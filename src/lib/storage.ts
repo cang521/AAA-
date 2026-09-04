@@ -818,3 +818,77 @@ export const saveGroupChats = (groups: GroupChat[]): void => {
   saveToStorage(STORAGE_KEYS.GROUP_CHATS, groups);
 };
 
+export {
+  INITIAL_CHARACTERS,
+  INITIAL_USER_PROFILE,
+  INITIAL_MENSTRUAL_DATA,
+  INITIAL_MEMOS,
+  INITIAL_MOMENTS,
+  INITIAL_WORLD_BOOKS,
+  INITIAL_ICONS,
+  INITIAL_WIDGETS,
+  INITIAL_API_LOGS,
+  INITIAL_PERMISSIONS,
+  INITIAL_API_CONFIG,
+  INITIAL_AI_CONTROLS,
+  INITIAL_GOMOKU_RECORDS,
+  INITIAL_TICTACTOE_RECORDS,
+  INITIAL_RPS_RECORDS,
+  INITIAL_RPS_STATS,
+  INITIAL_TELEPATHY_RECORDS,
+  INITIAL_TELEPATHY_CHAR_STATS,
+};
+
+/**
+ * Reset all localStorage items to factory defaults.
+ * Removes custom additions, restores original wallpapers, system settings,
+ * default AI characters, original profile, clean initial states.
+ */
+export function resetStorageToFactoryDefaults(): void {
+  // Clear all localStorage entries
+  localStorage.clear();
+
+  // Re-seed original default values
+  saveToStorage(STORAGE_KEYS.DESKTOP_WALLPAPER, DEFAULT_DESKTOP_WALLPAPER);
+  saveToStorage(STORAGE_KEYS.LOCK_WALLPAPER, DEFAULT_LOCK_WALLPAPER);
+  saveToStorage(
+    STORAGE_KEYS.CUSTOM_CSS,
+    '/* 自定义 CSS 示例 */\n.phone-screen {\n  font-family: system-ui, -apple-system, sans-serif;\n}'
+  );
+  saveToStorage(STORAGE_KEYS.PIN, '1234');
+  saveToStorage(STORAGE_KEYS.PIN_ENABLED, true);
+  saveToStorage(STORAGE_KEYS.IS_LOCKED, false);
+
+  saveToStorage(STORAGE_KEYS.CHARACTERS, INITIAL_CHARACTERS);
+  saveToStorage(STORAGE_KEYS.USER_PROFILE, INITIAL_USER_PROFILE);
+  saveToStorage(STORAGE_KEYS.MENSTRUAL, INITIAL_MENSTRUAL_DATA);
+  saveToStorage(STORAGE_KEYS.MEMOS, INITIAL_MEMOS);
+  saveToStorage(STORAGE_KEYS.MOMENTS, INITIAL_MOMENTS);
+  saveToStorage(STORAGE_KEYS.WORLD_BOOKS, INITIAL_WORLD_BOOKS);
+  saveToStorage(STORAGE_KEYS.LAUNCHER_ICONS, INITIAL_ICONS);
+  saveToStorage(STORAGE_KEYS.LAUNCHER_WIDGETS, INITIAL_WIDGETS);
+  saveToStorage(STORAGE_KEYS.API_LOGS, INITIAL_API_LOGS);
+  saveToStorage(STORAGE_KEYS.PERMISSIONS, INITIAL_PERMISSIONS);
+  saveToStorage(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG);
+  saveToStorage(STORAGE_KEYS.AI_CONTROLS, INITIAL_AI_CONTROLS);
+  saveToStorage(STORAGE_KEYS.GOMOKU_RECORDS, INITIAL_GOMOKU_RECORDS);
+  saveToStorage(STORAGE_KEYS.TICTACTOE_RECORDS, INITIAL_TICTACTOE_RECORDS);
+  saveToStorage(STORAGE_KEYS.RPS_RECORDS, INITIAL_RPS_RECORDS);
+  saveToStorage(STORAGE_KEYS.RPS_STATS, INITIAL_RPS_STATS);
+  saveToStorage(STORAGE_KEYS.TELEPATHY_RECORDS, INITIAL_TELEPATHY_RECORDS);
+  saveToStorage(STORAGE_KEYS.TELEPATHY_CHAR_STATS, INITIAL_TELEPATHY_CHAR_STATS);
+  saveToStorage(STORAGE_KEYS.GROUP_CHATS, INITIAL_GROUP_CHATS);
+
+  // Initial welcome message
+  saveToStorage(STORAGE_KEYS.MESSAGES, [
+    {
+      id: 'msg_welcome_1',
+      characterId: 'char_1',
+      sender: 'ai',
+      text: '小清，今天工作学习辛苦啦！有没有按时吃晚饭？记得多喝热水哦~',
+      timestamp: Date.now() - 3600000,
+      thinkingProcess: '用户系统数据显示此时为晚间。根据记忆条目“关注用户日常与情绪”，发出亲切问候，询问晚饭与喝水情况。',
+    },
+  ]);
+}
+

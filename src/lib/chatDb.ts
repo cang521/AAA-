@@ -614,3 +614,93 @@ export async function generateBenchmarkMessages(
   notifyChange();
   return inserted;
 }
+
+/**
+ * Retrieve all chat messages across all characters in IndexedDB
+ */
+export async function getAllChatMessages(): Promise<ChatMessage[]> {
+  const db = await getDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([STORE_MESSAGES], 'readonly');
+    const store = tx.objectStore(STORE_MESSAGES);
+    const req = store.getAll();
+    req.onsuccess = () => {
+      const msgs = (req.result || []) as ChatMessage[];
+      msgs.sort((a, b) => a.timestamp - b.timestamp);
+      resolve(msgs);
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
+ * Retrieve all chat messages for a specific character in chronological order
+ */
+export async function getAllChatMessagesForCharacter(characterId: string): Promise<ChatMessage[]> {
+  const db = await getDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([STORE_MESSAGES], 'readonly');
+    const store = tx.objectStore(STORE_MESSAGES);
+    const index = store.index('by_character_time');
+    const keyRange = IDBKeyRange.bound([characterId, 0], [characterId, Number.MAX_SAFE_INTEGER]);
+    const req = index.getAll(keyRange);
+    req.onsuccess = () => {
+      const msgs = (req.result || []) as ChatMessage[];
+      msgs.sort((a, b) => a.timestamp - b.timestamp);
+      resolve(msgs);
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
+ * Clear all chat messages from IndexedDB completely
+ */
+export async function clearAllChatMessages(): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction([STORE_MESSAGES], 'readwrite');
+  const store = tx.objectStore(STORE_MESSAGES);
+  store.clear();
+  await new Promise<void>((res, rej) => {
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+  metaCache.clear();
+  notifyChange();
+}
+
+/**
+ * Restore/Replace messages in IndexedDB (used for rollback or full restore)
+ */
+export async function restoreChatMessages(messages: ChatMessage[], clearFirst = true): Promise<void> {
+  const db = await getDb();
+  if (clearFirst) {
+    const txClear = db.transaction([STORE_MESSAGES], 'readwrite');
+    txClear.objectStore(STORE_MESSAGES).clear();
+    await new Promise<void>((res, rej) => {
+      txClear.oncomplete = () => res();
+      txClear.onerror = () => rej(txClear.error);
+    });
+  }
+
+  if (messages.length > 0) {
+    const batchSize = 1000;
+    for (let i = 0; i < messages.length; i += batchSize) {
+      const batch = messages.slice(i, i + batchSize);
+      const tx = db.transaction([STORE_MESSAGES], 'readwrite');
+      const store = tx.objectStore(STORE_MESSAGES);
+      for (const m of batch) {
+        if (m && m.id && m.characterId) {
+          store.put(m);
+        }
+      }
+      await new Promise<void>((res, rej) => {
+        tx.oncomplete = () => res();
+        tx.onerror = () => rej(tx.error);
+      });
+    }
+  }
+
+  await reloadMetaCache(db);
+  notifyChange();
+}

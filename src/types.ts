@@ -766,5 +766,59 @@ export interface WeatherEvent {
   };
 }
 
+// =========================================================================
+// AI 独立本地记忆空间 (Isolated Local Memory Space / Memory Vault)
+// =========================================================================
+export interface AiMemoryVault {
+  characterId: string; // 严格隔离：每个AI拥有唯一绑定的独立空间
+  characterName: string;
+  createdAt: number;
+  updatedAt: number;
+  fileCount: number;
+  totalSizeBytes: number;
+  description?: string;
+}
+
+export type MemoryFileType = 'txt' | 'json' | 'jsonl' | 'zip' | 'md' | 'csv' | 'log' | 'other';
+
+export interface AiMemoryFileMeta {
+  id: string;
+  characterId: string; // 严格隔离归属于该AI
+  fileName: string;
+  fileType: MemoryFileType;
+  fileSizeBytes: number;
+  createdAt: number;
+  updatedAt: number;
+  chunkCount: number;
+  lineCount?: number;
+  previewSnippet?: string; // 摘要预览，避免在列表中加载庞大原始内容
+  zipEntryCount?: number; // 如果是zip压缩包提取项
+}
+
+export interface AiMemoryChunk {
+  id: string;
+  characterId: string;
+  fileId: string;
+  fileName: string;
+  chunkIndex: number;
+  text: string;
+  tokenEstimated?: number;
+}
+
+export interface AiMemoryRecallMatch {
+  fileId: string;
+  fileName: string;
+  chunkIndex: number;
+  text: string;
+  score: number;
+}
+
+export interface AiMemoryRecallResult {
+  recalledText: string;
+  matchedChunks: AiMemoryRecallMatch[];
+  matchedFileNames: string[];
+}
+
+
 
 

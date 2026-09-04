@@ -38,6 +38,10 @@ import {
   Tag,
   Smile,
   ShieldCheck,
+  Database,
+  Download,
+  Upload,
+  History,
 } from 'lucide-react';
 import {
   AiCharacter,
@@ -60,6 +64,7 @@ import { ImagePickerModal } from '../ImagePickerModal';
 import { CustomAiCreatorModal } from './CustomAiCreatorModal';
 import { ChatBackgroundModal } from './ChatBackgroundModal';
 import { ChatSearchModal } from './ChatSearchModal';
+import { DataManagementModal } from '../data/DataManagementModal';
 import { calculateCycleStats } from '../../lib/menstrual';
 import { weatherService } from '../../lib/weatherService';
 import { deviceService } from '../../lib/deviceService';
@@ -79,7 +84,16 @@ import {
   subscribeChatDb,
   clearCharacterMessages,
 } from '../../lib/chatDb';
+import {
+  splitMessageIntoSentenceBubbles,
+  calculateTypingDelay,
+  getMultiBubbleConfig,
+  saveMultiBubbleConfig,
+  MultiBubbleConfig,
+} from '../../lib/wechatMultiBubble';
 import { ChatMessageBubble } from './ChatMessageBubble';
+import { AiMemoryVaultModal } from './memory/AiMemoryVaultModal';
+import { searchAiMemoryChunks, deleteAiMemoryVault } from '../../lib/aiMemoryVaultDb';
 
 interface WeChatAppProps {
   onBackToLauncher: () => void;
@@ -97,6 +111,7 @@ interface WeChatAppProps {
   onUpdateMoments: (posts: MomentPost[]) => void;
   onUpdateUserProfile: (profile: UserProfile) => void;
   onAddApiLog: (log: ApiLog) => void;
+  onDataChanged?: () => void;
 }
 
 const PAGE_SIZE = 40;
@@ -115,9 +130,14 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   onUpdateMoments,
   onUpdateUserProfile,
   onAddApiLog,
+  onDataChanged,
 }) => {
   const [activeTab, setActiveTab] = useState<'chats' | 'contacts' | 'moments' | 'me'>('chats');
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
+
+  // Data Management Modal State
+  const [showDataModal, setShowDataModal] = useState(false);
+  const [dataModalTab, setDataModalTab] = useState<'import' | 'export' | 'snapshots'>('import');
 
   // Group Chat State
   const [groupChats, setGroupChats] = useState<GroupChat[]>(() => loadGroupChats());
@@ -160,6 +180,12 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
   const [swipedContactId, setSwipedContactId] = useState<string | null>(null);
 
+  // Human-like Multi-Bubble Messaging Engine States (一句话一条消息，一整段分割连发)
+  const [multiBubbleConfig, setMultiBubbleConfig] = useState<MultiBubbleConfig>(() => getMultiBubbleConfig());
+  const [isAiMultiTyping, setIsAiMultiTyping] = useState(false);
+  const [multiTypingName, setMultiTypingName] = useState<string | null>(null);
+  const [multiBubbleToast, setMultiBubbleToast] = useState<string | null>(null);
+
   // Memory management collapsible folder (Requirement 5)
   const [isMemoryFolderOpen, setIsMemoryFolderOpen] = useState(false);
   const [newMemoryInput, setNewMemoryInput] = useState('');
@@ -181,6 +207,14 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
   // Image pickers
   const [imagePickerTarget, setImagePickerTarget] = useState<'user' | 'aiAvatar' | 'moment' | 'chatBg' | null>(null);
+
+  // AI Independent Memory Vault Modal State
+  const [showMemoryVaultModal, setShowMemoryVaultModal] = useState(false);
+  const [memoryVaultTargetChar, setMemoryVaultTargetChar] = useState<AiCharacter | null>(null);
+
+  // Character Deletion with Memory Space Option Modal (Requirement 8)
+  const [characterToDelete, setCharacterToDelete] = useState<AiCharacter | null>(null);
+  const [deleteMemoryVaultWithChar, setDeleteMemoryVaultWithChar] = useState(true);
 
   // Moments post creation & comments
   const [newPostContent, setNewPostContent] = useState('');
@@ -420,6 +454,79 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     }
   };
 
+  // Deliver AI message bubbles sequentially like real WeChat typing (一句话一条消息，连发四五条)
+  const deliverAiMessagesInSequence = async (
+    rawText: string,
+    thinkingProcess: string,
+    character: AiCharacter,
+    options?: {
+      vibrationPattern?: number[];
+    }
+  ) => {
+    const shouldSplit = multiBubbleConfig.enabled;
+    const bubbles = shouldSplit
+      ? splitMessageIntoSentenceBubbles(rawText, { maxBubbles: multiBubbleConfig.maxBubbles })
+      : [rawText];
+
+    if (!bubbles || bubbles.length === 0) return;
+
+    if (bubbles.length === 1) {
+      const aiMsg: ChatMessage = {
+        id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        characterId: character.id,
+        sender: 'ai',
+        text: bubbles[0],
+        timestamp: Date.now(),
+        thinkingProcess,
+      };
+      setDisplayedMessages((prev) => [...prev, aiMsg]);
+      setTotalHistoryCount((c) => c + 1);
+      scrollToBottom(true);
+      await saveChatMessage(aiMsg).catch((e) => console.error('Save AI msg error', e));
+      if (permissions?.realDevice?.vibration && typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(options?.vibrationPattern || [50]);
+      }
+      return;
+    }
+
+    // Multi-bubble human typing experience
+    setIsAiMultiTyping(true);
+    setMultiTypingName(character.name);
+
+    for (let i = 0; i < bubbles.length; i++) {
+      const bubbleText = bubbles[i];
+      if (i > 0) {
+        // Natural human typing latency based on sentence character length
+        const delay = calculateTypingDelay(bubbleText, multiBubbleConfig.speed);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+
+      const bubbleMsg: ChatMessage = {
+        id: 'msg_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2, 6),
+        characterId: character.id,
+        sender: 'ai',
+        text: bubbleText,
+        timestamp: Date.now() + i * 15,
+        thinkingProcess:
+          i === 0
+            ? thinkingProcess
+            : `${thinkingProcess}\n\n[连发第 ${i + 1}/${bubbles.length} 条消息]`,
+      };
+
+      setDisplayedMessages((prev) => [...prev, bubbleMsg]);
+      setTotalHistoryCount((c) => c + 1);
+      scrollToBottom(true);
+      saveChatMessage(bubbleMsg).catch((e) => console.error('Save AI bubble msg error', e));
+
+      if (permissions?.realDevice?.vibration && typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate([35]);
+      }
+    }
+
+    setIsAiMultiTyping(false);
+    setMultiTypingName(null);
+  };
+
   // 2. Trigger AI Reply for all pending consecutive user messages
   const handleTriggerAiReply = async (optionalImmediateUserText?: string) => {
     if (!activeCharacter || isLoading) return;
@@ -479,8 +586,21 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     setIsLoading(true);
 
     try {
-      // Intelligently recall historical memories from IndexedDB using RAG engine
+      // 1. Recall historical chat context from IndexedDB
       const { recalledText } = await recallCharacterMemories(activeCharacter.id, combinedUserText, 4);
+
+      // 2. Recall on-demand background files from this AI's strictly isolated local memory vault
+      const vaultRecall = await searchAiMemoryChunks(activeCharacter.id, combinedUserText, 4).catch((err) => {
+        console.warn('AI memory vault recall error:', err);
+        return { recalledText: '', matchedChunks: [], matchedFileNames: [] };
+      });
+
+      let combinedRecalledMemories = recalledText || '';
+      if (vaultRecall.recalledText) {
+        combinedRecalledMemories = combinedRecalledMemories
+          ? `${vaultRecall.recalledText}\n\n${combinedRecalledMemories}`
+          : vaultRecall.recalledText;
+      }
 
       // Fetch External Devices Summary if permitted
       const devicesSummary =
@@ -497,7 +617,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           character: activeCharacter,
           userMessage: combinedUserText,
           conversationHistory: recentHistoryWindow,
-          recalledMemoriesSummary: recalledText || undefined,
+          recalledMemoriesSummary: combinedRecalledMemories || undefined,
           userProfile,
           systemTime: systemNativeService.getRealSystemTime().summaryString,
           locationCity: weatherInfo?.city,
@@ -533,33 +653,23 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           }
         }
 
-        const aiMsg: ChatMessage = {
-          id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-          characterId: activeCharacter.id,
-          sender: 'ai',
-          text: data.text,
-          timestamp: Date.now(),
-          thinkingProcess:
-            data.thinkingProcess ||
-            `【推理分析】:\n1. 结合角色人设 [${activeCharacter.persona}]\n2. ${
-              associatedWorldBook ? `融入世界书设定 [《${associatedWorldBook.title}》]` : '无关联世界书，按日常设定回复'
-            }\n3. 检索长期记忆 [${activeCharacter.memories?.join('; ')}]\n4. 形成专属口吻回复。`,
-        };
+        const memoryRecallNote =
+          vaultRecall.matchedChunks.length > 0
+            ? `调阅专属记忆空间 (${vaultRecall.matchedChunks.length} 处匹配片段，来源: ${vaultRecall.matchedFileNames.join('、')})`
+            : `检索长期记忆 [${activeCharacter.memories?.slice(0, 3).join('; ') || '日常记忆'}]`;
 
-        // Update local displayed state
-        setDisplayedMessages((prev) => [...prev, aiMsg]);
-        setTotalHistoryCount((c) => c + 1);
-        scrollToBottom(true);
+        const thinkingProcess =
+          data.thinkingProcess ||
+          `【推理分析】:\n1. 结合角色人设 [${activeCharacter.persona}]\n2. ${
+            associatedWorldBook ? `融入世界书设定 [《${associatedWorldBook.title}》]` : '无关联世界书，按日常设定回复'
+          }\n3. ${memoryRecallNote}\n4. 形成专属口吻回复。`;
 
-        // Save to IndexedDB
-        saveChatMessage(aiMsg).catch((e) => console.error('Save AI msg error', e));
+        // Sequential multi-bubble delivery (一句话发一条消息，四五条连续发送)
+        await deliverAiMessagesInSequence(data.text, thinkingProcess, activeCharacter, {
+          vibrationPattern: [60, 40, 60],
+        });
 
         if (data.apiLog) onAddApiLog(data.apiLog);
-
-        // Vibration
-        if (permissions?.realDevice?.vibration && typeof navigator !== 'undefined' && navigator.vibrate) {
-          navigator.vibrate([60, 40, 60]);
-        }
 
         // Auto Extract Memory
         if (autoExtractMemoryEnabled && combinedUserText.length > 5) {
@@ -576,18 +686,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       }
     } catch (e) {
       console.error('Chat error', e);
-      const fallbackMsg: ChatMessage = {
-        id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-        characterId: activeCharacter.id,
-        sender: 'ai',
-        text: `${activeCharacter.name}: 刚刚网络开小差了，不过我已经收到你的消息啦！随时跟我说说你的近况吧~`,
-        timestamp: Date.now(),
-        thinkingProcess: `【离线本地思考模式】:\n网络异常，触发备用温情回复。`,
-      };
-      setDisplayedMessages((prev) => [...prev, fallbackMsg]);
-      setTotalHistoryCount((c) => c + 1);
-      scrollToBottom(true);
-      saveChatMessage(fallbackMsg).catch((err) => console.error(err));
+      const fallbackText = `${activeCharacter.name}: 刚刚网络开小差了，不过我已经收到你的消息啦！随时跟我说说你的近况吧~`;
+      const fallbackThinking = `【离线本地思考模式】:\n网络异常，触发备用温情回复。`;
+      await deliverAiMessagesInSequence(fallbackText, fallbackThinking, activeCharacter);
     } finally {
       setIsLoading(false);
     }
@@ -618,25 +719,15 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
       const data = await res.json();
       if (data.success && data.text) {
-        const aiMsg: ChatMessage = {
-          id: 'msg_' + Date.now(),
-          characterId: activeCharacter.id,
-          sender: 'ai',
-          text: data.text,
-          timestamp: Date.now(),
-          thinkingProcess:
-            data.thinkingProcess ||
-            `【生理周期关怀思考】:\n1. 感知用户生理阶段：${cycleStats.phaseTitle}\n2. 阶段关怀建议：${cycleStats.phaseAdvice}\n3. 结合【${activeCharacter.name}】人设严防OOC输出。`,
-        };
-        setDisplayedMessages((prev) => [...prev, aiMsg]);
-        setTotalHistoryCount((c) => c + 1);
-        scrollToBottom(true);
-        saveChatMessage(aiMsg).catch((e) => console.error(e));
-        if (data.apiLog) onAddApiLog(data.apiLog);
+        const thinkingProcess =
+          data.thinkingProcess ||
+          `【生理周期关怀思考】:\n1. 感知用户生理阶段：${cycleStats.phaseTitle}\n2. 阶段关怀建议：${cycleStats.phaseAdvice}\n3. 结合【${activeCharacter.name}】人设严防OOC输出。`;
 
-        if (permissions?.realDevice?.vibration && typeof navigator !== 'undefined' && navigator.vibrate) {
-          navigator.vibrate([80, 50, 80]);
-        }
+        await deliverAiMessagesInSequence(data.text, thinkingProcess, activeCharacter, {
+          vibrationPattern: [80, 50, 80],
+        });
+
+        if (data.apiLog) onAddApiLog(data.apiLog);
       }
     } catch (e) {
       console.error('Proactive care error', e);
@@ -644,18 +735,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         cycleStats.currentPeriodDay !== null
           ? `${activeCharacter.name}: 看到你今天在经期第 ${cycleStats.currentPeriodDay} 天，肚子会不会不舒服？一定要多喝温水、注意保暖，别太累了哦，有任何事随时跟我说。🌸`
           : `${activeCharacter.name}: 提醒你一下哦，还有 ${cycleStats.daysUntilNextPeriod} 天就要来例假了，提前备好温水和保暖物品，这几天别贪凉啦！❤️`;
-      const fallbackMsg: ChatMessage = {
-        id: 'msg_' + Date.now(),
-        characterId: activeCharacter.id,
-        sender: 'ai',
-        text: fallbackText,
-        timestamp: Date.now(),
-        thinkingProcess: `【本地经期关怀引擎】:\n1. 捕获经期数据\n2. 触发人设主动问候。`,
-      };
-      setDisplayedMessages((prev) => [...prev, fallbackMsg]);
-      setTotalHistoryCount((c) => c + 1);
-      scrollToBottom(true);
-      saveChatMessage(fallbackMsg).catch((err) => console.error(err));
+      const fallbackThinking = `【本地经期关怀引擎】:\n1. 捕获经期数据\n2. 触发人设主动问候。`;
+      await deliverAiMessagesInSequence(fallbackText, fallbackThinking, activeCharacter);
     } finally {
       setIsLoading(false);
     }
@@ -882,67 +963,136 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
           <div className="flex flex-col items-center">
             <h2 className="text-sm font-semibold tracking-wide flex items-center gap-1.5">
-              {activeTab === 'chats' && (activeChatId ? activeCharacter.name : '微信')}
+              {activeTab === 'chats' && (activeChatId ? (isAiMultiTyping ? `${activeCharacter.name} 正在输入...` : activeCharacter.name) : '微信')}
               {activeTab === 'contacts' && '通讯录'}
               {activeTab === 'moments' && '朋友圈'}
               {activeTab === 'me' && '我'}
             </h2>
             {activeTab === 'chats' && activeChatId && (
               <span className="text-[9px] text-zinc-500 font-mono">
-                {totalHistoryCount > 0 ? `${totalHistoryCount} 条历史` : '在线'}
+                {isAiMultiTyping ? (
+                  <span className="text-emerald-400 font-sans flex items-center gap-1 animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    正在连发多条短消息...
+                  </span>
+                ) : totalHistoryCount > 0 ? (
+                  `${totalHistoryCount} 条历史`
+                ) : (
+                  '在线'
+                )}
               </span>
             )}
           </div>
 
           <div className="flex items-center gap-1.5">
             {activeTab === 'chats' && activeChatId && (
-              <div className="relative">
+              <div className="flex items-center gap-1.5">
+                {/* Direct quick shortcut to AI's isolated memory vault */}
                 <button
-                  onClick={() => setShowChatOptionsMenu(!showChatOptionsMenu)}
-                  className="p-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition cursor-pointer"
-                  title="聊天设置与背景"
+                  onClick={() => {
+                    setMemoryVaultTargetChar(activeCharacter);
+                    setShowMemoryVaultModal(true);
+                  }}
+                  className="p-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-emerald-400 hover:text-emerald-300 transition cursor-pointer flex items-center gap-1 text-xs"
+                  title={`${activeCharacter.name} 的专属本地记忆空间（导入/管理知识库）`}
                 >
-                  <MoreHorizontal className="w-4 h-4" />
+                  <Database className="w-4 h-4" />
                 </button>
 
-                {/* Chat Top-Right Options Dropdown */}
-                {showChatOptionsMenu && (
-                  <div
-                    className="absolute right-0 top-10 w-44 bg-zinc-850 rounded-2xl shadow-2xl border border-zinc-750 p-1.5 z-40 space-y-1 animate-in fade-in zoom-in-95 duration-150"
-                    onClick={(e) => e.stopPropagation()}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowChatOptionsMenu(!showChatOptionsMenu)}
+                    className="p-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition cursor-pointer"
+                    title="聊天设置与背景"
                   >
-                    <button
-                      onClick={() => {
-                        setShowChatOptionsMenu(false);
-                        setShowSearchModal(true);
-                      }}
-                      className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-200 hover:bg-zinc-750 hover:text-amber-400 flex items-center gap-2.5 transition cursor-pointer"
+                    <MoreHorizontal className="w-4 h-4" />
+                  </button>
+
+                  {/* Chat Top-Right Options Dropdown */}
+                  {showChatOptionsMenu && (
+                    <div
+                      className="absolute right-0 top-10 w-52 bg-zinc-850 rounded-2xl shadow-2xl border border-zinc-750 p-1.5 z-40 space-y-1 animate-in fade-in zoom-in-95 duration-150"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      <Search className="w-3.5 h-3.5 text-amber-400" />
-                      <span>查找聊天记录</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowChatOptionsMenu(false);
-                        setShowBackgroundModal(true);
-                      }}
-                      className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-200 hover:bg-zinc-750 hover:text-emerald-400 flex items-center gap-2.5 transition cursor-pointer"
-                    >
-                      <Palette className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>自定义聊天背景</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowChatOptionsMenu(false);
-                        setShowAiSettingsModal(true);
-                      }}
-                      className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-200 hover:bg-zinc-750 hover:text-indigo-400 flex items-center gap-2.5 transition cursor-pointer"
-                    >
-                      <Settings className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>AI 人设与记忆管理</span>
-                    </button>
-                  </div>
-                )}
+                      <button
+                        onClick={() => {
+                          setShowChatOptionsMenu(false);
+                          setMemoryVaultTargetChar(activeCharacter);
+                          setShowMemoryVaultModal(true);
+                        }}
+                        className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-200 hover:bg-zinc-750 hover:text-emerald-400 flex items-center justify-between transition cursor-pointer bg-emerald-950/20 border border-emerald-500/20"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <Database className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>专属独立记忆空间</span>
+                        </div>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">
+                          完全隔离
+                        </span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          const next = !multiBubbleConfig.enabled;
+                          const updated = saveMultiBubbleConfig({ enabled: next });
+                          setMultiBubbleConfig(updated);
+                          setMultiBubbleToast(
+                            next
+                              ? '已开启：AI 拟真分句连发（一句话发一条消息）'
+                              : '已切换为：AI 单条长段发送模式'
+                          );
+                          setTimeout(() => setMultiBubbleToast(null), 2500);
+                          setShowChatOptionsMenu(false);
+                        }}
+                        className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-200 hover:bg-zinc-750 hover:text-emerald-400 flex items-center justify-between transition cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <MessageSquarePlus className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>分句连发模式</span>
+                        </div>
+                        <span
+                          className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono ${
+                            multiBubbleConfig.enabled
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                              : 'bg-zinc-800 text-zinc-400'
+                          }`}
+                        >
+                          {multiBubbleConfig.enabled ? '已开启' : '已关闭'}
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowChatOptionsMenu(false);
+                          setShowSearchModal(true);
+                        }}
+                        className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-200 hover:bg-zinc-750 hover:text-amber-400 flex items-center gap-2.5 transition cursor-pointer"
+                      >
+                        <Search className="w-3.5 h-3.5 text-amber-400" />
+                        <span>查找聊天记录</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowChatOptionsMenu(false);
+                          setShowBackgroundModal(true);
+                        }}
+                        className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-200 hover:bg-zinc-750 hover:text-emerald-400 flex items-center gap-2.5 transition cursor-pointer"
+                      >
+                        <Palette className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>自定义聊天背景</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowChatOptionsMenu(false);
+                          setShowAiSettingsModal(true);
+                        }}
+                        className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-200 hover:bg-zinc-750 hover:text-indigo-400 flex items-center gap-2.5 transition cursor-pointer"
+                      >
+                        <Settings className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>AI 人设与记忆管理</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -1035,6 +1185,19 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                         <UserPlus className="w-3.5 h-3.5" />
                       </div>
                       <span>添加朋友</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowTopPlusMenu(false);
+                        setDataModalTab('import');
+                        setShowDataModal(true);
+                      }}
+                      className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-200 hover:bg-zinc-750 hover:text-blue-400 flex items-center gap-2.5 transition border-t border-zinc-750/80 pt-2"
+                    >
+                      <div className="w-6 h-6 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center">
+                        <Database className="w-3.5 h-3.5" />
+                      </div>
+                      <span>数据管理中心</span>
                     </button>
                   </div>
                 )}
@@ -1153,7 +1316,34 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                           <span className="animate-pulse">{activeCharacter.name} 正在思考中...</span>
                         </div>
                       )}
+
+                      {/* Real-time typing bubble for multi-sentence sequential delivery */}
+                      {isAiMultiTyping && !isLoading && (
+                        <div className="flex gap-2.5 items-center text-xs text-zinc-300 pt-1 animate-in fade-in duration-200">
+                          <img
+                            src={activeCharacter.avatar}
+                            alt=""
+                            className="w-8 h-8 rounded-xl object-cover border border-zinc-750 shrink-0"
+                          />
+                          <div className="px-3 py-2 rounded-2xl bg-zinc-800/90 border border-zinc-750 text-zinc-300 flex items-center gap-2 shadow-xs">
+                            <span className="text-[11px] text-zinc-400">{activeCharacter.name} 正在输入</span>
+                            <span className="inline-flex gap-1 items-center">
+                              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-bounce" />
+                            </span>
+                          </div>
+                        </div>
+                      )}
                     </div>
+
+                    {/* Multi-bubble toast notification */}
+                    {multiBubbleToast && (
+                      <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-30 px-3.5 py-1.5 bg-zinc-900/95 border border-emerald-500/40 rounded-full text-xs text-emerald-300 shadow-xl flex items-center gap-1.5 pointer-events-none animate-in fade-in slide-in-from-top-2">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span>{multiBubbleToast}</span>
+                      </div>
+                    )}
 
                     {/* Quote Indicator */}
                     {quoteMsgId && (
@@ -1459,9 +1649,21 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
+                            setMemoryVaultTargetChar(char);
+                            setShowMemoryVaultModal(true);
+                          }}
+                          className="p-1.5 rounded-xl bg-zinc-850 hover:bg-zinc-700 text-emerald-400 hover:text-emerald-300 transition cursor-pointer shrink-0"
+                          title="进入该 AI 专属独立记忆空间 (导入/检索资料)"
+                        >
+                          <Database className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
                             setSwipedContactId(isSwiped ? null : char.id);
                           }}
-                          className="p-1 text-zinc-400 hover:text-white cursor-pointer"
+                          className="p-1 text-zinc-400 hover:text-white cursor-pointer shrink-0"
                           title="展开快捷操作"
                         >
                           <MoreHorizontal className="w-4 h-4" />
@@ -1497,10 +1699,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                             </button>
                             <button
                               onClick={() => {
-                                if (window.confirm(`确定要删除好友「${char.name}」吗？`)) {
-                                  onUpdateCharacters(characters.filter((c) => c.id !== char.id));
-                                  setSwipedContactId(null);
-                                }
+                                setCharacterToDelete(char);
+                                setDeleteMemoryVaultWithChar(true);
+                                setSwipedContactId(null);
                               }}
                               className="h-full px-3 bg-rose-600 hover:bg-rose-500 text-white text-xs font-medium flex items-center gap-1 cursor-pointer transition"
                             >
@@ -1700,6 +1901,59 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                   className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs shadow-md transition active:scale-95 cursor-pointer"
                 >
                   保存人设配置
+                </button>
+              </div>
+            </div>
+
+            {/* Data Management & Backup Center Card */}
+            <div className="p-4 rounded-3xl bg-zinc-850 border border-zinc-750 space-y-3">
+              <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                <div className="flex items-center gap-1.5 text-blue-400 font-semibold">
+                  <Database className="w-4 h-4" />
+                  <span>数据管理中心 (Data Management)</span>
+                </div>
+                <span className="text-[10px] text-zinc-500">导入/导出/去重合并/快照回滚</span>
+              </div>
+
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                全量备份所有 AI 人设档案、聊天记录、长期记忆库和群聊数据。支持导入 ZIP/JSON/TXT 格式并自动安全去重。
+              </p>
+
+              <div className="grid grid-cols-3 gap-2 pt-1">
+                <button
+                  onClick={() => {
+                    setDataModalTab('import');
+                    setShowDataModal(true);
+                  }}
+                  className="p-2.5 rounded-2xl bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 flex flex-col items-center justify-center gap-1 text-zinc-200 transition active:scale-95"
+                >
+                  <Upload className="w-4 h-4 text-blue-400" />
+                  <span className="font-bold text-[11px]">导入数据</span>
+                  <span className="text-[9px] text-zinc-400">ZIP/JSON/TXT</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setDataModalTab('export');
+                    setShowDataModal(true);
+                  }}
+                  className="p-2.5 rounded-2xl bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 flex flex-col items-center justify-center gap-1 text-zinc-200 transition active:scale-95"
+                >
+                  <Download className="w-4 h-4 text-emerald-400" />
+                  <span className="font-bold text-[11px]">导出数据</span>
+                  <span className="text-[9px] text-zinc-400">4种格式可选</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setDataModalTab('snapshots');
+                    setShowDataModal(true);
+                  }}
+                  className="p-2.5 rounded-2xl bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 flex flex-col items-center justify-center gap-1 text-zinc-200 transition active:scale-95"
+                >
+                  <History className="w-4 h-4 text-purple-400" />
+                  <span className="font-bold text-[11px]">备份回滚</span>
+                  <span className="text-[9px] text-zinc-400">安全快照</span>
                 </button>
               </div>
             </div>
@@ -2018,6 +2272,33 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
               )}
             </div>
 
+            {/* Independent Local Memory Space Entry (独立专属记忆空间) */}
+            <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-950/40 to-teal-950/40 border border-emerald-500/30 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-emerald-300 font-semibold">
+                  <Database className="w-4 h-4 text-emerald-400" />
+                  <span>{activeCharacter.name} 专属本地记忆空间</span>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">
+                  严格隔离
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                每个 AI 拥有完全独立的本地记忆库。支持导入 ZIP、JSON、JSONL、TXT 等文件，AI 将在聊天中按需智能检索回忆，绝不会污染当前聊天窗口。
+              </p>
+              <button
+                onClick={() => {
+                  setShowAiSettingsModal(false);
+                  setMemoryVaultTargetChar(activeCharacter);
+                  setShowMemoryVaultModal(true);
+                }}
+                className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs flex items-center justify-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
+              >
+                <FolderOpen className="w-4 h-4" />
+                <span>进入「{activeCharacter.name}」专属记忆空间</span>
+              </button>
+            </div>
+
             {/* Requirement 7: Menstrual Cycle Sensing & Proactive Care with Toggle Switch */}
             <div className="p-3.5 rounded-2xl bg-zinc-850 border border-zinc-750 space-y-2.5 text-xs">
               <div className="flex items-center justify-between">
@@ -2071,6 +2352,84 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                   <Sparkles className="w-3 h-3 text-rose-400" />
                   <span>发送一次阶段主动关怀测试</span>
                 </button>
+              )}
+            </div>
+
+            {/* Multi-Bubble Messaging Settings (一句话发一条消息，分句连发) */}
+            <div className="p-3.5 rounded-2xl bg-zinc-850 border border-zinc-750 space-y-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-emerald-300 font-semibold">
+                  <MessageSquarePlus className="w-4 h-4 text-emerald-400" />
+                  <span>真人打字分句连发（一句话一条消息）</span>
+                </div>
+                <button
+                  onClick={() => {
+                    const next = !multiBubbleConfig.enabled;
+                    const updated = saveMultiBubbleConfig({ enabled: next });
+                    setMultiBubbleConfig(updated);
+                  }}
+                  className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
+                    multiBubbleConfig.enabled ? 'bg-emerald-500' : 'bg-zinc-700'
+                  }`}
+                >
+                  <div
+                    className={`w-4 h-4 rounded-full bg-white transition-transform absolute top-1 ${
+                      multiBubbleConfig.enabled ? 'right-1' : 'left-1'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                像真人发微信一样，把整段回复智能切分成 2~5 条自然短句连续发送，带打字状态与震动反馈，彻底告别单条大长段。
+              </p>
+
+              {multiBubbleConfig.enabled && (
+                <div className="space-y-2 pt-1 border-t border-zinc-800">
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400 text-[11px]">打字间隔节奏</span>
+                    <div className="flex gap-1">
+                      {(['fast', 'normal', 'slow'] as const).map((spd) => (
+                        <button
+                          key={spd}
+                          onClick={() => {
+                            const updated = saveMultiBubbleConfig({ speed: spd });
+                            setMultiBubbleConfig(updated);
+                          }}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-medium transition cursor-pointer ${
+                            multiBubbleConfig.speed === spd
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                          }`}
+                        >
+                          {spd === 'fast' ? '快 (轻快)' : spd === 'normal' ? '标准 (自然)' : '稍慢 (悠闲)'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400 text-[11px]">单次连发上限</span>
+                    <div className="flex gap-1.5">
+                      {[3, 4, 5, 6].map((cnt) => (
+                        <button
+                          key={cnt}
+                          onClick={() => {
+                            const updated = saveMultiBubbleConfig({ maxBubbles: cnt });
+                            setMultiBubbleConfig(updated);
+                          }}
+                          className={`w-7 h-6 rounded-lg text-[10px] font-mono font-medium transition cursor-pointer flex items-center justify-center ${
+                            multiBubbleConfig.maxBubbles === cnt
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                          }`}
+                        >
+                          {cnt}句
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
 
@@ -2464,6 +2823,113 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           userProfile={userProfile}
           onJoinGroupSuccess={handleJoinGroupSuccess}
           onSimulateIncomingRequest={handleSimulateIncomingRequest}
+        />
+      )}
+
+      {/* Full-featured Data Management Modal */}
+      <DataManagementModal
+        isOpen={showDataModal}
+        onClose={() => setShowDataModal(false)}
+        initialTab={dataModalTab}
+        onDataChanged={() => {
+          setGroupChats(loadGroupChats());
+          setDbVersionKey((prev) => prev + 1);
+          if (onDataChanged) onDataChanged();
+        }}
+      />
+
+      {/* Delete Character with Memory Vault Choice Modal (Requirement 8) */}
+      {characterToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-sm rounded-3xl bg-zinc-900 border border-rose-500/30 p-5 text-white shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2 text-rose-400 font-semibold text-sm">
+                <Trash2 className="w-4 h-4" />
+                <span>删除好友确认</span>
+              </div>
+              <button
+                onClick={() => setCharacterToDelete(null)}
+                className="text-zinc-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3 p-3 rounded-2xl bg-zinc-800/80 border border-zinc-750">
+              <img
+                src={characterToDelete.avatar}
+                alt=""
+                className="w-12 h-12 rounded-xl object-cover border border-zinc-700 shrink-0"
+              />
+              <div className="min-w-0">
+                <h4 className="font-bold text-sm text-zinc-100">{characterToDelete.name}</h4>
+                <p className="text-xs text-zinc-400 font-mono">微信号: {characterToDelete.wxid}</p>
+                <p className="text-[11px] text-zinc-500 truncate">{characterToDelete.persona}</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              确定要删除该 AI 好友吗？删除后将无法通过好友列表与其发起私聊。
+            </p>
+
+            {/* Requirement 8: Checkbox to choose whether to delete memory vault */}
+            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-zinc-850 border border-zinc-750 cursor-pointer hover:bg-zinc-800 transition">
+              <input
+                type="checkbox"
+                checked={deleteMemoryVaultWithChar}
+                onChange={(e) => setDeleteMemoryVaultWithChar(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 bg-zinc-700 border-zinc-600 cursor-pointer"
+              />
+              <div className="text-xs">
+                <span className="font-semibold text-zinc-200 block">
+                  同时彻底清除该 AI 的独立本地记忆空间
+                </span>
+                <span className="text-[10px] text-zinc-400 leading-normal block mt-0.5">
+                  包括该 AI 名下已导入的全部资料文件、切片与检索索引（IndexedDB 永久擦除）。取消勾选可保留文件记忆。
+                </span>
+              </div>
+            </label>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                onClick={() => setCharacterToDelete(null)}
+                className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                onClick={async () => {
+                  const target = characterToDelete;
+                  if (!target) return;
+                  try {
+                    await deleteAiMemoryVault(target.id, deleteMemoryVaultWithChar);
+                  } catch (e) {
+                    console.error('Delete memory vault failed:', e);
+                  }
+                  onUpdateCharacters(characters.filter((c) => c.id !== target.id));
+                  if (activeChatId === target.id) {
+                    setActiveChatId(null);
+                  }
+                  setCharacterToDelete(null);
+                  setSwipedContactId(null);
+                }}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition cursor-pointer"
+              >
+                确认删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Memory Vault Full Management Modal */}
+      {showMemoryVaultModal && memoryVaultTargetChar && (
+        <AiMemoryVaultModal
+          isOpen={showMemoryVaultModal}
+          onClose={() => setShowMemoryVaultModal(false)}
+          currentCharacter={memoryVaultTargetChar}
+          allCharacters={characters}
+          onSelectCharacter={(char) => setMemoryVaultTargetChar(char)}
         />
       )}
     </div>

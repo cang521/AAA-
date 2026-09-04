@@ -61,6 +61,7 @@ import { WorldBookApp } from './components/apps/WorldBookApp';
 import { GameCenterApp } from './components/apps/GameCenterApp';
 import { WeatherApp } from './components/apps/WeatherApp';
 import { weatherService } from './lib/weatherService';
+import { initAllAiMemoryVaults } from './lib/aiMemoryVaultDb';
 
 export function App() {
   // Lock state
@@ -86,6 +87,15 @@ export function App() {
 
   // Active sub-app state
   const [activeAppId, setActiveAppId] = useState<string | null>(null);
+
+  // Automatically ensure independent local memory vaults exist for each AI character
+  useEffect(() => {
+    if (characters && characters.length > 0) {
+      initAllAiMemoryVaults(characters).catch((e) => {
+        console.warn('Auto initialize AI memory vaults warning:', e);
+      });
+    }
+  }, [characters]);
 
   // State Updaters with localStorage Persistence
   const updateIcons = (newIcons: AppIconConfig[]) => {
@@ -194,6 +204,23 @@ export function App() {
     URL.revokeObjectURL(url);
   };
 
+  const refreshAllData = () => {
+    setSettingsState(loadSettings());
+    setIconsState(loadIcons());
+    setWidgetsState(loadWidgets());
+    setCharactersState(loadCharacters());
+    setMessagesState(loadMessages());
+    setMomentsState(loadMoments());
+    setUserProfileState(loadUserProfile());
+    setMenstrualDataState(loadMenstrualData());
+    setApiConfigState(loadApiConfig());
+    setAiControlsState(loadAiControls());
+    setPermissionsState(loadPermissions());
+    setApiLogsState(loadApiLogs());
+    setMemosState(loadMemos());
+    setWorldBooksState(loadWorldBooks());
+  };
+
   const handleImportData = (jsonStr: string) => {
     try {
       const parsed = JSON.parse(jsonStr);
@@ -211,6 +238,7 @@ export function App() {
       if (parsed.memos) updateMemos(parsed.memos);
       if (parsed.worldBooks) updateWorldBooks(parsed.worldBooks);
 
+      refreshAllData();
       alert('数据导入成功！页面已实时更新。');
     } catch (e) {
       alert('解析导入数据失败，请确认文件是否为正确的 JSON 格式。');
@@ -268,6 +296,7 @@ export function App() {
                 onUpdateMoments={updateMoments}
                 onUpdateUserProfile={updateUserProfile}
                 onAddApiLog={addApiLog}
+                onDataChanged={refreshAllData}
               />
             )}
 
@@ -310,6 +339,7 @@ export function App() {
                 onExportData={handleExportData}
                 onImportData={handleImportData}
                 onAddApiLog={addApiLog}
+                onDataChanged={refreshAllData}
               />
             )}
 

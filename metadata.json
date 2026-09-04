@@ -1,6 +1,6 @@
 {
   "name": "AI 手机模拟器与智能微信系统",
-  "description": "高度仿真的 Android 手机系统，包含仿真微信与AI多人群聊空间（支持真人+多AI混合群聊、@成员智能触发与自主互动、群邀请码与真实网络/本地多端解析）、AI 4大分类智能设备管理中枢、急停保护与风险拦截、实时天气感知与AI主动关怀、经期健康预测、世界书与系统级权限管理。",
+  "description": "高度仿真的 Android 手机系统，包含仿真微信与AI多人群聊空间（支持真人+多AI混合群聊、@成员智能触发与自主互动、群邀请码与真实网络/本地多端解析、AI拟真真人分句连发多气泡）、AI 4大分类智能设备管理中枢、急停保护与风险拦截、实时天气感知与AI主动关怀、经期健康预测、世界书与系统级权限管理。",
   "requestFramePermissions": ["microphone", "geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

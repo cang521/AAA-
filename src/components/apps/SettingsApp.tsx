@@ -35,7 +35,15 @@ import {
   ShieldCheck,
   CheckCircle2,
   SlidersHorizontal,
+  History,
+  Archive,
+  RotateCcw,
+  AlertTriangle,
 } from 'lucide-react';
+import { DataManagementModal } from '../data/DataManagementModal';
+import { clearAllChatMessages } from '../../lib/chatDb';
+import { clearAllAiMemoryVaults } from '../../lib/aiMemoryVaultDb';
+import { resetStorageToFactoryDefaults } from '../../lib/storage';
 
 interface SettingsAppProps {
   onBackToLauncher: () => void;
@@ -43,10 +51,11 @@ interface SettingsAppProps {
   aiControls: AiControls;
   onSaveApiConfig: (config: ApiConfig) => void;
   onSaveAiControls: (controls: AiControls) => void;
-  onClearChats: () => void;
+  onClearChats?: () => void;
   onExportData: () => void;
   onImportData: (jsonStr: string) => void;
   onAddApiLog: (log: ApiLog) => void;
+  onDataChanged?: () => void;
 }
 
 interface ProviderPreset {
@@ -135,6 +144,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   onExportData,
   onImportData,
   onAddApiLog,
+  onDataChanged,
 }) => {
   const [config, setConfig] = useState<ApiConfig>(apiConfig);
   const [controls, setControls] = useState<AiControls>(aiControls);
@@ -166,6 +176,44 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   const [adaptedJsonOutput, setAdaptedJsonOutput] = useState('');
   const [isAdaptingJson, setIsAdaptingJson] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
+
+  // Data Management Full Modal states
+  const [showDataModal, setShowDataModal] = useState(false);
+  const [dataModalTab, setDataModalTab] = useState<'import' | 'export' | 'snapshots'>('import');
+
+  // Factory Reset (恢复出厂设置) Modal states
+  const [showResetConfirmModal, setShowResetConfirmModal] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetSuccessMessage, setResetSuccessMessage] = useState('');
+
+  const handleExecuteFactoryReset = async () => {
+    setIsResetting(true);
+    try {
+      // 1. Wipe IndexedDB chat messages
+      await clearAllChatMessages();
+      // 2. Wipe IndexedDB AI Memory Vaults, files and chunks
+      await clearAllAiMemoryVaults();
+      // 3. Reset localStorage to pristine default initial values
+      resetStorageToFactoryDefaults();
+
+      setResetSuccessMessage('恢复出厂设置成功！系统即将重新加载...');
+
+      // Notify parent state if needed
+      if (onDataChanged) {
+        onDataChanged();
+      }
+
+      // Reload page to re-initialize all states from pristine default storage
+      setTimeout(() => {
+        window.location.reload();
+      }, 900);
+    } catch (err) {
+      console.error('Failed to execute factory reset:', err);
+      // Fallback: still reset storage and reload
+      resetStorageToFactoryDefaults();
+      window.location.reload();
+    }
+  };
 
   // Auto load some initial baseline models if none loaded yet
   useEffect(() => {
@@ -993,37 +1041,149 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         {/* ========================================================================= */}
         {/* 4. Data Management & Backup */}
         {/* ========================================================================= */}
-        <div className="p-4 rounded-3xl bg-zinc-900 border border-zinc-800 space-y-3 shadow-sm">
-          <h3 className="font-bold text-sm text-blue-400 flex items-center gap-2">
-            <Database className="w-4 h-4" />
-            4. 数据备份与管理
-          </h3>
+        <div className="p-4 rounded-3xl bg-zinc-900 border border-zinc-800 space-y-3.5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-sm text-blue-400 flex items-center gap-2">
+              <Database className="w-4 h-4" />
+              4. 数据管理与备份回滚中心
+            </h3>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
+              本地安全解析
+            </span>
+          </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <p className="text-[11px] text-zinc-400 leading-relaxed">
+            支持 ZIP、JSON、JSONL、TXT 多格式数据导入导出，自动识别 AI 角色/人设/聊天记录/长期记忆/群聊，智能去重合并与多重历史快照回滚。
+          </p>
+
+          {/* Primary Action Button */}
+          <button
+            onClick={() => {
+              setDataModalTab('import');
+              setShowDataModal(true);
+            }}
+            className="w-full py-3 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-blue-600/25 flex items-center justify-center gap-2 transition active:scale-98"
+          >
+            <Database className="w-4 h-4" />
+            <span>打开数据管理中心 (导入/导出/去重/回滚)</span>
+          </button>
+
+          {/* Quick Action Buttons Grid */}
+          <div className="grid grid-cols-3 gap-2 text-xs">
             <button
-              onClick={onExportData}
-              className="p-3 rounded-2xl bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 flex flex-col items-center justify-center gap-1 text-zinc-200 font-medium"
+              onClick={() => {
+                setDataModalTab('import');
+                setShowDataModal(true);
+              }}
+              className="p-3 rounded-2xl bg-zinc-800/80 hover:bg-zinc-750 border border-zinc-700 flex flex-col items-center justify-center gap-1 text-zinc-200 font-medium transition"
             >
-              <Download className="w-5 h-5 text-emerald-400" />
-              导出全部数据 (JSON)
+              <Upload className="w-4 h-4 text-blue-400" />
+              <span>导入数据</span>
+              <span className="text-[9px] text-zinc-400">ZIP/JSON/TXT</span>
             </button>
 
-            <label className="p-3 rounded-2xl bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 flex flex-col items-center justify-center gap-1 text-zinc-200 font-medium cursor-pointer">
-              <Upload className="w-5 h-5 text-blue-400" />
-              导入数据文件
-              <input type="file" accept=".json" onChange={handleImportFileChange} className="hidden" />
-            </label>
+            <button
+              onClick={() => {
+                setDataModalTab('export');
+                setShowDataModal(true);
+              }}
+              className="p-3 rounded-2xl bg-zinc-800/80 hover:bg-zinc-750 border border-zinc-700 flex flex-col items-center justify-center gap-1 text-zinc-200 font-medium transition"
+            >
+              <Download className="w-4 h-4 text-emerald-400" />
+              <span>导出数据</span>
+              <span className="text-[9px] text-zinc-400">4种格式可选</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setDataModalTab('snapshots');
+                setShowDataModal(true);
+              }}
+              className="p-3 rounded-2xl bg-zinc-800/80 hover:bg-zinc-750 border border-zinc-700 flex flex-col items-center justify-center gap-1 text-zinc-200 font-medium transition"
+            >
+              <History className="w-4 h-4 text-purple-400" />
+              <span>快照回滚</span>
+              <span className="text-[9px] text-zinc-400">安全防误删</span>
+            </button>
           </div>
 
           <button
-            onClick={onClearChats}
-            className="w-full py-2.5 rounded-2xl bg-rose-950/40 hover:bg-rose-900/60 border border-rose-500/30 text-rose-300 font-semibold flex items-center justify-center gap-2 transition"
+            onClick={() => setShowResetConfirmModal(true)}
+            className="w-full py-2.5 rounded-2xl bg-rose-950/30 hover:bg-rose-900/50 border border-rose-500/30 text-rose-300 hover:text-rose-200 font-medium text-xs flex items-center justify-center gap-2 transition active:scale-[0.99]"
           >
-            <Trash2 className="w-4 h-4" />
-            一键清除全局聊天记录
+            <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+            恢复出厂设置 (清空所有后加内容)
           </button>
         </div>
       </div>
+
+      {/* Confirmation Modal for Factory Reset (恢复出厂设置) */}
+      {showResetConfirmModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-rose-500/30 rounded-3xl p-5 max-w-sm w-full shadow-2xl shadow-rose-950/40 text-center flex flex-col items-center">
+            <div className="w-14 h-14 rounded-2xl bg-rose-950/50 border border-rose-500/30 flex items-center justify-center mb-3">
+              <AlertTriangle className="w-8 h-8 text-rose-400 animate-pulse" />
+            </div>
+
+            <h3 className="text-base font-bold text-white mb-1.5">确认要恢复出厂设置吗？</h3>
+            
+            <p className="text-xs text-zinc-300 leading-relaxed mb-4 text-left bg-zinc-950/60 p-3 rounded-xl border border-zinc-800">
+              ⚠️ <span className="font-semibold text-rose-300">警告：</span>点击确认后，将执行实打实的彻底清除：
+              <br />• 清空所有后来添加的 AI 角色与自定义设定
+              <br />• 清空所有聊天记录与 AI 独立记忆空间 (文件与知识切片)
+              <br />• 清空所有动态、便签、世界书设定与游戏战绩
+              <br />• 恢复系统默认壁纸、主题及初始状态
+              <br /><span className="text-zinc-400 text-[11px] block mt-1">此操作无法撤销，请谨慎操作！</span>
+            </p>
+
+            {resetSuccessMessage ? (
+              <div className="w-full py-2.5 px-3 rounded-xl bg-emerald-950/50 border border-emerald-500/30 text-emerald-300 text-xs font-medium flex items-center justify-center gap-2 mb-2">
+                <CheckCircle className="w-4 h-4 text-emerald-400 animate-spin" />
+                <span>{resetSuccessMessage}</span>
+              </div>
+            ) : (
+              <div className="flex gap-2.5 w-full">
+                <button
+                  type="button"
+                  disabled={isResetting}
+                  onClick={() => setShowResetConfirmModal(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold transition active:scale-95 disabled:opacity-50"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  disabled={isResetting}
+                  onClick={handleExecuteFactoryReset}
+                  className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition active:scale-95 shadow-md shadow-rose-600/30 disabled:opacity-50"
+                >
+                  {isResetting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>正在清空重置...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>确认恢复出厂</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Full-featured Data Management Modal */}
+      <DataManagementModal
+        isOpen={showDataModal}
+        onClose={() => setShowDataModal(false)}
+        initialTab={dataModalTab}
+        onDataChanged={() => {
+          if (onDataChanged) onDataChanged();
+        }}
+      />
 
       {/* Sticky Bottom Save Settings Bar */}
       <div className="absolute bottom-0 left-0 right-0 p-3.5 bg-zinc-900/95 backdrop-blur-md border-t border-zinc-800 z-30">

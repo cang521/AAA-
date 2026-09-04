@@ -18,6 +18,7 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { AiCharacter } from '../../types';
+import { ensureAiMemoryVault } from '../../lib/aiMemoryVaultDb';
 
 interface CustomAiCreatorModalProps {
   isOpen: boolean;
@@ -252,6 +253,11 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
             }
           : undefined,
     };
+
+    // Automatically initialize isolated local memory vault for this new AI
+    ensureAiMemoryVault(newChar.id, newChar.name).catch((err) => {
+      console.warn('Failed to ensure memory vault on character creation:', err);
+    });
 
     onCreateCharacter(newChar);
     onClose();
@@ -612,6 +618,12 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
               </div>
             )}
           </div>
+        </div>
+
+        {/* Independent Local Memory Notice */}
+        <div className="mx-4 mb-2 p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/20 text-[11px] text-emerald-300/90 flex items-center gap-2">
+          <Brain className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span><b>独立本地记忆空间</b>：创建后将自动为其建立专属记忆文件夹，支持导入各类大型文件，离线保存且严格隔离。</span>
         </div>
 
         {/* Modal Footer Actions */}
