@@ -1,0 +1,29 @@
+name: Build Kivy Android APK
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    # 防止 Kivy 编译超时（Kivy打包通常耗时较长）
+    timeout-minutes: 60 
+
+    steps:
+    - name: 拉取代码
+      uses: actions/checkout@v3
+
+    - name: 使用 buildozer 打包 APK
+      # 使用社区优化过的 buildozer action，自带环境修复
+      uses: ArtemSBulgakov/buildozer-action@v1
+      with:
+        # 这里会读取你本地的 buildozer.spec 配置
+        workdir: '.' 
+        buildozer_version: stable
+
+    - name: 上传生成的 APK 文件
+      uses: actions/upload-artifact@v3
+      with:
+        name: release-apk
+        path: bin/*.apk
