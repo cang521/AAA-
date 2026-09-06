@@ -946,7 +946,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     <div className="w-full h-full flex flex-col bg-zinc-900 text-white select-none overflow-hidden font-sans">
       {/* Top Navigation Bar Header */}
       {!activeGroupChatId && (
-        <div className="h-12 bg-zinc-850 border-b border-zinc-800 px-3 flex items-center justify-between shrink-0 z-20">
+        <div className="h-12 bg-zinc-900 border-b border-zinc-800 px-3 flex items-center justify-between shrink-0 z-20">
           <button
             onClick={() => {
               if (activeChatId) {

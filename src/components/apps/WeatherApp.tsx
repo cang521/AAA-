@@ -275,7 +275,7 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
   return (
     <div id="weather_app_container" className="h-full flex flex-col bg-slate-950 text-slate-100 overflow-hidden select-none font-sans">
       {/* Top App Header */}
-      <div id="weather_header" className="pt-9 pb-2.5 px-3 flex items-center justify-between bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80 z-20 gap-2">
+      <div id="weather_header" className="py-2.5 px-3 flex items-center justify-between bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80 z-20 gap-2">
         <div className="flex items-center gap-2">
           {onBackToLauncher && (
             <button

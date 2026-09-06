@@ -80,7 +80,12 @@ export const LockScreen: React.FC<LockScreenProps> = ({
       <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/80" />
 
       {/* Top Header Time & Date */}
-      <div className="relative z-10 pt-10 text-center px-4">
+      <div
+        className="relative z-10 text-center px-4 pl-safe pr-safe"
+        style={{
+          paddingTop: 'calc(var(--safe-area-top, 0px) + 2rem)',
+        }}
+      >
         <div className="flex items-center justify-center gap-1.5 text-xs text-white/80 mb-2 font-medium">
           <Lock className="w-3.5 h-3.5 text-emerald-400" />
           <span>{isPinEnabled ? '输入数字密码解锁' : '上滑解锁手机'}</span>
@@ -158,7 +163,12 @@ export const LockScreen: React.FC<LockScreenProps> = ({
         )}
 
         {/* Bottom Quick Tools */}
-        <div className="w-full flex items-center justify-between text-white/70 px-4">
+        <div
+          className="w-full flex items-center justify-between text-white/70 px-4 pl-safe pr-safe"
+          style={{
+            paddingBottom: 'calc(var(--safe-area-bottom, 0px) + 1.25rem)',
+          }}
+        >
           <button className="p-2.5 rounded-full bg-white/15 backdrop-blur-md hover:bg-white/25 transition">
             <Phone className="w-5 h-5" />
           </button>

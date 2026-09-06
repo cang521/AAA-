@@ -1,1 +1,73 @@
 @import "tailwindcss";
+
+@theme {
+  --color-zinc-750: #232328;
+  --color-zinc-850: #18181b;
+}
+
+:root {
+  color-scheme: dark;
+  background-color: #09090b;
+  --safe-area-top: max(
+    env(safe-area-inset-top, 0px),
+    var(--safe-area-inset-top, 0px),
+    var(--android-safe-area-inset-top, 0px)
+  );
+  --safe-area-bottom: max(
+    env(safe-area-inset-bottom, 0px),
+    var(--safe-area-inset-bottom, 0px),
+    var(--android-safe-area-inset-bottom, 0px)
+  );
+  --safe-area-left: max(
+    env(safe-area-inset-left, 0px),
+    var(--safe-area-inset-left, 0px),
+    var(--android-safe-area-inset-left, 0px)
+  );
+  --safe-area-right: max(
+    env(safe-area-inset-right, 0px),
+    var(--safe-area-inset-right, 0px),
+    var(--android-safe-area-inset-right, 0px)
+  );
+}
+
+html, body, #root {
+  background-color: #09090b;
+  color-scheme: dark;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pt-safe {
+  padding-top: var(--safe-area-top);
+}
+
+.pb-safe {
+  padding-bottom: var(--safe-area-bottom);
+}
+
+.pl-safe {
+  padding-left: var(--safe-area-left);
+}
+
+.pr-safe {
+  padding-right: var(--safe-area-right);
+}
+
+.p-safe {
+  padding-top: var(--safe-area-top);
+  padding-bottom: var(--safe-area-bottom);
+  padding-left: var(--safe-area-left);
+  padding-right: var(--safe-area-right);
+}
+
+.top-safe {
+  top: var(--safe-area-top);
+}
+
+.bottom-safe {
+  bottom: var(--safe-area-bottom);
+}

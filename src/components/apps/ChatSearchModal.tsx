@@ -74,9 +74,14 @@ export const ChatSearchModal: React.FC<ChatSearchModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex flex-col justify-start animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex flex-col justify-start animate-in fade-in duration-150 pl-safe pr-safe pb-safe">
       {/* Search Header Bar */}
-      <div className="w-full bg-zinc-900 border-b border-zinc-800 p-3 flex items-center gap-3">
+      <div
+        className="w-full bg-zinc-900 border-b border-zinc-800 px-3 pb-3 flex items-center gap-3"
+        style={{
+          paddingTop: 'calc(var(--safe-area-top, 0px) + 0.75rem)',
+        }}
+      >
         <div className="flex-1 relative flex items-center">
           <Search className="w-4 h-4 text-zinc-400 absolute left-3 pointer-events-none" />
           <input

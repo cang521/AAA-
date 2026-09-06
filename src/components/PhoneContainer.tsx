@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Wifi, Signal, Battery, Lock } from 'lucide-react';
 
 interface PhoneContainerProps {
   children: React.ReactNode;

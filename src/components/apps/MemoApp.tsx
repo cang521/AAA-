@@ -184,7 +184,7 @@ export const MemoApp: React.FC<MemoAppProps> = ({
   return (
     <div className="relative w-full h-full flex flex-col bg-zinc-900 text-white font-sans overflow-hidden select-none">
       {/* Top Bar */}
-      <div className="h-12 px-3 bg-zinc-850 border-b border-zinc-800 flex items-center justify-between shrink-0 z-10">
+      <div className="h-12 px-3 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between shrink-0 z-10">
         <button
           onClick={onBackToLauncher}
           className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 font-medium px-2 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-750 transition"

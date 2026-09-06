@@ -293,7 +293,12 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
 
       {/* Edit Mode Top Indicator */}
       {isEditMode && (
-        <div className="relative z-30 pt-2 px-4 flex items-center justify-between bg-black/60 backdrop-blur-md py-2 text-white">
+        <div
+          className="relative z-30 px-4 flex items-center justify-between bg-black/60 backdrop-blur-md py-2 text-white pl-safe pr-safe"
+          style={{
+            paddingTop: 'calc(var(--safe-area-top, 0px) + 0.5rem)',
+          }}
+        >
           <span className="text-xs font-medium text-emerald-400">✏️ 桌面编辑模式</span>
           <div className="flex items-center gap-2">
             <button
@@ -321,7 +326,12 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
 
       {/* Top Search Bar Widget */}
       {!isEditMode && (
-        <div className="relative z-10 pt-3 px-4">
+        <div
+          className="relative z-10 px-4 pl-safe pr-safe"
+          style={{
+            paddingTop: 'calc(var(--safe-area-top, 0px) + 0.75rem)',
+          }}
+        >
           <div className="w-full h-10 rounded-2xl bg-white/20 backdrop-blur-md border border-white/20 flex items-center px-3 gap-2 text-white/80 shadow-sm">
             <Search className="w-4 h-4 text-white/70" />
             <input
@@ -617,7 +627,12 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
       </div>
 
       {/* Page Indicators & Controls */}
-      <div className="relative z-10 pb-4 flex flex-col items-center gap-2">
+      <div
+        className="relative z-10 flex flex-col items-center gap-2 pl-safe pr-safe"
+        style={{
+          paddingBottom: 'calc(var(--safe-area-bottom, 0px) + 1rem)',
+        }}
+      >
         <div className="flex items-center gap-1.5">
           {[...Array(pagesCount)].map((_, idx) => (
             <button

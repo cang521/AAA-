@@ -277,8 +277,8 @@ export function App() {
             onUnlock={() => setIsLocked(false)}
           />
         ) : activeAppId ? (
-          /* SUB-APP ACTIVE VIEW LAYER */
-          <div className="w-full h-full relative">
+          /* SUB-APP ACTIVE VIEW LAYER - Automatically offsets for Android status bar and navigation bar */
+          <div className="w-full h-full relative flex flex-col pt-safe pb-safe pl-safe pr-safe bg-zinc-900">
             {activeAppId === 'wechat' && (
               <WeChatApp
                 onBackToLauncher={() => setActiveAppId(null)}

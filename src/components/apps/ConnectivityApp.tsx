@@ -538,7 +538,7 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
   return (
     <div className="flex flex-col h-full w-full bg-[#f8fafc] text-zinc-900 overflow-hidden select-none font-sans relative">
       {/* 1. Header */}
-      <div className="bg-white/95 backdrop-blur-md border-b border-zinc-200/80 px-4 pt-10 pb-3 flex items-center justify-between shadow-xs z-20">
+      <div className="bg-white/95 backdrop-blur-md border-b border-zinc-200/80 px-4 py-3 flex items-center justify-between shadow-xs z-20">
         <div className="flex items-center gap-2.5">
           <button
             onClick={onBackToLauncher}
