@@ -1,0 +1,38 @@
+const handleTestConnection = async () => {
+  setIsTestingConnection(true);
+  setConnectionResult(null);
+  setModelTestResult(null);
+
+  const baseUrl = activeCategory === 'text' ? config.textBaseUrl : activeCategory === 'image' ? config.imageBaseUrl : config.voiceBaseUrl;
+  const apiKey = activeCategory === 'text' ? config.textApiKey : activeCategory === 'image' ? config.imageApiKey : config.voiceApiKey;
+  const providerType = activeCategory === 'text' ? config.textProvider : activeCategory === 'image' ? config.imageProvider : config.voiceProvider;
+
+  try {
+    // 关键修改：如果用户填了外部 Base URL，就直接请求外部，否则才走本地后端
+    const endpoint = baseUrl && baseUrl.startsWith('http')
+      ? `\( {baseUrl.replace(/\/ \)/, '')}/models`          // 直接请求反代的 models 接口做连通性测试
+      : '/api/provider/test-connection';
+
+    const res = await fetch(endpoint, {
+      method: baseUrl && baseUrl.startsWith('http') ? 'GET' : 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(baseUrl && baseUrl.startsWith('http') && apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}),
+      },
+      body: baseUrl && baseUrl.startsWith('http') ? undefined : JSON.stringify({
+        providerType: providerType || 'custom',
+        baseUrl,
+        apiKey,
+        customHeaders: config.customHeaders,
+      }),
+    });
+
+    // 后面的处理逻辑保持不变，或者根据反代返回格式微调
+    const data = await res.json();
+    // ... 你原来的成功/失败处理
+  } catch (e: any) {
+    // 原来的 catch
+  } finally {
+    setIsTestingConnection(false);
+  }
+};
