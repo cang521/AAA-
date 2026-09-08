@@ -1,0 +1,102 @@
+        - name: Configure Local Backend
+         shell: bash
+         run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          # 1. 创建本地后端连接文件
+          local_backend = Path("src/lib/localBackend.ts")
+          local_backend.parent.mkdir(parents=True, exist_ok=True)
+
+          local_backend.write_text(
+          """import { Capacitor } from '@capacitor/core';
+
+          const LOCAL_BACKEND_URL = 'http://127.0.0.1:3000';
+
+          export function setupLocalBackend() {
+            if (!Capacitor.isNativePlatform()) {
+              console.log('[LocalBackend] Web 模式，不使用手机本地后端');
+              return;
+            }
+
+            const originalFetch = window.fetch.bind(window);
+
+            window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+              const originalUrl =
+                input instanceof Request
+                  ? input.url
+                  : input instanceof URL
+                    ? input.toString()
+                    : input;
+
+              if (originalUrl.startsWith('/api/')) {
+                const targetUrl = `${LOCAL_BACKEND_URL}${originalUrl}`;
+
+                console.log('[LocalBackend]', originalUrl, '→', targetUrl);
+
+                if (input instanceof Request) {
+                  return originalFetch(
+                    new Request(targetUrl, input),
+                    init
+                  );
+                }
+
+                return originalFetch(targetUrl, init);
+              }
+
+              return originalFetch(input, init);
+            };
+
+            console.log(
+              `[LocalBackend] Android 本地后端已启用：${LOCAL_BACKEND_URL}`
+            );
+          }
+          """,
+          encoding="utf-8"
+          )
+
+          # 2. 自动接入 main.tsx
+          main = Path("src/main.tsx")
+          text = main.read_text(encoding="utf-8")
+
+          import_line = "import { setupLocalBackend } from './lib/localBackend.ts';"
+
+          if import_line not in text:
+              lines = text.splitlines()
+              insert_at = 0
+
+              for i, line in enumerate(lines):
+                  if line.startswith("import "):
+                      insert_at = i + 1
+
+              lines.insert(insert_at, import_line)
+              text = "\n".join(lines) + "\n"
+
+          if "setupLocalBackend();" not in text:
+              marker = "createRoot(document.getElementById('root')!).render("
+              text = text.replace(
+                  marker,
+                  "setupLocalBackend();\n\n" + marker,
+                  1
+              )
+
+          main.write_text(text, encoding="utf-8")
+
+          # 3. 自动给 server.ts 加 CORS
+          server = Path("server.ts")
+          text = server.read_text(encoding="utf-8")
+
+          cors = """// 允许 APK（Capacitor WebView）访问手机本地后端
+          app.use((req, res, next) => {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader(
+              'Access-Control-Allow-Methods',
+              'GET,POST,PUT,PATCH,DELETE,OPTIONS'
+            );
+            res.setHeader(
+              'Access-Control-Allow-Headers',
+              'Content-Type, Authorization'
+            );
+
+            if (req.method === 'OPTIONS') {
+              return res.sendStatus(204);
