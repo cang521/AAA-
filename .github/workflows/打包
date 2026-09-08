@@ -1,0 +1,182 @@
+name: 单独打包 APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    name: 打包小手机 APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 拉取项目代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 设置 Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: 安装项目依赖
+        run: npm install
+
+      - name: 安装 Capacitor Node.js
+        run: npm install @capawesome/capacitor-nodejs@0.1.1
+
+      - name: 配置 Node.js 内置后端
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p src/lib
+
+          cat > src/lib/localBackend.ts <<'EOF'
+          import { Capacitor } from '@capacitor/core';
+
+          const LOCAL_BACKEND_URL = 'http://127.0.0.1:3000';
+
+          export function setupLocalBackend() {
+            if (!Capacitor.isNativePlatform()) {
+              console.log('[LocalBackend] Web 模式');
+              return;
+            }
+
+            const originalFetch = window.fetch.bind(window);
+
+            window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+              const originalUrl =
+                input instanceof Request
+                  ? input.url
+                  : input instanceof URL
+                    ? input.toString()
+                    : input;
+
+              if (originalUrl.startsWith('/api/')) {
+                const targetUrl = `${LOCAL_BACKEND_URL}${originalUrl}`;
+
+                if (input instanceof Request) {
+                  return originalFetch(new Request(targetUrl, input), init);
+                }
+
+                return originalFetch(targetUrl, init);
+              }
+
+              return originalFetch(input, init);
+            };
+
+            console.log('[LocalBackend] Android → 127.0.0.1:3000');
+          }
+          EOF
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          # 接入 main.tsx
+          main = Path("src/main.tsx")
+          text = main.read_text(encoding="utf-8")
+
+          import_line = "import { setupLocalBackend } from './lib/localBackend.ts';"
+
+          if import_line not in text:
+              lines = text.splitlines()
+              insert_at = 0
+
+              for i, line in enumerate(lines):
+                  if line.startswith("import "):
+                      insert_at = i + 1
+
+              lines.insert(insert_at, import_line)
+              text = "\n".join(lines) + "\n"
+
+          if "setupLocalBackend();" not in text:
+              marker = "createRoot(document.getElementById('root')!).render("
+
+              if marker in text:
+                  text = text.replace(
+                      marker,
+                      "setupLocalBackend();\n\n" + marker,
+                      1
+                  )
+
+          main.write_text(text, encoding="utf-8")
+
+          # 修改 server.ts
+          server = Path("server.ts")
+          text = server.read_text(encoding="utf-8")
+
+          cors = """// Capacitor APK -> embedded Node backend CORS
+          app.use((req, res, next) => {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader(
+              'Access-Control-Allow-Methods',
+              'GET,POST,PUT,PATCH,DELETE,OPTIONS'
+            );
+            res.setHeader(
+              'Access-Control-Allow-Headers',
+              'Content-Type, Authorization'
+            );
+
+            if (req.method === 'OPTIONS') {
+              return res.sendStatus(204);
+            }
+
+            next();
+          });
+          """
+
+          if "Access-Control-Allow-Origin" not in text:
+              marker = "app.use(express.json({ limit: '10mb' }));"
+
+              if marker in text:
+                  text = text.replace(
+                      marker,
+                      marker + "\n\n" + cors,
+                      1
+                  )
+
+          text = text.replace(
+              "app.listen(PORT, '0.0.0.0'",
+              "app.listen(PORT, '127.0.0.1'"
+          )
+
+          server.write_text(text, encoding="utf-8")
+
+          # Capacitor Node.js 自动启动
+          config = Path("capacitor.config.ts")
+
+          config.write_text(
+          """import type { CapacitorConfig } from '@capacitor/cli';
+
+          const config: CapacitorConfig = {
+            appId: 'com.aistudio.aiphone',
+            appName: 'AI Phone Simulator',
+            webDir: 'dist',
+
+            server: {
+              androidScheme: 'https',
+              cleartext: true,
+            },
+
+            android: {
+              allowMixedContent: true,
+              captureInput: true,
+              webContentsDebuggingEnabled: true,
+            },
+
+            plugins: {
+              SplashScreen: {
+                launchShowDuration: 1500,
+                backgroundColor: '#18181b',
+                showSpinner: false,
+              },
+
+              Nodejs: {
+                nodeDir: 'nodejs',
+                startMode: 'auto',
