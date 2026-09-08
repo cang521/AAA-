@@ -1,0 +1,68 @@
+name: Build Full Xiaoshouji APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build frontend
+        run: npx vite build
+
+      - name: Build embedded backend
+        run: npm run build:mobile-backend
+
+      - name: Verify embedded backend
+        shell: bash
+        run: |
+          echo "====== Embedded backend ======"
+          ls -lah dist/nodejs
+          test -s dist/nodejs/package.json
+          test -s dist/nodejs/index.cjs
+          test -s dist/nodejs/server.cjs
+
+      - name: Sync Android
+        run: npx cap sync android
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.14.3'
+          validate-wrappers: false
+
+      - name: Build APK
+        working-directory: android
+        run: gradle assembleDebug --stacktrace --console=plain
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          echo "====== APK files ======"
+          find android/app/build/outputs/apk -type f -name "*.apk" -print
+          test -n "$(find android/app/build/outputs/apk -type f -name '*.apk' -print -quit)"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiaoshouji-full-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
