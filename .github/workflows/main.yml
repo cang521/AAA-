@@ -1,0 +1,99 @@
+name: Build Embedded Node APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build Android APK with Embedded Node.js
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install embedded Node.js runtime
+        run: npm install @capawesome/capacitor-nodejs@0.1.1
+
+      - name: Configure embedded backend
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p src/lib
+
+          cat > src/lib/localBackend.ts <<'EOF'
+          import { Capacitor } from '@capacitor/core';
+
+          const LOCAL_BACKEND_URL = 'http://127.0.0.1:3000';
+
+          export function setupLocalBackend() {
+            if (!Capacitor.isNativePlatform()) {
+              console.log('[LocalBackend] Web mode');
+              return;
+            }
+
+            const originalFetch = window.fetch.bind(window);
+
+            window.fetch = (
+              input: RequestInfo | URL,
+              init?: RequestInit
+            ) => {
+              const originalUrl =
+                input instanceof Request
+                  ? input.url
+                  : input instanceof URL
+                    ? input.toString()
+                    : input;
+
+              if (originalUrl.startsWith('/api/')) {
+                const targetUrl =
+                  `${LOCAL_BACKEND_URL}${originalUrl}`;
+
+                console.log(
+                  '[LocalBackend]',
+                  originalUrl,
+                  '->',
+                  targetUrl
+                );
+
+                if (input instanceof Request) {
+                  return originalFetch(
+                    new Request(targetUrl, input),
+                    init
+                  );
+                }
+
+                return originalFetch(targetUrl, init);
+              }
+
+              return originalFetch(input, init);
+            };
+
+            console.log(
+              '[LocalBackend] Android -> 127.0.0.1:3000'
+            );
+          }
+          EOF
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          #
