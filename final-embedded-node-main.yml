@@ -1,0 +1,248 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install embedded Node.js runtime
+        run: npm install @capawesome/capacitor-nodejs@0.1.1
+
+      - name: Configure embedded backend
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p src/lib
+
+          cat > src/lib/localBackend.ts <<'EOF'
+          import { Capacitor } from '@capacitor/core';
+
+          const LOCAL_BACKEND_URL = 'http://127.0.0.1:3000';
+
+          export function setupLocalBackend() {
+            if (!Capacitor.isNativePlatform()) {
+              console.log('[LocalBackend] Web 模式');
+              return;
+            }
+
+            const originalFetch = window.fetch.bind(window);
+
+            window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+              const originalUrl =
+                input instanceof Request
+                  ? input.url
+                  : input instanceof URL
+                    ? input.toString()
+                    : input;
+
+              if (originalUrl.startsWith('/api/')) {
+                const targetUrl = `${LOCAL_BACKEND_URL}${originalUrl}`;
+
+                if (input instanceof Request) {
+                  return originalFetch(new Request(targetUrl, input), init);
+                }
+
+                return originalFetch(targetUrl, init);
+              }
+
+              return originalFetch(input, init);
+            };
+
+            console.log('[LocalBackend] Android → 127.0.0.1:3000');
+          }
+          EOF
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          # main.tsx：接入本机 API
+          main = Path("src/main.tsx")
+          text = main.read_text(encoding="utf-8")
+
+          import_line = "import { setupLocalBackend } from './lib/localBackend.ts';"
+          if import_line not in text:
+              lines = text.splitlines()
+              insert_at = 0
+              for i, line in enumerate(lines):
+                  if line.startswith("import "):
+                      insert_at = i + 1
+              lines.insert(insert_at, import_line)
+              text = "\n".join(lines) + "\n"
+
+          if "setupLocalBackend();" not in text:
+              marker = "createRoot(document.getElementById('root')!).render("
+              if marker in text:
+                  text = text.replace(
+                      marker,
+                      "setupLocalBackend();\n\n" + marker,
+                      1
+                  )
+
+          main.write_text(text, encoding="utf-8")
+
+          # server.ts：允许 APK 访问，并只监听手机本机
+          server = Path("server.ts")
+          text = server.read_text(encoding="utf-8")
+
+          cors = """// Capacitor APK -> embedded Node backend CORS
+          app.use((req, res, next) => {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader(
+              'Access-Control-Allow-Methods',
+              'GET,POST,PUT,PATCH,DELETE,OPTIONS'
+            );
+            res.setHeader(
+              'Access-Control-Allow-Headers',
+              'Content-Type, Authorization'
+            );
+
+            if (req.method === 'OPTIONS') {
+              return res.sendStatus(204);
+            }
+
+            next();
+          });
+          """
+
+          if "Access-Control-Allow-Origin" not in text:
+              marker = "app.use(express.json({ limit: '10mb' }));"
+              if marker in text:
+                  text = text.replace(
+                      marker,
+                      marker + "\n\n" + cors,
+                      1
+                  )
+
+          text = text.replace(
+              "app.listen(PORT, '0.0.0.0'",
+              "app.listen(PORT, '127.0.0.1'"
+          )
+
+          server.write_text(text, encoding="utf-8")
+
+          # Capacitor Node.js 插件：App 启动时自动启动 Node
+          config = Path("capacitor.config.ts")
+          config.write_text("""import type { CapacitorConfig } from '@capacitor/cli';
+
+          const config: CapacitorConfig = {
+            appId: 'com.aistudio.aiphone',
+            appName: 'AI Phone Simulator',
+            webDir: 'dist',
+            server: {
+              androidScheme: 'https',
+              cleartext: true,
+            },
+            android: {
+              allowMixedContent: true,
+              captureInput: true,
+              webContentsDebuggingEnabled: true,
+            },
+            plugins: {
+              SplashScreen: {
+                launchShowDuration: 1500,
+                backgroundColor: '#18181b',
+                showSpinner: false,
+              },
+              Nodejs: {
+                nodeDir: 'nodejs',
+                startMode: 'auto',
+              },
+            },
+          };
+
+          export default config;
+          """, encoding="utf-8")
+
+          print("Embedded backend configuration complete.")
+          PY
+
+      - name: Build web app
+        run: npx vite build
+
+      - name: Bundle backend into APK
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p dist/nodejs
+
+          npx esbuild server.ts \
+            --bundle \
+            --platform=node \
+            --format=cjs \
+            --outfile=dist/nodejs/server.cjs \
+            --sourcemap
+
+          cat > dist/nodejs/package.json <<'EOF'
+          {
+            "name": "ai-phone-local-backend",
+            "version": "1.0.0",
+            "private": true,
+            "main": "server.cjs"
+          }
+          EOF
+
+          test -s dist/nodejs/server.cjs
+
+          echo "Embedded Node backend:"
+          ls -lh dist/nodejs/
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.14.3'
+          validate-wrappers: false
+
+      - name: Build Debug APK
+        working-directory: android
+        shell: bash
+        run: |
+          set +e
+          gradle assembleDebug --stacktrace --console=plain 2>&1 | tee ../build.log
+          STATUS=${PIPESTATUS[0]}
+
+          echo ""
+          echo "========================================"
+          echo "       真正的编译错误"
+          echo "========================================"
+
+          grep -n -A 30 -B 10 "What went wrong" ../build.log || true
+          grep -n -A 10 -B 5 "FAILURE:" ../build.log || true
+          grep -n -A 10 -B 5 "Execution failed" ../build.log || true
+
+          exit $STATUS
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiaoshouji-embedded-node-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
