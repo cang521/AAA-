@@ -1,0 +1,83 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Configure Local Backend
+        shell: bash
+        run: |
+          cat > src/lib/localBackend.ts <<'EOF'
+          import { Capacitor } from '@capacitor/core';
+
+          const LOCAL_BACKEND_URL = 'http://127.0.0.1:3000';
+
+          export function setupLocalBackend() {
+            if (!Capacitor.isNativePlatform()) {
+              console.log('[LocalBackend] Web 模式，不使用手机本地后端');
+              return;
+            }
+
+            const originalFetch = window.fetch.bind(window);
+
+            window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+              const originalUrl =
+                input instanceof Request
+                  ? input.url
+                  : input instanceof URL
+                    ? input.toString()
+                    : input;
+
+              if (originalUrl.startsWith('/api/')) {
+                const targetUrl = `${LOCAL_BACKEND_URL}${originalUrl}`;
+
+                console.log(
+                  '[LocalBackend]',
+                  originalUrl,
+                  '→',
+                  targetUrl
+                );
+
+                if (input instanceof Request) {
+                  return originalFetch(
+                    new Request(targetUrl, input),
+                    init
+                  );
+                }
+
+                return originalFetch(targetUrl, init);
+              }
+
+              return originalFetch(input, init);
+            };
+
+            console.log(
+              `[LocalBackend] Android 本地后端已启用：${LOCAL_BACKEND_URL}`
+            );
+          }
+          EOF
