@@ -1,0 +1,163 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Prepare embedded backend project files
+        shell: bash
+        run: |
+          set -e
+          python3 <<'PY2'
+          from pathlib import Path
+          import base64
+          import json
+
+          package = Path('package.json')
+          data = json.loads(package.read_text(encoding='utf-8'))
+          data.setdefault('dependencies', {})['@capawesome/capacitor-nodejs'] = '^0.1.1'
+          package.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          files = {
+              'src/lib/localBackend.ts': 'aW1wb3J0IHsgQ2FwYWNpdG9yIH0gZnJvbSAnQGNhcGFjaXRvci9jb3JlJzsKCmNvbnN0IExPQ0FMX0JBQ0tFTkRfVVJMID0gJ2h0dHA6Ly8xMjcuMC4wLjE6MzAwMCc7CgpmdW5jdGlvbiBzbGVlcChtczogbnVtYmVyKSB7CiAgcmV0dXJuIG5ldyBQcm9taXNlKChyZXNvbHZlKSA9PiBzZXRUaW1lb3V0KHJlc29sdmUsIG1zKSk7Cn0KCmFzeW5jIGZ1bmN0aW9uIGZldGNoTG9jYWxCYWNrZW5kKAogIGZldGNoZXI6IHR5cGVvZiB3aW5kb3cuZmV0Y2gsCiAgaW5wdXQ6IFJlcXVlc3RJbmZvIHwgVVJMLAogIGluaXQ/OiBSZXF1ZXN0SW5pdCwKKTogUHJvbWlzZTxSZXNwb25zZT4gewogIGNvbnN0IG9yaWdpbmFsVXJsID0KICAgIGlucHV0IGluc3RhbmNlb2YgUmVxdWVzdAogICAgICA/IGlucHV0LnVybAogICAgICA6IGlucHV0IGluc3RhbmNlb2YgVVJMCiAgICAgICAgPyBpbnB1dC50b1N0cmluZygpCiAgICAgICAgOiBpbnB1dDsKCiAgaWYgKCFvcmlnaW5hbFVybC5zdGFydHNXaXRoKCcvYXBpLycpKSB7CiAgICByZXR1cm4gZmV0Y2hlcihpbnB1dCwgaW5pdCk7CiAgfQoKICBjb25zdCB0YXJnZXRVcmwgPSBgJHtMT0NBTF9CQUNLRU5EX1VSTH0ke29yaWdpbmFsVXJsfWA7CgogIGxldCBsYXN0RXJyb3I6IHVua25vd247CgogIGZvciAobGV0IGF0dGVtcHQgPSAwOyBhdHRlbXB0IDwgMjA7IGF0dGVtcHQgKz0gMSkgewogICAgdHJ5IHsKICAgICAgaWYgKGlucHV0IGluc3RhbmNlb2YgUmVxdWVzdCkgewogICAgICAgIHJldHVybiBhd2FpdCBmZXRjaGVyKG5ldyBSZXF1ZXN0KHRhcmdldFVybCwgaW5wdXQpLCBpbml0KTsKICAgICAgfQoKICAgICAgcmV0dXJuIGF3YWl0IGZldGNoZXIodGFyZ2V0VXJsLCBpbml0KTsKICAgIH0gY2F0Y2ggKGVycm9yKSB7CiAgICAgIGxhc3RFcnJvciA9IGVycm9yOwogICAgICBhd2FpdCBzbGVlcCgyNTApOwogICAgfQogIH0KCiAgdGhyb3cgbGFzdEVycm9yIGluc3RhbmNlb2YgRXJyb3IKICAgID8gbGFzdEVycm9yCiAgICA6IG5ldyBFcnJvcign5pys5py6IEFJIOWQjuerr+WwmuacquWQr+WKqCcpOwp9CgpleHBvcnQgZnVuY3Rpb24gc2V0dXBMb2NhbEJhY2tlbmQoKSB7CiAgaWYgKCFDYXBhY2l0b3IuaXNOYXRpdmVQbGF0Zm9ybSgpKSB7CiAgICBjb25zb2xlLmxvZygnW0xvY2FsQmFja2VuZF0gV2ViIOaooeW8j++8jOS4jeS9v+eUqOaJi+acuuacrOWcsOWQjuerrycpOwogICAgcmV0dXJuOwogIH0KCiAgY29uc3Qgb3JpZ2luYWxGZXRjaCA9IHdpbmRvdy5mZXRjaC5iaW5kKHdpbmRvdyk7CiAgY29uc3QgbmF0aXZlRmV0Y2ggPSAoaW5wdXQ6IFJlcXVlc3RJbmZvIHwgVVJMLCBpbml0PzogUmVxdWVzdEluaXQpID0+CiAgICBvcmlnaW5hbEZldGNoKGlucHV0LCBpbml0KTsKCiAgd2luZG93LmZldGNoID0gKGlucHV0OiBSZXF1ZXN0SW5mbyB8IFVSTCwgaW5pdD86IFJlcXVlc3RJbml0KSA9PiB7CiAgICBjb25zdCBvcmlnaW5hbFVybCA9CiAgICAgIGlucHV0IGluc3RhbmNlb2YgUmVxdWVzdAogICAgICAgID8gaW5wdXQudXJsCiAgICAgICAgOiBpbnB1dCBpbnN0YW5jZW9mIFVSTAogICAgICAgICAgPyBpbnB1dC50b1N0cmluZygpCiAgICAgICAgICA6IGlucHV0OwoKICAgIGlmICghb3JpZ2luYWxVcmwuc3RhcnRzV2l0aCgnL2FwaS8nKSkgewogICAgICByZXR1cm4gbmF0aXZlRmV0Y2goaW5wdXQsIGluaXQpOwogICAgfQoKICAgIGNvbnN0IHRhcmdldFVybCA9IGAke0xPQ0FMX0JBQ0tFTkRfVVJMfSR7b3JpZ2luYWxVcmx9YDsKICAgIGNvbnNvbGUubG9nKCdbTG9jYWxCYWNrZW5kXScsIG9yaWdpbmFsVXJsLCAn4oaSJywgdGFyZ2V0VXJsKTsKCiAgICBjb25zdCBsb2NhbElucHV0ID0KICAgICAgaW5wdXQgaW5zdGFuY2VvZiBSZXF1ZXN0ID8gbmV3IFJlcXVlc3QodGFyZ2V0VXJsLCBpbnB1dCkgOiB0YXJnZXRVcmw7CgogICAgcmV0dXJuIGZldGNoTG9jYWxCYWNrZW5kKG9yaWdpbmFsRmV0Y2gsIGxvY2FsSW5wdXQsIGluaXQpOwogIH07CgogIGNvbnNvbGUubG9nKGBbTG9jYWxCYWNrZW5kXSBBbmRyb2lkIOWGhee9ruWQjuerr++8miR7TE9DQUxfQkFDS0VORF9VUkx9YCk7Cn0K',
+              'scripts/prepare-mobile-backend.mjs': 'aW1wb3J0IHsgcmVhZEZpbGVTeW5jLCB3cml0ZUZpbGVTeW5jIH0gZnJvbSAnbm9kZTpmcyc7Cgpjb25zdCBzb3VyY2UgPSByZWFkRmlsZVN5bmMoJ3NlcnZlci50cycsICd1dGY4Jyk7CmxldCB0ZXh0ID0gc291cmNlOwoKLy8gQVBLIFdlYlZpZXcgLT4gbG9jYWwgTm9kZSBiYWNrZW5kIENPUlMuCmNvbnN0IGNvcnNNYXJrZXIgPSAiYXBwLnVzZShleHByZXNzLmpzb24oeyBsaW1pdDogJzEwbWInIH0pKTsiOwpjb25zdCBjb3JzID0gYGFwcC51c2UoKHJlcSwgcmVzLCBuZXh0KSA9PiB7CiAgcmVzLnNldEhlYWRlcignQWNjZXNzLUNvbnRyb2wtQWxsb3ctT3JpZ2luJywgJyonKTsKICByZXMuc2V0SGVhZGVyKCdBY2Nlc3MtQ29udHJvbC1BbGxvdy1NZXRob2RzJywgJ0dFVCxQT1NULFBVVCxQQVRDSCxERUxFVEUsT1BUSU9OUycpOwogIHJlcy5zZXRIZWFkZXIoJ0FjY2Vzcy1Db250cm9sLUFsbG93LUhlYWRlcnMnLCAnQ29udGVudC1UeXBlLCBBdXRob3JpemF0aW9uJyk7CiAgaWYgKHJlcS5tZXRob2QgPT09ICdPUFRJT05TJykgcmV0dXJuIHJlcy5zZW5kU3RhdHVzKDIwNCk7CiAgbmV4dCgpOwp9KTtgOwoKaWYgKCF0ZXh0LmluY2x1ZGVzKCdBY2Nlc3MtQ29udHJvbC1BbGxvdy1PcmlnaW4nKSAmJiB0ZXh0LmluY2x1ZGVzKGNvcnNNYXJrZXIpKSB7CiAgdGV4dCA9IHRleHQucmVwbGFjZShjb3JzTWFya2VyLCBgJHtjb3JzTWFya2VyfVxuXG4ke2NvcnN9YCk7Cn0KCi8vIE9ubHkgZXhwb3NlIHRoZSBiYWNrZW5kIHRvIHRoaXMgYXBwJ3Mgb3duIGxvY2FsaG9zdCBpbnRlcmZhY2UuCnRleHQgPSB0ZXh0LnJlcGxhY2UoCiAgImFwcC5saXN0ZW4oUE9SVCwgJzAuMC4wLjAnIiwKICAiYXBwLmxpc3RlbihQT1JULCAnMTI3LjAuMC4xJyIsCik7CgovLyBUaGUgQW5kcm9pZCBOb2RlIHJ1bnRpbWUgaXMgTm9kZSAxOCwgd2hpbGUgdGhlIGRlc2t0b3AgcHJvamVjdCBjYW4gdXNlIHRoZQovLyBuZXdlciBHb29nbGUgU0RLLiBGb3IgdGhlIG1vYmlsZSBidWlsZCwgY2FsbCBHZW1pbmkncyBSRVNUIEFQSSBkaXJlY3RseS4KdGV4dCA9IHRleHQucmVwbGFjZSgKICAiaW1wb3J0IHsgR29vZ2xlR2VuQUkgfSBmcm9tICdAZ29vZ2xlL2dlbmFpJztcbiIsCiAgJycsCik7Cgpjb25zdCBzdGFydE1hcmtlciA9ICcgIC8vIEdvb2dsZSBHZW1pbmkgRXhlY3V0aW9uJzsKY29uc3QgZW5kTWFya2VyID0gIlxuICB0aHJvdyBuZXcgRXJyb3IoJ+acqumFjee9ruacieaViOeahCBBUEkg5a+G6ZKlIjsKY29uc3Qgc3RhcnQgPSB0ZXh0LmluZGV4T2Yoc3RhcnRNYXJrZXIpOwpjb25zdCBlbmQgPSBzdGFydCA+PSAwID8gdGV4dC5pbmRleE9mKGVuZE1hcmtlciwgc3RhcnQpIDogLTE7CgppZiAoc3RhcnQgPCAwIHx8IGVuZCA8IDApIHsKICB0aHJvdyBuZXcgRXJyb3IoJ+aXoOazleWumuS9jSBzZXJ2ZXIudHMg5Lit55qEIEdlbWluaSDmiafooYzku6PnoIHlnZcnKTsKfQoKY29uc3QgbW9iaWxlR2VtaW5pID0gYCAgLy8gR29vZ2xlIEdlbWluaSBFeGVjdXRpb24gKFJFU1QpCiAgaWYgKGFjdGl2ZUtleSkgewogICAgY29uc3QgZ2VtaW5pQmFzZSA9IChjbGVhbkJhc2VVcmwgfHwgJ2h0dHBzOi8vZ2VuZXJhdGl2ZWxhbmd1YWdlLmdvb2dsZWFwaXMuY29tJykucmVwbGFjZSgvXFwvKyQvLCAnJyk7CiAgICBjb25zdCB2ZXJzaW9uZWRCYXNlID0gL1xcLyh2MWJldGF8djEpJC8udGVzdChnZW1pbmlCYXNlKQogICAgICA/IGdlbWluaUJhc2UKICAgICAgOiBcYCR7JyR7J31nZW1pbmlCYXNlfS92MWJldGFcYDsKICAgIGNvbnN0IGVuZHBvaW50ID0gXGAkeyckeyd9dmVyc2lvbmVkQmFzZX0vbW9kZWxzLyR7JyR7J31lbmNvZGVVUklDb21wb25lbnQodGFyZ2V0TW9kZWwpfTpnZW5lcmF0ZUNvbnRlbnQ/a2V5PSR7JyR7J31lbmNvZGVVUklDb21wb25lbnQoYWN0aXZlS2V5KX1cYDsKCiAgICBjb25zdCBib2R5OiBhbnkgPSB7CiAgICAgIGNvbnRlbnRzOiBbewogICAgICAgIHJvbGU6ICd1c2VyJywKICAgICAgICBwYXJ0czogW3sgdGV4dDogcHJvbXB0IH1dLAogICAgICB9XSwKICAgIH07CgogICAgY29uc3QgZ2VuZXJhdGlvbkNvbmZpZzogYW55ID0ge307CiAgICBpZiAodGVtcGVyYXR1cmUgIT09IHVuZGVmaW5lZCkgZ2VuZXJhdGlvbkNvbmZpZy50ZW1wZXJhdHVyZSA9IHRlbXBlcmF0dXJlOwogICAgaWYgKHJlc3BvbnNlTWltZVR5cGUpIGdlbmVyYXRpb25Db25maWcucmVzcG9uc2VNaW1lVHlwZSA9IHJlc3BvbnNlTWltZVR5cGU7CiAgICBpZiAoT2JqZWN0LmtleXMoZ2VuZXJhdGlvbkNvbmZpZykubGVuZ3RoID4gMCkgYm9keS5nZW5lcmF0aW9uQ29uZmlnID0gZ2VuZXJhdGlvbkNvbmZpZzsKICAgIGlmIChzeXN0ZW1JbnN0cnVjdGlvbikgYm9keS5zeXN0ZW1JbnN0cnVjdGlvbiA9IHsgcGFydHM6IFt7IHRleHQ6IHN5c3RlbUluc3RydWN0aW9uIH1dIH07CgogICAgdHJ5IHsKICAgICAgY29uc3QgcmVzcG9uc2UgPSBhd2FpdCBmZXRjaChlbmRwb2ludCwgewogICAgICAgIG1ldGhvZDogJ1BPU1QnLAogICAgICAgIGhlYWRlcnM6IHsKICAgICAgICAgICdDb250ZW50LVR5cGUnOiAnYXBwbGljYXRpb24vanNvbicsCiAgICAgICAgICAnVXNlci1BZ2VudCc6ICdhaXN0dWRpby1idWlsZC1waG9uZScsCiAgICAgICAgICAuLi5jdXN0b21IZWFkZXJzLAogICAgICAgIH0sCiAgICAgICAgYm9keTogSlNPTi5zdHJpbmdpZnkoYm9keSksCiAgICAgICAgc2lnbmFsOiBBYm9ydFNpZ25hbC50aW1lb3V0KHRpbWVvdXRNcyksCiAgICAgIH0pOwoKICAgICAgY29uc3QgcmF3ID0gYXdhaXQgcmVzcG9uc2UudGV4dCgpOwogICAgICBsZXQgZGF0YTogYW55ID0ge307CiAgICAgIHRyeSB7IGRhdGEgPSByYXcgPyBKU09OLnBhcnNlKHJhdykgOiB7fTsgfSBjYXRjaCB7IGRhdGEgPSB7IHJhdyB9OyB9CgogICAgICBpZiAoIXJlc3BvbnNlLm9rKSB7CiAgICAgICAgY29uc3QgYXBpTWVzc2FnZSA9IGRhdGE/LmVycm9yPy5tZXNzYWdlIHx8IHJhdyB8fCBcYEhUVFAgJHsnJHsnfXJlc3BvbnNlLnN0YXR1c31cYDsKICAgICAgICBpZiAocmVzcG9uc2Uuc3RhdHVzID09PSA0MDEgfHwgcmVzcG9uc2Uuc3RhdHVzID09PSA0MDMpIHsKICAgICAgICAgIHRocm93IG5ldyBFcnJvcihcYFtHZW1pbmkgNDAxIOmJtOadg+Wksei0pV0gR2VtaW5pIEFQSSBLZXkg5peg5pWI5oiW5peg5p2D6ZmQOiAkeyckeyd9YXBpTWVzc2FnZX1cYCk7CiAgICAgICAgfQogICAgICAgIGlmIChyZXNwb25zZS5zdGF0dXMgPT09IDQwNCkgewogICAgICAgICAgdGhyb3cgbmV3IEVycm9yKFxgW0dlbWluaSA0MDQg5qih5Z6L5LiN5a2Y5ZyoXSDmqKHlnosgJHsnJHsnfXRhcmdldE1vZGVsfSDlnKjmraTnq6/ngrnkuI3lj6/nlKg6ICR7JyR7J31hcGlNZXNzYWdlfVxgKTsKICAgICAgICB9CiAgICAgICAgaWYgKHJlc3BvbnNlLnN0YXR1cyA9PT0gNDI5KSB7CiAgICAgICAgICB0aHJvdyBuZXcgRXJyb3IoXGBbR2VtaW5pIDQyOSDphY3pop3nlKjlsL1dIEFQSSDpop3luqbotoXpmZDmiJblj5fpmZA6ICR7JyR7J31hcGlNZXNzYWdlfVxgKTsKICAgICAgICB9CiAgICAgICAgdGhyb3cgbmV3IEVycm9yKFxgW0dlbWluaSAkeyckeyd9cmVzcG9uc2Uuc3RhdHVzfSBBUEkg6ZSZ6K+vXSAkeyckeyd9YXBpTWVzc2FnZX1cYCk7CiAgICAgIH0KCiAgICAgIHJldHVybiBkYXRhPy5jYW5kaWRhdGVzPy5bMF0/LmNvbnRlbnQ/LnBhcnRzCiAgICAgICAgPy5tYXAoKHBhcnQ6IGFueSkgPT4gcGFydD8udGV4dCB8fCAnJykKICAgICAgICAuam9pbignJykgfHwgJyc7CiAgICB9IGNhdGNoIChnZW1pbmlFcnI6IGFueSkgewogICAgICBpZiAoZ2VtaW5pRXJyPy5uYW1lID09PSAnVGltZW91dEVycm9yJyB8fCBnZW1pbmlFcnI/Lm5hbWUgPT09ICdBYm9ydEVycm9yJykgewogICAgICAgIHRocm93IG5ldyBFcnJvcihcYOivt+axgui2heaXtiAoJHsgJyR7J310aW1lb3V0TXMgLyAxMDAwIH3np5Ip77yMR2VtaW5pIOacquiDveWcqOmZkOWumuaXtumXtOWGhei/lOWbnuOAglxgKTsKICAgICAgfQogICAgICB0aHJvdyBnZW1pbmlFcnI7CiAgICB9CiAgfQpgOwoKdGV4dCA9IHRleHQuc2xpY2UoMCwgc3RhcnQpICsgbW9iaWxlR2VtaW5pICsgdGV4dC5zbGljZShlbmQpOwp3cml0ZUZpbGVTeW5jKCdzZXJ2ZXIubW9iaWxlLnRzJywgdGV4dCwgJ3V0ZjgnKTsKY29uc29sZS5sb2coJ01vYmlsZSBiYWNrZW5kIHNvdXJjZSBwcmVwYXJlZC4nKTsK',
+          }
+
+          for path, encoded in files.items():
+              target = Path(path)
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_bytes(base64.b64decode(encoded))
+
+          config = Path('capacitor.config.ts')
+          text = config.read_text(encoding='utf-8')
+          if '@capawesome/capacitor-nodejs' not in text.splitlines()[0]:
+              text = '/// <reference types="@capawesome/capacitor-nodejs" />\n' + text
+          if "Nodejs: {" not in text:
+              text = text.replace(
+                  "  plugins: {\n",
+                  "  plugins: {\n    Nodejs: {\n      nodeDir: 'nodejs',\n      startMode: 'auto',\n    },\n",
+                  1,
+              )
+          config.write_text(text, encoding='utf-8')
+
+          main = Path('src/main.tsx')
+          text = main.read_text(encoding='utf-8')
+          import_line = "import { setupLocalBackend } from './lib/localBackend.ts';"
+          if import_line not in text:
+              text = text.replace(
+                  "import { ErrorBoundary } from './components/ErrorBoundary.tsx';",
+                  "import { ErrorBoundary } from './components/ErrorBoundary.tsx';\n" + import_line,
+                  1,
+              )
+          if 'setupLocalBackend();' not in text:
+              text = text.replace(
+                  "createRoot(document.getElementById('root')!).render(",
+                  "setupLocalBackend();\n\ncreateRoot(document.getElementById('root')!).render(",
+                  1,
+              )
+          main.write_text(text, encoding='utf-8')
+          PY2
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Prepare embedded Node backend
+        shell: bash
+        run: |
+          set -e
+          node scripts/prepare-mobile-backend.mjs
+          mkdir -p public/nodejs
+
+          npx esbuild server.mobile.ts \
+            --platform=node \
+            --format=cjs \
+            --target=node18 \
+            --packages=external \
+            --outfile=public/nodejs/server.cjs
+
+          cat > public/nodejs/index.js <<'EOF2'
+          process.env.NODE_ENV = 'production';
+          process.env.CAPACITOR_NODEJS = '1';
+          require('./server.cjs');
+          EOF2
+
+          cat > public/nodejs/package.json <<'EOF2'
+          {
+            "name": "aiphone-mobile-backend",
+            "version": "1.0.0",
+            "private": true,
+            "main": "index.js",
+            "dependencies": {
+              "dotenv": "^17.2.3",
+              "express": "^4.21.2"
+            }
+          }
+          EOF2
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Install embedded backend runtime dependencies
+        working-directory: dist/nodejs
+        run: npm install --omit=dev --ignore-scripts
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.14.3'
+          validate-wrappers: false
+
+      - name: Build Debug APK
+        working-directory: android
+        shell: bash
+        run: |
+          set +e
+          gradle assembleDebug --stacktrace --console=plain 2>&1 | tee ../build.log
+          STATUS=${PIPESTATUS[0]}
+
+          echo ""
+          echo "========================================"
+          echo "       真正的编译错误在这里"
+          echo "========================================"
+          grep -n -A 30 -B 10 "What went wrong" ../build.log || true
+
+          echo ""
+          echo "========================================"
+          echo "       任务失败信息"
+          echo "========================================"
+          grep -n -A 10 -B 5 "FAILURE:" ../build.log || true
+          grep -n -A 10 -B 5 "Execution failed" ../build.log || true
+
+          exit $STATUS
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiaoshouji-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
