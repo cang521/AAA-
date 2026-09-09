@@ -43,6 +43,17 @@ jobs:
       - name: Sync Android
         run: npx cap sync android
 
+      - name: Verify Android Node.js integration
+        shell: bash
+        run: |
+          echo "====== Capacitor plugins ======"
+          cat android/app/src/main/assets/capacitor.plugins.json
+          grep -qi "nodejs" android/app/src/main/assets/capacitor.plugins.json
+          echo "====== Node project copied to Android assets ======"
+          test -s android/app/src/main/assets/public/nodejs/package.json
+          test -s android/app/src/main/assets/public/nodejs/index.cjs
+          test -s android/app/src/main/assets/public/nodejs/server.cjs
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
         with:

@@ -8,6 +8,19 @@ dotenv.config();
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
+// 允许 Capacitor WebView (https://localhost) 访问手机本地后端。
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, backend: 'xiaoshouji-local-node', port: PORT });
+});
+
 const PORT = 3000;
 
 interface AiCallParams {
@@ -3000,7 +3013,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, '127.0.0.1', () => {
     console.log(`📱 Simulated Android AI Phone Server listening on port ${PORT}`);
   });
 }
