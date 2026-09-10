@@ -55,6 +55,8 @@ import { SettingsApp } from './components/apps/SettingsApp';
 import { BeautificationApp } from './components/apps/BeautificationApp';
 import { ConnectivityApp } from './components/apps/ConnectivityApp';
 import { PermissionsApp } from './components/apps/PermissionsApp';
+import { AiPermissionsApp } from './components/apps/AiPermissionsApp';
+import { AiActivityLogsApp } from './components/apps/AiActivityLogsApp';
 import { ApiMonitorApp } from './components/apps/ApiMonitorApp';
 import { MemoApp } from './components/apps/MemoApp';
 import { WorldBookApp } from './components/apps/WorldBookApp';
@@ -395,10 +397,16 @@ export function App() {
             )}
 
             {activeAppId === 'permissions' && (
-              <PermissionsApp
+              <AiPermissionsApp
                 onBackToLauncher={() => setActiveAppId(null)}
-                permissions={permissions}
-                onUpdatePermissions={updatePermissions}
+                onOpenActivityLogs={() => setActiveAppId('ai_activity_logs')}
+              />
+            )}
+
+            {activeAppId === 'ai_activity_logs' && (
+              <AiActivityLogsApp
+                onBackToLauncher={() => setActiveAppId(null)}
+                onOpenPermissions={() => setActiveAppId('permissions')}
               />
             )}
 
@@ -442,6 +450,7 @@ export function App() {
               'beautification',
               'connectivity',
               'permissions',
+              'ai_activity_logs',
               'apimonitor',
               'memo',
             ].includes(activeAppId) && (

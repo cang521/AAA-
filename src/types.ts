@@ -5,6 +5,7 @@ export type AppId =
   | 'beautification'
   | 'connectivity'
   | 'permissions'
+  | 'ai_activity_logs'
   | 'apimonitor'
   | 'memo'
   | 'worldbook'
@@ -320,6 +321,13 @@ export interface ModelTestResult {
   errorType?: string;
 }
 
+export interface ProviderConfigItem {
+  provider: ProviderType;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+}
+
 export interface ApiConfig {
   // 文本 / 对话 LLM
   textProvider?: ProviderType;
@@ -327,6 +335,9 @@ export interface ApiConfig {
   textModel: string;
   textBaseUrl?: string;
   textEnableStream?: boolean;
+
+  // 各个 Provider 的独立配置映射，确保切换不同 Provider 时不会相互覆盖配置
+  providers?: Record<string, ProviderConfigItem>;
 
   // 图像生成
   imageProvider?: ProviderType;

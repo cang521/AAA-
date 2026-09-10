@@ -13,6 +13,7 @@ import {
   MessageCircle,
   HeartPulse,
   FileText,
+  FileCheck,
   Activity,
   Palette,
   Settings,
@@ -170,6 +171,8 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
         return <Gamepad2 className="w-6 h-6 text-white" />;
       case 'CloudSun':
         return <CloudSun className="w-6 h-6 text-white" />;
+      case 'FileCheck':
+        return <FileCheck className="w-6 h-6 text-white" />;
       default:
         return <MessageCircle className="w-6 h-6 text-white" />;
     }
@@ -199,6 +202,8 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
         return 'bg-gradient-to-tr from-teal-600 to-emerald-400 shadow-teal-500/20';
       case 'permissions':
         return 'bg-gradient-to-tr from-indigo-600 to-blue-500 shadow-indigo-500/20';
+      case 'ai_activity_logs':
+        return 'bg-gradient-to-tr from-purple-600 to-pink-500 shadow-purple-500/20';
       default:
         return 'bg-emerald-600';
     }

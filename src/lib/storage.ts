@@ -8,6 +8,7 @@ import {
   ApiLog,
   AiPermissions,
   ApiConfig,
+  ProviderConfigItem,
   AiControls,
   WidgetConfig,
   AppIconConfig,
@@ -219,6 +220,7 @@ const INITIAL_ICONS: AppIconConfig[] = [
   { id: 'icon_settings', name: '系统设置', appId: 'settings', pageIndex: 0, positionIndex: 8, builtInIcon: 'Settings' },
   { id: 'icon_connectivity', name: '外部设备', appId: 'connectivity', pageIndex: 0, positionIndex: 9, builtInIcon: 'Link' },
   { id: 'icon_permissions', name: 'AI 权限', appId: 'permissions', pageIndex: 0, positionIndex: 10, builtInIcon: 'Shield' },
+  { id: 'icon_ai_activity_logs', name: 'AI 活动记录', appId: 'ai_activity_logs', pageIndex: 0, positionIndex: 11, builtInIcon: 'FileCheck' },
 ];
 
 const INITIAL_WIDGETS: WidgetConfig[] = [
@@ -308,12 +310,16 @@ const INITIAL_API_CONFIG: ApiConfig = {
   textApiKey: '',
   textModel: 'gemini-3.6-flash',
   textBaseUrl: '',
+  textProvider: 'google_gemini',
+  providers: {},
   imageApiKey: '',
   imageModel: 'gemini-3.1-flash-lite-image',
   imageBaseUrl: '',
+  imageProvider: 'google_gemini',
   voiceApiKey: '',
   voiceModel: 'gemini-3.1-flash-tts-preview',
   voiceBaseUrl: '',
+  voiceProvider: 'google_gemini',
 };
 
 const INITIAL_AI_CONTROLS: AiControls = {
@@ -421,8 +427,72 @@ export const saveUserProfile = (profile: UserProfile) => saveToStorage(STORAGE_K
 export const loadMenstrualData = () => loadFromStorage<MenstrualData>(STORAGE_KEYS.MENSTRUAL, INITIAL_MENSTRUAL_DATA);
 export const saveMenstrualData = (data: MenstrualData) => saveToStorage(STORAGE_KEYS.MENSTRUAL, data);
 
-export const loadApiConfig = () => loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG);
-export const saveApiConfig = (c: ApiConfig) => saveToStorage(STORAGE_KEYS.API_CONFIG, c);
+export const loadApiConfig = (): ApiConfig => {
+  const loaded = loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG);
+  if (!loaded) return { ...INITIAL_API_CONFIG };
+
+  const providers: Record<string, ProviderConfigItem> = { ...(loaded.providers || {}) };
+  const currentTextProvider = loaded.textProvider || (loaded.textBaseUrl ? 'openai_compatible' : 'google_gemini');
+
+  // Defensive migration: ensure the current provider has an entry in providers if textApiKey / textBaseUrl exist
+  if (!providers[currentTextProvider]) {
+    providers[currentTextProvider] = {
+      provider: currentTextProvider,
+      apiKey: loaded.textApiKey || '',
+      baseUrl: loaded.textBaseUrl || '',
+      model: loaded.textModel || 'gemini-3.6-flash',
+    };
+  } else {
+    // If loaded has active key but provider entry was empty
+    if (loaded.textApiKey && !providers[currentTextProvider].apiKey) {
+      providers[currentTextProvider].apiKey = loaded.textApiKey;
+    }
+    if (loaded.textBaseUrl !== undefined && !providers[currentTextProvider].baseUrl) {
+      providers[currentTextProvider].baseUrl = loaded.textBaseUrl;
+    }
+  }
+
+  return {
+    ...INITIAL_API_CONFIG,
+    ...loaded,
+    textProvider: currentTextProvider,
+    providers,
+  };
+};
+
+export const saveApiConfig = (c: ApiConfig): void => {
+  try {
+    const existing = loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG);
+    const existingProviders = existing?.providers || {};
+    const newProviders = c.providers || {};
+
+    const mergedProviders = { ...existingProviders, ...newProviders };
+    const currentProvider = c.textProvider || existing?.textProvider || 'google_gemini';
+
+    // If active textApiKey is non-empty, ensure it is recorded in the active provider's entry
+    if (c.textApiKey && mergedProviders[currentProvider]) {
+      mergedProviders[currentProvider].apiKey = c.textApiKey;
+    }
+    if (c.textBaseUrl !== undefined && mergedProviders[currentProvider]) {
+      mergedProviders[currentProvider].baseUrl = c.textBaseUrl;
+    }
+    if (c.textModel && mergedProviders[currentProvider]) {
+      mergedProviders[currentProvider].model = c.textModel;
+    }
+
+    const merged: ApiConfig = {
+      ...INITIAL_API_CONFIG,
+      ...existing,
+      ...c,
+      providers: mergedProviders,
+    };
+
+    saveToStorage(STORAGE_KEYS.API_CONFIG, merged);
+  } catch (e) {
+    console.error('Failed to save API config:', e);
+    saveToStorage(STORAGE_KEYS.API_CONFIG, c);
+  }
+};
 
 export const loadAiControls = () => loadFromStorage<AiControls>(STORAGE_KEYS.AI_CONTROLS, INITIAL_AI_CONTROLS);
 export const saveAiControls = (c: AiControls) => saveToStorage(STORAGE_KEYS.AI_CONTROLS, c);

@@ -43,7 +43,7 @@ import {
 import { DataManagementModal } from '../data/DataManagementModal';
 import { clearAllChatMessages } from '../../lib/chatDb';
 import { clearAllAiMemoryVaults } from '../../lib/aiMemoryVaultDb';
-import { resetStorageToFactoryDefaults } from '../../lib/storage';
+import { resetStorageToFactoryDefaults, loadApiConfig, saveApiConfig } from '../../lib/storage';
 
 interface SettingsAppProps {
   onBackToLauncher: () => void;
@@ -146,7 +146,17 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   onAddApiLog,
   onDataChanged,
 }) => {
-  const [config, setConfig] = useState<ApiConfig>(apiConfig);
+  const [config, setConfig] = useState<ApiConfig>(() => {
+    const stored = loadApiConfig();
+    return {
+      ...stored,
+      ...apiConfig,
+      providers: {
+        ...(stored.providers || {}),
+        ...(apiConfig?.providers || {}),
+      },
+    };
+  });
   const [controls, setControls] = useState<AiControls>(aiControls);
 
   // Active Provider Category Tab
@@ -156,6 +166,21 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   const [showTextKey, setShowTextKey] = useState(false);
   const [showImageKey, setShowImageKey] = useState(false);
   const [showVoiceKey, setShowVoiceKey] = useState(false);
+
+  // Active text provider
+  const activeTextProvider = config.textProvider || 'google_gemini';
+
+  // API Key text inputs for user typing
+  const [textApiKeyInput, setTextApiKeyInput] = useState<string>(() => {
+    return config.providers?.[activeTextProvider]?.apiKey || config.textApiKey || '';
+  });
+  const [imageApiKeyInput, setImageApiKeyInput] = useState<string>(() => config.imageApiKey || '');
+  const [voiceApiKeyInput, setVoiceApiKeyInput] = useState<string>(() => config.voiceApiKey || '');
+
+  // Explicit deletion tracking (Requirement 6: only user explicit click deletes a key)
+  const [explicitlyClearedTextKey, setExplicitlyClearedTextKey] = useState(false);
+  const [explicitlyClearedImageKey, setExplicitlyClearedImageKey] = useState(false);
+  const [explicitlyClearedVoiceKey, setExplicitlyClearedVoiceKey] = useState(false);
 
   // Connection Test States
   const [isTestingConnection, setIsTestingConnection] = useState(false);
@@ -232,11 +257,131 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     }
   }, []);
 
+  // Helpers to get saved and effective keys
+  const getSavedTextKey = () => {
+    const activeProvider = config.textProvider || 'google_gemini';
+    const inProviders = config.providers?.[activeProvider]?.apiKey;
+    if (inProviders) return inProviders;
+    if (config.textApiKey) return config.textApiKey;
+    const stored = loadApiConfig();
+    return stored.providers?.[activeProvider]?.apiKey || stored.textApiKey || '';
+  };
+
+  const getEffectiveTextApiKey = () => {
+    if (explicitlyClearedTextKey) return '';
+    if (textApiKeyInput.trim()) return textApiKeyInput.trim();
+    return getSavedTextKey();
+  };
+
+  const getSavedImageKey = () => {
+    if (config.imageApiKey) return config.imageApiKey;
+    const stored = loadApiConfig();
+    return stored.imageApiKey || '';
+  };
+
+  const getEffectiveImageApiKey = () => {
+    if (explicitlyClearedImageKey) return '';
+    if (imageApiKeyInput.trim()) return imageApiKeyInput.trim();
+    return getSavedImageKey();
+  };
+
+  const getSavedVoiceKey = () => {
+    if (config.voiceApiKey) return config.voiceApiKey;
+    const stored = loadApiConfig();
+    return stored.voiceApiKey || '';
+  };
+
+  const getEffectiveVoiceApiKey = () => {
+    if (explicitlyClearedVoiceKey) return '';
+    if (voiceApiKeyInput.trim()) return voiceApiKeyInput.trim();
+    return getSavedVoiceKey();
+  };
+
+  const handleClearTextKey = () => {
+    setExplicitlyClearedTextKey(true);
+    setTextApiKeyInput('');
+    const activeProvider = config.textProvider || 'google_gemini';
+    setConfig((prev) => ({
+      ...prev,
+      textApiKey: '',
+      providers: {
+        ...(prev.providers || {}),
+        [activeProvider]: {
+          ...(prev.providers?.[activeProvider] || {
+            provider: activeProvider,
+            baseUrl: prev.textBaseUrl || '',
+            model: prev.textModel || '',
+          }),
+          apiKey: '',
+        },
+      },
+    }));
+  };
+
+  const handleClearImageKey = () => {
+    setExplicitlyClearedImageKey(true);
+    setImageApiKeyInput('');
+    setConfig((prev) => ({ ...prev, imageApiKey: '' }));
+  };
+
+  const handleClearVoiceKey = () => {
+    setExplicitlyClearedVoiceKey(true);
+    setVoiceApiKeyInput('');
+    setConfig((prev) => ({ ...prev, voiceApiKey: '' }));
+  };
+
   const handleGlobalSave = () => {
-    onSaveApiConfig(config);
+    const activeProvider = config.textProvider || 'google_gemini';
+    const effectiveTextKey = getEffectiveTextApiKey();
+    const effectiveImageKey = getEffectiveImageApiKey();
+    const effectiveVoiceKey = getEffectiveVoiceApiKey();
+
+    const effectiveTextBaseUrl = config.textBaseUrl !== undefined ? config.textBaseUrl.trim() : (config.providers?.[activeProvider]?.baseUrl || '');
+    const effectiveTextModel = config.textModel?.trim() || config.providers?.[activeProvider]?.model || 'gemini-3.6-flash';
+
+    const updatedProviders = {
+      ...(config.providers || {}),
+      [activeProvider]: {
+        provider: activeProvider,
+        apiKey: effectiveTextKey,
+        baseUrl: effectiveTextBaseUrl,
+        model: effectiveTextModel,
+      },
+    };
+
+    const finalConfig: ApiConfig = {
+      ...config,
+      textProvider: activeProvider,
+      textApiKey: effectiveTextKey,
+      textBaseUrl: effectiveTextBaseUrl,
+      textModel: effectiveTextModel,
+      imageApiKey: effectiveImageKey,
+      imageBaseUrl: config.imageBaseUrl !== undefined ? config.imageBaseUrl.trim() : '',
+      imageModel: config.imageModel?.trim() || 'dall-e-3',
+      voiceApiKey: effectiveVoiceKey,
+      voiceBaseUrl: config.voiceBaseUrl !== undefined ? config.voiceBaseUrl.trim() : '',
+      voiceModel: config.voiceModel?.trim() || 'tts-1',
+      providers: updatedProviders,
+    };
+
+    // 1. Direct persistence to storage
+    saveApiConfig(finalConfig);
+
+    // 2. Notify parent App.tsx state
+    onSaveApiConfig(finalConfig);
     onSaveAiControls(controls);
+
+    // 3. Update local component state
+    setConfig(finalConfig);
+    setTextApiKeyInput(effectiveTextKey);
+    setImageApiKeyInput(effectiveImageKey);
+    setVoiceApiKeyInput(effectiveVoiceKey);
+    setExplicitlyClearedTextKey(false);
+    setExplicitlyClearedImageKey(false);
+    setExplicitlyClearedVoiceKey(false);
+
     setSaveSuccessMsg('🎉 全局 API Provider 配置与系统设置已保存生效！');
-    setTimeout(() => setSaveSuccessMsg(''), 3000);
+    setTimeout(() => setSaveSuccessMsg(''), 3500);
   };
 
   // 1. Real Connection Test
@@ -245,9 +390,27 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     setConnectionResult(null);
     setModelTestResult(null);
 
-    const baseUrl = activeCategory === 'text' ? config.textBaseUrl : activeCategory === 'image' ? config.imageBaseUrl : config.voiceBaseUrl;
-    const apiKey = activeCategory === 'text' ? config.textApiKey : activeCategory === 'image' ? config.imageApiKey : config.voiceApiKey;
-    const providerType = activeCategory === 'text' ? config.textProvider : activeCategory === 'image' ? config.imageProvider : config.voiceProvider;
+    const activeProvider = config.textProvider || 'google_gemini';
+    const effectiveTextKey = getEffectiveTextApiKey();
+    const effectiveTextBaseUrl = config.textBaseUrl !== undefined ? config.textBaseUrl.trim() : (config.providers?.[activeProvider]?.baseUrl || '');
+
+    const baseUrl = activeCategory === 'text'
+      ? effectiveTextBaseUrl
+      : activeCategory === 'image'
+      ? (config.imageBaseUrl || '')
+      : (config.voiceBaseUrl || '');
+
+    const apiKey = activeCategory === 'text'
+      ? effectiveTextKey
+      : activeCategory === 'image'
+      ? getEffectiveImageApiKey()
+      : getEffectiveVoiceApiKey();
+
+    const providerType = activeCategory === 'text'
+      ? (config.textProvider || 'google_gemini')
+      : activeCategory === 'image'
+      ? (config.imageProvider || 'openai_compatible')
+      : (config.voiceProvider || 'openai_compatible');
 
     try {
       const res = await fetch('/api/provider/test-connection', {
@@ -289,9 +452,27 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     setIsFetchingModels(true);
     setModelFetchResult(null);
 
-    const baseUrl = activeCategory === 'text' ? config.textBaseUrl : activeCategory === 'image' ? config.imageBaseUrl : config.voiceBaseUrl;
-    const apiKey = activeCategory === 'text' ? config.textApiKey : activeCategory === 'image' ? config.imageApiKey : config.voiceApiKey;
-    const providerType = activeCategory === 'text' ? config.textProvider : activeCategory === 'image' ? config.imageProvider : config.voiceProvider;
+    const activeProvider = config.textProvider || 'google_gemini';
+    const effectiveTextKey = getEffectiveTextApiKey();
+    const effectiveTextBaseUrl = config.textBaseUrl !== undefined ? config.textBaseUrl.trim() : (config.providers?.[activeProvider]?.baseUrl || '');
+
+    const baseUrl = activeCategory === 'text'
+      ? effectiveTextBaseUrl
+      : activeCategory === 'image'
+      ? (config.imageBaseUrl || '')
+      : (config.voiceBaseUrl || '');
+
+    const apiKey = activeCategory === 'text'
+      ? effectiveTextKey
+      : activeCategory === 'image'
+      ? getEffectiveImageApiKey()
+      : getEffectiveVoiceApiKey();
+
+    const providerType = activeCategory === 'text'
+      ? (config.textProvider || 'google_gemini')
+      : activeCategory === 'image'
+      ? (config.imageProvider || 'openai_compatible')
+      : (config.voiceProvider || 'openai_compatible');
 
     try {
       const res = await fetch('/api/provider/fetch-models', {
@@ -311,7 +492,6 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
       if (data.success && data.models && data.models.length > 0) {
         setFetchedModels(data.models);
-        // If current model is not in list, auto suggest the first one or keep current
         setSaveSuccessMsg(`🎉 成功从 API 服务端获取到 ${data.models.length} 个真实模型！`);
         setTimeout(() => setSaveSuccessMsg(''), 4000);
       }
@@ -333,9 +513,28 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     setIsTestingModel(true);
     setModelTestResult(null);
 
-    const baseUrl = activeCategory === 'text' ? config.textBaseUrl : activeCategory === 'image' ? config.imageBaseUrl : config.voiceBaseUrl;
-    const apiKey = activeCategory === 'text' ? config.textApiKey : activeCategory === 'image' ? config.imageApiKey : config.voiceApiKey;
-    const providerType = activeCategory === 'text' ? config.textProvider : activeCategory === 'image' ? config.imageProvider : config.voiceProvider;
+    const activeProvider = config.textProvider || 'google_gemini';
+    const effectiveTextKey = getEffectiveTextApiKey();
+    const effectiveTextBaseUrl = config.textBaseUrl !== undefined ? config.textBaseUrl.trim() : (config.providers?.[activeProvider]?.baseUrl || '');
+
+    const baseUrl = activeCategory === 'text'
+      ? effectiveTextBaseUrl
+      : activeCategory === 'image'
+      ? (config.imageBaseUrl || '')
+      : (config.voiceBaseUrl || '');
+
+    const apiKey = activeCategory === 'text'
+      ? effectiveTextKey
+      : activeCategory === 'image'
+      ? getEffectiveImageApiKey()
+      : getEffectiveVoiceApiKey();
+
+    const providerType = activeCategory === 'text'
+      ? (config.textProvider || 'google_gemini')
+      : activeCategory === 'image'
+      ? (config.imageProvider || 'openai_compatible')
+      : (config.voiceProvider || 'openai_compatible');
+
     const model = activeCategory === 'text' ? config.textModel : activeCategory === 'image' ? config.imageModel : config.voiceModel;
 
     try {
@@ -373,14 +572,51 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     }
   };
 
-  // Quick Preset Selection
+  // Quick Preset Selection (with multi-provider preservation)
   const applyTextPreset = (preset: ProviderPreset) => {
+    const currentProvider = config.textProvider || 'google_gemini';
+
+    // Calculate current effective key for the provider we are leaving
+    const currentSavedKey = config.providers?.[currentProvider]?.apiKey || config.textApiKey || '';
+    const currentEffectiveKey = explicitlyClearedTextKey ? '' : (textApiKeyInput.trim() || currentSavedKey);
+    const currentBaseUrl = config.textBaseUrl !== undefined ? config.textBaseUrl.trim() : '';
+    const currentModel = config.textModel || '';
+
+    // Snapshot current provider
+    const updatedProviders = {
+      ...(config.providers || {}),
+      [currentProvider]: {
+        provider: currentProvider,
+        apiKey: currentEffectiveKey,
+        baseUrl: currentBaseUrl,
+        model: currentModel,
+      },
+    };
+
+    // Load destination provider
+    const target = updatedProviders[preset.id] || {
+      provider: preset.id,
+      apiKey: '',
+      baseUrl: preset.defaultBaseUrl,
+      model: preset.defaultModel,
+    };
+
+    const targetBaseUrl = target.baseUrl !== undefined && target.baseUrl !== '' ? target.baseUrl : preset.defaultBaseUrl;
+    const targetModel = target.model || preset.defaultModel;
+    const targetKey = target.apiKey || '';
+
+    setTextApiKeyInput(targetKey);
+    setExplicitlyClearedTextKey(false);
+
     setConfig((prev) => ({
       ...prev,
       textProvider: preset.id,
-      textBaseUrl: preset.defaultBaseUrl,
-      textModel: preset.defaultModel,
+      textBaseUrl: targetBaseUrl,
+      textModel: targetModel,
+      textApiKey: targetKey,
+      providers: updatedProviders,
     }));
+
     setConnectionResult(null);
     setModelFetchResult(null);
     setModelTestResult(null);
@@ -607,17 +843,37 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
                 {/* API Key Input */}
                 <div className="space-y-1">
-                  <label className="text-[11px] text-zinc-400 font-medium flex items-center justify-between">
-                    <span>API 密钥 (API Key / Token)</span>
-                    <span className="text-[10px] text-zinc-500">密钥绝不在前端明文暴露</span>
-                  </label>
+                  <div className="flex items-center justify-between text-[11px]">
+                    <label className="text-zinc-400 font-medium flex items-center gap-1.5">
+                      <span>API 密钥 (API Key / Token)</span>
+                      {getSavedTextKey() && !explicitlyClearedTextKey && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-mono">
+                          ✓ 已安全保存 (•{getSavedTextKey().length > 8 ? getSavedTextKey().slice(-4) : '已存'})
+                        </span>
+                      )}
+                    </label>
+                    {getSavedTextKey() && !explicitlyClearedTextKey ? (
+                      <button
+                        type="button"
+                        onClick={handleClearTextKey}
+                        className="text-[10px] text-rose-400 hover:text-rose-300 transition underline underline-offset-2"
+                      >
+                        清除/删除Key
+                      </button>
+                    ) : (
+                      <span className="text-[10px] text-zinc-500">密钥绝不在前端明文暴露</span>
+                    )}
+                  </div>
                   <div className="relative">
                     <input
                       type={showTextKey ? 'text' : 'password'}
-                      placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
-                      value={config.textApiKey || ''}
-                      onChange={(e) => setConfig({ ...config, textApiKey: e.target.value.trim() })}
-                      className="w-full px-3 py-2 pr-10 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs placeholder-zinc-600 focus:outline-none focus:border-cyan-500 transition"
+                      placeholder={getSavedTextKey() && !explicitlyClearedTextKey ? '已保存有效密钥（留空保持不变；输入新 Key 覆盖）' : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'}
+                      value={textApiKeyInput}
+                      onChange={(e) => {
+                        setTextApiKeyInput(e.target.value);
+                        setExplicitlyClearedTextKey(false);
+                      }}
+                      className="w-full px-3 py-2 pr-10 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs placeholder-zinc-500 focus:outline-none focus:border-cyan-500 transition"
                     />
                     <button
                       type="button"
@@ -851,14 +1107,35 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[11px] text-zinc-400 font-medium">图像 API Key (留空默认同主密钥)</label>
+                  <div className="flex items-center justify-between text-[11px]">
+                    <label className="text-zinc-400 font-medium flex items-center gap-1.5">
+                      <span>图像 API Key (留空默认同主密钥)</span>
+                      {getSavedImageKey() && !explicitlyClearedImageKey && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-mono">
+                          ✓ 已保存 (•{getSavedImageKey().length > 8 ? getSavedImageKey().slice(-4) : '已存'})
+                        </span>
+                      )}
+                    </label>
+                    {getSavedImageKey() && !explicitlyClearedImageKey && (
+                      <button
+                        type="button"
+                        onClick={handleClearImageKey}
+                        className="text-[10px] text-rose-400 hover:text-rose-300 transition underline underline-offset-2"
+                      >
+                        清除Key
+                      </button>
+                    )}
+                  </div>
                   <div className="relative">
                     <input
                       type={showImageKey ? 'text' : 'password'}
-                      placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
-                      value={config.imageApiKey || ''}
-                      onChange={(e) => setConfig({ ...config, imageApiKey: e.target.value.trim() })}
-                      className="w-full px-3 py-2 pr-10 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs placeholder-zinc-600 focus:outline-none focus:border-pink-500"
+                      placeholder={getSavedImageKey() && !explicitlyClearedImageKey ? '已保存有效密钥（留空保持不变；输入新 Key 覆盖）' : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'}
+                      value={imageApiKeyInput}
+                      onChange={(e) => {
+                        setImageApiKeyInput(e.target.value);
+                        setExplicitlyClearedImageKey(false);
+                      }}
+                      className="w-full px-3 py-2 pr-10 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs placeholder-zinc-500 focus:outline-none focus:border-pink-500"
                     />
                     <button
                       type="button"
@@ -929,14 +1206,35 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[11px] text-zinc-400 font-medium">语音 API Key</label>
+                  <div className="flex items-center justify-between text-[11px]">
+                    <label className="text-zinc-400 font-medium flex items-center gap-1.5">
+                      <span>语音 API Key</span>
+                      {getSavedVoiceKey() && !explicitlyClearedVoiceKey && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-mono">
+                          ✓ 已保存 (•{getSavedVoiceKey().length > 8 ? getSavedVoiceKey().slice(-4) : '已存'})
+                        </span>
+                      )}
+                    </label>
+                    {getSavedVoiceKey() && !explicitlyClearedVoiceKey && (
+                      <button
+                        type="button"
+                        onClick={handleClearVoiceKey}
+                        className="text-[10px] text-rose-400 hover:text-rose-300 transition underline underline-offset-2"
+                      >
+                        清除Key
+                      </button>
+                    )}
+                  </div>
                   <div className="relative">
                     <input
                       type={showVoiceKey ? 'text' : 'password'}
-                      placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
-                      value={config.voiceApiKey || ''}
-                      onChange={(e) => setConfig({ ...config, voiceApiKey: e.target.value.trim() })}
-                      className="w-full px-3 py-2 pr-10 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs placeholder-zinc-600 focus:outline-none focus:border-amber-500"
+                      placeholder={getSavedVoiceKey() && !explicitlyClearedVoiceKey ? '已保存有效密钥（留空保持不变；输入新 Key 覆盖）' : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'}
+                      value={voiceApiKeyInput}
+                      onChange={(e) => {
+                        setVoiceApiKeyInput(e.target.value);
+                        setExplicitlyClearedVoiceKey(false);
+                      }}
+                      className="w-full px-3 py-2 pr-10 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs placeholder-zinc-500 focus:outline-none focus:border-amber-500"
                     />
                     <button
                       type="button"
