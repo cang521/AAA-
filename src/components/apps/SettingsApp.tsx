@@ -4,6 +4,7 @@ import {
   AiControls,
   ApiLog,
   ProviderType,
+  ProviderConfigItem,
   RemoteModelItem,
   ConnectionTestResult,
   ModelFetchResult,
@@ -462,7 +463,40 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       setConnectionResult(data);
 
       if (data.success) {
-        setSaveSuccessMsg(`⚡ 连接测试成功！HTTP 200 链路畅通 (延迟: ${data.latencyMs}ms)`);
+        // Auto-persist verified configuration so testing a working key never risks losing it
+        const activeProvider = config.textProvider || 'google_gemini';
+        const effectiveTextKey = getEffectiveTextApiKey();
+        const effectiveImageKey = getEffectiveImageApiKey();
+        const effectiveVoiceKey = getEffectiveVoiceApiKey();
+
+        const effectiveTextBaseUrl = config.textBaseUrl !== undefined ? config.textBaseUrl.trim() : (config.providers?.[activeProvider]?.baseUrl || '');
+        const effectiveTextModel = config.textModel?.trim() || config.providers?.[activeProvider]?.model || 'gemini-3.6-flash';
+
+        const updatedProviders = {
+          ...(config.providers || {}),
+          [activeProvider]: {
+            provider: activeProvider,
+            apiKey: effectiveTextKey,
+            baseUrl: effectiveTextBaseUrl,
+            model: effectiveTextModel,
+          },
+        };
+
+        const validatedConfig: ApiConfig = {
+          ...config,
+          textProvider: activeProvider,
+          textApiKey: effectiveTextKey,
+          textBaseUrl: effectiveTextBaseUrl,
+          textModel: effectiveTextModel,
+          imageApiKey: effectiveImageKey,
+          voiceApiKey: effectiveVoiceKey,
+          providers: updatedProviders,
+        };
+
+        saveApiConfig(validatedConfig);
+        onSaveApiConfig(validatedConfig);
+
+        setSaveSuccessMsg(`⚡ 连接测试成功！HTTP 200 链路畅通，配置已自动保存 (延迟: ${data.latencyMs}ms)`);
         setTimeout(() => setSaveSuccessMsg(''), 4000);
       }
     } catch (e: any) {
@@ -660,16 +694,30 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     };
 
     // Load destination provider
-    const target = updatedProviders[preset.id] || {
+    const existingTarget = updatedProviders[preset.id];
+
+    // CRITICAL FIX: Never wipe the API key when user clicks a preset button!
+    // If the target provider doesn't have a specific key yet, inherit the current active key.
+    const targetKey = (existingTarget && existingTarget.apiKey !== undefined && existingTarget.apiKey !== '')
+      ? existingTarget.apiKey
+      : (explicitlyClearedTextKey ? '' : (currentEffectiveKey || config.textApiKey || ''));
+
+    const targetBaseUrl = (existingTarget && existingTarget.baseUrl !== undefined && existingTarget.baseUrl !== '')
+      ? existingTarget.baseUrl
+      : preset.defaultBaseUrl;
+
+    const targetModel = (existingTarget && existingTarget.model)
+      ? existingTarget.model
+      : preset.defaultModel;
+
+    const target: ProviderConfigItem = {
       provider: preset.id,
-      apiKey: '',
-      baseUrl: preset.defaultBaseUrl,
-      model: preset.defaultModel,
+      apiKey: targetKey,
+      baseUrl: targetBaseUrl,
+      model: targetModel,
     };
 
-    const targetBaseUrl = target.baseUrl !== undefined && target.baseUrl !== '' ? target.baseUrl : preset.defaultBaseUrl;
-    const targetModel = target.model || preset.defaultModel;
-    const targetKey = target.apiKey || '';
+    updatedProviders[preset.id] = target;
 
     setTextApiKeyInput(targetKey);
     setExplicitlyClearedTextKey(false);
@@ -733,7 +781,14 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       {/* Top Navigation Bar */}
       <div className="h-12 px-3 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between z-20 shrink-0">
         <button
-          onClick={onBackToLauncher}
+          onClick={() => {
+            // Auto persist any effective configuration before leaving
+            const effectiveKey = getEffectiveTextApiKey();
+            if (effectiveKey || config.textBaseUrl) {
+              handleGlobalSave();
+            }
+            onBackToLauncher();
+          }}
           className="flex items-center gap-1 text-xs text-zinc-300 hover:text-white font-medium px-2.5 py-1 rounded-xl bg-zinc-800 transition active:scale-95"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -936,8 +991,25 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                       placeholder={getSavedTextKey() && !explicitlyClearedTextKey ? '已保存有效密钥（留空保持不变；输入新 Key 覆盖）' : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'}
                       value={textApiKeyInput}
                       onChange={(e) => {
-                        setTextApiKeyInput(e.target.value);
+                        const val = e.target.value;
+                        setTextApiKeyInput(val);
                         setExplicitlyClearedTextKey(false);
+                        const activeProvider = config.textProvider || 'google_gemini';
+                        setConfig((prev) => ({
+                          ...prev,
+                          textApiKey: val,
+                          providers: {
+                            ...(prev.providers || {}),
+                            [activeProvider]: {
+                              ...(prev.providers?.[activeProvider] || {
+                                provider: activeProvider,
+                                baseUrl: prev.textBaseUrl || '',
+                                model: prev.textModel || '',
+                              }),
+                              apiKey: val,
+                            },
+                          },
+                        }));
                       }}
                       className="w-full px-3 py-2 pr-10 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs placeholder-zinc-500 focus:outline-none focus:border-cyan-500 transition"
                     />
@@ -1198,8 +1270,10 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                       placeholder={getSavedImageKey() && !explicitlyClearedImageKey ? '已保存有效密钥（留空保持不变；输入新 Key 覆盖）' : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'}
                       value={imageApiKeyInput}
                       onChange={(e) => {
-                        setImageApiKeyInput(e.target.value);
+                        const val = e.target.value;
+                        setImageApiKeyInput(val);
                         setExplicitlyClearedImageKey(false);
+                        setConfig((prev) => ({ ...prev, imageApiKey: val }));
                       }}
                       className="w-full px-3 py-2 pr-10 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs placeholder-zinc-500 focus:outline-none focus:border-pink-500"
                     />
@@ -1297,8 +1371,10 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                       placeholder={getSavedVoiceKey() && !explicitlyClearedVoiceKey ? '已保存有效密钥（留空保持不变；输入新 Key 覆盖）' : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'}
                       value={voiceApiKeyInput}
                       onChange={(e) => {
-                        setVoiceApiKeyInput(e.target.value);
+                        const val = e.target.value;
+                        setVoiceApiKeyInput(val);
                         setExplicitlyClearedVoiceKey(false);
+                        setConfig((prev) => ({ ...prev, voiceApiKey: val }));
                       }}
                       className="w-full px-3 py-2 pr-10 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs placeholder-zinc-500 focus:outline-none focus:border-amber-500"
                     />

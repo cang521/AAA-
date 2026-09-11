@@ -489,9 +489,14 @@ export const saveApiConfig = (c: ApiConfig): void => {
     const mergedProviders = { ...existingProviders, ...newProviders };
     const currentProvider = c.textProvider || existing?.textProvider || 'google_gemini';
 
-    // If active textApiKey is non-empty, ensure it is recorded in the active provider's entry
-    if (c.textApiKey && mergedProviders[currentProvider]) {
-      mergedProviders[currentProvider].apiKey = c.textApiKey;
+    // Safety guard: Don't allow accidental clearing of existing valid key
+    const isExplicitTextClear = c.textApiKey === '' && (c.providers?.[currentProvider]?.apiKey === '' || !c.providers?.[currentProvider]);
+    const effectiveTextKey = isExplicitTextClear
+      ? ''
+      : (c.textApiKey || mergedProviders[currentProvider]?.apiKey || existing?.textApiKey || '');
+
+    if (mergedProviders[currentProvider]) {
+      mergedProviders[currentProvider].apiKey = effectiveTextKey;
     }
     if (c.textBaseUrl !== undefined && mergedProviders[currentProvider]) {
       mergedProviders[currentProvider].baseUrl = c.textBaseUrl;
@@ -504,6 +509,7 @@ export const saveApiConfig = (c: ApiConfig): void => {
       ...INITIAL_API_CONFIG,
       ...existing,
       ...c,
+      textApiKey: effectiveTextKey,
       providers: mergedProviders,
     };
 
