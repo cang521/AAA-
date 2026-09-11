@@ -295,7 +295,7 @@ export interface ConnectionTestResult {
   checkedEndpoint: string;
   message: string;
   error?: string;
-  errorType?: 'auth_error' | 'network_error' | 'not_found' | 'rate_limit' | 'server_error' | 'timeout' | 'unknown';
+  errorType?: 'auth_error' | 'network_error' | 'not_found' | 'rate_limit' | 'server_error' | 'timeout' | 'unknown' | 'backend_offline';
   availableModelsCount?: number;
   maskedKey?: string;
 }

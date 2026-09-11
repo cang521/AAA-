@@ -62,7 +62,9 @@ jobs:
 
       - name: Build APK
         working-directory: android
-        run: gradle assembleDebug --stacktrace --console=plain
+        run: |
+          BUILD_CODE=$(( ${{ github.run_number }} + 1 ))
+          gradle assembleDebug -PversionCode=${BUILD_CODE} -PversionName="1.1.${BUILD_CODE}" --stacktrace --console=plain
 
       - name: Verify APK
         shell: bash

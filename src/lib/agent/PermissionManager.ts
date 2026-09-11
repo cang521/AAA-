@@ -188,7 +188,7 @@ export const AI_PERMISSION_ITEMS: AiPermissionItemDef[] = [
 ];
 
 // Predefined 10 Scene Rules
-const DEFAULT_SCENE_RULES: Record<SceneId, SceneRuleConfig> = {
+export const DEFAULT_SCENE_RULES: Record<SceneId, SceneRuleConfig> = {
   short_video: {
     sceneId: 'short_video',
     sceneName: '短视频 (抖音/快手等)',
@@ -454,6 +454,21 @@ class PermissionManager {
         // Update name in case character name was renamed in WeChat
         if (this.aiConfigs[c.id].aiName !== c.name) {
           this.aiConfigs[c.id].aiName = c.name;
+          hasChanges = true;
+        }
+        // Incrementally supplement newly added permission items without overwriting existing settings
+        if (!this.aiConfigs[c.id].permissions) {
+          this.aiConfigs[c.id].permissions = {};
+          hasChanges = true;
+        }
+        AI_PERMISSION_ITEMS.forEach((item) => {
+          if (this.aiConfigs[c.id].permissions[item.id] === undefined) {
+            this.aiConfigs[c.id].permissions[item.id] = item.defaultLevel;
+            hasChanges = true;
+          }
+        });
+        if (this.aiConfigs[c.id].allowAwarePermissionChanges === undefined) {
+          this.aiConfigs[c.id].allowAwarePermissionChanges = true;
           hasChanges = true;
         }
       }

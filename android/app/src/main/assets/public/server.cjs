@@ -29,6 +29,16 @@ var import_genai = require("@google/genai");
 import_dotenv.default.config();
 var app = (0, import_express.default)();
 app.use(import_express.default.json({ limit: "10mb" }));
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true, backend: "xiaoshouji-local-node", port: PORT });
+});
 var PORT = 3e3;
 async function callAiService({
   prompt,
@@ -2645,7 +2655,7 @@ async function startServer() {
       res.sendFile(import_path.default.join(distPath, "index.html"));
     });
   }
-  app.listen(PORT, "0.0.0.0", () => {
+  app.listen(PORT, "127.0.0.1", () => {
     console.log(`\u{1F4F1} Simulated Android AI Phone Server listening on port ${PORT}`);
   });
 }

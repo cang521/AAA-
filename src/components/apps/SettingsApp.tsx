@@ -39,11 +39,20 @@ import {
   Archive,
   RotateCcw,
   AlertTriangle,
+  Shield,
+  FileCheck,
 } from 'lucide-react';
 import { DataManagementModal } from '../data/DataManagementModal';
 import { clearAllChatMessages } from '../../lib/chatDb';
 import { clearAllAiMemoryVaults } from '../../lib/aiMemoryVaultDb';
 import { resetStorageToFactoryDefaults, loadApiConfig, saveApiConfig } from '../../lib/storage';
+import {
+  getUpgradeProtectionLogs,
+  CURRENT_APP_DATA_VERSION,
+  CURRENT_APP_VERSION_CODE,
+  CURRENT_APP_VERSION_NAME,
+  UpgradeProtectionLog,
+} from '../../lib/dataMigration';
 
 interface SettingsAppProps {
   onBackToLauncher: () => void;
@@ -205,6 +214,10 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   // Data Management Full Modal states
   const [showDataModal, setShowDataModal] = useState(false);
   const [dataModalTab, setDataModalTab] = useState<'import' | 'export' | 'snapshots'>('import');
+
+  // Upgrade Protection Logs Modal states
+  const [showUpgradeLogsModal, setShowUpgradeLogsModal] = useState(false);
+  const [upgradeLogs, setUpgradeLogs] = useState<UpgradeProtectionLog[]>([]);
 
   // Factory Reset (恢复出厂设置) Modal states
   const [showResetConfirmModal, setShowResetConfirmModal] = useState(false);
@@ -425,7 +438,27 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         }),
       });
 
-      const data: ConnectionTestResult = await res.json();
+      const text = await res.text();
+      let data: ConnectionTestResult;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = {
+          success: false,
+          latencyMs: 0,
+          providerType: providerType || 'custom',
+          checkedEndpoint: baseUrl || '未配置',
+          errorType: 'backend_offline',
+          message: 'Android 内置后端未启动',
+          error: '后端服务未就绪或未返回 JSON 响应。请确认应用完全初始化。',
+        };
+      }
+
+      if (data.error === 'Android 内置后端未启动' || res.status === 503) {
+        data.errorType = 'backend_offline';
+        data.message = 'Android 内置后端未启动';
+      }
+
       setConnectionResult(data);
 
       if (data.success) {
@@ -433,13 +466,14 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         setTimeout(() => setSaveSuccessMsg(''), 4000);
       }
     } catch (e: any) {
+      const isOffline = (e.message || '').includes('Android 内置后端未启动') || (e.message || '').includes('Failed to fetch');
       setConnectionResult({
         success: false,
         latencyMs: 0,
         providerType: providerType || 'custom',
         checkedEndpoint: baseUrl || '未配置',
-        errorType: 'network_error',
-        message: '前端网络请求异常，无法连接后端代理服务',
+        errorType: isOffline ? 'backend_offline' : 'network_error',
+        message: isOffline ? 'Android 内置后端未启动' : '前端网络请求异常，无法连接后端代理服务',
         error: e.message || '网络请求错误',
       });
     } finally {
@@ -487,7 +521,24 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         }),
       });
 
-      const data: ModelFetchResult = await res.json();
+      const text = await res.text();
+      let data: ModelFetchResult;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = {
+          success: false,
+          supported: false,
+          models: [],
+          message: 'Android 内置后端未启动',
+          error: '后端服务未就绪或未返回 JSON 响应。',
+        };
+      }
+
+      if (data.message === 'Android 内置后端未启动' || res.status === 503) {
+        data.message = 'Android 内置后端未启动';
+      }
+
       setModelFetchResult(data);
 
       if (data.success && data.models && data.models.length > 0) {
@@ -496,11 +547,12 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         setTimeout(() => setSaveSuccessMsg(''), 4000);
       }
     } catch (e: any) {
+      const isOffline = (e.message || '').includes('Android 内置后端未启动') || (e.message || '').includes('Failed to fetch');
       setModelFetchResult({
         success: false,
         supported: false,
         models: [],
-        message: '拉取模型列表失败',
+        message: isOffline ? 'Android 内置后端未启动' : '拉取模型列表失败',
         error: e.message || '网络请求错误',
       });
     } finally {
@@ -552,7 +604,20 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         }),
       });
 
-      const data: ModelTestResult = await res.json();
+      const text = await res.text();
+      let data: ModelTestResult;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = {
+          success: false,
+          latencyMs: 0,
+          model,
+          reply: '',
+          error: 'Android 内置后端未启动：后端未就绪或未返回 JSON 响应。',
+        };
+      }
+
       setModelTestResult(data);
 
       if (data.success) {
@@ -560,12 +625,13 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         setTimeout(() => setSaveSuccessMsg(''), 4000);
       }
     } catch (e: any) {
+      const isOffline = (e.message || '').includes('Android 内置后端未启动') || (e.message || '').includes('Failed to fetch');
       setModelTestResult({
         success: false,
         latencyMs: 0,
         model,
         reply: '',
-        error: e.message || '请求异常',
+        error: isOffline ? 'Android 内置后端未启动' : (e.message || '请求异常'),
       });
     } finally {
       setIsTestingModel(false);
@@ -1405,6 +1471,48 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
             </button>
           </div>
 
+          {/* Upgrade Protection & Version Status Card */}
+          <div className="p-3.5 rounded-2xl bg-zinc-950/70 border border-emerald-500/30 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+                  <Shield className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-xs text-white">安全增量升级 / 用户数据保护</h4>
+                  <p className="text-[10px] text-zinc-400">覆盖安装与 APK 更新时 100% 保留所有聊天、角色与记忆</p>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">
+                保护生效中
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-[10px]">
+              <div className="p-2 rounded-xl bg-zinc-900 border border-zinc-800">
+                <span className="text-zinc-400 block">应用包名 (固定不变)</span>
+                <span className="font-mono text-zinc-200 font-semibold truncate block">com.aistudio.aiphone</span>
+              </div>
+              <div className="p-2 rounded-xl bg-zinc-900 border border-zinc-800">
+                <span className="text-zinc-400 block">版本与模式结构</span>
+                <span className="font-mono text-emerald-400 font-semibold block">
+                  v{CURRENT_APP_VERSION_NAME} (code {CURRENT_APP_VERSION_CODE}) / schema v{CURRENT_APP_DATA_VERSION}
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => {
+                setUpgradeLogs(getUpgradeProtectionLogs());
+                setShowUpgradeLogsModal(true);
+              }}
+              className="w-full py-2 rounded-xl bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-500/30 text-emerald-300 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-[0.99]"
+            >
+              <FileCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>查看升级数据保护日志 (Migration Logs)</span>
+            </button>
+          </div>
+
           <button
             onClick={() => setShowResetConfirmModal(true)}
             className="w-full py-2.5 rounded-2xl bg-rose-950/30 hover:bg-rose-900/50 border border-rose-500/30 text-rose-300 hover:text-rose-200 font-medium text-xs flex items-center justify-center gap-2 transition active:scale-[0.99]"
@@ -1469,6 +1577,84 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Upgrade Protection Logs Modal */}
+      {showUpgradeLogsModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-emerald-500/30 rounded-3xl p-5 max-w-md w-full max-h-[85vh] shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+                  <Shield className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-white">升级数据保护日志</h3>
+                  <p className="text-[10px] text-zinc-400">仅记录保护结果与补充项，不泄露任何私密内容或密钥</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowUpgradeLogsModal(false)}
+                className="w-7 h-7 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white flex items-center justify-center text-xs"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto py-3 space-y-3">
+              {upgradeLogs.length === 0 ? (
+                <div className="py-8 text-center text-zinc-500 text-xs">
+                  暂无升级日志记录（当前为初始版本或未发生跨版本迁移）
+                </div>
+              ) : (
+                upgradeLogs.map((log, idx) => (
+                  <div key={idx} className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800/80 space-y-2">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-bold text-emerald-400">
+                        从版本 {log.fromDataVersion} 升级至版本 {log.toDataVersion}
+                      </span>
+                      <span className="text-zinc-500 text-[10px]">
+                        {new Date(log.timestamp).toLocaleString()}
+                      </span>
+                    </div>
+
+                    <div className="text-[10px] text-zinc-400">
+                      版本代码: versionCode {log.toVersionCode} (旧版: {log.fromVersionCode})
+                    </div>
+
+                    <div className="space-y-1.5 pt-1 border-t border-zinc-800/50">
+                      {log.items.map((item, itemIdx) => (
+                        <div key={itemIdx} className="flex items-start justify-between gap-2 text-[11px]">
+                          <span className="text-zinc-200 font-medium shrink-0">{item.name}:</span>
+                          <span
+                            className={`text-right leading-tight ${
+                              item.status === 'preserved'
+                                ? 'text-emerald-400'
+                                : item.status === 'supplemented'
+                                ? 'text-blue-400'
+                                : 'text-zinc-400'
+                            }`}
+                          >
+                            {item.detail}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="pt-3 border-t border-zinc-800 flex justify-end">
+              <button
+                onClick={() => setShowUpgradeLogsModal(false)}
+                className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium text-xs transition"
+              >
+                关闭
+              </button>
+            </div>
           </div>
         </div>
       )}

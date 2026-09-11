@@ -370,13 +370,32 @@ export const loadIcons = () => {
 };
 export const saveIcons = (icons: AppIconConfig[]) => saveToStorage(STORAGE_KEYS.LAUNCHER_ICONS, icons);
 
-export const loadWidgets = () => loadFromStorage<WidgetConfig[]>(STORAGE_KEYS.LAUNCHER_WIDGETS, INITIAL_WIDGETS);
+export const loadWidgets = () => {
+  const loaded = loadFromStorage<WidgetConfig[]>(STORAGE_KEYS.LAUNCHER_WIDGETS, INITIAL_WIDGETS);
+  if (!Array.isArray(loaded) || loaded.length === 0) return INITIAL_WIDGETS;
+  const existingTypes = new Set(loaded.map((w) => w.type));
+  const missingWidgets = INITIAL_WIDGETS.filter((w) => !existingTypes.has(w.type));
+  if (missingWidgets.length > 0) {
+    const merged = [...loaded, ...missingWidgets];
+    saveToStorage(STORAGE_KEYS.LAUNCHER_WIDGETS, merged);
+    return merged;
+  }
+  return loaded;
+};
 export const saveWidgets = (widgets: WidgetConfig[]) => saveToStorage(STORAGE_KEYS.LAUNCHER_WIDGETS, widgets);
 
 export const loadCharacters = () => {
   const loaded = loadFromStorage<AiCharacter[]>(STORAGE_KEYS.CHARACTERS, INITIAL_CHARACTERS);
   if (!Array.isArray(loaded) || loaded.length === 0) {
     return INITIAL_CHARACTERS;
+  }
+  // Incrementally supplement missing default characters if any exist
+  const existingIds = new Set(loaded.map((c) => c.id));
+  const missing = INITIAL_CHARACTERS.filter((c) => !existingIds.has(c.id));
+  if (missing.length > 0) {
+    const merged = [...loaded, ...missing];
+    saveToStorage(STORAGE_KEYS.CHARACTERS, merged);
+    return merged;
   }
   return loaded;
 };
@@ -400,31 +419,32 @@ export const saveMoments = (moments: MomentPost[]) => saveToStorage(STORAGE_KEYS
 
 export const loadUserProfile = (): UserProfile => {
   const loaded = loadFromStorage<UserProfile>(STORAGE_KEYS.USER_PROFILE, INITIAL_USER_PROFILE);
+  if (!loaded) return INITIAL_USER_PROFILE;
+  const merged: UserProfile = {
+    ...INITIAL_USER_PROFILE,
+    ...loaded,
+  };
   let changed = false;
-  if (!loaded.inviteCode) {
-    loaded.inviteCode = generateUserInviteCode();
-    changed = true;
-  }
-  if (loaded.personality === undefined) {
-    loaded.personality = INITIAL_USER_PROFILE.personality;
-    changed = true;
-  }
-  if (loaded.interests === undefined) {
-    loaded.interests = INITIAL_USER_PROFILE.interests;
-    changed = true;
-  }
-  if (loaded.chatCarePreference === undefined) {
-    loaded.chatCarePreference = INITIAL_USER_PROFILE.chatCarePreference;
+  if (!merged.inviteCode) {
+    merged.inviteCode = generateUserInviteCode();
     changed = true;
   }
   if (changed) {
-    saveToStorage(STORAGE_KEYS.USER_PROFILE, loaded);
+    saveToStorage(STORAGE_KEYS.USER_PROFILE, merged);
   }
-  return loaded;
+  return merged;
 };
 export const saveUserProfile = (profile: UserProfile) => saveToStorage(STORAGE_KEYS.USER_PROFILE, profile);
 
-export const loadMenstrualData = () => loadFromStorage<MenstrualData>(STORAGE_KEYS.MENSTRUAL, INITIAL_MENSTRUAL_DATA);
+export const loadMenstrualData = (): MenstrualData => {
+  const loaded = loadFromStorage<MenstrualData>(STORAGE_KEYS.MENSTRUAL, INITIAL_MENSTRUAL_DATA);
+  if (!loaded) return INITIAL_MENSTRUAL_DATA;
+  return {
+    ...INITIAL_MENSTRUAL_DATA,
+    ...loaded,
+    records: Array.isArray(loaded.records) ? loaded.records : INITIAL_MENSTRUAL_DATA.records,
+  };
+};
 export const saveMenstrualData = (data: MenstrualData) => saveToStorage(STORAGE_KEYS.MENSTRUAL, data);
 
 export const loadApiConfig = (): ApiConfig => {
@@ -494,7 +514,14 @@ export const saveApiConfig = (c: ApiConfig): void => {
   }
 };
 
-export const loadAiControls = () => loadFromStorage<AiControls>(STORAGE_KEYS.AI_CONTROLS, INITIAL_AI_CONTROLS);
+export const loadAiControls = (): AiControls => {
+  const loaded = loadFromStorage<AiControls>(STORAGE_KEYS.AI_CONTROLS, INITIAL_AI_CONTROLS);
+  if (!loaded) return INITIAL_AI_CONTROLS;
+  return {
+    ...INITIAL_AI_CONTROLS,
+    ...loaded,
+  };
+};
 export const saveAiControls = (c: AiControls) => saveToStorage(STORAGE_KEYS.AI_CONTROLS, c);
 
 export const loadPermissions = () => {

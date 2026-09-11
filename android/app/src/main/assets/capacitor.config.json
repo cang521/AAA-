@@ -16,6 +16,10 @@
 			"launchShowDuration": 1500,
 			"backgroundColor": "#18181b",
 			"showSpinner": false
+		},
+		"Nodejs": {
+			"nodeDir": "nodejs",
+			"startMode": "auto"
 		}
 	}
 }

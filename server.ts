@@ -56,8 +56,10 @@ async function callAiService({
   timeoutMs = 35000,
   customHeaders = {},
 }: AiCallParams): Promise<string> {
-  const activeKey = (apiKey && apiKey.trim()) || process.env.GEMINI_API_KEY || '';
   const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, '') : '';
+  const cleanKey = (apiKey && apiKey.trim()) || '';
+  // Only use server environment key in dev/preview if user has NOT specified a custom key AND has NOT specified a custom baseUrl
+  const activeKey = cleanKey || (!cleanBaseUrl && (!providerType || providerType === 'google_gemini') && process.env.NODE_ENV !== 'production' ? (process.env.GEMINI_API_KEY || '') : '');
   const targetModel = model?.trim() || 'gemini-3.6-flash';
 
   // Determine whether this request is OpenAI-compatible / Non-Google
@@ -224,6 +226,41 @@ async function callAiService({
       return result.text || '';
     } catch (geminiErr: any) {
       const errMsg = geminiErr.message || '';
+
+      // If custom Base URL returned 404 (endpoint not found in Gemini format), try OpenAI chat/completions on that proxy
+      if (cleanBaseUrl && (errMsg.includes('404') || errMsg.includes('NOT_FOUND') || errMsg.includes('Cannot POST') || errMsg.includes('not found'))) {
+        try {
+          let fallbackEndpoint = cleanBaseUrl;
+          if (!fallbackEndpoint.endsWith('/chat/completions')) {
+            fallbackEndpoint = fallbackEndpoint.endsWith('/v1') ? `${fallbackEndpoint}/chat/completions` : `${fallbackEndpoint}/v1/chat/completions`;
+          }
+          const altRes = await fetch(fallbackEndpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${activeKey}`,
+              ...customHeaders,
+            },
+            body: JSON.stringify({
+              model: targetModel,
+              messages: [
+                ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
+                { role: 'user', content: prompt },
+              ],
+              temperature,
+            }),
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          if (altRes.ok) {
+            const j = await altRes.json();
+            const text = j.choices?.[0]?.message?.content;
+            if (typeof text === 'string') return text;
+          }
+        } catch {
+          // ignore and proceed to standard error formatting
+        }
+      }
+
       if (errMsg.includes('401') || errMsg.includes('API_KEY_INVALID')) {
         throw new Error(`[Gemini 401 鉴权失败] Gemini API Key 无效: ${errMsg}`);
       } else if (errMsg.includes('404') || errMsg.includes('NOT_FOUND')) {
@@ -244,7 +281,8 @@ async function callAiService({
 app.post('/api/provider/test-connection', async (req, res) => {
   const { providerType, baseUrl, apiKey, serviceType = 'text', customHeaders } = req.body;
   const startTime = Date.now();
-  const cleanKey = (apiKey && apiKey.trim()) || (providerType === 'google_gemini' ? process.env.GEMINI_API_KEY : '') || '';
+  // Never fallback to process.env key when testing user settings
+  const cleanKey = (apiKey && apiKey.trim()) || '';
   const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, '') : '';
 
   if (!cleanKey && providerType !== 'ollama') {
@@ -263,21 +301,64 @@ app.post('/api/provider/test-connection', async (req, res) => {
     ? `${cleanKey.slice(0, 3)}****${cleanKey.slice(-4)}`
     : (cleanKey ? '****' : '(无密钥)');
 
-  // 1. Google Gemini Connection Test
-  if (providerType === 'google_gemini' || (!cleanBaseUrl && !providerType)) {
+  // 1. Google Gemini Connection Test (Official or Custom Reverse Proxy)
+  if (providerType === 'google_gemini') {
+    const isV1Path = cleanBaseUrl.includes('/v1') && !cleanBaseUrl.includes('v1beta');
     const testEndpoint = cleanBaseUrl
-      ? `${cleanBaseUrl}/v1beta/models?key=${cleanKey}`
+      ? (isV1Path
+          ? (cleanBaseUrl.endsWith('/models') ? cleanBaseUrl : `${cleanBaseUrl}/models`)
+          : (cleanBaseUrl.endsWith('/v1beta') ? `${cleanBaseUrl}/models?key=${cleanKey}` : `${cleanBaseUrl}/v1beta/models?key=${cleanKey}`))
       : `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanKey}`;
 
     try {
       const resp = await fetch(testEndpoint, {
         method: 'GET',
-        headers: { 'User-Agent': 'aistudio-build-provider-test' },
+        headers: {
+          'User-Agent': 'aistudio-build-provider-test',
+          'x-goog-api-key': cleanKey,
+          'Authorization': `Bearer ${cleanKey}`,
+          ...customHeaders,
+        },
         signal: AbortSignal.timeout(10000),
       });
       const latencyMs = Date.now() - startTime;
 
       if (!resp.ok) {
+        // If 404 on custom reverse proxy, try probing generateContent directly
+        if (cleanBaseUrl && (resp.status === 404 || resp.status === 405)) {
+          const probeEndpoint = cleanBaseUrl.endsWith('/v1beta')
+            ? `${cleanBaseUrl}/models/gemini-2.5-flash:generateContent?key=${cleanKey}`
+            : `${cleanBaseUrl}/v1beta/models/gemini-2.5-flash:generateContent?key=${cleanKey}`;
+          try {
+            const probeResp = await fetch(probeEndpoint, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': cleanKey,
+                'Authorization': `Bearer ${cleanKey}`,
+                ...customHeaders,
+              },
+              body: JSON.stringify({ contents: [{ parts: [{ text: 'ping' }] }] }),
+              signal: AbortSignal.timeout(10000),
+            });
+            if (probeResp.ok) {
+              return res.json({
+                success: true,
+                latencyMs: Date.now() - startTime,
+                statusCode: 200,
+                statusText: 'OK',
+                providerType: 'google_gemini',
+                checkedEndpoint: probeEndpoint.replace(cleanKey, '***'),
+                maskedKey,
+                availableModelsCount: 1,
+                message: `Google Gemini 自定义反代 API 连通成功！(generateContent 链路正常，耗时 ${Date.now() - startTime}ms)`,
+              });
+            }
+          } catch {
+            // keep standard error
+          }
+        }
+
         const errText = await resp.text();
         let errMsg = errText;
         try {
@@ -295,7 +376,7 @@ app.post('/api/provider/test-connection', async (req, res) => {
             checkedEndpoint: testEndpoint.replace(cleanKey, '***'),
             errorType: 'auth_error',
             maskedKey,
-            message: 'Gemini API Key 鉴权失败',
+            message: cleanBaseUrl ? `反代 API Key 鉴权失败 (${resp.status})` : 'Gemini API Key 鉴权失败',
             error: errMsg,
           });
         }
@@ -315,7 +396,7 @@ app.post('/api/provider/test-connection', async (req, res) => {
       }
 
       const data = await resp.json();
-      const modelsCount = Array.isArray(data.models) ? data.models.length : 0;
+      const modelsCount = Array.isArray(data.models) ? data.models.length : (Array.isArray(data.data) ? data.data.length : 0);
 
       return res.json({
         success: true,
@@ -326,7 +407,7 @@ app.post('/api/provider/test-connection', async (req, res) => {
         checkedEndpoint: testEndpoint.replace(cleanKey, '***'),
         maskedKey,
         availableModelsCount: modelsCount,
-        message: `Google Gemini 官方/反代 API 连通成功！检测到 ${modelsCount} 个可用模型 (耗时 ${latencyMs}ms)`,
+        message: `${cleanBaseUrl ? '自定义反代' : 'Google Gemini 官方'} API 连通成功！检测到 ${modelsCount} 个可用模型 (耗时 ${latencyMs}ms)`,
       });
     } catch (err: any) {
       const latencyMs = Date.now() - startTime;
@@ -492,46 +573,100 @@ app.post('/api/provider/test-connection', async (req, res) => {
 // =========================================================================
 app.post('/api/provider/fetch-models', async (req, res) => {
   const { providerType, baseUrl, apiKey, serviceType = 'text', customHeaders } = req.body;
-  const cleanKey = (apiKey && apiKey.trim()) || (providerType === 'google_gemini' ? process.env.GEMINI_API_KEY : '') || '';
+  // Never fallback to process.env key when testing user settings
+  const cleanKey = (apiKey && apiKey.trim()) || '';
   const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, '') : '';
 
+  if (!cleanKey && providerType !== 'ollama') {
+    return res.status(400).json({
+      success: false,
+      supported: false,
+      models: [],
+      errorType: 'auth_error',
+      message: '请先输入有效的 API Key 再获取模型列表。',
+    });
+  }
+
   // 1. Google Gemini Models Fetching
-  if (providerType === 'google_gemini' || (!cleanBaseUrl && !providerType)) {
+  if (providerType === 'google_gemini') {
+    const isV1Path = cleanBaseUrl.includes('/v1') && !cleanBaseUrl.includes('v1beta');
     const fetchUrl = cleanBaseUrl
-      ? `${cleanBaseUrl}/v1beta/models?key=${cleanKey}`
+      ? (isV1Path
+          ? (cleanBaseUrl.endsWith('/models') ? cleanBaseUrl : `${cleanBaseUrl}/models`)
+          : (cleanBaseUrl.endsWith('/v1beta') ? `${cleanBaseUrl}/models?key=${cleanKey}` : `${cleanBaseUrl}/v1beta/models?key=${cleanKey}`))
       : `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanKey}`;
 
     try {
       const resp = await fetch(fetchUrl, {
         method: 'GET',
-        headers: { 'User-Agent': 'aistudio-build-models-fetch' },
+        headers: {
+          'User-Agent': 'aistudio-build-models-fetch',
+          'x-goog-api-key': cleanKey,
+          'Authorization': `Bearer ${cleanKey}`,
+          ...customHeaders,
+        },
         signal: AbortSignal.timeout(12000),
       });
 
       if (!resp.ok) {
+        // If 404 on custom reverse proxy, try probing /v1/models (OpenAI-compatible proxy format)
+        if (cleanBaseUrl && (resp.status === 404 || resp.status === 405) && !isV1Path) {
+          const altUrl = `${cleanBaseUrl}/v1/models`;
+          try {
+            const altResp = await fetch(altUrl, {
+              method: 'GET',
+              headers: {
+                'User-Agent': 'aistudio-build-models-fetch',
+                'Authorization': `Bearer ${cleanKey}`,
+                ...customHeaders,
+              },
+              signal: AbortSignal.timeout(8000),
+            });
+            if (altResp.ok) {
+              const altData = await altResp.json();
+              const altList = Array.isArray(altData.data) ? altData.data : (Array.isArray(altData.models) ? altData.models : (Array.isArray(altData) ? altData : []));
+              const formatted = altList.map((m: any) => ({
+                id: typeof m === 'string' ? m : m.id || m.name,
+                name: typeof m === 'object' && m.name ? m.name : (typeof m === 'string' ? m : m.id),
+                type: 'text',
+                owned_by: 'Proxy',
+              }));
+              return res.json({
+                success: true,
+                supported: true,
+                models: formatted,
+                sourceEndpoint: altUrl,
+                message: `成功拉取到 ${formatted.length} 个模型 (来自反代 /v1/models)`,
+              });
+            }
+          } catch {
+            // fallback to original error
+          }
+        }
+
         const errText = await resp.text();
         return res.status(resp.status).json({
           success: false,
           supported: true,
           models: [],
-          message: `拉取 Gemini 模型列表失败 (${resp.status})`,
+          message: cleanBaseUrl ? `从自定义反代拉取模型列表失败 (${resp.status})` : `拉取 Gemini 模型列表失败 (${resp.status})`,
           error: errText,
         });
       }
 
       const data = await resp.json();
-      const rawList = Array.isArray(data.models) ? data.models : [];
+      const rawList = Array.isArray(data.models) ? data.models : (Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []));
       const formattedModels = rawList.map((m: any) => {
-        const id = (m.name || '').replace('models/', '');
+        const id = (typeof m === 'string' ? m : m.id || m.name || '').replace('models/', '');
         const isImage = id.includes('imagen') || id.includes('image');
         const isVoice = id.includes('audio') || id.includes('tts') || id.includes('speech');
         return {
           id,
-          name: m.displayName || id,
-          description: m.description || '',
+          name: typeof m === 'object' && (m.displayName || m.name) ? (m.displayName || m.name) : id,
+          description: typeof m === 'object' ? (m.description || '') : '',
           type: isImage ? 'image' : isVoice ? 'voice' : 'text',
-          contextWindow: m.inputTokenLimit,
-          owned_by: 'Google',
+          contextWindow: typeof m === 'object' ? m.inputTokenLimit : undefined,
+          owned_by: typeof m === 'object' && m.owned_by ? m.owned_by : (cleanBaseUrl ? 'Gemini-Proxy' : 'Google'),
         };
       });
 
@@ -540,14 +675,14 @@ app.post('/api/provider/fetch-models', async (req, res) => {
         supported: true,
         models: formattedModels,
         sourceEndpoint: fetchUrl.replace(cleanKey, '***'),
-        message: `成功拉取到 ${formattedModels.length} 个 Gemini 真实模型`,
+        message: `成功拉取到 ${formattedModels.length} 个 ${cleanBaseUrl ? '反代' : 'Gemini'} 真实模型`,
       });
     } catch (err: any) {
       return res.status(500).json({
         success: false,
         supported: false,
         models: [],
-        message: '拉取 Gemini 模型列表失败',
+        message: cleanBaseUrl ? '连接自定义反代拉取模型列表失败' : '拉取 Gemini 模型列表失败',
         error: err.message,
       });
     }
@@ -2996,6 +3131,15 @@ app.post('/api/provider/generate-speech', async (req, res) => {
   }
 });
 
+// 404 handler for API routes - never return HTML for API requests!
+app.use('/api', (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'API 端点未找到',
+    message: `端点 ${req.method} ${req.originalUrl} 不存在`,
+  });
+});
+
 // Vite middleware / static serving
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
@@ -3013,7 +3157,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '127.0.0.1', () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`📱 Simulated Android AI Phone Server listening on port ${PORT}`);
   });
 }
