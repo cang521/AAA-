@@ -28,7 +28,9 @@ import {
   History,
   FileText,
   Lock,
+  Terminal,
 } from 'lucide-react';
+import { AgentSimulatorModal } from '../agent/AgentSimulatorModal';
 import {
   CapabilityStatus,
   SystemCapabilityId,
@@ -71,7 +73,7 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
   const [isCheckingAll, setIsCheckingAll] = useState(false);
   const [activeDiagnostic, setActiveDiagnostic] = useState<CapabilityDiagnosticResult | null>(null);
   const [fallbackModalCap, setFallbackModalCap] = useState<SystemCapabilityDef | null>(null);
-  const [techExplainCap, setTechExplainCap] = useState<SystemCapabilityDef | null>(null);
+  const [apkRequirementCap, setApkRequirementCap] = useState<SystemCapabilityDef | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
 
   // AI independent permissions state
@@ -79,6 +81,7 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
   const [selectedAiId, setSelectedAiId] = useState<string>('');
   const [aiConfigs, setAiConfigs] = useState(permissionManager.getAllAiConfigs());
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [isSimulatorOpen, setIsSimulatorOpen] = useState(false);
 
   // Scene rules state
   const [sceneRules, setSceneRules] = useState(permissionManager.getAllSceneRules());
@@ -105,7 +108,14 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
     // Auto-check real permissions on mount
     systemCapabilityManager.recheckAll();
 
+    // Recheck immediately when user returns to app from Android Settings
+    const handleFocusReturn = () => {
+      systemCapabilityManager.recheckAll();
+    };
+    window.addEventListener('focus', handleFocusReturn);
+
     return () => {
+      window.removeEventListener('focus', handleFocusReturn);
       unsubSys();
       unsubPerm();
     };
@@ -125,10 +135,10 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
 
   const handleRecheckAll = async () => {
     setIsCheckingAll(true);
-    triggerToast('正在重新检测全套 14 项系统能力...');
+    triggerToast('正在读取系统底层真实权限状态...');
     await systemCapabilityManager.recheckAll();
     setIsCheckingAll(false);
-    triggerToast('系统能力状态检测完成');
+    triggerToast('系统真实权限检测已完成');
   };
 
   const counts = systemCapabilityManager.getCapabilityCounts();
@@ -178,12 +188,19 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
             ⚫ 当前设备不支持
           </span>
         );
+      case 'NEED_APK':
+        return (
+          <span className="px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 text-[11px] font-medium flex items-center gap-1 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+            🟣 需要安装 Android APK 后使用
+          </span>
+        );
       case 'NOT_IMPLEMENTED':
       default:
         return (
-          <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700/60 text-[11px] font-medium flex items-center gap-1 shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
-            ⚪ 当前版本尚未实现
+          <span className="px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 text-[11px] font-medium flex items-center gap-1 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+            🟣 需要安装 Android APK 后使用
           </span>
         );
     }
@@ -192,9 +209,9 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
   const handleRequestCapability = async (id: SystemCapabilityId) => {
     const res = await systemCapabilityManager.requestCapability(id);
     if (res.success) {
-      triggerToast('能力授权成功');
+      triggerToast('权限授权成功');
     } else {
-      triggerToast(res.error || '获取未完成，可点击【再次获取】或【权限诊断】');
+      triggerToast(res.error || '未完成授权，可点击【重新获取权限】重试');
     }
   };
 
@@ -242,6 +259,14 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setIsSimulatorOpen(true)}
+            className="px-2 py-1 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 text-[10px] font-medium flex items-center gap-1 transition"
+            title="打开 AI 代理决策模拟台"
+          >
+            <Terminal className="w-3.5 h-3.5" />
+            <span>决策模拟台</span>
+          </button>
           {onOpenActivityLogs && (
             <button
               onClick={onOpenActivityLogs}
@@ -313,7 +338,7 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
               </span>
             </div>
             <p className="text-[10px] text-zinc-400">
-              已授权 {counts.granted} · 临时 {counts.temporary} · 尚未实现 {counts.notImplemented} · 未授权 {counts.denied}
+              已授权 {counts.granted} · 临时 {counts.temporary} · 需要APK {counts.needApk} · 未授权 {counts.denied}
             </p>
           </div>
 
@@ -379,8 +404,8 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
 
             <div className="space-y-2.5">
               {SYSTEM_CAPABILITIES_LIST.map((cap) => {
-                const status = sysStatuses[cap.id] || 'NOT_IMPLEMENTED';
-                const isNotImplemented = status === 'NOT_IMPLEMENTED';
+                const status = sysStatuses[cap.id] || 'DENIED';
+                const isNeedApk = status === 'NEED_APK';
                 const isFailed = status === 'REQUEST_FAILED';
                 const isDenied = status === 'DENIED';
                 const isGranted = status === 'GRANTED' || status === 'TEMPORARY';
@@ -420,17 +445,29 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
 
                     {/* Action Buttons */}
                     <div className="pt-1 flex items-center justify-end gap-2 flex-wrap border-t border-zinc-800/60">
-                      {isNotImplemented && (
+                      {isNeedApk && (
                         <>
-                          <span className="text-[10px] text-zinc-500 mr-auto flex items-center gap-1">
-                            <Layers className="w-3 h-3 text-zinc-500" />
-                            Phase 2 原生插件预留
+                          <span className="text-[10px] text-purple-400 mr-auto flex items-center gap-1">
+                            <Layers className="w-3 h-3 text-purple-400" />
+                            需要安装 Android APK 后使用
                           </span>
                           <button
-                            onClick={() => setTechExplainCap(cap)}
+                            onClick={() => setApkRequirementCap(cap)}
+                            className="px-2.5 py-1 rounded-xl bg-purple-900/30 hover:bg-purple-900/50 text-purple-300 border border-purple-500/30 text-[11px] font-medium transition"
+                          >
+                            真机说明
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (!systemCapabilityManager.isNativeAndroid()) {
+                                setApkRequirementCap(cap);
+                              } else {
+                                handleRequestCapability(cap.id);
+                              }
+                            }}
                             className="px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-medium transition"
                           >
-                            能力技术说明
+                            尝试授权
                           </button>
                         </>
                       )}
@@ -446,18 +483,18 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
 
                       {isFailed && (
                         <>
-                          {/* CRITICAL USER REQUIREMENT: 再次获取 is ALWAYS enabled and visible! */}
+                          {/* CRITICAL USER REQUIREMENT: 重新获取权限 is ALWAYS enabled and visible! */}
                           <button
                             onClick={() => handleRequestCapability(cap.id)}
                             className="px-3 py-1.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-medium transition active:scale-95"
                           >
-                            再次获取
+                            重新获取权限
                           </button>
                           <button
                             onClick={() => handleOpenFallbackDrawer(cap)}
                             className="px-2.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] font-medium transition"
                           >
-                            自动寻找设置入口
+                            系统设置入口
                           </button>
                         </>
                       )}
@@ -468,13 +505,13 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                             onClick={() => handleRequestCapability(cap.id)}
                             className="px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-medium transition"
                           >
-                            检查权限
+                            重新检测
                           </button>
                           <button
                             onClick={() => handleOpenFallbackDrawer(cap)}
                             className="px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-medium transition flex items-center gap-1"
                           >
-                            <span>打开系统设置</span>
+                            <span>系统设置</span>
                             <ExternalLink className="w-3 h-3 text-zinc-400" />
                           </button>
                         </>
@@ -491,11 +528,11 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                           <button
                             onClick={async () => {
                               await systemCapabilityManager.recheckAll();
-                              triggerToast('已重新检测该能力真实状态');
+                              triggerToast('已重新检测系统真实状态');
                             }}
                             className="px-2.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] font-medium transition"
                           >
-                            我已经设置好了 · 重新检测
+                            已在系统开启 · 重新检测
                           </button>
                         </>
                       )}
@@ -970,40 +1007,45 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
       )}
 
       {/* ========================================== */}
-      {/* MODAL 3: 能力技术说明 (Not Implemented Tech Info) */}
+      {/* MODAL 3: 真机运行要求说明 (Real Android APK Requirement) */}
       {/* ========================================== */}
-      {techExplainCap && (
+      {apkRequirementCap && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
           <div className="w-full max-w-sm rounded-3xl bg-zinc-900 border border-zinc-700 p-4 space-y-3 shadow-2xl text-xs">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
               <h3 className="font-bold text-sm text-zinc-100 flex items-center gap-1.5">
-                <Info className="w-4 h-4 text-indigo-400" />
-                原生技术架构说明
+                <Info className="w-4 h-4 text-purple-400" />
+                需要安装 Android APK 后使用
               </h3>
               <button
-                onClick={() => setTechExplainCap(null)}
+                onClick={() => setApkRequirementCap(null)}
                 className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="space-y-2 text-zinc-300 text-[11px] leading-relaxed">
-              <div className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800">
-                <span className="text-zinc-400 block text-[10px]">技术名称:</span>
-                <span className="font-mono text-indigo-300 font-semibold">{techExplainCap.androidApiName}</span>
+            <div className="space-y-2.5 text-zinc-300 text-[11px] leading-relaxed">
+              <div className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-1">
+                <div className="flex justify-between items-center text-[10px] text-zinc-400">
+                  <span>Android 原生底层接口:</span>
+                  <span className="text-emerald-400 font-mono">代码与服务已就绪</span>
+                </div>
+                <span className="font-mono text-purple-300 font-semibold block break-all">{apkRequirementCap.androidApiName}</span>
               </div>
               <p>
-                当前小手机处于 <strong className="text-zinc-100">Phase 1 权限与基础设施阶段</strong>。
-                本项目遵循工程诚实原则：<strong className="text-rose-400">严禁伪造已授权</strong>。
+                【<strong className="text-zinc-100">{apkRequirementCap.name}</strong>】属于 Android 系统底层特权功能。
               </p>
-              <p>
-                该能力需要借助 Android 平台专门的后台 Service（例如无障碍辅助服务、通知监听服务或 UsageStatsManager）。在后续 Phase 2 编译原生 Android APK 并注册底层插件后即可直接对接使用。
+              <p className="text-zinc-400">
+                项目中已完整集成 Android 原生插件与后台服务（AndroidPermissionBridge、NotificationCollectorService、AiAccessibilityService）。在 Android 设备安装该 APK 后，点击即可真实弹出系统授权对话框或直接跳转 Android 系统设置页面。
+              </p>
+              <p className="text-zinc-300">
+                当前运行在 <strong className="text-purple-300">Web Preview 浏览器沙箱</strong> 中，浏览器缺少宿主 Android 系统的底层特权体系，因此显示“需要安装 Android APK 后使用”。
               </p>
             </div>
 
             <button
-              onClick={() => setTechExplainCap(null)}
+              onClick={() => setApkRequirementCap(null)}
               className="w-full py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition"
             >
               我知道了
@@ -1071,6 +1113,12 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
           </div>
         </div>
       )}
+
+      {/* Decision Simulator Modal (Phase 2) */}
+      <AgentSimulatorModal
+        isOpen={isSimulatorOpen}
+        onClose={() => setIsSimulatorOpen(false)}
+      />
     </div>
   );
 };

@@ -19,7 +19,8 @@ export type CapabilityStatus =
   | 'REQUEST_FAILED'     // 🟠 获取失败
   | 'SETTINGS_REQUIRED'  // 🔵 需要系统设置
   | 'UNSUPPORTED'        // ⚫ 当前设备不支持
-  | 'NOT_IMPLEMENTED';   // ⚪ 当前版本尚未实现
+  | 'NEED_APK'           // 🟣 需要安装 Android APK 后使用
+  | 'NOT_IMPLEMENTED';   // ⚪ 未实现
 
 export type SystemCapabilityId =
   | 'notification'             // 1. 通知权限
@@ -192,8 +193,87 @@ export interface AiActivityLog {
 }
 
 // ==========================================
-// AI Own View (Restricted to Self)
+// Phase 2: Events & Decision Chain Types
 // ==========================================
+
+export type AgentEventType =
+  | 'APP_FOREGROUND_CHANGED'
+  | 'APP_USAGE_TICK'
+  | 'BATTERY_CHANGED'
+  | 'TIME_PERIOD_CHANGED'
+  | 'SCENE_CHANGED'
+  | 'MANUAL_TRIGGER'
+  | 'PERIODIC_EVALUATION';
+
+export interface AgentEvent {
+  id: string;
+  type: AgentEventType;
+  timestamp: number;
+  payload: Record<string, any>;
+  summary: string;
+}
+
+export type AgentActionType =
+  | 'proactive_chat'
+  | 'screen_view'
+  | 'system_notification'
+  | 'floating_bubble'
+  | 'request_open_phone'
+  | 'app_navigate';
+
+export interface ActionCandidate {
+  id: string;
+  targetAiId: string;
+  targetAiName: string;
+  actionType: AgentActionType;
+  actionTitle: string;
+  triggerReason: string;
+  urgency: 'low' | 'normal' | 'high';
+  proposedMessageText?: string;
+  targetAppId?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface DecisionTraceStage {
+  stageName: string;
+  passed: boolean;
+  statusText: string;
+  detail: string;
+}
+
+export interface AgentDecisionTrace {
+  id: string;
+  timestamp: number;
+  candidate: ActionCandidate;
+  stages: DecisionTraceStage[];
+  finalOutcome: 'ALLOW' | 'ASK' | 'DENY';
+  executionResult?: 'SUCCESS' | 'FAILED' | 'REJECTED' | 'WAITING_USER';
+  failureReason?: string;
+}
+
+export interface AgentAskPrompt {
+  id: string;
+  aiId: string;
+  aiName: string;
+  aiAvatar?: string;
+  actionType: AgentActionType;
+  actionTitle: string;
+  sceneName: string;
+  description: string;
+  timestamp: number;
+  resolve: (decision: 'ALLOW_ONCE' | 'ALLOW_ALWAYS' | 'DENY') => void;
+}
+
+export interface InPhoneNotification {
+  id: string;
+  aiId: string;
+  aiName: string;
+  aiAvatar?: string;
+  title: string;
+  content: string;
+  timestamp: number;
+  category?: 'proactive_chat' | 'system_alert' | 'care';
+}
 
 export interface AiSelfPermissionView {
   aiId: string;
@@ -207,3 +287,4 @@ export interface AiSelfPermissionView {
   deniedActions: string[];
   recentPermissionChanges: PermissionChangedEvent[];
 }
+

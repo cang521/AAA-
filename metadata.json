@@ -1,6 +1,6 @@
 {
   "name": "AI 手机模拟器与智能微信系统",
   "description": "高度仿真的 Android 手机系统，包含仿真微信与AI多人群聊空间、AI高参与度/手机代理四层权限管理体系（系统底层能力、AI独立权限、场景控制规则、动作执行拦截）与不可篡改AI活动记录审计中心、急停保护与风险拦截、实时天气感知、经期健康、世界书与智能设备管理。",
-  "requestFramePermissions": ["microphone", "geolocation"],
+  "requestFramePermissions": ["camera", "microphone", "geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

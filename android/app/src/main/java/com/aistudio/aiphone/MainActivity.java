@@ -12,10 +12,12 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
+import com.aistudio.aiphone.plugins.AndroidPermissionBridge;
 
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        registerPlugin(AndroidPermissionBridge.class);
         super.onCreate(savedInstanceState);
 
         Window window = getWindow();

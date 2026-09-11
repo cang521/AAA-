@@ -4,4 +4,5 @@
     <string name="title_activity_main">AI Phone Simulator</string>
     <string name="package_name">com.aistudio.aiphone</string>
     <string name="custom_url_scheme">com.aistudio.aiphone</string>
+    <string name="accessibility_service_description">AI 手机界面辅助与无障碍感知服务，用于协助感知应用运行状态与提供人机智能辅助。</string>
 </resources>

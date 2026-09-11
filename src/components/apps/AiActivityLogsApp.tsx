@@ -20,7 +20,9 @@ import {
   Sliders,
   History,
   Lock,
+  Terminal,
 } from 'lucide-react';
+import { AgentSimulatorModal } from '../agent/AgentSimulatorModal';
 import {
   AiActivityLog,
   ActivityEventType,
@@ -44,6 +46,7 @@ export const AiActivityLogsApp: React.FC<AiActivityLogsAppProps> = ({
   const [characters, setCharacters] = useState<AiCharacter[]>([]);
   const [selectedLog, setSelectedLog] = useState<AiActivityLog | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [isSimulatorOpen, setIsSimulatorOpen] = useState(false);
 
   // Filters
   const [dateFilter, setDateFilter] = useState<'today' | '3days' | 'all'>('today');
@@ -203,6 +206,14 @@ export const AiActivityLogsApp: React.FC<AiActivityLogsAppProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setIsSimulatorOpen(true)}
+            className="px-2 py-1 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 text-[10px] font-medium flex items-center gap-1 transition"
+            title="打开 AI 代理决策模拟台"
+          >
+            <Terminal className="w-3.5 h-3.5" />
+            <span>决策模拟台</span>
+          </button>
           {onOpenPermissions && (
             <button
               onClick={onOpenPermissions}
@@ -522,6 +533,12 @@ export const AiActivityLogsApp: React.FC<AiActivityLogsAppProps> = ({
           </div>
         </div>
       )}
+
+      {/* Decision Simulator Modal (Phase 2) */}
+      <AgentSimulatorModal
+        isOpen={isSimulatorOpen}
+        onClose={() => setIsSimulatorOpen(false)}
+      />
     </div>
   );
 };
