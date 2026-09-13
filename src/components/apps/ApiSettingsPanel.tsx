@@ -81,37 +81,18 @@ const persistCustomPresets = (items: CustomPresetItem[]) => {
 };
 
 export interface ApiSettingsPanelProps {
-  config: ApiConfig;
-  setConfig: React.Dispatch<React.SetStateAction<ApiConfig>>;
+  draftConfig: ApiConfig;
+  setDraftConfig: React.Dispatch<React.SetStateAction<ApiConfig>>;
   activeCategory: 'text' | 'image' | 'voice';
   setActiveCategory: (cat: 'text' | 'image' | 'voice') => void;
 
-  // Key inputs & visibility
-  textApiKeyInput: string;
-  setTextApiKeyInput: (val: string) => void;
   showTextKey: boolean;
   setShowTextKey: (show: boolean) => void;
-
-  imageApiKeyInput: string;
-  setImageApiKeyInput: (val: string) => void;
   showImageKey: boolean;
   setShowImageKey: (show: boolean) => void;
-
-  voiceApiKeyInput: string;
-  setVoiceApiKeyInput: (val: string) => void;
   showVoiceKey: boolean;
   setShowVoiceKey: (show: boolean) => void;
 
-  // Saved key getters & clearers
-  getSavedTextKey: () => string;
-  getSavedImageKey: () => string;
-  getSavedVoiceKey: () => string;
-  explicitlyClearedTextKey: boolean;
-  setExplicitlyClearedTextKey: (val: boolean) => void;
-  explicitlyClearedImageKey: boolean;
-  setExplicitlyClearedImageKey: (val: boolean) => void;
-  explicitlyClearedVoiceKey: boolean;
-  setExplicitlyClearedVoiceKey: (val: boolean) => void;
   handleClearTextKey: () => void;
   handleClearImageKey: () => void;
   handleClearVoiceKey: () => void;
@@ -135,31 +116,16 @@ export interface ApiSettingsPanelProps {
 }
 
 export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
-  config,
-  setConfig,
+  draftConfig,
+  setDraftConfig,
   activeCategory,
   setActiveCategory,
-  textApiKeyInput,
-  setTextApiKeyInput,
   showTextKey,
   setShowTextKey,
-  imageApiKeyInput,
-  setImageApiKeyInput,
   showImageKey,
   setShowImageKey,
-  voiceApiKeyInput,
-  setVoiceApiKeyInput,
   showVoiceKey,
   setShowVoiceKey,
-  getSavedTextKey,
-  getSavedImageKey,
-  getSavedVoiceKey,
-  explicitlyClearedTextKey,
-  setExplicitlyClearedTextKey,
-  explicitlyClearedImageKey,
-  setExplicitlyClearedImageKey,
-  explicitlyClearedVoiceKey,
-  setExplicitlyClearedVoiceKey,
   handleClearTextKey,
   handleClearImageKey,
   handleClearVoiceKey,
@@ -174,9 +140,16 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   modelTestResult,
   handleTestSelectedModel,
   handleGlobalSave,
+  applyTextPreset,
 }) => {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showPresetManager, setShowPresetManager] = useState(false);
+
+  // Derived single source of truth values
+  const currentProvider = draftConfig.textProvider || 'google_gemini';
+  const currentTextKey = draftConfig.providers?.[currentProvider]?.apiKey ?? draftConfig.textApiKey ?? '';
+  const currentImageKey = draftConfig.imageApiKey ?? '';
+  const currentVoiceKey = draftConfig.voiceApiKey ?? '';
 
   // 自定义配置列表状态
   const [customPresets, setCustomPresets] = useState<CustomPresetItem[]>(loadSavedPresets);
@@ -200,22 +173,30 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   const handleSelectPreset = (id: string) => {
     setSelectedPresetId(id);
     if (id === 'custom') {
-      setConfig((prev) => ({ ...prev, textProvider: 'custom' }));
+      setDraftConfig((prev) => ({ ...prev, textProvider: 'custom' }));
       return;
     }
     const found = customPresets.find((p) => p.id === id);
     if (found) {
-      setConfig((prev) => ({
-        ...prev,
-        textProvider: 'custom',
-        textBaseUrl: found.baseUrl,
-        textModel: found.model,
-        ...(found.apiKey ? { textApiKey: found.apiKey } : {}),
-      }));
-      if (found.apiKey) {
-        setTextApiKeyInput(found.apiKey);
-        setExplicitlyClearedTextKey(false);
-      }
+      setDraftConfig((prev) => {
+        const updatedProviders = {
+          ...(prev.providers || {}),
+          custom: {
+            provider: 'custom' as const,
+            baseUrl: found.baseUrl,
+            model: found.model,
+            apiKey: found.apiKey || prev.providers?.custom?.apiKey || prev.textApiKey || '',
+          },
+        };
+        return {
+          ...prev,
+          textProvider: 'custom',
+          textBaseUrl: found.baseUrl,
+          textModel: found.model,
+          textApiKey: found.apiKey || prev.textApiKey || '',
+          providers: updatedProviders,
+        };
+      });
       showNotice(`已切换到预设：${found.name}`);
     }
   };
@@ -226,9 +207,9 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
     const newPreset: CustomPresetItem = {
       id: 'custom_' + Date.now(),
       name,
-      baseUrl: config.textBaseUrl || '',
-      apiKey: textApiKeyInput.trim() || getSavedTextKey() || '',
-      model: config.textModel || '',
+      baseUrl: draftConfig.textBaseUrl || '',
+      apiKey: currentTextKey,
+      model: draftConfig.textModel || '',
       createdAt: Date.now(),
     };
     const updated = [...customPresets, newPreset];
@@ -252,7 +233,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   // 清空 / 删除当前的自定义配置内容
   const handleClearCurrentConfig = () => {
     handleClearTextKey();
-    setConfig((prev) => ({
+    setDraftConfig((prev) => ({
       ...prev,
       textBaseUrl: '',
       textApiKey: '',
@@ -261,19 +242,13 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
       providers: {
         ...(prev.providers || {}),
         custom: {
-          ...(prev.providers?.custom || {
-            provider: 'custom',
-            baseUrl: '',
-            model: '',
-          }),
+          provider: 'custom' as const,
           apiKey: '',
           baseUrl: '',
           model: '',
         },
       },
     }));
-    setTextApiKeyInput('');
-    setExplicitlyClearedTextKey(true);
     setSelectedPresetId('custom');
     showNotice('已清空当前自定义配置');
   };
@@ -336,8 +311,29 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="https://api.openai.com/v1 或留空使用默认"
-              value={config.textBaseUrl || ''}
-              onChange={(e) => setConfig({ ...config, textBaseUrl: e.target.value.trim() })}
+              value={draftConfig.textBaseUrl || ''}
+              onChange={(e) => {
+                const val = e.target.value;
+                setDraftConfig((prev) => {
+                  const provider = prev.textProvider || 'google_gemini';
+                  return {
+                    ...prev,
+                    textBaseUrl: val,
+                    providers: {
+                      ...(prev.providers || {}),
+                      [provider]: {
+                        ...(prev.providers?.[provider] || {
+                          provider,
+                          apiKey: '',
+                          baseUrl: '',
+                          model: prev.textModel || '',
+                        }),
+                        baseUrl: val,
+                      },
+                    },
+                  };
+                });
+              }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
           </div>
@@ -348,26 +344,29 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               <label className="text-xs text-zinc-300 font-medium">
                 2. 密钥 (Key / API Key)
               </label>
-              {getSavedTextKey() && !explicitlyClearedTextKey && (
-                <span className="text-[11px] text-zinc-400 font-mono">
-                  已保存有效密钥 (••••{getSavedTextKey().slice(-4)})
-                </span>
-              )}
+              {currentTextKey ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-zinc-400 font-mono">
+                    已配置 (••••{currentTextKey.slice(-4)})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleClearTextKey}
+                    className="text-[11px] text-rose-400 hover:text-rose-300 transition underline underline-offset-2"
+                  >
+                    清除
+                  </button>
+                </div>
+              ) : null}
             </div>
             <div className="relative">
               <input
                 type={showTextKey ? 'text' : 'password'}
-                placeholder={
-                  getSavedTextKey() && !explicitlyClearedTextKey
-                    ? '已保存有效密钥（留空保持不变；输入新 Key 覆盖）'
-                    : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'
-                }
-                value={textApiKeyInput}
+                placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+                value={currentTextKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  setTextApiKeyInput(val);
-                  setExplicitlyClearedTextKey(false);
-                  setConfig((prev) => {
+                  setDraftConfig((prev) => {
                     const provider = prev.textProvider || 'google_gemini';
                     return {
                       ...prev,
@@ -406,10 +405,29 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             </label>
             {fetchedModels.length > 0 && (
               <select
-                value={config.textModel || ''}
+                value={draftConfig.textModel || ''}
                 onChange={(e) => {
-                  if (e.target.value) {
-                    setConfig((prev) => ({ ...prev, textModel: e.target.value }));
+                  const val = e.target.value;
+                  if (val) {
+                    setDraftConfig((prev) => {
+                      const provider = prev.textProvider || 'google_gemini';
+                      return {
+                        ...prev,
+                        textModel: val,
+                        providers: {
+                          ...(prev.providers || {}),
+                          [provider]: {
+                            ...(prev.providers?.[provider] || {
+                              provider,
+                              apiKey: '',
+                              baseUrl: prev.textBaseUrl || '',
+                              model: '',
+                            }),
+                            model: val,
+                          },
+                        },
+                      };
+                    });
                   }
                 }}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs font-mono focus:outline-none focus:border-zinc-500 mb-1.5"
@@ -425,8 +443,29 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="手动输入模型名 (如: gemini-3.6-flash, deepseek-chat, gpt-4o)"
-              value={config.textModel || ''}
-              onChange={(e) => setConfig({ ...config, textModel: e.target.value.trim() })}
+              value={draftConfig.textModel || ''}
+              onChange={(e) => {
+                const val = e.target.value;
+                setDraftConfig((prev) => {
+                  const provider = prev.textProvider || 'google_gemini';
+                  return {
+                    ...prev,
+                    textModel: val,
+                    providers: {
+                      ...(prev.providers || {}),
+                      [provider]: {
+                        ...(prev.providers?.[provider] || {
+                          provider,
+                          apiKey: '',
+                          baseUrl: prev.textBaseUrl || '',
+                          model: '',
+                        }),
+                        model: val,
+                      },
+                    },
+                  };
+                });
+              }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
           </div>
@@ -572,10 +611,10 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 <div className="space-y-1.5">
                   <label className="text-zinc-400 font-medium block">底层 Provider 协议类型</label>
                   <select
-                    value={config.textProvider || 'custom'}
+                    value={draftConfig.textProvider || 'custom'}
                     onChange={(e) => {
                       const newP = e.target.value as ProviderType;
-                      setConfig((prev) => ({ ...prev, textProvider: newP }));
+                      setDraftConfig((prev) => ({ ...prev, textProvider: newP }));
                     }}
                     className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs focus:outline-none"
                   >
@@ -591,11 +630,11 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   <button
                     type="button"
                     onClick={handleTestSelectedModel}
-                    disabled={isTestingModel || !config.textModel}
+                    disabled={isTestingModel || !draftConfig.textModel}
                     className="w-full py-2 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition disabled:opacity-50"
                   >
                     <Play className="w-3 h-3 text-zinc-300" />
-                    <span>{isTestingModel ? '测试中...' : `向 [${config.textModel || '当前模型'}] 发送测试问候`}</span>
+                    <span>{isTestingModel ? '测试中...' : `向 [${draftConfig.textModel || '当前模型'}] 发送测试问候`}</span>
                   </button>
                   {modelTestResult && (
                     <div className="p-3 rounded-xl bg-black/60 border border-zinc-800 text-xs space-y-1">
@@ -613,7 +652,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   )}
                 </div>
 
-                {getSavedTextKey() && !explicitlyClearedTextKey && (
+                {currentTextKey ? (
                   <div className="pt-2 border-t border-zinc-800 flex items-center justify-between">
                     <span className="text-zinc-400">清除已保存密钥</span>
                     <button
@@ -624,7 +663,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                       清除当前 Key
                     </button>
                   </div>
-                )}
+                ) : null}
               </div>
             )}
           </div>
@@ -641,8 +680,8 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="https://api.openai.com/v1"
-              value={config.imageBaseUrl || ''}
-              onChange={(e) => setConfig({ ...config, imageBaseUrl: e.target.value.trim() })}
+              value={draftConfig.imageBaseUrl || ''}
+              onChange={(e) => setDraftConfig({ ...draftConfig, imageBaseUrl: e.target.value.trim() })}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
           </div>
@@ -652,26 +691,29 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               <label className="text-xs text-zinc-300 font-medium">
                 2. 图像 API 密钥 (留空默认同主密钥)
               </label>
-              {getSavedImageKey() && !explicitlyClearedImageKey && (
-                <span className="text-[11px] text-zinc-400 font-mono">
-                  已保存有效密钥 (••••{getSavedImageKey().slice(-4)})
-                </span>
-              )}
+              {currentImageKey ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-zinc-400 font-mono">
+                    已配置 (••••{currentImageKey.slice(-4)})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleClearImageKey}
+                    className="text-[11px] text-rose-400 hover:text-rose-300 transition underline underline-offset-2"
+                  >
+                    清除
+                  </button>
+                </div>
+              ) : null}
             </div>
             <div className="relative">
               <input
                 type={showImageKey ? 'text' : 'password'}
-                placeholder={
-                  getSavedImageKey() && !explicitlyClearedImageKey
-                    ? '已保存有效密钥（留空保持不变）'
-                    : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'
-                }
-                value={imageApiKeyInput}
+                placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+                value={currentImageKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  setImageApiKeyInput(val);
-                  setExplicitlyClearedImageKey(false);
-                  setConfig((prev) => {
+                  setDraftConfig((prev) => {
                     const provider = prev.imageProvider || 'openai_compatible';
                     return {
                       ...prev,
@@ -709,8 +751,8 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="dall-e-3, imagen-3.0-generate-002, flux-schnell..."
-              value={config.imageModel || 'dall-e-3'}
-              onChange={(e) => setConfig({ ...config, imageModel: e.target.value.trim() })}
+              value={draftConfig.imageModel || 'dall-e-3'}
+              onChange={(e) => setDraftConfig({ ...draftConfig, imageModel: e.target.value.trim() })}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition"
             />
           </div>
@@ -766,8 +808,8 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="https://api.openai.com/v1"
-              value={config.voiceBaseUrl || ''}
-              onChange={(e) => setConfig({ ...config, voiceBaseUrl: e.target.value.trim() })}
+              value={draftConfig.voiceBaseUrl || ''}
+              onChange={(e) => setDraftConfig({ ...draftConfig, voiceBaseUrl: e.target.value.trim() })}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
           </div>
@@ -777,26 +819,29 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               <label className="text-xs text-zinc-300 font-medium">
                 2. 语音 API 密钥 (留空默认同主密钥)
               </label>
-              {getSavedVoiceKey() && !explicitlyClearedVoiceKey && (
-                <span className="text-[11px] text-zinc-400 font-mono">
-                  已保存有效密钥 (••••{getSavedVoiceKey().slice(-4)})
-                </span>
-              )}
+              {currentVoiceKey ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-zinc-400 font-mono">
+                    已配置 (••••{currentVoiceKey.slice(-4)})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleClearVoiceKey}
+                    className="text-[11px] text-rose-400 hover:text-rose-300 transition underline underline-offset-2"
+                  >
+                    清除
+                  </button>
+                </div>
+              ) : null}
             </div>
             <div className="relative">
               <input
                 type={showVoiceKey ? 'text' : 'password'}
-                placeholder={
-                  getSavedVoiceKey() && !explicitlyClearedVoiceKey
-                    ? '已保存有效密钥（留空保持不变）'
-                    : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'
-                }
-                value={voiceApiKeyInput}
+                placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+                value={currentVoiceKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  setVoiceApiKeyInput(val);
-                  setExplicitlyClearedVoiceKey(false);
-                  setConfig((prev) => {
+                  setDraftConfig((prev) => {
                     const provider = prev.voiceProvider || 'openai_compatible';
                     return {
                       ...prev,
@@ -834,8 +879,8 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="tts-1, tts-1-hd, whisper-1..."
-              value={config.voiceModel || 'tts-1'}
-              onChange={(e) => setConfig({ ...config, voiceModel: e.target.value.trim() })}
+              value={draftConfig.voiceModel || 'tts-1'}
+              onChange={(e) => setDraftConfig({ ...draftConfig, voiceModel: e.target.value.trim() })}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition"
             />
           </div>
