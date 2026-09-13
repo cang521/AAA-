@@ -493,16 +493,28 @@ export const saveApiConfig = (c: ApiConfig): void => {
     const isExplicitTextClear = c.textApiKey === '' && (c.providers?.[currentProvider]?.apiKey === '' || !c.providers?.[currentProvider]);
     const effectiveTextKey = isExplicitTextClear
       ? ''
-      : (c.textApiKey || mergedProviders[currentProvider]?.apiKey || existing?.textApiKey || '');
+      : (c.textApiKey && c.textApiKey.trim() !== '' ? c.textApiKey.trim() : (mergedProviders[currentProvider]?.apiKey || existing?.textApiKey || ''));
+
+    // Base URL safeguard: if empty and not explicit change, preserve existing
+    const effectiveTextBaseUrl = (c.textBaseUrl !== undefined && c.textBaseUrl.trim() !== '')
+      ? c.textBaseUrl.trim()
+      : (existing?.textBaseUrl || mergedProviders[currentProvider]?.baseUrl || '');
+
+    // Image and Voice Key safeguards
+    const effectiveImageKey = (c.imageApiKey && c.imageApiKey.trim() !== '')
+      ? c.imageApiKey.trim()
+      : (existing?.imageApiKey || '');
+
+    const effectiveVoiceKey = (c.voiceApiKey && c.voiceApiKey.trim() !== '')
+      ? c.voiceApiKey.trim()
+      : (existing?.voiceApiKey || '');
 
     if (mergedProviders[currentProvider]) {
       mergedProviders[currentProvider].apiKey = effectiveTextKey;
-    }
-    if (c.textBaseUrl !== undefined && mergedProviders[currentProvider]) {
-      mergedProviders[currentProvider].baseUrl = c.textBaseUrl;
-    }
-    if (c.textModel && mergedProviders[currentProvider]) {
-      mergedProviders[currentProvider].model = c.textModel;
+      mergedProviders[currentProvider].baseUrl = effectiveTextBaseUrl;
+      if (c.textModel) {
+        mergedProviders[currentProvider].model = c.textModel;
+      }
     }
 
     const merged: ApiConfig = {
@@ -510,6 +522,9 @@ export const saveApiConfig = (c: ApiConfig): void => {
       ...existing,
       ...c,
       textApiKey: effectiveTextKey,
+      textBaseUrl: effectiveTextBaseUrl,
+      imageApiKey: effectiveImageKey,
+      voiceApiKey: effectiveVoiceKey,
       providers: mergedProviders,
     };
 

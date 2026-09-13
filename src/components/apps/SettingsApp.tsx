@@ -42,6 +42,9 @@ import {
   AlertTriangle,
   Shield,
   FileCheck,
+  ChevronDown,
+  Check,
+  Sliders,
 } from 'lucide-react';
 import { DataManagementModal } from '../data/DataManagementModal';
 import { clearAllChatMessages } from '../../lib/chatDb';
@@ -54,6 +57,7 @@ import {
   CURRENT_APP_VERSION_NAME,
   UpgradeProtectionLog,
 } from '../../lib/dataMigration';
+import { ApiSettingsPanel, TEXT_PROVIDER_PRESETS, ProviderPreset } from './ApiSettingsPanel';
 
 interface SettingsAppProps {
   onBackToLauncher: () => void;
@@ -67,82 +71,6 @@ interface SettingsAppProps {
   onAddApiLog: (log: ApiLog) => void;
   onDataChanged?: () => void;
 }
-
-interface ProviderPreset {
-  id: ProviderType;
-  name: string;
-  defaultBaseUrl: string;
-  defaultModel: string;
-  badge: string;
-  description: string;
-}
-
-const TEXT_PROVIDER_PRESETS: ProviderPreset[] = [
-  {
-    id: 'google_gemini',
-    name: 'Google Gemini (官方 / 原生)',
-    defaultBaseUrl: 'https://generativelanguage.googleapis.com',
-    defaultModel: 'gemini-3.6-flash',
-    badge: '官方推荐',
-    description: '支持 Gemini 3.6 Flash / 2.5 Pro 及自定义反代端点',
-  },
-  {
-    id: 'deepseek',
-    name: 'DeepSeek 官方 API',
-    defaultBaseUrl: 'https://api.deepseek.com/v1',
-    defaultModel: 'deepseek-chat',
-    badge: 'OpenAI 兼容',
-    description: '支持 DeepSeek V3、DeepSeek R1 推理模型',
-  },
-  {
-    id: 'openai_compatible',
-    name: 'OpenAI 官方 / 标准兼容',
-    defaultBaseUrl: 'https://api.openai.com/v1',
-    defaultModel: 'gpt-4o',
-    badge: '标准协议',
-    description: '支持 GPT-4o、GPT-4o Mini、OneAPI、NewAPI、反代网关',
-  },
-  {
-    id: 'openrouter',
-    name: 'OpenRouter (多模型聚合)',
-    defaultBaseUrl: 'https://openrouter.ai/api/v1',
-    defaultModel: 'anthropic/claude-3.5-sonnet',
-    badge: '全模型聚合',
-    description: '聚合 Claude 3.5、Llama 3、Mistral、DeepSeek 等',
-  },
-  {
-    id: 'siliconflow',
-    name: 'SiliconFlow 硅基流动',
-    defaultBaseUrl: 'https://api.siliconflow.cn/v1',
-    defaultModel: 'deepseek-ai/DeepSeek-V3',
-    badge: '国内高并发',
-    description: '高可用 OpenAI 兼容中转加速服务',
-  },
-  {
-    id: 'groq',
-    name: 'Groq 高速推理',
-    defaultBaseUrl: 'https://api.groq.com/openai/v1',
-    defaultModel: 'llama-3.3-70b-versatile',
-    badge: '极速 LPU',
-    description: '超低延迟 LLaMA 3.3 / Mixtral 推理',
-  },
-  {
-    id: 'ollama',
-    name: 'Ollama 本地私有化模型',
-    defaultBaseUrl: 'http://localhost:11434/v1',
-    defaultModel: 'llama3:latest',
-    badge: '本地离线',
-    description: '连接局域网或本机 Ollama 服务',
-  },
-  {
-    id: 'custom',
-    name: '自定义 OpenAI-compatible 反代',
-    defaultBaseUrl: '',
-    defaultModel: 'gpt-4o',
-    badge: '自定义',
-    description: '任意符合 OpenAI /v1 规范的反代、自建网关或中转服务',
-  },
-];
 
 export const SettingsApp: React.FC<SettingsAppProps> = ({
   onBackToLauncher,
@@ -215,6 +143,10 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   // Data Management Full Modal states
   const [showDataModal, setShowDataModal] = useState(false);
   const [dataModalTab, setDataModalTab] = useState<'import' | 'export' | 'snapshots'>('import');
+
+  // Preset & Advanced Collapsible states
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showPresetManager, setShowPresetManager] = useState(false);
 
   // Upgrade Protection Logs Modal states
   const [showUpgradeLogsModal, setShowUpgradeLogsModal] = useState(false);
@@ -736,6 +668,23 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     setModelTestResult(null);
   };
 
+  const getSelectedPresetId = (): string => {
+    const currentProvider = config.textProvider || 'google_gemini';
+    const match = TEXT_PROVIDER_PRESETS.find((p) => p.id === currentProvider);
+    return match ? match.id : 'custom';
+  };
+
+  const handlePresetChange = (presetId: string) => {
+    if (presetId === 'custom') {
+      setConfig((prev) => ({ ...prev, textProvider: 'custom' }));
+      return;
+    }
+    const preset = TEXT_PROVIDER_PRESETS.find((p) => p.id === presetId);
+    if (preset) {
+      applyTextPreset(preset);
+    }
+  };
+
   // JSON format adapter handler
   const handleAdapterJson = async () => {
     if (!rawJsonInput.trim()) return;
@@ -811,597 +760,50 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         )}
 
         {/* ========================================================================= */}
-        {/* 1. API Provider Management Center */}
+        {/* 1. API 连接设置 (Clean Black Mobile Settings) */}
         {/* ========================================================================= */}
-        <div className="p-4 rounded-3xl bg-zinc-900 border border-zinc-800 space-y-4 shadow-sm">
-          {/* Header */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
-                <Globe className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="font-bold text-sm text-white">API Provider 管理系统</h3>
-                <p className="text-[10px] text-zinc-400">配置服务商、Base URL、Key，真实测试网络与拉取模型</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Provider Category Switcher Tabs */}
-          <div className="grid grid-cols-3 gap-1.5 p-1 bg-zinc-950 rounded-2xl border border-zinc-800/80">
-            <button
-              onClick={() => {
-                setActiveCategory('text');
-                setConnectionResult(null);
-                setModelFetchResult(null);
-                setModelTestResult(null);
-              }}
-              className={`py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition ${
-                activeCategory === 'text'
-                  ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/20'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              <Cpu className="w-3.5 h-3.5" />
-              <span>💬 文本模型</span>
-            </button>
-            <button
-              onClick={() => {
-                setActiveCategory('image');
-                setConnectionResult(null);
-                setModelFetchResult(null);
-                setModelTestResult(null);
-              }}
-              className={`py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition ${
-                activeCategory === 'image'
-                  ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/20'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>🎨 图像生图</span>
-            </button>
-            <button
-              onClick={() => {
-                setActiveCategory('voice');
-                setConnectionResult(null);
-                setModelFetchResult(null);
-                setModelTestResult(null);
-              }}
-              className={`py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition ${
-                activeCategory === 'voice'
-                  ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/20'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              <Radio className="w-3.5 h-3.5" />
-              <span>🎙️ 语音合成</span>
-            </button>
-          </div>
-
-          {/* ==================== 1.1 TEXT PROVIDER WORKFLOW ==================== */}
-          {activeCategory === 'text' && (
-            <div className="space-y-4">
-              {/* Provider Fast Presets */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="font-semibold text-zinc-300 flex items-center gap-1">
-                    <Layers className="w-3.5 h-3.5 text-cyan-400" />
-                    选择 API 服务商 (Provider) 预设
-                  </span>
-                  <span className="text-zinc-500 text-[10px]">点击一键填入端点格式</span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  {TEXT_PROVIDER_PRESETS.map((preset) => {
-                    const isSelected =
-                      config.textProvider === preset.id ||
-                      (!config.textProvider && preset.id === 'google_gemini' && !config.textBaseUrl);
-                    return (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        onClick={() => applyTextPreset(preset)}
-                        className={`p-2.5 rounded-2xl border text-left flex flex-col justify-between gap-1 transition ${
-                          isSelected
-                            ? 'bg-cyan-950/40 border-cyan-500 text-white shadow-sm ring-1 ring-cyan-500/30'
-                            : 'bg-zinc-950/60 border-zinc-800/80 text-zinc-300 hover:border-zinc-700'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between w-full">
-                          <span className="font-bold text-[11px] truncate">{preset.name}</span>
-                          <span
-                            className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
-                              isSelected
-                                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                                : 'bg-zinc-800 text-zinc-400'
-                            }`}
-                          >
-                            {preset.badge}
-                          </span>
-                        </div>
-                        <span className="text-[10px] text-zinc-500 line-clamp-1">{preset.description}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Step 1: Base URL & API Key */}
-              <div className="p-3.5 rounded-2xl bg-zinc-950/90 border border-zinc-800 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-zinc-200 text-xs flex items-center gap-1.5">
-                    <span className="w-4 h-4 rounded-full bg-cyan-500/20 text-cyan-400 font-mono text-[10px] flex items-center justify-center">
-                      1
-                    </span>
-                    配置 API 基础信息 (Base URL & Key)
-                  </span>
-                  <span className="text-[10px] text-emerald-400 font-mono">
-                    {config.textBaseUrl ? '自定义反代模式' : 'Google 原生端点'}
-                  </span>
-                </div>
-
-                {/* Base URL Input */}
-                <div className="space-y-1">
-                  <label className="text-[11px] text-zinc-400 font-medium flex items-center justify-between">
-                    <span>API Base URL / 接口根地址</span>
-                    <button
-                      type="button"
-                      onClick={() => setConfig({ ...config, textBaseUrl: '' })}
-                      className="text-[10px] text-zinc-500 hover:text-zinc-300"
-                    >
-                      清空(使用默认)
-                    </button>
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="https://api.openai.com/v1 或 https://generativelanguage.googleapis.com"
-                    value={config.textBaseUrl || ''}
-                    onChange={(e) => setConfig({ ...config, textBaseUrl: e.target.value.trim() })}
-                    className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-cyan-300 font-mono text-xs placeholder-zinc-600 focus:outline-none focus:border-cyan-500 transition"
-                  />
-                </div>
-
-                {/* API Key Input */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <label className="text-zinc-400 font-medium flex items-center gap-1.5">
-                      <span>API 密钥 (API Key / Token)</span>
-                      {getSavedTextKey() && !explicitlyClearedTextKey && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-mono">
-                          ✓ 已安全保存 (•{getSavedTextKey().length > 8 ? getSavedTextKey().slice(-4) : '已存'})
-                        </span>
-                      )}
-                    </label>
-                    {getSavedTextKey() && !explicitlyClearedTextKey ? (
-                      <button
-                        type="button"
-                        onClick={handleClearTextKey}
-                        className="text-[10px] text-rose-400 hover:text-rose-300 transition underline underline-offset-2"
-                      >
-                        清除/删除Key
-                      </button>
-                    ) : (
-                      <span className="text-[10px] text-zinc-500">密钥绝不在前端明文暴露</span>
-                    )}
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showTextKey ? 'text' : 'password'}
-                      placeholder={getSavedTextKey() && !explicitlyClearedTextKey ? '已保存有效密钥（留空保持不变；输入新 Key 覆盖）' : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'}
-                      value={textApiKeyInput}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setTextApiKeyInput(val);
-                        setExplicitlyClearedTextKey(false);
-                        const activeProvider = config.textProvider || 'google_gemini';
-                        setConfig((prev) => ({
-                          ...prev,
-                          textApiKey: val,
-                          providers: {
-                            ...(prev.providers || {}),
-                            [activeProvider]: {
-                              ...(prev.providers?.[activeProvider] || {
-                                provider: activeProvider,
-                                baseUrl: prev.textBaseUrl || '',
-                                model: prev.textModel || '',
-                              }),
-                              apiKey: val,
-                            },
-                          },
-                        }));
-                      }}
-                      className="w-full px-3 py-2 pr-10 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs placeholder-zinc-500 focus:outline-none focus:border-cyan-500 transition"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowTextKey(!showTextKey)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-1"
-                    >
-                      {showTextKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Step 2: Action Buttons (Test Connection & Fetch Models) */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-zinc-200 text-xs flex items-center gap-1.5">
-                    <span className="w-4 h-4 rounded-full bg-cyan-500/20 text-cyan-400 font-mono text-[10px] flex items-center justify-center">
-                      2
-                    </span>
-                    网络连通性验证与模型拉取
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  {/* Test Connection Button */}
-                  <button
-                    type="button"
-                    onClick={handleTestConnection}
-                    disabled={isTestingConnection}
-                    className="py-2.5 px-3 rounded-2xl bg-cyan-600 hover:bg-cyan-500 active:scale-95 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition"
-                  >
-                    <Zap className={`w-3.5 h-3.5 ${isTestingConnection ? 'animate-bounce text-yellow-300' : ''}`} />
-                    <span>{isTestingConnection ? '正在测试连接...' : '⚡ 测试连接 (Test)'}</span>
-                  </button>
-
-                  {/* Fetch Models Button */}
-                  <button
-                    type="button"
-                    onClick={handleFetchModels}
-                    disabled={isFetchingModels}
-                    className="py-2.5 px-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isFetchingModels ? 'animate-spin' : ''}`} />
-                    <span>{isFetchingModels ? '正在拉取模型...' : '📋 获取模型列表'}</span>
-                  </button>
-                </div>
-
-                {/* Connection Test Result Feedback Card */}
-                {connectionResult && (
-                  <div
-                    className={`p-3 rounded-2xl border text-xs space-y-1.5 transition ${
-                      connectionResult.success
-                        ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-300'
-                        : 'bg-rose-950/40 border-rose-500/50 text-rose-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between font-bold">
-                      <div className="flex items-center gap-1.5">
-                        {connectionResult.success ? (
-                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                        ) : (
-                          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                        )}
-                        <span>{connectionResult.success ? '连接测试通过 (HTTP 200)' : '连接测试失败'}</span>
-                      </div>
-                      <span className="font-mono text-[11px] px-2 py-0.5 rounded-full bg-black/40">
-                        {connectionResult.latencyMs}ms
-                      </span>
-                    </div>
-
-                    <p className="text-[11px] text-zinc-300">{connectionResult.message}</p>
-
-                    {connectionResult.checkedEndpoint && (
-                      <div className="text-[10px] font-mono text-zinc-400 break-all bg-black/30 p-1.5 rounded-lg">
-                        端点: {connectionResult.checkedEndpoint}
-                      </div>
-                    )}
-
-                    {connectionResult.error && (
-                      <div className="text-[10px] font-mono text-rose-300 break-all bg-rose-950/60 p-2 rounded-xl border border-rose-500/30">
-                        错误详情: {connectionResult.error}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Model Fetch Result Feedback Banner */}
-                {modelFetchResult && !modelFetchResult.success && (
-                  <div className="p-3 rounded-2xl bg-amber-950/40 border border-amber-500/40 text-amber-300 text-xs space-y-1">
-                    <div className="flex items-center gap-1.5 font-bold">
-                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
-                      <span>未能自动拉取模型列表</span>
-                    </div>
-                    <p className="text-[11px] text-amber-200">{modelFetchResult.message}</p>
-                    {modelFetchResult.error && (
-                      <p className="text-[10px] font-mono text-amber-300/80 break-all">{modelFetchResult.error}</p>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Step 3: Model Selection (Dropdown with Search & Manual Input) */}
-              <div className="p-3.5 rounded-2xl bg-zinc-950/90 border border-zinc-800 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-zinc-200 text-xs flex items-center gap-1.5">
-                    <span className="w-4 h-4 rounded-full bg-cyan-500/20 text-cyan-400 font-mono text-[10px] flex items-center justify-center">
-                      3
-                    </span>
-                    选择或指定模型 (Target Model)
-                  </span>
-                  <span className="text-[10px] text-cyan-400 font-medium">
-                    当前: <span className="font-mono">{config.textModel}</span>
-                  </span>
-                </div>
-
-                {/* Model Search & Select */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      placeholder="🔍 搜索已获取的模型 ID..."
-                      value={modelFilterQuery}
-                      onChange={(e) => setModelFilterQuery(e.target.value)}
-                      className="w-1/2 px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700 text-white text-[11px] placeholder-zinc-500"
-                    />
-                    <span className="text-[10px] text-zinc-500">共 {fetchedModels.length} 个模型</span>
-                  </div>
-
-                  <select
-                    value={config.textModel}
-                    onChange={(e) => {
-                      setConfig({ ...config, textModel: e.target.value });
-                      setModelTestResult(null);
-                    }}
-                    className="w-full px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-cyan-300 font-mono text-xs focus:outline-none focus:border-cyan-500 transition"
-                  >
-                    {filteredModels.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.id} {m.name && m.name !== m.id ? `(${m.name})` : ''} {m.owned_by ? `[${m.owned_by}]` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Manual Model Override Input */}
-                <div className="space-y-1 pt-1">
-                  <label className="text-[10px] text-zinc-400">或者手动自定义输入模型名称 (Model ID):</label>
-                  <input
-                    type="text"
-                    placeholder="例如: gpt-4o, deepseek-chat, claude-3-5-sonnet, qwen-max..."
-                    value={config.textModel}
-                    onChange={(e) => setConfig({ ...config, textModel: e.target.value.trim() })}
-                    className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs placeholder-zinc-600 focus:outline-none focus:border-cyan-500"
-                  />
-                </div>
-
-                {/* Step 4: Test Selected Model */}
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    onClick={handleTestSelectedModel}
-                    disabled={isTestingModel || !config.textModel}
-                    className="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 active:scale-95 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition"
-                  >
-                    <Play className={`w-3.5 h-3.5 ${isTestingModel ? 'animate-spin' : ''}`} />
-                    <span>{isTestingModel ? `正在向 [${config.textModel}] 发送单次测试...` : `🧪 真实测试当前选定模型 (${config.textModel})`}</span>
-                  </button>
-
-                  {/* Model Test Result Panel */}
-                  {modelTestResult && (
-                    <div
-                      className={`mt-2.5 p-3 rounded-2xl border text-xs space-y-1.5 ${
-                        modelTestResult.success
-                          ? 'bg-purple-950/40 border-purple-500/50 text-purple-200'
-                          : 'bg-rose-950/40 border-rose-500/50 text-rose-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between font-bold">
-                        <div className="flex items-center gap-1.5">
-                          {modelTestResult.success ? (
-                            <CheckCircle2 className="w-4 h-4 text-purple-400 shrink-0" />
-                          ) : (
-                            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                          )}
-                          <span>模型响应测试 {modelTestResult.success ? '成功' : '失败'}</span>
-                        </div>
-                        <span className="font-mono text-[11px] px-2 py-0.5 rounded-full bg-black/40">
-                          {modelTestResult.latencyMs}ms
-                        </span>
-                      </div>
-
-                      {modelTestResult.reply && (
-                        <div className="p-2.5 rounded-xl bg-black/50 border border-purple-500/30 text-purple-100 font-sans text-[11px] leading-relaxed">
-                          💬 模型回复: "{modelTestResult.reply}"
-                        </div>
-                      )}
-
-                      {modelTestResult.error && (
-                        <div className="text-[10px] font-mono text-rose-300 break-all bg-rose-950/60 p-2 rounded-xl border border-rose-500/30">
-                          {modelTestResult.error}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ==================== 1.2 IMAGE PROVIDER WORKFLOW ==================== */}
-          {activeCategory === 'image' && (
-            <div className="space-y-4">
-              <div className="p-3.5 rounded-2xl bg-zinc-950/90 border border-zinc-800 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-zinc-200 text-xs flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-pink-400" />
-                    图像生成 API (朋友圈配图 / 角色立绘)
-                  </span>
-                  <span className="text-[10px] text-pink-400 font-mono">DALL-E / Imagen / SD</span>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] text-zinc-400 font-medium">图像 API Base URL (留空默认同主接口)</label>
-                  <input
-                    type="text"
-                    placeholder="https://api.openai.com/v1"
-                    value={config.imageBaseUrl || ''}
-                    onChange={(e) => setConfig({ ...config, imageBaseUrl: e.target.value.trim() })}
-                    className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-pink-300 font-mono text-xs placeholder-zinc-600 focus:outline-none focus:border-pink-500"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <label className="text-zinc-400 font-medium flex items-center gap-1.5">
-                      <span>图像 API Key (留空默认同主密钥)</span>
-                      {getSavedImageKey() && !explicitlyClearedImageKey && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-mono">
-                          ✓ 已保存 (•{getSavedImageKey().length > 8 ? getSavedImageKey().slice(-4) : '已存'})
-                        </span>
-                      )}
-                    </label>
-                    {getSavedImageKey() && !explicitlyClearedImageKey && (
-                      <button
-                        type="button"
-                        onClick={handleClearImageKey}
-                        className="text-[10px] text-rose-400 hover:text-rose-300 transition underline underline-offset-2"
-                      >
-                        清除Key
-                      </button>
-                    )}
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showImageKey ? 'text' : 'password'}
-                      placeholder={getSavedImageKey() && !explicitlyClearedImageKey ? '已保存有效密钥（留空保持不变；输入新 Key 覆盖）' : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'}
-                      value={imageApiKeyInput}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setImageApiKeyInput(val);
-                        setExplicitlyClearedImageKey(false);
-                        setConfig((prev) => ({ ...prev, imageApiKey: val }));
-                      }}
-                      className="w-full px-3 py-2 pr-10 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs placeholder-zinc-500 focus:outline-none focus:border-pink-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowImageKey(!showImageKey)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-1"
-                    >
-                      {showImageKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] text-zinc-400 font-medium">图像模型 (Model)</label>
-                  <input
-                    type="text"
-                    placeholder="dall-e-3, imagen-3.0-generate-002, flux-schnell..."
-                    value={config.imageModel || 'dall-e-3'}
-                    onChange={(e) => setConfig({ ...config, imageModel: e.target.value.trim() })}
-                    className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleTestConnection}
-                    disabled={isTestingConnection}
-                    className="py-2 rounded-xl bg-pink-600 hover:bg-pink-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50"
-                  >
-                    <Zap className="w-3.5 h-3.5" />
-                    <span>{isTestingConnection ? '测试中...' : '测试图像连接'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleFetchModels}
-                    disabled={isFetchingModels}
-                    className="py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>拉取图像模型</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ==================== 1.3 VOICE PROVIDER WORKFLOW ==================== */}
-          {activeCategory === 'voice' && (
-            <div className="space-y-4">
-              <div className="p-3.5 rounded-2xl bg-zinc-950/90 border border-zinc-800 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-zinc-200 text-xs flex items-center gap-1.5">
-                    <Radio className="w-4 h-4 text-amber-400" />
-                    语音合成 / TTS API (消息语音朗读)
-                  </span>
-                  <span className="text-[10px] text-amber-400 font-mono">OpenAI TTS / Edge</span>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] text-zinc-400 font-medium">语音 API Base URL</label>
-                  <input
-                    type="text"
-                    placeholder="https://api.openai.com/v1"
-                    value={config.voiceBaseUrl || ''}
-                    onChange={(e) => setConfig({ ...config, voiceBaseUrl: e.target.value.trim() })}
-                    className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-amber-300 font-mono text-xs placeholder-zinc-600 focus:outline-none focus:border-amber-500"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <label className="text-zinc-400 font-medium flex items-center gap-1.5">
-                      <span>语音 API Key</span>
-                      {getSavedVoiceKey() && !explicitlyClearedVoiceKey && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-mono">
-                          ✓ 已保存 (•{getSavedVoiceKey().length > 8 ? getSavedVoiceKey().slice(-4) : '已存'})
-                        </span>
-                      )}
-                    </label>
-                    {getSavedVoiceKey() && !explicitlyClearedVoiceKey && (
-                      <button
-                        type="button"
-                        onClick={handleClearVoiceKey}
-                        className="text-[10px] text-rose-400 hover:text-rose-300 transition underline underline-offset-2"
-                      >
-                        清除Key
-                      </button>
-                    )}
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showVoiceKey ? 'text' : 'password'}
-                      placeholder={getSavedVoiceKey() && !explicitlyClearedVoiceKey ? '已保存有效密钥（留空保持不变；输入新 Key 覆盖）' : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'}
-                      value={voiceApiKeyInput}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setVoiceApiKeyInput(val);
-                        setExplicitlyClearedVoiceKey(false);
-                        setConfig((prev) => ({ ...prev, voiceApiKey: val }));
-                      }}
-                      className="w-full px-3 py-2 pr-10 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs placeholder-zinc-500 focus:outline-none focus:border-amber-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowVoiceKey(!showVoiceKey)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-1"
-                    >
-                      {showVoiceKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] text-zinc-400 font-medium">语音模型 (Model)</label>
-                  <input
-                    type="text"
-                    placeholder="tts-1, tts-1-hd, whisper-1..."
-                    value={config.voiceModel || 'tts-1'}
-                    onChange={(e) => setConfig({ ...config, voiceModel: e.target.value.trim() })}
-                    className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+        <ApiSettingsPanel
+          config={config}
+          setConfig={setConfig}
+          activeCategory={activeCategory}
+          setActiveCategory={setActiveCategory}
+          textApiKeyInput={textApiKeyInput}
+          setTextApiKeyInput={setTextApiKeyInput}
+          showTextKey={showTextKey}
+          setShowTextKey={setShowTextKey}
+          imageApiKeyInput={imageApiKeyInput}
+          setImageApiKeyInput={setImageApiKeyInput}
+          showImageKey={showImageKey}
+          setShowImageKey={setShowImageKey}
+          voiceApiKeyInput={voiceApiKeyInput}
+          setVoiceApiKeyInput={setVoiceApiKeyInput}
+          showVoiceKey={showVoiceKey}
+          setShowVoiceKey={setShowVoiceKey}
+          getSavedTextKey={getSavedTextKey}
+          getSavedImageKey={getSavedImageKey}
+          getSavedVoiceKey={getSavedVoiceKey}
+          explicitlyClearedTextKey={explicitlyClearedTextKey}
+          setExplicitlyClearedTextKey={setExplicitlyClearedTextKey}
+          explicitlyClearedImageKey={explicitlyClearedImageKey}
+          setExplicitlyClearedImageKey={setExplicitlyClearedImageKey}
+          explicitlyClearedVoiceKey={explicitlyClearedVoiceKey}
+          setExplicitlyClearedVoiceKey={setExplicitlyClearedVoiceKey}
+          handleClearTextKey={handleClearTextKey}
+          handleClearImageKey={handleClearImageKey}
+          handleClearVoiceKey={handleClearVoiceKey}
+          fetchedModels={fetchedModels}
+          isTestingConnection={isTestingConnection}
+          connectionResult={connectionResult}
+          handleTestConnection={handleTestConnection}
+          isFetchingModels={isFetchingModels}
+          modelFetchResult={modelFetchResult}
+          handleFetchModels={handleFetchModels}
+          isTestingModel={isTestingModel}
+          modelTestResult={modelTestResult}
+          handleTestSelectedModel={handleTestSelectedModel}
+          handleGlobalSave={handleGlobalSave}
+          applyTextPreset={applyTextPreset}
+        />
 
         {/* ========================================================================= */}
         {/* 2. AI Behavior & System Permissions Controls */}
