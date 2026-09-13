@@ -247,33 +247,43 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     setExplicitlyClearedTextKey(true);
     setTextApiKeyInput('');
     const activeProvider = config.textProvider || 'google_gemini';
-    setConfig((prev) => ({
-      ...prev,
-      textApiKey: '',
-      providers: {
-        ...(prev.providers || {}),
-        [activeProvider]: {
-          ...(prev.providers?.[activeProvider] || {
-            provider: activeProvider,
-            baseUrl: prev.textBaseUrl || '',
-            model: prev.textModel || '',
-          }),
-          apiKey: '',
-        },
+    const updatedProviders = {
+      ...(config.providers || {}),
+      [activeProvider]: {
+        ...(config.providers?.[activeProvider] || {
+          provider: activeProvider,
+          baseUrl: config.textBaseUrl || '',
+          model: config.textModel || '',
+        }),
+        apiKey: '',
       },
-    }));
+    };
+    const updatedConfig = {
+      ...config,
+      textApiKey: '',
+      providers: updatedProviders,
+    };
+    setConfig(updatedConfig);
+    saveApiConfig(updatedConfig, { explicitlyClearTextKey: true });
+    onSaveApiConfig(updatedConfig);
   };
 
   const handleClearImageKey = () => {
     setExplicitlyClearedImageKey(true);
     setImageApiKeyInput('');
-    setConfig((prev) => ({ ...prev, imageApiKey: '' }));
+    const updatedConfig = { ...config, imageApiKey: '' };
+    setConfig(updatedConfig);
+    saveApiConfig(updatedConfig, { explicitlyClearImageKey: true });
+    onSaveApiConfig(updatedConfig);
   };
 
   const handleClearVoiceKey = () => {
     setExplicitlyClearedVoiceKey(true);
     setVoiceApiKeyInput('');
-    setConfig((prev) => ({ ...prev, voiceApiKey: '' }));
+    const updatedConfig = { ...config, voiceApiKey: '' };
+    setConfig(updatedConfig);
+    saveApiConfig(updatedConfig, { explicitlyClearVoiceKey: true });
+    onSaveApiConfig(updatedConfig);
   };
 
   const handleGlobalSave = () => {
@@ -310,8 +320,12 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       providers: updatedProviders,
     };
 
-    // 1. Direct persistence to storage
-    saveApiConfig(finalConfig);
+    // 1. Direct persistence to storage with explicit clear flags
+    saveApiConfig(finalConfig, {
+      explicitlyClearTextKey: explicitlyClearedTextKey,
+      explicitlyClearImageKey: explicitlyClearedImageKey,
+      explicitlyClearVoiceKey: explicitlyClearedVoiceKey,
+    });
 
     // 2. Notify parent App.tsx state
     onSaveApiConfig(finalConfig);
@@ -395,40 +409,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       setConnectionResult(data);
 
       if (data.success) {
-        // Auto-persist verified configuration so testing a working key never risks losing it
-        const activeProvider = config.textProvider || 'google_gemini';
-        const effectiveTextKey = getEffectiveTextApiKey();
-        const effectiveImageKey = getEffectiveImageApiKey();
-        const effectiveVoiceKey = getEffectiveVoiceApiKey();
-
-        const effectiveTextBaseUrl = config.textBaseUrl !== undefined ? config.textBaseUrl.trim() : (config.providers?.[activeProvider]?.baseUrl || '');
-        const effectiveTextModel = config.textModel?.trim() || config.providers?.[activeProvider]?.model || 'gemini-3.6-flash';
-
-        const updatedProviders = {
-          ...(config.providers || {}),
-          [activeProvider]: {
-            provider: activeProvider,
-            apiKey: effectiveTextKey,
-            baseUrl: effectiveTextBaseUrl,
-            model: effectiveTextModel,
-          },
-        };
-
-        const validatedConfig: ApiConfig = {
-          ...config,
-          textProvider: activeProvider,
-          textApiKey: effectiveTextKey,
-          textBaseUrl: effectiveTextBaseUrl,
-          textModel: effectiveTextModel,
-          imageApiKey: effectiveImageKey,
-          voiceApiKey: effectiveVoiceKey,
-          providers: updatedProviders,
-        };
-
-        saveApiConfig(validatedConfig);
-        onSaveApiConfig(validatedConfig);
-
-        setSaveSuccessMsg(`⚡ 连接测试成功！HTTP 200 链路畅通，配置已自动保存 (延迟: ${data.latencyMs}ms)`);
+        setSaveSuccessMsg(`⚡ 连接测试成功！HTTP 200 链路畅通 (延迟: ${data.latencyMs}ms)`);
         setTimeout(() => setSaveSuccessMsg(''), 4000);
       }
     } catch (e: any) {

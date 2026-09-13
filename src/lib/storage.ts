@@ -447,6 +447,12 @@ export const loadMenstrualData = (): MenstrualData => {
 };
 export const saveMenstrualData = (data: MenstrualData) => saveToStorage(STORAGE_KEYS.MENSTRUAL, data);
 
+export interface SaveApiConfigOptions {
+  explicitlyClearTextKey?: boolean;
+  explicitlyClearImageKey?: boolean;
+  explicitlyClearVoiceKey?: boolean;
+}
+
 export const loadApiConfig = (): ApiConfig => {
   const loaded = loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG);
   if (!loaded) return { ...INITIAL_API_CONFIG };
@@ -463,68 +469,160 @@ export const loadApiConfig = (): ApiConfig => {
       model: loaded.textModel || 'gemini-3.6-flash',
     };
   } else {
-    // If loaded has active key but provider entry was empty
+    // Sync keys between root textApiKey and providers map
     if (loaded.textApiKey && !providers[currentTextProvider].apiKey) {
       providers[currentTextProvider].apiKey = loaded.textApiKey;
+    }
+    if (providers[currentTextProvider].apiKey && !loaded.textApiKey) {
+      loaded.textApiKey = providers[currentTextProvider].apiKey;
     }
     if (loaded.textBaseUrl !== undefined && !providers[currentTextProvider].baseUrl) {
       providers[currentTextProvider].baseUrl = loaded.textBaseUrl;
     }
   }
 
+  // Primary source of truth for current provider's API key:
+  const primaryApiKey = providers[currentTextProvider]?.apiKey || loaded.textApiKey || '';
+
   return {
     ...INITIAL_API_CONFIG,
     ...loaded,
     textProvider: currentTextProvider,
+    textApiKey: primaryApiKey,
     providers,
   };
 };
 
-export const saveApiConfig = (c: ApiConfig): void => {
+export const clearApiKey = (providerType: 'text' | 'image' | 'voice', providerName?: string): void => {
+  const existing = loadApiConfig();
+  if (providerType === 'text') {
+    const p = providerName || existing.textProvider || 'google_gemini';
+    const updatedProviders = { ...(existing.providers || {}) };
+    if (updatedProviders[p]) {
+      updatedProviders[p] = { ...updatedProviders[p], apiKey: '' };
+    }
+    saveApiConfig(
+      {
+        ...existing,
+        textApiKey: '',
+        providers: updatedProviders,
+      },
+      { explicitlyClearTextKey: true }
+    );
+  } else if (providerType === 'image') {
+    saveApiConfig(
+      {
+        ...existing,
+        imageApiKey: '',
+      },
+      { explicitlyClearImageKey: true }
+    );
+  } else if (providerType === 'voice') {
+    saveApiConfig(
+      {
+        ...existing,
+        voiceApiKey: '',
+      },
+      { explicitlyClearVoiceKey: true }
+    );
+  }
+};
+
+export const saveApiConfig = (c: ApiConfig, options?: SaveApiConfigOptions): void => {
   try {
     const existing = loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG);
     const existingProviders = existing?.providers || {};
     const newProviders = c.providers || {};
 
-    const mergedProviders = { ...existingProviders, ...newProviders };
     const currentProvider = c.textProvider || existing?.textProvider || 'google_gemini';
 
-    // Safety guard: Don't allow accidental clearing of existing valid key
-    const isExplicitTextClear = c.textApiKey === '' && (c.providers?.[currentProvider]?.apiKey === '' || !c.providers?.[currentProvider]);
-    const effectiveTextKey = isExplicitTextClear
-      ? ''
-      : (c.textApiKey && c.textApiKey.trim() !== '' ? c.textApiKey.trim() : (mergedProviders[currentProvider]?.apiKey || existing?.textApiKey || ''));
+    // 1. Text API Key handling:
+    // User requirement: "禁止通过空字符串推断用户明确删除，只有明确标志 explicitlyClearTextKey 才能删除。新 Key 为空而旧 Key 存在时永远保留旧 Key"
+    const incomingTextKeyInProvider = newProviders[currentProvider]?.apiKey?.trim();
+    const incomingTextKeyRoot = c.textApiKey?.trim();
+    const incomingTextKey = incomingTextKeyInProvider || incomingTextKeyRoot;
+
+    const existingKeyInProvider = existingProviders[currentProvider]?.apiKey?.trim();
+    const existingKeyRoot = existing?.textApiKey?.trim();
+    const existingKey = existingKeyInProvider || existingKeyRoot || '';
+
+    let effectiveTextKey = '';
+    if (options?.explicitlyClearTextKey) {
+      // User explicitly clicked "Clear / Delete Key" button
+      effectiveTextKey = '';
+    } else if (incomingTextKey) {
+      // User provided a new valid Key
+      effectiveTextKey = incomingTextKey;
+    } else {
+      // Incoming is empty and no explicit delete flag: ALWAYS PRESERVE EXISTING KEY
+      effectiveTextKey = existingKey;
+    }
+
+    // Merge providers map, ensuring config.providers[currentProvider].apiKey is updated
+    const mergedProviders = { ...existingProviders, ...newProviders };
+    if (!mergedProviders[currentProvider]) {
+      mergedProviders[currentProvider] = {
+        provider: currentProvider,
+        apiKey: effectiveTextKey,
+        baseUrl: c.textBaseUrl !== undefined ? c.textBaseUrl.trim() : (existing?.textBaseUrl || ''),
+        model: c.textModel?.trim() || existing?.textModel || 'gemini-3.6-flash',
+      };
+    } else {
+      mergedProviders[currentProvider] = {
+        ...mergedProviders[currentProvider],
+        apiKey: effectiveTextKey,
+        baseUrl:
+          c.textBaseUrl !== undefined && c.textBaseUrl.trim() !== ''
+            ? c.textBaseUrl.trim()
+            : (mergedProviders[currentProvider]?.baseUrl || existing?.textBaseUrl || ''),
+        model:
+          c.textModel?.trim() ||
+          mergedProviders[currentProvider]?.model ||
+          existing?.textModel ||
+          'gemini-3.6-flash',
+      };
+    }
 
     // Base URL safeguard: if empty and not explicit change, preserve existing
-    const effectiveTextBaseUrl = (c.textBaseUrl !== undefined && c.textBaseUrl.trim() !== '')
-      ? c.textBaseUrl.trim()
-      : (existing?.textBaseUrl || mergedProviders[currentProvider]?.baseUrl || '');
+    const effectiveTextBaseUrl =
+      c.textBaseUrl !== undefined && c.textBaseUrl.trim() !== ''
+        ? c.textBaseUrl.trim()
+        : (existing?.textBaseUrl || mergedProviders[currentProvider]?.baseUrl || '');
 
-    // Image and Voice Key safeguards
-    const effectiveImageKey = (c.imageApiKey && c.imageApiKey.trim() !== '')
-      ? c.imageApiKey.trim()
-      : (existing?.imageApiKey || '');
+    // 2. Image API Key handling:
+    let effectiveImageKey = '';
+    if (options?.explicitlyClearImageKey) {
+      effectiveImageKey = '';
+    } else if (c.imageApiKey && c.imageApiKey.trim() !== '') {
+      effectiveImageKey = c.imageApiKey.trim();
+    } else {
+      effectiveImageKey = existing?.imageApiKey?.trim() || '';
+    }
 
-    const effectiveVoiceKey = (c.voiceApiKey && c.voiceApiKey.trim() !== '')
-      ? c.voiceApiKey.trim()
-      : (existing?.voiceApiKey || '');
-
-    if (mergedProviders[currentProvider]) {
-      mergedProviders[currentProvider].apiKey = effectiveTextKey;
-      mergedProviders[currentProvider].baseUrl = effectiveTextBaseUrl;
-      if (c.textModel) {
-        mergedProviders[currentProvider].model = c.textModel;
-      }
+    // 3. Voice API Key handling:
+    let effectiveVoiceKey = '';
+    if (options?.explicitlyClearVoiceKey) {
+      effectiveVoiceKey = '';
+    } else if (c.voiceApiKey && c.voiceApiKey.trim() !== '') {
+      effectiveVoiceKey = c.voiceApiKey.trim();
+    } else {
+      effectiveVoiceKey = existing?.voiceApiKey?.trim() || '';
     }
 
     const merged: ApiConfig = {
       ...INITIAL_API_CONFIG,
       ...existing,
       ...c,
+      textProvider: currentProvider,
       textApiKey: effectiveTextKey,
       textBaseUrl: effectiveTextBaseUrl,
+      textModel: c.textModel?.trim() || existing?.textModel || 'gemini-3.6-flash',
       imageApiKey: effectiveImageKey,
+      imageBaseUrl: c.imageBaseUrl !== undefined ? c.imageBaseUrl.trim() : (existing?.imageBaseUrl || ''),
+      imageModel: c.imageModel?.trim() || existing?.imageModel || 'dall-e-3',
       voiceApiKey: effectiveVoiceKey,
+      voiceBaseUrl: c.voiceBaseUrl !== undefined ? c.voiceBaseUrl.trim() : (existing?.voiceBaseUrl || ''),
+      voiceModel: c.voiceModel?.trim() || existing?.voiceModel || 'tts-1',
       providers: mergedProviders,
     };
 

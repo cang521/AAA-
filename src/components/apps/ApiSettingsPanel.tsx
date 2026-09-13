@@ -251,12 +251,26 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
 
   // 清空 / 删除当前的自定义配置内容
   const handleClearCurrentConfig = () => {
+    handleClearTextKey();
     setConfig((prev) => ({
       ...prev,
       textBaseUrl: '',
       textApiKey: '',
       textModel: '',
       textProvider: 'custom',
+      providers: {
+        ...(prev.providers || {}),
+        custom: {
+          ...(prev.providers?.custom || {
+            provider: 'custom',
+            baseUrl: '',
+            model: '',
+          }),
+          apiKey: '',
+          baseUrl: '',
+          model: '',
+        },
+      },
     }));
     setTextApiKeyInput('');
     setExplicitlyClearedTextKey(true);
@@ -353,6 +367,24 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   const val = e.target.value;
                   setTextApiKeyInput(val);
                   setExplicitlyClearedTextKey(false);
+                  setConfig((prev) => {
+                    const provider = prev.textProvider || 'google_gemini';
+                    return {
+                      ...prev,
+                      textApiKey: val,
+                      providers: {
+                        ...(prev.providers || {}),
+                        [provider]: {
+                          ...(prev.providers?.[provider] || {
+                            provider,
+                            baseUrl: prev.textBaseUrl || '',
+                            model: prev.textModel || '',
+                          }),
+                          apiKey: val,
+                        },
+                      },
+                    };
+                  });
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
               />
@@ -639,7 +671,24 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   const val = e.target.value;
                   setImageApiKeyInput(val);
                   setExplicitlyClearedImageKey(false);
-                  setConfig((prev) => ({ ...prev, imageApiKey: val }));
+                  setConfig((prev) => {
+                    const provider = prev.imageProvider || 'openai_compatible';
+                    return {
+                      ...prev,
+                      imageApiKey: val,
+                      providers: {
+                        ...(prev.providers || {}),
+                        [provider]: {
+                          ...(prev.providers?.[provider] || {
+                            provider,
+                            baseUrl: prev.imageBaseUrl || '',
+                            model: prev.imageModel || '',
+                          }),
+                          apiKey: val,
+                        },
+                      },
+                    };
+                  });
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
               />
@@ -747,7 +796,24 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   const val = e.target.value;
                   setVoiceApiKeyInput(val);
                   setExplicitlyClearedVoiceKey(false);
-                  setConfig((prev) => ({ ...prev, voiceApiKey: val }));
+                  setConfig((prev) => {
+                    const provider = prev.voiceProvider || 'openai_compatible';
+                    return {
+                      ...prev,
+                      voiceApiKey: val,
+                      providers: {
+                        ...(prev.providers || {}),
+                        [provider]: {
+                          ...(prev.providers?.[provider] || {
+                            provider,
+                            baseUrl: prev.voiceBaseUrl || '',
+                            model: prev.voiceModel || '',
+                          }),
+                          apiKey: val,
+                        },
+                      },
+                    };
+                  });
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
               />
