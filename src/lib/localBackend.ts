@@ -6,9 +6,12 @@ let backendStatus: 'unknown' | 'ready' | 'failed' = 'unknown';
 let failureReason = '';
 let readyPromise: Promise<boolean> | null = null;
 
-async function pingBackendHealth(): Promise<boolean> {
+// Store native fetch reference that is never overwritten by the wrapper
+let nativeFetch: typeof window.fetch = typeof window !== 'undefined' ? window.fetch.bind(window) : (fetch as any);
+
+async function pingBackendHealth(fetcher: typeof window.fetch = nativeFetch): Promise<boolean> {
   try {
-    const res = await window.fetch(`${LOCAL_BACKEND}/api/health`, {
+    const res = await fetcher(`${LOCAL_BACKEND}/api/health`, {
       method: 'GET',
       signal: AbortSignal.timeout(1500),
     });
@@ -24,7 +27,7 @@ async function pingBackendHealth(): Promise<boolean> {
   return false;
 }
 
-async function waitForNodeBackend(): Promise<boolean> {
+async function waitForNodeBackend(fetcher: typeof window.fetch = nativeFetch): Promise<boolean> {
   if (!Capacitor.isNativePlatform()) return true;
   if (backendStatus === 'ready') return true;
   if (backendStatus === 'failed') return false;
@@ -32,7 +35,7 @@ async function waitForNodeBackend(): Promise<boolean> {
 
   readyPromise = (async () => {
     // 1. First quick health check (in case backend is already up)
-    if (await pingBackendHealth()) {
+    if (await pingBackendHealth(fetcher)) {
       backendStatus = 'ready';
       return true;
     }
@@ -51,7 +54,7 @@ async function waitForNodeBackend(): Promise<boolean> {
     // 3. Poll health check for up to 15 seconds (retrying every 300ms)
     const startTime = Date.now();
     while (Date.now() - startTime < 15000) {
-      if (await pingBackendHealth()) {
+      if (await pingBackendHealth(fetcher)) {
         backendStatus = 'ready';
         console.log('[小手机本地后端] 127.0.0.1:3000 健康检查通过，后端已准备就绪');
         return true;
@@ -75,6 +78,11 @@ function extractApiPath(input: RequestInfo | URL): string | null {
       : input instanceof URL
         ? input.toString()
         : String(input);
+
+  // Health check should bypass the /api interceptor to prevent any re-entry
+  if (urlStr === '/api/health' || urlStr.endsWith('/api/health') || urlStr.includes('/api/health?')) {
+    return null;
+  }
 
   if (urlStr.startsWith('http://127.0.0.1:3000/api/')) {
     return urlStr.substring('http://127.0.0.1:3000'.length);
@@ -127,6 +135,7 @@ export function setupLocalBackend() {
   if (!Capacitor.isNativePlatform()) return;
 
   const originalFetch = window.fetch.bind(window);
+  nativeFetch = originalFetch;
 
   window.fetch = async (
     input: RequestInfo | URL,
@@ -140,8 +149,8 @@ export function setupLocalBackend() {
       return originalFetch(input, init);
     }
 
-    // Ensure local Node.js backend is active
-    const isReady = await waitForNodeBackend();
+    // Ensure local Node.js backend is active (pass originalFetch so health checks bypass this wrapper)
+    const isReady = await waitForNodeBackend(originalFetch);
     if (!isReady) {
       return createBackendUnavailableResponse(failureReason || 'Android 内置后端未启动');
     }
