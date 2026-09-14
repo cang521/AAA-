@@ -6,12 +6,9 @@ let backendStatus: 'unknown' | 'ready' | 'failed' = 'unknown';
 let failureReason = '';
 let readyPromise: Promise<boolean> | null = null;
 
-// Store native fetch reference that is never overwritten by the wrapper
-let nativeFetch: typeof window.fetch = typeof window !== 'undefined' ? window.fetch.bind(window) : (fetch as any);
-
-async function pingBackendHealth(fetcher: typeof window.fetch = nativeFetch): Promise<boolean> {
+export async function pingBackendHealth(): Promise<boolean> {
   try {
-    const res = await fetcher(`${LOCAL_BACKEND}/api/health`, {
+    const res = await fetch(`${LOCAL_BACKEND}/api/health`, {
       method: 'GET',
       signal: AbortSignal.timeout(1500),
     });
@@ -27,7 +24,7 @@ async function pingBackendHealth(fetcher: typeof window.fetch = nativeFetch): Pr
   return false;
 }
 
-async function waitForNodeBackend(fetcher: typeof window.fetch = nativeFetch): Promise<boolean> {
+export async function waitForNodeBackend(): Promise<boolean> {
   if (!Capacitor.isNativePlatform()) return true;
   if (backendStatus === 'ready') return true;
   if (backendStatus === 'failed') return false;
@@ -35,7 +32,7 @@ async function waitForNodeBackend(fetcher: typeof window.fetch = nativeFetch): P
 
   readyPromise = (async () => {
     // 1. First quick health check (in case backend is already up)
-    if (await pingBackendHealth(fetcher)) {
+    if (await pingBackendHealth()) {
       backendStatus = 'ready';
       return true;
     }
@@ -54,7 +51,7 @@ async function waitForNodeBackend(fetcher: typeof window.fetch = nativeFetch): P
     // 3. Poll health check for up to 15 seconds (retrying every 300ms)
     const startTime = Date.now();
     while (Date.now() - startTime < 15000) {
-      if (await pingBackendHealth(fetcher)) {
+      if (await pingBackendHealth()) {
         backendStatus = 'ready';
         console.log('[小手机本地后端] 127.0.0.1:3000 健康检查通过，后端已准备就绪');
         return true;
@@ -71,7 +68,7 @@ async function waitForNodeBackend(fetcher: typeof window.fetch = nativeFetch): P
   return readyPromise;
 }
 
-function extractApiPath(input: RequestInfo | URL): string | null {
+export function extractApiPath(input: RequestInfo | URL): string | null {
   const urlStr =
     input instanceof Request
       ? input.url
@@ -93,11 +90,12 @@ function extractApiPath(input: RequestInfo | URL): string | null {
   }
 
   try {
-    const parsed = new URL(urlStr, window.location.href);
-    const origin = window.location.origin;
-    // Intercept requests targeting current origin, localhost, or android asset host
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+    const parsed = new URL(urlStr, origin);
+    const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
     if (
       parsed.origin === origin ||
+      parsed.hostname === host ||
       parsed.hostname === 'localhost' ||
       parsed.hostname === '127.0.0.1' ||
       parsed.protocol === 'capacitor:'
@@ -107,13 +105,13 @@ function extractApiPath(input: RequestInfo | URL): string | null {
       }
     }
   } catch {
-    // ignore URL parse errors for malformed relative inputs
+    // ignore URL parse errors
   }
 
   return null;
 }
 
-function createBackendUnavailableResponse(detailMessage?: string): Response {
+export function createBackendUnavailableResponse(detailMessage?: string): Response {
   const body = JSON.stringify({
     success: false,
     ok: false,
@@ -131,57 +129,61 @@ function createBackendUnavailableResponse(detailMessage?: string): Response {
   });
 }
 
-export function setupLocalBackend() {
-  if (!Capacitor.isNativePlatform()) return;
+/**
+ * Unified internal API request wrapper.
+ * - In standard Web / AI Studio preview environment: requests /api/... directly.
+ * - In Capacitor Android native environment: checks 127.0.0.1:3000 health, then rewrites to http://127.0.0.1:3000/api/...
+ * - Non-/api requests (e.g. user custom Base URLs) pass through unmodified.
+ */
+export async function apiFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<Response> {
+  const apiPath = extractApiPath(input);
 
-  const originalFetch = window.fetch.bind(window);
-  nativeFetch = originalFetch;
+  // Non-internal /api/ request (e.g. user custom external Base URL) or not Native Android
+  if (!Capacitor.isNativePlatform() || !apiPath) {
+    return fetch(input, init);
+  }
 
-  window.fetch = async (
-    input: RequestInfo | URL,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    const apiPath = extractApiPath(input);
+  const isReady = await waitForNodeBackend();
+  if (!isReady) {
+    return createBackendUnavailableResponse(failureReason || 'Android 内置后端未启动');
+  }
 
-    // If it is not an internal /api/... request, pass through directly
-    // (e.g. external user-configured Base URL requests like https://my-proxy.com)
-    if (!apiPath) {
-      return originalFetch(input, init);
+  const targetUrl = `${LOCAL_BACKEND}${apiPath}`;
+  console.log('[小手机本地后端] apiFetch 转发:', apiPath, '->', targetUrl);
+
+  try {
+    let resp: Response;
+    if (input instanceof Request) {
+      resp = await fetch(new Request(targetUrl, input), init);
+    } else {
+      resp = await fetch(targetUrl, init);
     }
 
-    // Ensure local Node.js backend is active (pass originalFetch so health checks bypass this wrapper)
-    const isReady = await waitForNodeBackend(originalFetch);
-    if (!isReady) {
-      return createBackendUnavailableResponse(failureReason || 'Android 内置后端未启动');
-    }
-
-    const targetUrl = `${LOCAL_BACKEND}${apiPath}`;
-    console.log('[小手机本地后端] 转发 /api 请求:', apiPath, '->', targetUrl);
-
-    try {
-      let resp: Response;
-      if (input instanceof Request) {
-        resp = await originalFetch(new Request(targetUrl, input), init);
-      } else {
-        resp = await originalFetch(targetUrl, init);
+    const contentType = resp.headers.get('content-type') || '';
+    if (contentType.includes('text/html')) {
+      const cloned = resp.clone();
+      const text = await cloned.text().catch(() => '');
+      if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html') || text.trim().startsWith('<!doctype')) {
+        console.warn('[小手机本地后端] 拦截到 HTML 响应，转换为明确后端未就绪错误');
+        return createBackendUnavailableResponse('Android 内置后端未启动（收到前端静态页面响应，非 API 数据）');
       }
-
-      // Guard against index.html being served when a 404/fallback happens
-      const contentType = resp.headers.get('content-type') || '';
-      if (contentType.includes('text/html')) {
-        const cloned = resp.clone();
-        const text = await cloned.text().catch(() => '');
-        if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html') || text.trim().startsWith('<!doctype')) {
-          console.warn('[小手机本地后端] 拦截到 HTML 响应，转换为明确后端未就绪错误');
-          return createBackendUnavailableResponse('Android 内置后端未启动（收到前端静态页面响应，非 API 数据）');
-        }
-      }
-
-      return resp;
-    } catch (netErr: any) {
-      console.error('[小手机本地后端] 连接 127.0.0.1:3000 失败:', netErr);
-      return createBackendUnavailableResponse(`Android 内置后端未启动 (127.0.0.1:3000 连接失败: ${netErr.message || '网络连接拒绝'})`);
     }
-  };
+
+    return resp;
+  } catch (netErr: any) {
+    console.error('[小手机本地后端] 连接 127.0.0.1:3000 失败:', netErr);
+    return createBackendUnavailableResponse(`Android 内置后端未启动 (127.0.0.1:3000 连接失败: ${netErr.message || '网络连接拒绝'})`);
+  }
 }
+
+/**
+ * Legacy setup helper - kept for backwards compatibility (no-op, window.fetch is no longer overridden).
+ */
+export function setupLocalBackend() {
+  // Deprecated: window.fetch is not globally overridden. Use apiFetch for internal /api requests.
+}
+
 

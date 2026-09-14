@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../../lib/localBackend';
 import {
   SmartDevice,
   AiPermissions,
@@ -297,7 +298,7 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
       } else {
         // 2) Fallback to Server Gemini NLP endpoint
         const devicesSummary = deviceService.getSanitizedDevicesSummary(permissions);
-        const res = await fetch('/api/gemini/device-nlp-control', {
+        const res = await apiFetch('/api/gemini/device-nlp-control', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

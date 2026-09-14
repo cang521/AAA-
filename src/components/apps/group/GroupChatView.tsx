@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { apiFetch } from '../../../lib/localBackend';
 import {
   ChevronLeft,
   MoreHorizontal,
@@ -145,7 +146,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     setTypingAiName(targetName);
 
     try {
-      const res = await fetch('/api/gemini/group-chat', {
+      const res = await apiFetch('/api/gemini/group-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../../lib/localBackend';
 import {
   ArrowLeft,
   Cloud,
@@ -217,7 +218,7 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
         .map((m) => `- [${m.title || '便签'}] ${m.content}`)
         .join('\n');
 
-      const res = await fetch('/api/gemini/weather-proactive-care', {
+      const res = await apiFetch('/api/gemini/weather-proactive-care', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

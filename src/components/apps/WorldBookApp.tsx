@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { apiFetch } from '../../lib/localBackend';
 import {
   WorldBook,
   WorldBookEntry,
@@ -77,7 +78,7 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
   const handleAiGenerate = async () => {
     setIsAiGenerating(true);
     try {
-      const res = await fetch('/api/gemini/worldbook-ai', {
+      const res = await apiFetch('/api/gemini/worldbook-ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

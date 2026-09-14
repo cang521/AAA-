@@ -7,6 +7,7 @@ import {
   TelepathyRecord,
   ApiConfig,
 } from '../../../types';
+import { apiFetch } from '../../../lib/localBackend';
 
 export const TELEPATHY_LEVELS = [
   { min: 0, max: 20, title: '刚认识', desc: '初识阶段，彼此还在互相了解摸索中~', color: 'text-zinc-400', bg: 'bg-zinc-800' },
@@ -330,7 +331,7 @@ export const requestAiTelepathyChoice = async (
   confidenceReason?: string;
 }> => {
   try {
-    const res = await fetch('/api/gemini/telepathy-deduce-choice', {
+    const res = await apiFetch('/api/gemini/telepathy-deduce-choice', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -369,7 +370,7 @@ export const requestAiTelepathyReaction = async (
   apiConfig?: ApiConfig
 ): Promise<string> => {
   try {
-    const res = await fetch('/api/gemini/telepathy-reaction', {
+    const res = await apiFetch('/api/gemini/telepathy-reaction', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -402,7 +403,7 @@ export const generateTelepathyMemory = async (
 ): Promise<string> => {
   const userName = userProfile?.name || '玩家';
   try {
-    const res = await fetch('/api/gemini/telepathy-generate-memory', {
+    const res = await apiFetch('/api/gemini/telepathy-generate-memory', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

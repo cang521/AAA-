@@ -1,5 +1,6 @@
 import { WeatherData, WeatherConfig, WeatherCareConfig, WeatherEvent, WeatherEventType, Memo } from '../types';
 import { systemNativeService, SystemLocationResult } from './systemNativeService';
+import { apiFetch } from './localBackend';
 
 const WEATHER_CACHE_KEY = 'wechat_phone_weather_cache_v2';
 const WEATHER_CONFIG_KEY = 'wechat_phone_weather_config_v2';
@@ -182,7 +183,7 @@ class WeatherService {
         return unlocatedWeather;
       }
 
-      const res = await fetch(url.toString());
+      const res = await apiFetch(url.toString());
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.weather) {
@@ -266,7 +267,7 @@ class WeatherService {
     try {
       const url = new URL('/api/weather/search-city', window.location.origin);
       url.searchParams.set('query', query.trim());
-      const res = await fetch(url.toString());
+      const res = await apiFetch(url.toString());
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.results)) {

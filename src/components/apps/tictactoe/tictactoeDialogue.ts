@@ -1,4 +1,5 @@
 import { AiCharacter, ApiConfig, ApiLog } from '../../../types';
+import { apiFetch } from '../../../lib/localBackend';
 
 export type TicTacToeSituation =
   | 'player_threat' // 玩家准备形成三连
@@ -137,7 +138,7 @@ export async function getTicTacToeDialogue({
   }
 
   try {
-    const res = await fetch('/api/gemini/tictactoe-commentary', {
+    const res = await apiFetch('/api/gemini/tictactoe-commentary', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

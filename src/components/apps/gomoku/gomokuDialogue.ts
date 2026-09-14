@@ -1,4 +1,5 @@
 import { AiCharacter, ApiConfig, ApiLog } from '../../../types';
+import { apiFetch } from '../../../lib/localBackend';
 
 export type GomokuSituation =
   | 'thinking'
@@ -137,7 +138,7 @@ export async function getGomokuDialogue({
   }
 
   try {
-    const res = await fetch('/api/gemini/gomoku-commentary', {
+    const res = await apiFetch('/api/gemini/gomoku-commentary', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

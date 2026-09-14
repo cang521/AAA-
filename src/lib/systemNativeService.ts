@@ -1,3 +1,5 @@
+import { apiFetch } from './localBackend';
+
 /**
  * Native Android / Browser Device Capabilities
  * Strictly separates native phone hardware (Time, GPS Geolocation, Battery, Vibration)
@@ -147,7 +149,7 @@ class SystemNativeService {
       let displayName = '';
 
       try {
-        const geoRes = await fetch(
+        const geoRes = await apiFetch(
           `/api/weather/reverse-geocode?lat=${latitude}&lon=${longitude}`
         );
         if (geoRes.ok) {

@@ -1,4 +1,5 @@
 import { AiCharacter, ApiConfig } from '../../../types';
+import { apiFetch } from '../../../lib/localBackend';
 
 export type RpsSituation = 'before_throw' | 'ai_win' | 'ai_loss' | 'ai_streak' | 'ai_losing_streak' | 'draw';
 
@@ -119,7 +120,7 @@ export const fetchRpsDialogue = async (
   apiConfig?: ApiConfig
 ): Promise<string> => {
   try {
-    const res = await fetch('/api/gemini/rps-dialogue', {
+    const res = await apiFetch('/api/gemini/rps-dialogue', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -149,7 +150,7 @@ export const generateRpsQuestion = async (
   apiConfig?: ApiConfig
 ): Promise<{ question: string; category: string }> => {
   try {
-    const res = await fetch('/api/gemini/rps-generate-question', {
+    const res = await apiFetch('/api/gemini/rps-generate-question', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -192,7 +193,7 @@ export const answerRpsQuestion = async (
   apiConfig?: ApiConfig
 ): Promise<string> => {
   try {
-    const res = await fetch('/api/gemini/rps-answer-question', {
+    const res = await apiFetch('/api/gemini/rps-answer-question', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

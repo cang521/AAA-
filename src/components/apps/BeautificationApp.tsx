@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { apiFetch } from '../../lib/localBackend';
 import { AppIconConfig, ApiLog, ApiConfig } from '../../types';
 import {
   ArrowLeft,
@@ -65,7 +66,7 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
     if (!cssCode.trim()) return;
     setIsFixingCss(true);
     try {
-      const res = await fetch('/api/gemini/fix-css', {
+      const res = await apiFetch('/api/gemini/fix-css', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ customCss: cssCode, apiConfig }),

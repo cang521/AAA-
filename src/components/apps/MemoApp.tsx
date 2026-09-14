@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { apiFetch } from '../../lib/localBackend';
 import { Memo } from '../../types';
 import {
   ArrowLeft,
@@ -130,7 +131,7 @@ export const MemoApp: React.FC<MemoAppProps> = ({
 
     setAiLoading(true);
     try {
-      const res = await fetch('/api/gemini/chat', {
+      const res = await apiFetch('/api/gemini/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

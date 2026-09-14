@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { apiFetch } from '../../lib/localBackend';
 import {
   Send,
   Sparkles,
@@ -610,7 +611,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
       const recentHistoryWindow = currentDisplayed.slice(-16);
 
-      const res = await fetch('/api/gemini/chat', {
+      const res = await apiFetch('/api/gemini/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -705,7 +706,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     setIsLoading(true);
 
     try {
-      const res = await fetch('/api/gemini/proactive-period', {
+      const res = await apiFetch('/api/gemini/proactive-period', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

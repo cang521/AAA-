@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../../lib/localBackend';
 import {
   ApiConfig,
   AiControls,
@@ -358,7 +359,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     }
 
     try {
-      const res = await fetch('/api/provider/test-connection', {
+      const res = await apiFetch('/api/provider/test-connection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -464,7 +465,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     }
 
     try {
-      const res = await fetch('/api/provider/fetch-models', {
+      const res = await apiFetch('/api/provider/fetch-models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -571,7 +572,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     }
 
     try {
-      const res = await fetch('/api/provider/test-model', {
+      const res = await apiFetch('/api/provider/test-model', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -696,7 +697,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     if (!rawJsonInput.trim()) return;
     setIsAdaptingJson(true);
     try {
-      const res = await fetch('/api/gemini/adapter-json', {
+      const res = await apiFetch('/api/gemini/adapter-json', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rawJson: rawJsonInput, apiConfig: draftConfig }),
