@@ -411,8 +411,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     const providerType = activeCategory === 'text'
       ? effective.provider
       : activeCategory === 'image'
-      ? (draftConfig.imageProvider || stored.imageProvider || 'google_gemini')
-      : (draftConfig.voiceProvider || stored.voiceProvider || 'google_gemini');
+      ? (draftConfig.imageProvider || stored.imageProvider || 'openai_compatible')
+      : (draftConfig.voiceProvider || stored.voiceProvider || 'openai_compatible');
 
     const baseUrl = activeCategory === 'text'
       ? effective.baseUrl
