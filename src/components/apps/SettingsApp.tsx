@@ -84,7 +84,36 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   onAddApiLog,
   onDataChanged,
 }) => {
-  const [draftConfig, setDraftConfig] = useState<ApiConfig>(() => loadApiConfig());
+  const [draftConfig, setDraftConfig] = useState<ApiConfig>(() => {
+    const stored = loadApiConfig();
+    const mergedProviders = { ...(stored.providers || {}), ...(apiConfig?.providers || {}) };
+    const effective = resolveEffectiveTextConfig(apiConfig, stored);
+    mergedProviders[effective.provider] = {
+      provider: effective.provider,
+      apiKey: effective.apiKey,
+      baseUrl: effective.baseUrl,
+      model: effective.model,
+    };
+    return {
+      ...stored,
+      ...apiConfig,
+      textProvider: effective.provider,
+      textApiKey: effective.apiKey,
+      textBaseUrl: effective.baseUrl,
+      textModel: effective.model,
+      providers: mergedProviders,
+    };
+  });
+
+  const updateApiDraft = (
+    nextConfig: ApiConfig,
+    options?: Parameters<typeof saveApiConfig>[1]
+  ) => {
+    setDraftConfig(nextConfig);
+    saveApiConfig(nextConfig, options);
+    onSaveApiConfig(nextConfig);
+  };
+
   const [controls, setControls] = useState<AiControls>(aiControls);
 
   // Active Provider Category Tab
@@ -196,9 +225,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       textApiKey: '',
       providers: updatedProviders,
     };
-    setDraftConfig(updatedConfig);
-    saveApiConfig(updatedConfig, { explicitlyClearTextKey: true });
-    onSaveApiConfig(updatedConfig);
+    updateApiDraft(updatedConfig, { explicitlyClearTextKey: true });
   };
 
   const handleClearImageKey = () => {
@@ -219,9 +246,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       imageApiKey: '',
       providers: updatedProviders,
     };
-    setDraftConfig(updatedConfig);
-    saveApiConfig(updatedConfig, { explicitlyClearImageKey: true });
-    onSaveApiConfig(updatedConfig);
+    updateApiDraft(updatedConfig, { explicitlyClearImageKey: true });
   };
 
   const handleClearVoiceKey = () => {
@@ -242,9 +267,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       voiceApiKey: '',
       providers: updatedProviders,
     };
-    setDraftConfig(updatedConfig);
-    saveApiConfig(updatedConfig, { explicitlyClearVoiceKey: true });
-    onSaveApiConfig(updatedConfig);
+    updateApiDraft(updatedConfig, { explicitlyClearVoiceKey: true });
   };
 
   const handleGlobalSave = () => {
@@ -276,15 +299,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       providers: updatedProviders,
     };
 
-    // 1. Direct persistence to storage
-    saveApiConfig(finalConfig);
-
-    // 2. Notify parent App.tsx state
-    onSaveApiConfig(finalConfig);
+    updateApiDraft(finalConfig);
     onSaveAiControls(controls);
-
-    // 3. Update local draft state
-    setDraftConfig(finalConfig);
 
     setSaveSuccessMsg('🎉 全局 API Provider 配置与系统设置已保存生效！');
     setTimeout(() => setSaveSuccessMsg(''), 3500);
@@ -317,31 +333,28 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       ? (draftConfig.imageApiKey || stored.imageApiKey || '')
       : (draftConfig.voiceApiKey || stored.voiceApiKey || '');
 
-    // Synchronize draft state and save normalized valid config to storage
+    // Synchronize draft state and save normalized valid config to storage & parent state
     if (activeCategory === 'text') {
-      setDraftConfig((prev) => {
-        const updatedProviders = {
-          ...(stored.providers || {}),
-          ...(prev.providers || {}),
-        };
-        updatedProviders[effective.provider] = {
-          provider: effective.provider,
-          apiKey: effective.apiKey,
-          baseUrl: effective.baseUrl,
-          model: effective.model,
-        };
-        const next: ApiConfig = {
-          ...stored,
-          ...prev,
-          textProvider: effective.provider,
-          textApiKey: effective.apiKey,
-          textBaseUrl: effective.baseUrl,
-          textModel: effective.model,
-          providers: updatedProviders,
-        };
-        saveApiConfig(next);
-        return next;
-      });
+      const updatedProviders = {
+        ...(stored.providers || {}),
+        ...(draftConfig.providers || {}),
+      };
+      updatedProviders[effective.provider] = {
+        provider: effective.provider,
+        apiKey: effective.apiKey,
+        baseUrl: effective.baseUrl,
+        model: effective.model,
+      };
+      const next: ApiConfig = {
+        ...stored,
+        ...draftConfig,
+        textProvider: effective.provider,
+        textApiKey: effective.apiKey,
+        textBaseUrl: effective.baseUrl,
+        textModel: effective.model,
+        providers: updatedProviders,
+      };
+      updateApiDraft(next);
     }
 
     try {
@@ -428,29 +441,26 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
     // Lock immutable snapshot & normalize config before request
     if (activeCategory === 'text') {
-      setDraftConfig((prev) => {
-        const updatedProviders = {
-          ...(stored.providers || {}),
-          ...(prev.providers || {}),
-        };
-        updatedProviders[effective.provider] = {
-          provider: effective.provider,
-          apiKey: effective.apiKey,
-          baseUrl: effective.baseUrl,
-          model: effective.model,
-        };
-        const next: ApiConfig = {
-          ...stored,
-          ...prev,
-          textProvider: effective.provider,
-          textApiKey: effective.apiKey,
-          textBaseUrl: effective.baseUrl,
-          textModel: effective.model,
-          providers: updatedProviders,
-        };
-        saveApiConfig(next);
-        return next;
-      });
+      const updatedProviders = {
+        ...(stored.providers || {}),
+        ...(draftConfig.providers || {}),
+      };
+      updatedProviders[effective.provider] = {
+        provider: effective.provider,
+        apiKey: effective.apiKey,
+        baseUrl: effective.baseUrl,
+        model: effective.model,
+      };
+      const next: ApiConfig = {
+        ...stored,
+        ...draftConfig,
+        textProvider: effective.provider,
+        textApiKey: effective.apiKey,
+        textBaseUrl: effective.baseUrl,
+        textModel: effective.model,
+        providers: updatedProviders,
+      };
+      updateApiDraft(next);
     }
 
     try {
@@ -538,29 +548,26 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       : (draftConfig.voiceModel || stored.voiceModel || '');
 
     if (activeCategory === 'text') {
-      setDraftConfig((prev) => {
-        const updatedProviders = {
-          ...(stored.providers || {}),
-          ...(prev.providers || {}),
-        };
-        updatedProviders[effective.provider] = {
-          provider: effective.provider,
-          apiKey: effective.apiKey,
-          baseUrl: effective.baseUrl,
-          model: effective.model,
-        };
-        const next: ApiConfig = {
-          ...stored,
-          ...prev,
-          textProvider: effective.provider,
-          textApiKey: effective.apiKey,
-          textBaseUrl: effective.baseUrl,
-          textModel: effective.model,
-          providers: updatedProviders,
-        };
-        saveApiConfig(next);
-        return next;
-      });
+      const updatedProviders = {
+        ...(stored.providers || {}),
+        ...(draftConfig.providers || {}),
+      };
+      updatedProviders[effective.provider] = {
+        provider: effective.provider,
+        apiKey: effective.apiKey,
+        baseUrl: effective.baseUrl,
+        model: effective.model,
+      };
+      const next: ApiConfig = {
+        ...stored,
+        ...draftConfig,
+        textProvider: effective.provider,
+        textApiKey: effective.apiKey,
+        textBaseUrl: effective.baseUrl,
+        textModel: effective.model,
+        providers: updatedProviders,
+      };
+      updateApiDraft(next);
     }
 
     try {
@@ -765,6 +772,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         <ApiSettingsPanel
           draftConfig={draftConfig}
           setDraftConfig={setDraftConfig}
+          updateApiDraft={updateApiDraft}
           activeCategory={activeCategory}
           setActiveCategory={setActiveCategory}
           showTextKey={showTextKey}

@@ -84,6 +84,7 @@ const persistCustomPresets = (items: CustomPresetItem[]) => {
 export interface ApiSettingsPanelProps {
   draftConfig: ApiConfig;
   setDraftConfig: React.Dispatch<React.SetStateAction<ApiConfig>>;
+  updateApiDraft: (nextConfig: ApiConfig, options?: Parameters<typeof saveApiConfig>[1]) => void;
   activeCategory: 'text' | 'image' | 'voice';
   setActiveCategory: (cat: 'text' | 'image' | 'voice') => void;
 
@@ -119,6 +120,7 @@ export interface ApiSettingsPanelProps {
 export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   draftConfig,
   setDraftConfig,
+  updateApiDraft,
   activeCategory,
   setActiveCategory,
   showTextKey,
@@ -177,32 +179,30 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   const handleSelectPreset = (id: string) => {
     setSelectedPresetId(id);
     if (id === 'custom') {
-      setDraftConfig((prev) => ({ ...prev, textProvider: 'custom' }));
+      const nextConfig: ApiConfig = { ...draftConfig, textProvider: 'custom' };
+      updateApiDraft(nextConfig);
       return;
     }
     const found = customPresets.find((p) => p.id === id);
     if (found) {
-      setDraftConfig((prev) => {
-        const updatedProviders = {
-          ...(prev.providers || {}),
-          custom: {
-            provider: 'custom' as const,
-            baseUrl: found.baseUrl,
-            model: found.model,
-            apiKey: found.apiKey || prev.providers?.custom?.apiKey || prev.textApiKey || '',
-          },
-        };
-        const nextConfig: ApiConfig = {
-          ...prev,
-          textProvider: 'custom',
-          textBaseUrl: found.baseUrl,
-          textModel: found.model,
-          textApiKey: found.apiKey || prev.textApiKey || '',
-          providers: updatedProviders,
-        };
-        saveApiConfig(nextConfig);
-        return nextConfig;
-      });
+      const updatedProviders = {
+        ...(draftConfig.providers || {}),
+        custom: {
+          provider: 'custom' as const,
+          baseUrl: found.baseUrl,
+          model: found.model,
+          apiKey: found.apiKey || draftConfig.providers?.custom?.apiKey || draftConfig.textApiKey || '',
+        },
+      };
+      const nextConfig: ApiConfig = {
+        ...draftConfig,
+        textProvider: 'custom',
+        textBaseUrl: found.baseUrl,
+        textModel: found.model,
+        textApiKey: found.apiKey || draftConfig.textApiKey || '',
+        providers: updatedProviders,
+      };
+      updateApiDraft(nextConfig);
       showNotice(`已切换到预设：${found.name}`);
     }
   };
@@ -239,14 +239,14 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   // 清空 / 删除当前的自定义配置内容
   const handleClearCurrentConfig = () => {
     handleClearTextKey();
-    setDraftConfig((prev) => ({
-      ...prev,
+    const nextConfig: ApiConfig = {
+      ...draftConfig,
       textBaseUrl: '',
       textApiKey: '',
       textModel: '',
       textProvider: 'custom',
       providers: {
-        ...(prev.providers || {}),
+        ...(draftConfig.providers || {}),
         custom: {
           provider: 'custom' as const,
           apiKey: '',
@@ -254,7 +254,8 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
           model: '',
         },
       },
-    }));
+    };
+    updateApiDraft(nextConfig, { explicitlyClearTextKey: true });
     setSelectedPresetId('custom');
     showNotice('已清空当前自定义配置');
   };
@@ -320,26 +321,23 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={currentTextBaseUrl}
               onChange={(e) => {
                 const val = e.target.value;
-                setDraftConfig((prev) => {
-                  const stored = loadApiConfig();
-                  const effective = resolveEffectiveTextConfig(prev, stored);
-                  const provider = effective.provider;
-                  const nextConfig: ApiConfig = {
-                    ...prev,
-                    textBaseUrl: val,
-                    providers: {
-                      ...(prev.providers || {}),
-                      [provider]: {
-                        provider,
-                        apiKey: effective.apiKey,
-                        baseUrl: val,
-                        model: effective.model,
-                      },
+                const stored = loadApiConfig();
+                const effective = resolveEffectiveTextConfig(draftConfig, stored);
+                const provider = effective.provider;
+                const nextConfig: ApiConfig = {
+                  ...draftConfig,
+                  textBaseUrl: val,
+                  providers: {
+                    ...(draftConfig.providers || {}),
+                    [provider]: {
+                      provider,
+                      apiKey: effective.apiKey,
+                      baseUrl: val,
+                      model: effective.model,
                     },
-                  };
-                  saveApiConfig(nextConfig);
-                  return nextConfig;
-                });
+                  },
+                };
+                updateApiDraft(nextConfig);
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
@@ -373,26 +371,23 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 value={currentTextKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  setDraftConfig((prev) => {
-                    const stored = loadApiConfig();
-                    const effective = resolveEffectiveTextConfig(prev, stored);
-                    const provider = effective.provider;
-                    const nextConfig: ApiConfig = {
-                      ...prev,
-                      textApiKey: val,
-                      providers: {
-                        ...(prev.providers || {}),
-                        [provider]: {
-                          provider,
-                          apiKey: val,
-                          baseUrl: effective.baseUrl,
-                          model: effective.model,
-                        },
+                  const stored = loadApiConfig();
+                  const effective = resolveEffectiveTextConfig(draftConfig, stored);
+                  const provider = effective.provider;
+                  const nextConfig: ApiConfig = {
+                    ...draftConfig,
+                    textApiKey: val,
+                    providers: {
+                      ...(draftConfig.providers || {}),
+                      [provider]: {
+                        provider,
+                        apiKey: val,
+                        baseUrl: effective.baseUrl,
+                        model: effective.model,
                       },
-                    };
-                    saveApiConfig(nextConfig);
-                    return nextConfig;
-                  });
+                    },
+                  };
+                  updateApiDraft(nextConfig);
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
               />
@@ -418,27 +413,24 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 onChange={(e) => {
                   const val = e.target.value;
                   if (val) {
-                    setDraftConfig((prev) => {
-                      const provider = prev.textProvider || 'google_gemini';
-                      const nextConfig: ApiConfig = {
-                        ...prev,
-                        textModel: val,
-                        providers: {
-                          ...(prev.providers || {}),
-                          [provider]: {
-                            ...(prev.providers?.[provider] || {
-                              provider,
-                              apiKey: '',
-                              baseUrl: prev.textBaseUrl || '',
-                              model: '',
-                            }),
-                            model: val,
-                          },
+                    const provider = draftConfig.textProvider || 'google_gemini';
+                    const nextConfig: ApiConfig = {
+                      ...draftConfig,
+                      textModel: val,
+                      providers: {
+                        ...(draftConfig.providers || {}),
+                        [provider]: {
+                          ...(draftConfig.providers?.[provider] || {
+                            provider,
+                            apiKey: '',
+                            baseUrl: draftConfig.textBaseUrl || '',
+                            model: '',
+                          }),
+                          model: val,
                         },
-                      };
-                      saveApiConfig(nextConfig);
-                      return nextConfig;
-                    });
+                      },
+                    };
+                    updateApiDraft(nextConfig);
                   }
                 }}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs font-mono focus:outline-none focus:border-zinc-500 mb-1.5"
@@ -457,27 +449,24 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={draftConfig.textModel || ''}
               onChange={(e) => {
                 const val = e.target.value;
-                setDraftConfig((prev) => {
-                  const provider = prev.textProvider || 'google_gemini';
-                  const nextConfig: ApiConfig = {
-                    ...prev,
-                    textModel: val,
-                    providers: {
-                      ...(prev.providers || {}),
-                      [provider]: {
-                        ...(prev.providers?.[provider] || {
-                          provider,
-                          apiKey: '',
-                          baseUrl: prev.textBaseUrl || '',
-                          model: '',
-                        }),
-                        model: val,
-                      },
+                const provider = draftConfig.textProvider || 'google_gemini';
+                const nextConfig: ApiConfig = {
+                  ...draftConfig,
+                  textModel: val,
+                  providers: {
+                    ...(draftConfig.providers || {}),
+                    [provider]: {
+                      ...(draftConfig.providers?.[provider] || {
+                        provider,
+                        apiKey: '',
+                        baseUrl: draftConfig.textBaseUrl || '',
+                        model: '',
+                      }),
+                      model: val,
                     },
-                  };
-                  saveApiConfig(nextConfig);
-                  return nextConfig;
-                });
+                  },
+                };
+                updateApiDraft(nextConfig);
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
@@ -627,7 +616,8 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                     value={draftConfig.textProvider || 'custom'}
                     onChange={(e) => {
                       const newP = e.target.value as ProviderType;
-                      setDraftConfig((prev) => ({ ...prev, textProvider: newP }));
+                      const nextConfig: ApiConfig = { ...draftConfig, textProvider: newP };
+                      updateApiDraft(nextConfig);
                     }}
                     className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs focus:outline-none"
                   >
@@ -696,11 +686,8 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={draftConfig.imageBaseUrl || ''}
               onChange={(e) => {
                 const val = e.target.value.trim();
-                setDraftConfig((prev) => {
-                  const nextConfig: ApiConfig = { ...prev, imageBaseUrl: val };
-                  saveApiConfig(nextConfig);
-                  return nextConfig;
-                });
+                const nextConfig: ApiConfig = { ...draftConfig, imageBaseUrl: val };
+                updateApiDraft(nextConfig);
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
@@ -733,26 +720,23 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 value={currentImageKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  setDraftConfig((prev) => {
-                    const provider = prev.imageProvider || 'openai_compatible';
-                    const nextConfig: ApiConfig = {
-                      ...prev,
-                      imageApiKey: val,
-                      providers: {
-                        ...(prev.providers || {}),
-                        [provider]: {
-                          ...(prev.providers?.[provider] || {
-                            provider,
-                            baseUrl: prev.imageBaseUrl || '',
-                            model: prev.imageModel || '',
-                          }),
-                          apiKey: val,
-                        },
+                  const provider = draftConfig.imageProvider || 'openai_compatible';
+                  const nextConfig: ApiConfig = {
+                    ...draftConfig,
+                    imageApiKey: val,
+                    providers: {
+                      ...(draftConfig.providers || {}),
+                      [provider]: {
+                        ...(draftConfig.providers?.[provider] || {
+                          provider,
+                          baseUrl: draftConfig.imageBaseUrl || '',
+                          model: draftConfig.imageModel || '',
+                        }),
+                        apiKey: val,
                       },
-                    };
-                    saveApiConfig(nextConfig);
-                    return nextConfig;
-                  });
+                    },
+                  };
+                  updateApiDraft(nextConfig);
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
               />
@@ -776,11 +760,8 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={draftConfig.imageModel || 'dall-e-3'}
               onChange={(e) => {
                 const val = e.target.value.trim();
-                setDraftConfig((prev) => {
-                  const nextConfig: ApiConfig = { ...prev, imageModel: val };
-                  saveApiConfig(nextConfig);
-                  return nextConfig;
-                });
+                const nextConfig: ApiConfig = { ...draftConfig, imageModel: val };
+                updateApiDraft(nextConfig);
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition"
             />
@@ -840,11 +821,8 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={draftConfig.voiceBaseUrl || ''}
               onChange={(e) => {
                 const val = e.target.value.trim();
-                setDraftConfig((prev) => {
-                  const nextConfig: ApiConfig = { ...prev, voiceBaseUrl: val };
-                  saveApiConfig(nextConfig);
-                  return nextConfig;
-                });
+                const nextConfig: ApiConfig = { ...draftConfig, voiceBaseUrl: val };
+                updateApiDraft(nextConfig);
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
@@ -877,26 +855,23 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 value={currentVoiceKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  setDraftConfig((prev) => {
-                    const provider = prev.voiceProvider || 'openai_compatible';
-                    const nextConfig: ApiConfig = {
-                      ...prev,
-                      voiceApiKey: val,
-                      providers: {
-                        ...(prev.providers || {}),
-                        [provider]: {
-                          ...(prev.providers?.[provider] || {
-                            provider,
-                            baseUrl: prev.voiceBaseUrl || '',
-                            model: prev.voiceModel || '',
-                          }),
-                          apiKey: val,
-                        },
+                  const provider = draftConfig.voiceProvider || 'openai_compatible';
+                  const nextConfig: ApiConfig = {
+                    ...draftConfig,
+                    voiceApiKey: val,
+                    providers: {
+                      ...(draftConfig.providers || {}),
+                      [provider]: {
+                        ...(draftConfig.providers?.[provider] || {
+                          provider,
+                          baseUrl: draftConfig.voiceBaseUrl || '',
+                          model: draftConfig.voiceModel || '',
+                        }),
+                        apiKey: val,
                       },
-                    };
-                    saveApiConfig(nextConfig);
-                    return nextConfig;
-                  });
+                    },
+                  };
+                  updateApiDraft(nextConfig);
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
               />
@@ -920,11 +895,8 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={draftConfig.voiceModel || 'tts-1'}
               onChange={(e) => {
                 const val = e.target.value.trim();
-                setDraftConfig((prev) => {
-                  const nextConfig: ApiConfig = { ...prev, voiceModel: val };
-                  saveApiConfig(nextConfig);
-                  return nextConfig;
-                });
+                const nextConfig: ApiConfig = { ...draftConfig, voiceModel: val };
+                updateApiDraft(nextConfig);
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition"
             />
