@@ -419,50 +419,25 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     setIsFetchingModels(true);
     setModelFetchResult(null);
 
-    const stored = loadApiConfig();
-    const effective = resolveEffectiveTextConfig(draftConfig, stored);
+    const effective = resolveEffectiveTextConfig(draftConfig);
 
     const providerType = activeCategory === 'text'
       ? effective.provider
       : activeCategory === 'image'
-      ? (draftConfig.imageProvider || stored.imageProvider || 'openai_compatible')
-      : (draftConfig.voiceProvider || stored.voiceProvider || 'openai_compatible');
+      ? (draftConfig.imageProvider || 'openai_compatible')
+      : (draftConfig.voiceProvider || 'openai_compatible');
 
     const baseUrl = activeCategory === 'text'
       ? effective.baseUrl
       : activeCategory === 'image'
-      ? (draftConfig.imageBaseUrl || stored.imageBaseUrl || '')
-      : (draftConfig.voiceBaseUrl || stored.voiceBaseUrl || '');
+      ? (draftConfig.imageBaseUrl || '')
+      : (draftConfig.voiceBaseUrl || '');
 
     const apiKey = activeCategory === 'text'
       ? effective.apiKey
       : activeCategory === 'image'
-      ? (draftConfig.imageApiKey || stored.imageApiKey || '')
-      : (draftConfig.voiceApiKey || stored.voiceApiKey || '');
-
-    // Lock immutable snapshot & normalize config before request
-    if (activeCategory === 'text') {
-      const updatedProviders = {
-        ...(stored.providers || {}),
-        ...(draftConfig.providers || {}),
-      };
-      updatedProviders[effective.provider] = {
-        provider: effective.provider,
-        apiKey: effective.apiKey,
-        baseUrl: effective.baseUrl,
-        model: effective.model,
-      };
-      const next: ApiConfig = {
-        ...stored,
-        ...draftConfig,
-        textProvider: effective.provider,
-        textApiKey: effective.apiKey,
-        textBaseUrl: effective.baseUrl,
-        textModel: effective.model,
-        providers: updatedProviders,
-      };
-      updateApiDraft(next);
-    }
+      ? (draftConfig.imageApiKey || '')
+      : (draftConfig.voiceApiKey || '');
 
     try {
       const res = await apiFetch('/api/provider/fetch-models', {
