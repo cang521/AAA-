@@ -439,6 +439,15 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       ? (draftConfig.imageApiKey || '')
       : (draftConfig.voiceApiKey || '');
 
+    console.log('[API Key Log - Fetch Models Request]', {
+      activeCategory,
+      providerType: providerType || 'custom',
+      baseUrl,
+      keyIsEmpty: !apiKey,
+      keyLength: apiKey ? apiKey.length : 0,
+      keyLast4: apiKey ? apiKey.slice(-4) : '',
+    });
+
     try {
       const res = await apiFetch('/api/provider/fetch-models', {
         method: 'POST',

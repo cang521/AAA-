@@ -577,6 +577,15 @@ app.post('/api/provider/fetch-models', async (req, res) => {
   const cleanKey = (apiKey && apiKey.trim()) || '';
   const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, '') : '';
 
+  console.log('[API Key Log - Server fetch-models Received]', {
+    providerType,
+    baseUrl: cleanBaseUrl,
+    serviceType,
+    keyIsEmpty: !cleanKey,
+    keyLength: cleanKey ? cleanKey.length : 0,
+    keyLast4: cleanKey ? cleanKey.slice(-4) : '',
+  });
+
   if (!cleanKey && providerType !== 'ollama') {
     return res.status(400).json({
       success: false,

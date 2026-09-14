@@ -149,7 +149,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   const [showPresetManager, setShowPresetManager] = useState(false);
 
   // Derived single source of truth values
-  const effectiveText = resolveEffectiveTextConfig(draftConfig, loadApiConfig());
+  const effectiveText = resolveEffectiveTextConfig(draftConfig);
   const currentProvider = effectiveText.provider;
   const currentTextKey = effectiveText.apiKey;
   const currentTextBaseUrl = effectiveText.baseUrl;
@@ -321,19 +321,28 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={currentTextBaseUrl}
               onChange={(e) => {
                 const val = e.target.value;
-                const stored = loadApiConfig();
-                const effective = resolveEffectiveTextConfig(draftConfig, stored);
+                const effective = resolveEffectiveTextConfig(draftConfig);
                 const provider = effective.provider;
+                console.log('[API Key Log - BaseURL Change]', {
+                  provider,
+                  baseUrl: val,
+                  keyIsEmpty: !effective.apiKey,
+                  keyLength: effective.apiKey ? effective.apiKey.length : 0,
+                  keyLast4: effective.apiKey ? effective.apiKey.slice(-4) : '',
+                });
                 const nextConfig: ApiConfig = {
                   ...draftConfig,
                   textBaseUrl: val,
                   providers: {
                     ...(draftConfig.providers || {}),
                     [provider]: {
-                      provider,
-                      apiKey: effective.apiKey,
+                      ...(draftConfig.providers?.[provider] || {
+                        provider,
+                        apiKey: effective.apiKey,
+                        baseUrl: val,
+                        model: effective.model,
+                      }),
                       baseUrl: val,
-                      model: effective.model,
                     },
                   },
                 };
@@ -371,19 +380,28 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 value={currentTextKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  const stored = loadApiConfig();
-                  const effective = resolveEffectiveTextConfig(draftConfig, stored);
+                  const effective = resolveEffectiveTextConfig(draftConfig);
                   const provider = effective.provider;
+                  console.log('[API Key Log - Key Change]', {
+                    provider,
+                    baseUrl: effective.baseUrl,
+                    keyIsEmpty: !val,
+                    keyLength: val ? val.length : 0,
+                    keyLast4: val ? val.slice(-4) : '',
+                  });
                   const nextConfig: ApiConfig = {
                     ...draftConfig,
                     textApiKey: val,
                     providers: {
                       ...(draftConfig.providers || {}),
                       [provider]: {
-                        provider,
+                        ...(draftConfig.providers?.[provider] || {
+                          provider,
+                          apiKey: val,
+                          baseUrl: effective.baseUrl,
+                          model: effective.model,
+                        }),
                         apiKey: val,
-                        baseUrl: effective.baseUrl,
-                        model: effective.model,
                       },
                     },
                   };
