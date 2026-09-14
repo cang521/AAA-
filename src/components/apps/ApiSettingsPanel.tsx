@@ -7,7 +7,7 @@ import {
   ModelFetchResult,
   ModelTestResult,
 } from '../../types';
-import { saveApiConfig } from '../../lib/storage';
+import { saveApiConfig, loadApiConfig, resolveEffectiveTextConfig } from '../../lib/storage';
 import {
   Eye,
   EyeOff,
@@ -147,8 +147,11 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   const [showPresetManager, setShowPresetManager] = useState(false);
 
   // Derived single source of truth values
-  const currentProvider = draftConfig.textProvider || 'google_gemini';
-  const currentTextKey = draftConfig.providers?.[currentProvider]?.apiKey ?? draftConfig.textApiKey ?? '';
+  const effectiveText = resolveEffectiveTextConfig(draftConfig, loadApiConfig());
+  const currentProvider = effectiveText.provider;
+  const currentTextKey = effectiveText.apiKey;
+  const currentTextBaseUrl = effectiveText.baseUrl;
+  const currentTextModel = effectiveText.model;
   const currentImageKey = draftConfig.imageApiKey ?? '';
   const currentVoiceKey = draftConfig.voiceApiKey ?? '';
 
@@ -314,24 +317,23 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="https://api.openai.com/v1 或留空使用默认"
-              value={draftConfig.textBaseUrl || ''}
+              value={currentTextBaseUrl}
               onChange={(e) => {
                 const val = e.target.value;
                 setDraftConfig((prev) => {
-                  const provider = prev.textProvider || 'google_gemini';
+                  const stored = loadApiConfig();
+                  const effective = resolveEffectiveTextConfig(prev, stored);
+                  const provider = effective.provider;
                   const nextConfig: ApiConfig = {
                     ...prev,
                     textBaseUrl: val,
                     providers: {
                       ...(prev.providers || {}),
                       [provider]: {
-                        ...(prev.providers?.[provider] || {
-                          provider,
-                          apiKey: '',
-                          baseUrl: '',
-                          model: prev.textModel || '',
-                        }),
+                        provider,
+                        apiKey: effective.apiKey,
                         baseUrl: val,
+                        model: effective.model,
                       },
                     },
                   };
@@ -372,19 +374,19 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 onChange={(e) => {
                   const val = e.target.value;
                   setDraftConfig((prev) => {
-                    const provider = prev.textProvider || 'google_gemini';
+                    const stored = loadApiConfig();
+                    const effective = resolveEffectiveTextConfig(prev, stored);
+                    const provider = effective.provider;
                     const nextConfig: ApiConfig = {
                       ...prev,
                       textApiKey: val,
                       providers: {
                         ...(prev.providers || {}),
                         [provider]: {
-                          ...(prev.providers?.[provider] || {
-                            provider,
-                            baseUrl: prev.textBaseUrl || '',
-                            model: prev.textModel || '',
-                          }),
+                          provider,
                           apiKey: val,
+                          baseUrl: effective.baseUrl,
+                          model: effective.model,
                         },
                       },
                     };

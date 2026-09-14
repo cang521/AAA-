@@ -8,6 +8,7 @@ import {
   ApiLog,
   AiPermissions,
   ApiConfig,
+  ProviderType,
   ProviderConfigItem,
   AiControls,
   WidgetConfig,
@@ -453,42 +454,53 @@ export interface SaveApiConfigOptions {
   explicitlyClearVoiceKey?: boolean;
 }
 
+export const resolveEffectiveTextConfig = (
+  draft?: Partial<ApiConfig> | null,
+  stored?: Partial<ApiConfig> | null
+): { provider: ProviderType; apiKey: string; baseUrl: string; model: string } => {
+  const provider = (draft?.textProvider || stored?.textProvider || 'google_gemini') as ProviderType;
+
+  // Non-empty preference order: draft provider -> draft root -> stored provider -> stored root
+  const draftProvKey = draft?.providers?.[provider]?.apiKey?.trim();
+  const draftRootKey = draft?.textApiKey?.trim();
+  const storedProvKey = stored?.providers?.[provider]?.apiKey?.trim();
+  const storedRootKey = stored?.textApiKey?.trim();
+  const apiKey = draftProvKey || draftRootKey || storedProvKey || storedRootKey || '';
+
+  const draftProvBaseUrl = draft?.providers?.[provider]?.baseUrl?.trim();
+  const draftRootBaseUrl = draft?.textBaseUrl?.trim();
+  const storedProvBaseUrl = stored?.providers?.[provider]?.baseUrl?.trim();
+  const storedRootBaseUrl = stored?.textBaseUrl?.trim();
+  const baseUrl = draftProvBaseUrl || draftRootBaseUrl || storedProvBaseUrl || storedRootBaseUrl || '';
+
+  const draftProvModel = draft?.providers?.[provider]?.model?.trim();
+  const draftRootModel = draft?.textModel?.trim();
+  const storedProvModel = stored?.providers?.[provider]?.model?.trim();
+  const storedRootModel = stored?.textModel?.trim();
+  const model = draftProvModel || draftRootModel || storedProvModel || storedRootModel || 'gemini-3.6-flash';
+
+  return { provider, apiKey, baseUrl, model };
+};
+
 export const loadApiConfig = (): ApiConfig => {
-  const loaded = loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG);
-  if (!loaded) return { ...INITIAL_API_CONFIG };
+  const loaded = loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG) || { ...INITIAL_API_CONFIG };
+  const effective = resolveEffectiveTextConfig(loaded, INITIAL_API_CONFIG);
 
   const providers: Record<string, ProviderConfigItem> = { ...(loaded.providers || {}) };
-  const currentTextProvider = loaded.textProvider || (loaded.textBaseUrl ? 'openai_compatible' : 'google_gemini');
-
-  // Defensive migration: ensure the current provider has an entry in providers if textApiKey / textBaseUrl exist
-  if (!providers[currentTextProvider]) {
-    providers[currentTextProvider] = {
-      provider: currentTextProvider,
-      apiKey: loaded.textApiKey || '',
-      baseUrl: loaded.textBaseUrl || '',
-      model: loaded.textModel || 'gemini-3.6-flash',
-    };
-  } else {
-    // Sync keys between root textApiKey and providers map
-    if (loaded.textApiKey && !providers[currentTextProvider].apiKey) {
-      providers[currentTextProvider].apiKey = loaded.textApiKey;
-    }
-    if (providers[currentTextProvider].apiKey && !loaded.textApiKey) {
-      loaded.textApiKey = providers[currentTextProvider].apiKey;
-    }
-    if (loaded.textBaseUrl !== undefined && !providers[currentTextProvider].baseUrl) {
-      providers[currentTextProvider].baseUrl = loaded.textBaseUrl;
-    }
-  }
-
-  // Primary source of truth for current provider's API key:
-  const primaryApiKey = providers[currentTextProvider]?.apiKey || loaded.textApiKey || '';
+  providers[effective.provider] = {
+    provider: effective.provider,
+    apiKey: effective.apiKey,
+    baseUrl: effective.baseUrl,
+    model: effective.model,
+  };
 
   return {
     ...INITIAL_API_CONFIG,
     ...loaded,
-    textProvider: currentTextProvider,
-    textApiKey: primaryApiKey,
+    textProvider: effective.provider,
+    textApiKey: effective.apiKey,
+    textBaseUrl: effective.baseUrl,
+    textModel: effective.model,
     providers,
   };
 };
@@ -530,106 +542,83 @@ export const clearApiKey = (providerType: 'text' | 'image' | 'voice', providerNa
 
 export const saveApiConfig = (c: ApiConfig, options?: SaveApiConfigOptions): void => {
   try {
-    const existing = loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG);
-    const existingProviders = existing?.providers || {};
+    const existing = loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG) || { ...INITIAL_API_CONFIG };
+    const existingProviders = existing.providers || {};
     const newProviders = c.providers || {};
 
-    const currentProvider = c.textProvider || existing?.textProvider || 'google_gemini';
+    const currentProvider = (c.textProvider || existing.textProvider || 'google_gemini') as ProviderType;
 
-    // 1. Text API Key handling:
-    // User requirement: "禁止通过空字符串推断用户明确删除，只有明确标志 explicitlyClearTextKey 才能删除。新 Key 为空而旧 Key 存在时永远保留旧 Key"
-    const incomingTextKeyInProvider = newProviders[currentProvider]?.apiKey?.trim();
-    const incomingTextKeyRoot = c.textApiKey?.trim();
-    const incomingTextKey = incomingTextKeyInProvider || incomingTextKeyRoot;
-
-    const existingKeyInProvider = existingProviders[currentProvider]?.apiKey?.trim();
-    const existingKeyRoot = existing?.textApiKey?.trim();
-    const existingKey = existingKeyInProvider || existingKeyRoot || '';
-
+    // 1. Text API Key handling
     let effectiveTextKey = '';
     if (options?.explicitlyClearTextKey) {
-      // User explicitly clicked "Clear / Delete Key" button
       effectiveTextKey = '';
-    } else if (incomingTextKey) {
-      // User provided a new valid Key
-      effectiveTextKey = incomingTextKey;
     } else {
-      // Incoming is empty and no explicit delete flag: ALWAYS PRESERVE EXISTING KEY
-      effectiveTextKey = existingKey;
+      const incomingProvKey = newProviders[currentProvider]?.apiKey?.trim();
+      const incomingRootKey = c.textApiKey?.trim();
+      const existingProvKey = existingProviders[currentProvider]?.apiKey?.trim();
+      const existingRootKey = existing.textApiKey?.trim();
+      effectiveTextKey = incomingProvKey || incomingRootKey || existingProvKey || existingRootKey || '';
     }
 
-    // Merge providers map, ensuring config.providers[currentProvider].apiKey is updated
+    // 2. Base URL handling
+    const incomingProvBaseUrl = newProviders[currentProvider]?.baseUrl?.trim();
+    const incomingRootBaseUrl = c.textBaseUrl?.trim();
+    const existingProvBaseUrl = existingProviders[currentProvider]?.baseUrl?.trim();
+    const existingRootBaseUrl = existing.textBaseUrl?.trim();
+    const effectiveTextBaseUrl = incomingProvBaseUrl || incomingRootBaseUrl || existingProvBaseUrl || existingRootBaseUrl || '';
+
+    // 3. Model handling
+    const incomingProvModel = newProviders[currentProvider]?.model?.trim();
+    const incomingRootModel = c.textModel?.trim();
+    const existingProvModel = existingProviders[currentProvider]?.model?.trim();
+    const existingRootModel = existing.textModel?.trim();
+    const effectiveTextModel = incomingProvModel || incomingRootModel || existingProvModel || existingRootModel || 'gemini-3.6-flash';
+
+    // Merge providers map
     const mergedProviders = { ...existingProviders, ...newProviders };
-    if (!mergedProviders[currentProvider]) {
-      mergedProviders[currentProvider] = {
-        provider: currentProvider,
-        apiKey: effectiveTextKey,
-        baseUrl: c.textBaseUrl !== undefined ? c.textBaseUrl.trim() : (existing?.textBaseUrl || ''),
-        model: c.textModel?.trim() || existing?.textModel || 'gemini-3.6-flash',
-      };
-    } else {
-      mergedProviders[currentProvider] = {
-        ...mergedProviders[currentProvider],
-        apiKey: effectiveTextKey,
-        baseUrl:
-          c.textBaseUrl !== undefined && c.textBaseUrl.trim() !== ''
-            ? c.textBaseUrl.trim()
-            : (mergedProviders[currentProvider]?.baseUrl || existing?.textBaseUrl || ''),
-        model:
-          c.textModel?.trim() ||
-          mergedProviders[currentProvider]?.model ||
-          existing?.textModel ||
-          'gemini-3.6-flash',
-      };
-    }
+    mergedProviders[currentProvider] = {
+      provider: currentProvider,
+      apiKey: effectiveTextKey,
+      baseUrl: effectiveTextBaseUrl,
+      model: effectiveTextModel,
+    };
 
-    // Base URL safeguard: if empty and not explicit change, preserve existing
-    const effectiveTextBaseUrl =
-      c.textBaseUrl !== undefined && c.textBaseUrl.trim() !== ''
-        ? c.textBaseUrl.trim()
-        : (existing?.textBaseUrl || mergedProviders[currentProvider]?.baseUrl || '');
-
-    // 2. Image API Key handling:
+    // 4. Image API Key handling
     let effectiveImageKey = '';
     if (options?.explicitlyClearImageKey) {
       effectiveImageKey = '';
     } else if (c.imageApiKey && c.imageApiKey.trim() !== '') {
       effectiveImageKey = c.imageApiKey.trim();
     } else {
-      effectiveImageKey = existing?.imageApiKey?.trim() || '';
+      effectiveImageKey = existing.imageApiKey?.trim() || '';
     }
 
-    // 3. Voice API Key handling:
+    // 5. Voice API Key handling
     let effectiveVoiceKey = '';
     if (options?.explicitlyClearVoiceKey) {
       effectiveVoiceKey = '';
     } else if (c.voiceApiKey && c.voiceApiKey.trim() !== '') {
       effectiveVoiceKey = c.voiceApiKey.trim();
     } else {
-      effectiveVoiceKey = existing?.voiceApiKey?.trim() || '';
+      effectiveVoiceKey = existing.voiceApiKey?.trim() || '';
     }
 
-    const merged: ApiConfig = {
+    const nextConfig: ApiConfig = {
       ...INITIAL_API_CONFIG,
       ...existing,
       ...c,
       textProvider: currentProvider,
       textApiKey: effectiveTextKey,
       textBaseUrl: effectiveTextBaseUrl,
-      textModel: c.textModel?.trim() || existing?.textModel || 'gemini-3.6-flash',
+      textModel: effectiveTextModel,
       imageApiKey: effectiveImageKey,
-      imageBaseUrl: c.imageBaseUrl !== undefined ? c.imageBaseUrl.trim() : (existing?.imageBaseUrl || ''),
-      imageModel: c.imageModel?.trim() || existing?.imageModel || 'dall-e-3',
       voiceApiKey: effectiveVoiceKey,
-      voiceBaseUrl: c.voiceBaseUrl !== undefined ? c.voiceBaseUrl.trim() : (existing?.voiceBaseUrl || ''),
-      voiceModel: c.voiceModel?.trim() || existing?.voiceModel || 'tts-1',
       providers: mergedProviders,
     };
 
-    saveToStorage(STORAGE_KEYS.API_CONFIG, merged);
-  } catch (e) {
-    console.error('Failed to save API config:', e);
-    saveToStorage(STORAGE_KEYS.API_CONFIG, c);
+    saveToStorage(STORAGE_KEYS.API_CONFIG, nextConfig);
+  } catch (err) {
+    console.error('Failed to save API config to storage:', err);
   }
 };
 
