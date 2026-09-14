@@ -1,3 +1,5 @@
+import { Capacitor } from '@capacitor/core';
+import { Preferences } from '@capacitor/preferences';
 import {
   AiCharacter,
   ChatMessage,
@@ -540,6 +542,62 @@ export const clearApiKey = (providerType: 'text' | 'image' | 'voice', providerNa
   }
 };
 
+function maskApiKey(key?: string): string {
+  if (!key || !key.trim()) return '[Empty]';
+  const k = key.trim();
+  if (k.length <= 8) return '****';
+  return `${k.slice(0, 3)}****${k.slice(-4)} (${k.length} chars)`;
+}
+
+/**
+ * Hydrates phone_api_config from Capacitor Preferences into localStorage on Android startup.
+ * Allows existing synchronous loadApiConfig() calls to seamlessly read the restored native config.
+ */
+export async function hydrateApiConfigFromNativeStorage(): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) {
+    return false;
+  }
+
+  try {
+    const { value } = await Preferences.get({ key: STORAGE_KEYS.API_CONFIG });
+    if (value && value.trim()) {
+      const parsed = JSON.parse(value) as ApiConfig;
+      if (parsed && typeof parsed === 'object') {
+        localStorage.setItem(STORAGE_KEYS.API_CONFIG, value);
+        console.log(
+          '[API Config Hydration] Restored phone_api_config from Capacitor Preferences.',
+          'Provider:', parsed.textProvider || 'google_gemini',
+          'BaseUrl:', parsed.textBaseUrl || '[default]',
+          'ApiKey:', maskApiKey(parsed.textApiKey)
+        );
+        return true;
+      }
+    }
+    console.log('[API Config Hydration] No Preferences value found for phone_api_config, falling back to localStorage.');
+  } catch (err) {
+    console.warn('[API Config Hydration] Error reading phone_api_config from Preferences, falling back to localStorage:', err);
+  }
+
+  try {
+    const localRaw = localStorage.getItem(STORAGE_KEYS.API_CONFIG);
+    if (localRaw) {
+      const localParsed = JSON.parse(localRaw) as ApiConfig;
+      console.log(
+        '[API Config Hydration] Using localStorage fallback.',
+        'Provider:', localParsed.textProvider || 'google_gemini',
+        'BaseUrl:', localParsed.textBaseUrl || '[default]',
+        'ApiKey:', maskApiKey(localParsed.textApiKey)
+      );
+    } else {
+      console.log('[API Config Hydration] Neither Preferences nor localStorage found for phone_api_config. Will use INITIAL_API_CONFIG.');
+    }
+  } catch {
+    // ignore
+  }
+
+  return false;
+}
+
 export const saveApiConfig = (c: ApiConfig, options?: SaveApiConfigOptions): void => {
   try {
     const existing = loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG) || { ...INITIAL_API_CONFIG };
@@ -616,7 +674,25 @@ export const saveApiConfig = (c: ApiConfig, options?: SaveApiConfigOptions): voi
       providers: mergedProviders,
     };
 
+    // Synchronously write to localStorage
     saveToStorage(STORAGE_KEYS.API_CONFIG, nextConfig);
+
+    // Asynchronously mirror phone_api_config to Capacitor Preferences in Android Native environment
+    if (Capacitor.isNativePlatform()) {
+      const jsonStr = JSON.stringify(nextConfig);
+      Preferences.set({ key: STORAGE_KEYS.API_CONFIG, value: jsonStr })
+        .then(() => {
+          console.log(
+            '[API Config Save] Mirrored phone_api_config to Capacitor Preferences successfully.',
+            'Provider:', nextConfig.textProvider,
+            'BaseUrl:', nextConfig.textBaseUrl || '[default]',
+            'ApiKey:', maskApiKey(nextConfig.textApiKey)
+          );
+        })
+        .catch((err) => {
+          console.warn('[API Config Save] Failed to mirror phone_api_config to Preferences:', err);
+        });
+    }
   } catch (err) {
     console.error('Failed to save API config to storage:', err);
   }
@@ -1075,6 +1151,9 @@ export function resetStorageToFactoryDefaults(): void {
   saveToStorage(STORAGE_KEYS.API_LOGS, INITIAL_API_LOGS);
   saveToStorage(STORAGE_KEYS.PERMISSIONS, INITIAL_PERMISSIONS);
   saveToStorage(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG);
+  if (Capacitor.isNativePlatform()) {
+    Preferences.set({ key: STORAGE_KEYS.API_CONFIG, value: JSON.stringify(INITIAL_API_CONFIG) }).catch(() => {});
+  }
   saveToStorage(STORAGE_KEYS.AI_CONTROLS, INITIAL_AI_CONTROLS);
   saveToStorage(STORAGE_KEYS.GOMOKU_RECORDS, INITIAL_GOMOKU_RECORDS);
   saveToStorage(STORAGE_KEYS.TICTACTOE_RECORDS, INITIAL_TICTACTOE_RECORDS);
