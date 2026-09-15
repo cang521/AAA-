@@ -134,6 +134,18 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   const [fetchedModels, setFetchedModels] = useState<RemoteModelItem[]>([]);
   const [modelFetchResult, setModelFetchResult] = useState<ModelFetchResult | null>(null);
   const [modelFilterQuery, setModelFilterQuery] = useState('');
+  const [fetchDebugInfo, setFetchDebugInfo] = useState<{
+    timestamp: string;
+    providerType: string;
+    baseUrl: string;
+    keyIsEmpty: boolean;
+    keyLength: number;
+    keyLast4: string;
+    httpStatus?: number | string;
+    reachedServer?: boolean;
+    responseMessage?: string;
+    responseError?: string;
+  } | null>(null);
 
   // Single Model Test States
   const [isTestingModel, setIsTestingModel] = useState(false);
@@ -439,6 +451,20 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       ? (draftConfig.imageApiKey || '')
       : (draftConfig.voiceApiKey || '');
 
+    const debugSnapshot = {
+      timestamp: new Date().toLocaleTimeString(),
+      providerType: providerType || 'custom',
+      baseUrl,
+      keyIsEmpty: !apiKey || !apiKey.trim(),
+      keyLength: apiKey ? apiKey.trim().length : 0,
+      keyLast4: apiKey && apiKey.trim() ? apiKey.trim().slice(-4) : '',
+      httpStatus: '请求发送中...',
+      reachedServer: false,
+      responseMessage: '',
+      responseError: '',
+    };
+    setFetchDebugInfo(debugSnapshot);
+
     console.log('[API Key Log - Fetch Models Request]', {
       activeCategory,
       providerType: providerType || 'custom',
@@ -479,6 +505,14 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         data.message = 'Android 内置后端未启动';
       }
 
+      setFetchDebugInfo({
+        ...debugSnapshot,
+        httpStatus: res.status,
+        reachedServer: true,
+        responseMessage: data.message || (data.success ? `成功获取 ${data.models?.length || 0} 个模型` : ''),
+        responseError: data.error || '',
+      });
+
       setModelFetchResult(data);
 
       if (data.success && data.models && data.models.length > 0) {
@@ -488,6 +522,13 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       }
     } catch (e: any) {
       const isOffline = (e.message || '').includes('Android 内置后端未启动') || (e.message || '').includes('Failed to fetch');
+      setFetchDebugInfo({
+        ...debugSnapshot,
+        httpStatus: '网络异常',
+        reachedServer: false,
+        responseMessage: isOffline ? 'Android 内置后端未启动' : '网络请求失败',
+        responseError: e.message || '网络请求错误',
+      });
       setModelFetchResult({
         success: false,
         supported: false,
@@ -781,6 +822,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           handleTestSelectedModel={handleTestSelectedModel}
           handleGlobalSave={handleGlobalSave}
           applyTextPreset={applyTextPreset}
+          fetchDebugInfo={fetchDebugInfo}
         />
 
         {/* ========================================================================= */}

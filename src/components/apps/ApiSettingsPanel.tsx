@@ -23,6 +23,7 @@ import {
   Settings2,
   Trash2,
   Plus,
+  Bug,
 } from 'lucide-react';
 
 export interface ProviderPreset {
@@ -115,6 +116,18 @@ export interface ApiSettingsPanelProps {
 
   handleGlobalSave: () => void;
   applyTextPreset: (preset: ProviderPreset) => void;
+  fetchDebugInfo?: {
+    timestamp: string;
+    providerType: string;
+    baseUrl: string;
+    keyIsEmpty: boolean;
+    keyLength: number;
+    keyLast4: string;
+    httpStatus?: number | string;
+    reachedServer?: boolean;
+    responseMessage?: string;
+    responseError?: string;
+  } | null;
 }
 
 export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
@@ -144,9 +157,33 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   handleTestSelectedModel,
   handleGlobalSave,
   applyTextPreset,
+  fetchDebugInfo,
 }) => {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showPresetManager, setShowPresetManager] = useState(false);
+
+  const formatKeyInfo = (key?: string) => {
+    if (!key || !key.trim()) {
+      return <span className="text-rose-400 font-bold">[为空] len=0</span>;
+    }
+    const k = key.trim();
+    return (
+      <span className="text-emerald-400 font-medium">
+        [有值] len={k.length} (末尾: ***{k.slice(-4)})
+      </span>
+    );
+  };
+
+  const formatKeyInfoFromFields = (isEmpty: boolean, length: number, last4: string) => {
+    if (isEmpty || length === 0) {
+      return <span className="text-rose-400 font-bold">[为空] len=0</span>;
+    }
+    return (
+      <span className="text-emerald-400 font-medium">
+        [有值] len={length} (末尾: ***{last4})
+      </span>
+    );
+  };
 
   // Derived single source of truth values
   const effectiveText = resolveEffectiveTextConfig(draftConfig);
@@ -1092,6 +1129,54 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
           </div>
         </div>
       )}
+      {/* ========================================================================= */}
+      {/* 4. 🔧 真机可视化 API 状态实时诊断看板 */}
+      {/* ========================================================================= */}
+      <div className="mt-5 p-3.5 rounded-2xl bg-amber-950/20 border border-amber-500/30 space-y-3 font-mono text-[11px] text-zinc-300">
+        <div className="flex items-center justify-between border-b border-amber-500/20 pb-2">
+          <span className="font-bold text-amber-400 flex items-center gap-1.5 text-xs font-sans">
+            <Bug className="w-4 h-4 text-amber-400" />
+            真机 API 状态实时诊断 (Diagnostic Dashboard)
+          </span>
+          <span className="text-[10px] text-amber-300/60 font-sans">密钥脱敏保护中</span>
+        </div>
+
+        {/* 1. Realtime Form & State */}
+        <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
+          <div className="text-amber-300 font-semibold mb-1 text-[11px] font-sans">1. 实时 Input & State 诊断：</div>
+          <div>• Input 当前显示 Key: {formatKeyInfo(currentTextKey)}</div>
+          <div>• draftConfig.textApiKey: {formatKeyInfo(draftConfig.textApiKey)}</div>
+          <div>• draftConfig.textProvider: <span className="text-sky-300 font-bold">{draftConfig.textProvider || 'google_gemini'}</span></div>
+          <div>• providers[{currentProvider}]?.apiKey: {formatKeyInfo(draftConfig.providers?.[currentProvider]?.apiKey)}</div>
+          <div>• resolveEffectiveTextConfig().apiKey: {formatKeyInfo(effectiveText.apiKey)}</div>
+          <div>• 当前 Base URL: <span className="text-sky-300">{effectiveText.baseUrl || '(默认/空)'}</span></div>
+        </div>
+
+        {/* 2. Last Fetch Models Snapshot */}
+        <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
+          <div className="text-sky-300 font-semibold mb-1 text-[11px] font-sans">2. 点击「拉取模型」瞬间抓拍与响应：</div>
+          {fetchDebugInfo ? (
+            <>
+              <div>• 抓拍时间: <span className="text-zinc-400">{fetchDebugInfo.timestamp}</span></div>
+              <div>• 实际发送 providerType: <span className="text-amber-300">{fetchDebugInfo.providerType}</span></div>
+              <div>• 实际发送 baseUrl: <span className="text-sky-300">{fetchDebugInfo.baseUrl || '(空)'}</span></div>
+              <div>• 实际发送 apiKey: {formatKeyInfoFromFields(fetchDebugInfo.keyIsEmpty, fetchDebugInfo.keyLength, fetchDebugInfo.keyLast4)}</div>
+              <div className="pt-1 mt-1 border-t border-zinc-800">
+                • HTTP Status: <span className={fetchDebugInfo.httpStatus === 200 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{fetchDebugInfo.httpStatus}</span>
+              </div>
+              <div>• 到达后端端点 (/api/...): <span className={fetchDebugInfo.reachedServer ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{fetchDebugInfo.reachedServer ? '是 (Reached)' : '否 (Failed/Offline)'}</span></div>
+              {fetchDebugInfo.responseMessage && (
+                <div>• 后端 message: <span className="text-amber-300">{fetchDebugInfo.responseMessage}</span></div>
+              )}
+              {fetchDebugInfo.responseError && (
+                <div>• 后端 error: <span className="text-rose-300">{fetchDebugInfo.responseError}</span></div>
+              )}
+            </>
+          ) : (
+            <div className="text-zinc-500 italic">尚未点击「拉取模型」按钮</div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
