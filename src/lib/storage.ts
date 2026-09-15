@@ -460,25 +460,26 @@ export const resolveEffectiveTextConfig = (
   draft?: Partial<ApiConfig> | null,
   stored?: Partial<ApiConfig> | null
 ): { provider: ProviderType; apiKey: string; baseUrl: string; model: string } => {
-  const provider = (draft?.textProvider || stored?.textProvider || 'google_gemini') as ProviderType;
+  const fallbackStored = stored || loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG);
+  const provider = (draft?.textProvider || fallbackStored?.textProvider || 'google_gemini') as ProviderType;
 
   // Non-empty preference order: draft provider -> draft root -> stored provider -> stored root
   const draftProvKey = draft?.providers?.[provider]?.apiKey?.trim();
   const draftRootKey = draft?.textApiKey?.trim();
-  const storedProvKey = stored?.providers?.[provider]?.apiKey?.trim();
-  const storedRootKey = stored?.textApiKey?.trim();
+  const storedProvKey = fallbackStored?.providers?.[provider]?.apiKey?.trim();
+  const storedRootKey = fallbackStored?.textApiKey?.trim();
   const apiKey = draftProvKey || draftRootKey || storedProvKey || storedRootKey || '';
 
   const draftProvBaseUrl = draft?.providers?.[provider]?.baseUrl?.trim();
   const draftRootBaseUrl = draft?.textBaseUrl?.trim();
-  const storedProvBaseUrl = stored?.providers?.[provider]?.baseUrl?.trim();
-  const storedRootBaseUrl = stored?.textBaseUrl?.trim();
+  const storedProvBaseUrl = fallbackStored?.providers?.[provider]?.baseUrl?.trim();
+  const storedRootBaseUrl = fallbackStored?.textBaseUrl?.trim();
   const baseUrl = draftProvBaseUrl || draftRootBaseUrl || storedProvBaseUrl || storedRootBaseUrl || '';
 
   const draftProvModel = draft?.providers?.[provider]?.model?.trim();
   const draftRootModel = draft?.textModel?.trim();
-  const storedProvModel = stored?.providers?.[provider]?.model?.trim();
-  const storedRootModel = stored?.textModel?.trim();
+  const storedProvModel = fallbackStored?.providers?.[provider]?.model?.trim();
+  const storedRootModel = fallbackStored?.textModel?.trim();
   const model = draftProvModel || draftRootModel || storedProvModel || storedRootModel || 'gemini-3.6-flash';
 
   return { provider, apiKey, baseUrl, model };

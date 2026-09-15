@@ -133,6 +133,17 @@ export function App() {
     }
   }, [characters]);
 
+  // Re-sync apiConfig state after native Capacitor hydration finishes or when active app changes
+  useEffect(() => {
+    const syncFreshApiConfig = () => {
+      const fresh = loadApiConfig();
+      setApiConfigState(fresh);
+    };
+    syncFreshApiConfig();
+    const timer = setTimeout(syncFreshApiConfig, 300);
+    return () => clearTimeout(timer);
+  }, [activeAppId]);
+
   // State Updaters with localStorage Persistence
   const updateIcons = (newIcons: AppIconConfig[]) => {
     setIconsState(newIcons);

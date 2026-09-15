@@ -86,34 +86,45 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   onAddApiLog,
   onDataChanged,
 }) => {
-  const [draftConfig, setDraftConfig] = useState<ApiConfig>(() => {
+  const buildUnifiedConfig = (incomingConfig?: ApiConfig): ApiConfig => {
     const stored = loadApiConfig();
-    const mergedProviders = { ...(stored.providers || {}), ...(apiConfig?.providers || {}) };
-    const effective = resolveEffectiveTextConfig(apiConfig, stored);
-    mergedProviders[effective.provider] = {
-      provider: effective.provider,
+    const source = incomingConfig || apiConfig;
+    const effective = resolveEffectiveTextConfig(source, stored);
+    const provider = effective.provider;
+
+    const mergedProviders = { ...(stored.providers || {}), ...(source?.providers || {}) };
+    mergedProviders[provider] = {
+      provider,
       apiKey: effective.apiKey,
       baseUrl: effective.baseUrl,
       model: effective.model,
     };
+
     return {
       ...stored,
-      ...apiConfig,
-      textProvider: effective.provider,
+      ...source,
+      textProvider: provider,
       textApiKey: effective.apiKey,
       textBaseUrl: effective.baseUrl,
       textModel: effective.model,
       providers: mergedProviders,
     };
-  });
+  };
+
+  const [draftConfig, setDraftConfig] = useState<ApiConfig>(() => buildUnifiedConfig(apiConfig));
+
+  useEffect(() => {
+    setDraftConfig(buildUnifiedConfig(apiConfig));
+  }, [apiConfig]);
 
   const updateApiDraft = (
     nextConfig: ApiConfig,
     options?: Parameters<typeof saveApiConfig>[1]
   ) => {
-    setDraftConfig(nextConfig);
-    saveApiConfig(nextConfig, options);
-    onSaveApiConfig(nextConfig);
+    const unified = buildUnifiedConfig(nextConfig);
+    setDraftConfig(unified);
+    saveApiConfig(unified, options);
+    onSaveApiConfig(unified);
   };
 
   const [controls, setControls] = useState<AiControls>(aiControls);
