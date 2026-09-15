@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { pingBackendHealth } from '../../lib/localBackend';
 import {
   ApiConfig,
   ProviderType,
@@ -127,6 +129,11 @@ export interface ApiSettingsPanelProps {
     reachedServer?: boolean;
     responseMessage?: string;
     responseError?: string;
+    isNativePlatform?: boolean;
+    capacitorPlatform?: string;
+    targetUrl?: string;
+    backendHealthOk?: boolean;
+    failureStage?: string;
   } | null;
 }
 
@@ -184,6 +191,31 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
       </span>
     );
   };
+
+  // Realtime Android native health check state
+  const [liveHealth, setLiveHealth] = useState<string>('检测中...');
+
+  useEffect(() => {
+    let active = true;
+    if (Capacitor.isNativePlatform()) {
+      pingBackendHealth()
+        .then((ok) => {
+          if (active) {
+            setLiveHealth(ok ? '健康 (127.0.0.1:3000 响应正常)' : '未连通 (127.0.0.1:3000 未启动或无响应)');
+          }
+        })
+        .catch((e) => {
+          if (active) {
+            setLiveHealth(`检测异常: ${e?.message || '无法建立连接'}`);
+          }
+        });
+    } else {
+      setLiveHealth('Web 模式 (直连标准 API 路由)');
+    }
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Derived single source of truth values
   const effectiveText = resolveEffectiveTextConfig(draftConfig);
@@ -1136,14 +1168,14 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
         <div className="flex items-center justify-between border-b border-amber-500/20 pb-2">
           <span className="font-bold text-amber-400 flex items-center gap-1.5 text-xs font-sans">
             <Bug className="w-4 h-4 text-amber-400" />
-            真机 API 状态实时诊断 (Diagnostic Dashboard)
+            Android APK 真机 API 状态与链路实时诊断看板
           </span>
           <span className="text-[10px] text-amber-300/60 font-sans">密钥脱敏保护中</span>
         </div>
 
         {/* 1. Realtime Form & State */}
         <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
-          <div className="text-amber-300 font-semibold mb-1 text-[11px] font-sans">1. 实时 Input & State 诊断：</div>
+          <div className="text-amber-300 font-semibold mb-1 text-[11px] font-sans">1. 实时 Input & State 状态：</div>
           <div>• Input 当前显示 Key: {formatKeyInfo(currentTextKey)}</div>
           <div>• draftConfig.textApiKey: {formatKeyInfo(draftConfig.textApiKey)}</div>
           <div>• draftConfig.textProvider: <span className="text-sky-300 font-bold">{draftConfig.textProvider || 'google_gemini'}</span></div>
@@ -1154,7 +1186,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
 
         {/* 2. Last Fetch Models Snapshot */}
         <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
-          <div className="text-sky-300 font-semibold mb-1 text-[11px] font-sans">2. 点击「拉取模型」瞬间抓拍与响应：</div>
+          <div className="text-sky-300 font-semibold mb-1 text-[11px] font-sans">2. 点击「拉取模型」抓拍与 HTTP 响应：</div>
           {fetchDebugInfo ? (
             <>
               <div>• 抓拍时间: <span className="text-zinc-400">{fetchDebugInfo.timestamp}</span></div>
@@ -1164,16 +1196,29 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               <div className="pt-1 mt-1 border-t border-zinc-800">
                 • HTTP Status: <span className={fetchDebugInfo.httpStatus === 200 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{fetchDebugInfo.httpStatus}</span>
               </div>
-              <div>• 到达后端端点 (/api/...): <span className={fetchDebugInfo.reachedServer ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{fetchDebugInfo.reachedServer ? '是 (Reached)' : '否 (Failed/Offline)'}</span></div>
+              <div>• 到达 server.ts 端点: <span className={fetchDebugInfo.reachedServer ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{fetchDebugInfo.reachedServer ? '是 (Reached server.ts)' : '否 (未到达 / 离线代理拦截)'}</span></div>
               {fetchDebugInfo.responseMessage && (
-                <div>• 后端 message: <span className="text-amber-300">{fetchDebugInfo.responseMessage}</span></div>
+                <div>• response message: <span className="text-amber-300">{fetchDebugInfo.responseMessage}</span></div>
               )}
               {fetchDebugInfo.responseError && (
-                <div>• 后端 error: <span className="text-rose-300">{fetchDebugInfo.responseError}</span></div>
+                <div>• response error: <span className="text-rose-300">{fetchDebugInfo.responseError}</span></div>
               )}
             </>
           ) : (
             <div className="text-zinc-500 italic">尚未点击「拉取模型」按钮</div>
+          )}
+        </div>
+
+        {/* 3. Android APK Specific Link Diagnostic */}
+        <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
+          <div className="text-purple-300 font-semibold mb-1 text-[11px] font-sans">3. Android APK 特有网络与 Node 后端链路诊断：</div>
+          <div>• 是否 Capacitor Native 平台: <span className="text-amber-300 font-bold">{Capacitor.isNativePlatform() ? '是 (Native APK)' : '否 (Web/Preview)'}</span></div>
+          <div>• Capacitor 平台类型: <span className="text-sky-300">{Capacitor.getPlatform()}</span></div>
+          <div>• apiFetch 映射目标地址 (Target URL): <span className="text-sky-300">{fetchDebugInfo?.targetUrl || (Capacitor.isNativePlatform() ? 'http://127.0.0.1:3000/api/provider/fetch-models' : '/api/provider/fetch-models')}</span></div>
+          <div>• 127.0.0.1:3000 本地后端健康状态: <span className={liveHealth.includes('健康') ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{liveHealth}</span></div>
+          <div>• /api/provider/fetch-models 到达 server.ts: <span className={fetchDebugInfo?.reachedServer ? 'text-emerald-400 font-bold' : fetchDebugInfo ? 'text-rose-400 font-bold' : 'text-zinc-500'}>{fetchDebugInfo ? (fetchDebugInfo.reachedServer ? '是 (Reached server.ts)' : '否 (未到达 / 离线代理拦截)') : '(等待点击拉取模型)'}</span></div>
+          {fetchDebugInfo?.failureStage && (
+            <div>• 当前失败/执行阶段 (Failure Stage): <span className="text-amber-300 font-bold">{fetchDebugInfo.failureStage}</span></div>
           )}
         </div>
       </div>

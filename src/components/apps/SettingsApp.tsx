@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { apiFetch } from '../../lib/localBackend';
+import { apiFetch, pingBackendHealth } from '../../lib/localBackend';
+import { Capacitor } from '@capacitor/core';
 import {
   ApiConfig,
   AiControls,
@@ -145,6 +146,11 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     reachedServer?: boolean;
     responseMessage?: string;
     responseError?: string;
+    isNativePlatform?: boolean;
+    capacitorPlatform?: string;
+    targetUrl?: string;
+    backendHealthOk?: boolean;
+    failureStage?: string;
   } | null>(null);
 
   // Single Model Test States
@@ -451,6 +457,18 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       ? (draftConfig.imageApiKey || '')
       : (draftConfig.voiceApiKey || '');
 
+    const isNative = Capacitor.isNativePlatform();
+    const capPlatform = Capacitor.getPlatform();
+    const targetUrl = isNative ? 'http://127.0.0.1:3000/api/provider/fetch-models' : '/api/provider/fetch-models';
+    const isBackendAlive = await pingBackendHealth().catch(() => false);
+
+    let initialFailureStage = '';
+    if (isNative && !isBackendAlive) {
+      initialFailureStage = '阶段A: Android 内置 127.0.0.1:3000 健康检查未就绪 (Node Backend 尚未正常响应)';
+    } else {
+      initialFailureStage = '阶段B: 准备发起 apiFetch 网络请求';
+    }
+
     const debugSnapshot = {
       timestamp: new Date().toLocaleTimeString(),
       providerType: providerType || 'custom',
@@ -462,6 +480,11 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       reachedServer: false,
       responseMessage: '',
       responseError: '',
+      isNativePlatform: isNative,
+      capacitorPlatform: capPlatform,
+      targetUrl,
+      backendHealthOk: isBackendAlive,
+      failureStage: initialFailureStage,
     };
     setFetchDebugInfo(debugSnapshot);
 
@@ -505,12 +528,23 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         data.message = 'Android 内置后端未启动';
       }
 
+      const isOfflineResponse = res.status === 503 || res.headers.get('X-Android-Backend-Status') === 'offline';
+      const reachedServer = !isOfflineResponse;
+
+      let stage = '';
+      if (reachedServer) {
+        stage = '阶段C: 请求已进入 server.ts 端点 (Server reached)';
+      } else {
+        stage = '阶段A-2: localBackend 拦截并返回 503 / 离线状态 (未到达 server.ts)';
+      }
+
       setFetchDebugInfo({
         ...debugSnapshot,
         httpStatus: res.status,
-        reachedServer: true,
+        reachedServer,
         responseMessage: data.message || (data.success ? `成功获取 ${data.models?.length || 0} 个模型` : ''),
         responseError: data.error || '',
+        failureStage: stage,
       });
 
       setModelFetchResult(data);
@@ -528,6 +562,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         reachedServer: false,
         responseMessage: isOffline ? 'Android 内置后端未启动' : '网络请求失败',
         responseError: e.message || '网络请求错误',
+        failureStage: `阶段-ERR: 客户端网络调用失败 (${e.name || 'Error'}: ${e.message || '未连接到目标接口'})`,
       });
       setModelFetchResult({
         success: false,
