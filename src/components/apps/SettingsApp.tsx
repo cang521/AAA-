@@ -88,7 +88,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 }) => {
   const buildUnifiedConfig = (
     incomingConfig?: ApiConfig,
-    options?: Parameters<typeof saveApiConfig>[1]
+    options?: Parameters<typeof saveApiConfig>[1],
+    currentDraft?: ApiConfig
   ): ApiConfig => {
     const stored = loadApiConfig();
     const source = incomingConfig || apiConfig;
@@ -96,7 +97,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     const storedEffective = resolveEffectiveTextConfig(stored);
     const sourceEffective = resolveEffectiveTextConfig(source);
     const propEffective = resolveEffectiveTextConfig(apiConfig);
-    const draftEffective = resolveEffectiveTextConfig(draftConfig);
+    const draftEffective = resolveEffectiveTextConfig(currentDraft);
 
     const provider =
       sourceEffective.provider ||
@@ -140,7 +141,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     const mergedProviders = {
       ...(stored.providers || {}),
       ...(apiConfig?.providers || {}),
-      ...(draftConfig?.providers || {}),
+      ...(currentDraft?.providers || {}),
       ...(source?.providers || {}),
     };
 
@@ -154,7 +155,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     return {
       ...stored,
       ...apiConfig,
-      ...draftConfig,
+      ...(currentDraft || {}),
       ...source,
       textProvider: provider,
       textApiKey: apiKey,
@@ -167,8 +168,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   const [draftConfig, setDraftConfig] = useState<ApiConfig>(() => buildUnifiedConfig(apiConfig));
 
   useEffect(() => {
-    const fresh = buildUnifiedConfig(apiConfig);
     setDraftConfig((prevDraft) => {
+      const fresh = buildUnifiedConfig(apiConfig, undefined, prevDraft);
       const prevKey = resolveEffectiveTextConfig(prevDraft).apiKey;
       const freshKey = resolveEffectiveTextConfig(fresh).apiKey;
 
@@ -184,10 +185,12 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     nextConfig: ApiConfig,
     options?: Parameters<typeof saveApiConfig>[1]
   ) => {
-    const unified = buildUnifiedConfig(nextConfig, options);
-    setDraftConfig(unified);
-    saveApiConfig(unified, options);
-    onSaveApiConfig(unified);
+    setDraftConfig((prevDraft) => {
+      const unified = buildUnifiedConfig(nextConfig, options, prevDraft);
+      saveApiConfig(unified, options);
+      onSaveApiConfig(unified);
+      return unified;
+    });
   };
 
   const [controls, setControls] = useState<AiControls>(aiControls);
