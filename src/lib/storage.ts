@@ -456,6 +456,31 @@ export interface SaveApiConfigOptions {
   explicitlyClearVoiceKey?: boolean;
 }
 
+export interface KeyClearDiagnosticInfo {
+  source: string;
+  previousKeyLength: number;
+  nextKeyLength: number;
+  timestamp: string;
+}
+
+let lastKeyClearDiagnostic: KeyClearDiagnosticInfo | null = null;
+
+export const recordKeyClearEvent = (source: string, prevLen: number, nextLen: number) => {
+  if (prevLen > 0 && nextLen === 0) {
+    lastKeyClearDiagnostic = {
+      source,
+      previousKeyLength: prevLen,
+      nextKeyLength: nextLen,
+      timestamp: new Date().toLocaleTimeString(),
+    };
+    console.warn(`[API Key Diagnostic] Key cleared from len=${prevLen} to 0 by source: ${source}`);
+  }
+};
+
+export const getLastKeyClearDiagnostic = (): KeyClearDiagnosticInfo | null => {
+  return lastKeyClearDiagnostic;
+};
+
 export const resolveEffectiveTextConfig = (
   draft?: Partial<ApiConfig> | null,
   stored?: Partial<ApiConfig> | null
@@ -463,12 +488,31 @@ export const resolveEffectiveTextConfig = (
   const fallbackStored = stored || loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG);
   const provider = (draft?.textProvider || fallbackStored?.textProvider || 'google_gemini') as ProviderType;
 
-  // Non-empty preference order: draft provider -> draft root -> stored provider -> stored root
+  // Non-empty preference order: draft provider -> draft root -> stored provider -> stored root -> any provider with key
   const draftProvKey = draft?.providers?.[provider]?.apiKey?.trim();
   const draftRootKey = draft?.textApiKey?.trim();
   const storedProvKey = fallbackStored?.providers?.[provider]?.apiKey?.trim();
   const storedRootKey = fallbackStored?.textApiKey?.trim();
-  const apiKey = draftProvKey || draftRootKey || storedProvKey || storedRootKey || '';
+
+  let anyProviderKey = '';
+  if (draft?.providers) {
+    for (const p of Object.values(draft.providers)) {
+      if (p?.apiKey?.trim()) {
+        anyProviderKey = p.apiKey.trim();
+        break;
+      }
+    }
+  }
+  if (!anyProviderKey && fallbackStored?.providers) {
+    for (const p of Object.values(fallbackStored.providers)) {
+      if (p?.apiKey?.trim()) {
+        anyProviderKey = p.apiKey.trim();
+        break;
+      }
+    }
+  }
+
+  const apiKey = draftProvKey || draftRootKey || storedProvKey || storedRootKey || anyProviderKey || '';
 
   const draftProvBaseUrl = draft?.providers?.[provider]?.baseUrl?.trim();
   const draftRootBaseUrl = draft?.textBaseUrl?.trim();
@@ -610,6 +654,8 @@ export const saveApiConfig = (c: ApiConfig, options?: SaveApiConfigOptions): voi
     // 1. Text API Key handling
     let effectiveTextKey = '';
     if (options?.explicitlyClearTextKey) {
+      const prevLen = existing.textApiKey?.length || existingProviders[currentProvider]?.apiKey?.length || 0;
+      recordKeyClearEvent('saveApiConfig (explicitlyClearTextKey)', prevLen, 0);
       effectiveTextKey = '';
     } else {
       const incomingProvKey = newProviders[currentProvider]?.apiKey?.trim();

@@ -51,7 +51,7 @@ import {
 import { DataManagementModal } from '../data/DataManagementModal';
 import { clearAllChatMessages } from '../../lib/chatDb';
 import { clearAllAiMemoryVaults } from '../../lib/aiMemoryVaultDb';
-import { resetStorageToFactoryDefaults, loadApiConfig, saveApiConfig, resolveEffectiveTextConfig } from '../../lib/storage';
+import { resetStorageToFactoryDefaults, loadApiConfig, saveApiConfig, resolveEffectiveTextConfig, recordKeyClearEvent } from '../../lib/storage';
 import {
   getUpgradeProtectionLogs,
   CURRENT_APP_DATA_VERSION,
@@ -86,27 +86,80 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   onAddApiLog,
   onDataChanged,
 }) => {
-  const buildUnifiedConfig = (incomingConfig?: ApiConfig): ApiConfig => {
+  const buildUnifiedConfig = (
+    incomingConfig?: ApiConfig,
+    options?: Parameters<typeof saveApiConfig>[1]
+  ): ApiConfig => {
     const stored = loadApiConfig();
     const source = incomingConfig || apiConfig;
-    const effective = resolveEffectiveTextConfig(source, stored);
-    const provider = effective.provider;
 
-    const mergedProviders = { ...(stored.providers || {}), ...(source?.providers || {}) };
+    const storedEffective = resolveEffectiveTextConfig(stored);
+    const sourceEffective = resolveEffectiveTextConfig(source);
+    const propEffective = resolveEffectiveTextConfig(apiConfig);
+    const draftEffective = resolveEffectiveTextConfig(draftConfig);
+
+    const provider =
+      sourceEffective.provider ||
+      draftEffective.provider ||
+      propEffective.provider ||
+      storedEffective.provider ||
+      'google_gemini';
+
+    let apiKey = '';
+    if (options?.explicitlyClearTextKey) {
+      const prevLen = draftEffective.apiKey.length || sourceEffective.apiKey.length || 0;
+      recordKeyClearEvent('buildUnifiedConfig (explicitlyClearTextKey)', prevLen, 0);
+      apiKey = '';
+    } else {
+      apiKey =
+        sourceEffective.apiKey ||
+        draftEffective.apiKey ||
+        propEffective.apiKey ||
+        storedEffective.apiKey ||
+        '';
+
+      if (draftEffective.apiKey.length > 0 && apiKey.length === 0) {
+        recordKeyClearEvent('buildUnifiedConfig key dropped', draftEffective.apiKey.length, 0);
+      }
+    }
+
+    const baseUrl =
+      sourceEffective.baseUrl ||
+      draftEffective.baseUrl ||
+      propEffective.baseUrl ||
+      storedEffective.baseUrl ||
+      '';
+
+    const model =
+      sourceEffective.model ||
+      draftEffective.model ||
+      propEffective.model ||
+      storedEffective.model ||
+      'gemini-3.6-flash';
+
+    const mergedProviders = {
+      ...(stored.providers || {}),
+      ...(apiConfig?.providers || {}),
+      ...(draftConfig?.providers || {}),
+      ...(source?.providers || {}),
+    };
+
     mergedProviders[provider] = {
       provider,
-      apiKey: effective.apiKey,
-      baseUrl: effective.baseUrl,
-      model: effective.model,
+      apiKey,
+      baseUrl,
+      model,
     };
 
     return {
       ...stored,
+      ...apiConfig,
+      ...draftConfig,
       ...source,
       textProvider: provider,
-      textApiKey: effective.apiKey,
-      textBaseUrl: effective.baseUrl,
-      textModel: effective.model,
+      textApiKey: apiKey,
+      textBaseUrl: baseUrl,
+      textModel: model,
       providers: mergedProviders,
     };
   };
@@ -114,14 +167,24 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   const [draftConfig, setDraftConfig] = useState<ApiConfig>(() => buildUnifiedConfig(apiConfig));
 
   useEffect(() => {
-    setDraftConfig(buildUnifiedConfig(apiConfig));
+    const fresh = buildUnifiedConfig(apiConfig);
+    setDraftConfig((prevDraft) => {
+      const prevKey = resolveEffectiveTextConfig(prevDraft).apiKey;
+      const freshKey = resolveEffectiveTextConfig(fresh).apiKey;
+
+      if (prevKey && !freshKey) {
+        recordKeyClearEvent('SettingsApp apiConfig useEffect blocked clear', prevKey.length, 0);
+        return prevDraft;
+      }
+      return fresh;
+    });
   }, [apiConfig]);
 
   const updateApiDraft = (
     nextConfig: ApiConfig,
     options?: Parameters<typeof saveApiConfig>[1]
   ) => {
-    const unified = buildUnifiedConfig(nextConfig);
+    const unified = buildUnifiedConfig(nextConfig, options);
     setDraftConfig(unified);
     saveApiConfig(unified, options);
     onSaveApiConfig(unified);

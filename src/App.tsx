@@ -31,6 +31,8 @@ import {
   saveMenstrualData,
   loadApiConfig,
   saveApiConfig,
+  resolveEffectiveTextConfig,
+  recordKeyClearEvent,
   loadAiControls,
   saveAiControls,
   loadPermissions,
@@ -137,7 +139,26 @@ export function App() {
   useEffect(() => {
     const syncFreshApiConfig = () => {
       const fresh = loadApiConfig();
-      setApiConfigState(fresh);
+      setApiConfigState((prev) => {
+        const prevEff = resolveEffectiveTextConfig(prev);
+        const freshEff = resolveEffectiveTextConfig(fresh);
+        if (prevEff.apiKey && !freshEff.apiKey) {
+          recordKeyClearEvent('App apiConfig sync blocked clear', prevEff.apiKey.length, 0);
+          const provider = prevEff.provider;
+          return {
+            ...fresh,
+            textApiKey: prevEff.apiKey,
+            providers: {
+              ...(fresh.providers || {}),
+              [provider]: {
+                ...(fresh.providers?.[provider] || { provider, baseUrl: freshEff.baseUrl, model: freshEff.model }),
+                apiKey: prevEff.apiKey,
+              },
+            },
+          };
+        }
+        return fresh;
+      });
     };
     syncFreshApiConfig();
     const timer = setTimeout(syncFreshApiConfig, 300);

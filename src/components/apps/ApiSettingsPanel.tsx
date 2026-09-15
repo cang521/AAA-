@@ -9,7 +9,7 @@ import {
   ModelFetchResult,
   ModelTestResult,
 } from '../../types';
-import { saveApiConfig, loadApiConfig, resolveEffectiveTextConfig } from '../../lib/storage';
+import { saveApiConfig, loadApiConfig, resolveEffectiveTextConfig, getLastKeyClearDiagnostic } from '../../lib/storage';
 import {
   Eye,
   EyeOff,
@@ -225,6 +225,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   const currentTextModel = effectiveText.model;
   const currentImageKey = draftConfig.imageApiKey ?? '';
   const currentVoiceKey = draftConfig.voiceApiKey ?? '';
+  const keyClearInfo = getLastKeyClearDiagnostic();
 
   // 自定义配置列表状态
   const [customPresets, setCustomPresets] = useState<CustomPresetItem[]>(loadSavedPresets);
@@ -1219,6 +1220,23 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
           <div>• /api/provider/fetch-models 到达 server.ts: <span className={fetchDebugInfo?.reachedServer ? 'text-emerald-400 font-bold' : fetchDebugInfo ? 'text-rose-400 font-bold' : 'text-zinc-500'}>{fetchDebugInfo ? (fetchDebugInfo.reachedServer ? '是 (Reached server.ts)' : '否 (未到达 / 离线代理拦截)') : '(等待点击拉取模型)'}</span></div>
           {fetchDebugInfo?.failureStage && (
             <div>• 当前失败/执行阶段 (Failure Stage): <span className="text-amber-300 font-bold">{fetchDebugInfo.failureStage}</span></div>
+          )}
+        </div>
+
+        {/* 4. API Key 清空来源诊断 Tracker */}
+        <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
+          <div className="text-rose-400 font-semibold mb-1 text-[11px] font-sans">
+            4. API Key 最后一次变为空值的来源 (Key Clear Tracker)：
+          </div>
+          {keyClearInfo ? (
+            <>
+              <div>• 清空来源 (lastKeyClearSource): <span className="text-rose-300 font-bold">{keyClearInfo.source}</span></div>
+              <div>• 触发时间: <span className="text-zinc-400">{keyClearInfo.timestamp}</span></div>
+              <div>• 清空前 length (previousKeyLength): <span className="text-amber-300 font-bold">{keyClearInfo.previousKeyLength}</span></div>
+              <div>• 清空后 length (nextKeyLength): <span className="text-rose-400 font-bold">{keyClearInfo.nextKeyLength}</span></div>
+            </>
+          ) : (
+            <div className="text-emerald-400 italic font-sans">• 尚未检测到 API Key 被从非空清空为 0 的异常操作 (lastKeyClearSource: None)</div>
           )}
         </div>
       </div>
