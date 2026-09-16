@@ -44,7 +44,7 @@ const STORAGE_KEYS = {
   WORLD_BOOKS: 'phone_world_books',
   API_LOGS: 'phone_api_logs',
   PERMISSIONS: 'phone_ai_permissions',
-  API_CONFIG: 'phone_api_config',
+  API_CONFIG: 'phone_api_config_v2',
   AI_CONTROLS: 'phone_ai_controls',
   LAUNCHER_PAGES: 'phone_launcher_pages_count',
   LAUNCHER_ICONS: 'phone_launcher_icons',
@@ -314,7 +314,20 @@ const INITIAL_API_CONFIG: ApiConfig = {
   textModel: 'gemini-3.6-flash',
   textBaseUrl: '',
   textProvider: 'google_gemini',
-  providers: {},
+  providers: {
+    google_gemini: {
+      provider: 'google_gemini',
+      apiKey: '',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-3.6-flash',
+    },
+    custom: {
+      provider: 'custom',
+      apiKey: '',
+      baseUrl: '',
+      model: 'gpt-4o',
+    },
+  },
   imageApiKey: '',
   imageModel: 'gemini-3.1-flash-lite-image',
   imageBaseUrl: '',
@@ -450,73 +463,6 @@ export const loadMenstrualData = (): MenstrualData => {
 };
 export const saveMenstrualData = (data: MenstrualData) => saveToStorage(STORAGE_KEYS.MENSTRUAL, data);
 
-export interface SaveApiConfigOptions {
-  explicitlyClearTextKey?: boolean;
-  explicitlyClearImageKey?: boolean;
-  explicitlyClearVoiceKey?: boolean;
-  flushImmediate?: boolean;
-}
-
-/**
- * Single-Queue Serialized Native Preferences Persistence Engine for phone_api_config
- */
-let latestNativeConfig: ApiConfig | null = null;
-let nativeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-let nativeWriteChain: Promise<void> = Promise.resolve();
-
-function executeNativeWrite(): Promise<void> {
-  if (!latestNativeConfig) return Promise.resolve();
-  const configToWrite = latestNativeConfig;
-
-  nativeWriteChain = nativeWriteChain
-    .then(async () => {
-      if (!Capacitor.isNativePlatform()) return;
-      try {
-        const jsonStr = JSON.stringify(configToWrite);
-        await Preferences.set({ key: STORAGE_KEYS.API_CONFIG, value: jsonStr });
-        console.log(
-          '[API Config Native Save] Mirrored phone_api_config to Preferences successfully.',
-          'Provider:', configToWrite.textProvider,
-          'BaseUrl:', configToWrite.textBaseUrl || '[default]',
-          'ApiKey:', maskApiKey(configToWrite.textApiKey)
-        );
-      } catch (err) {
-        console.warn('[API Config Native Save] Failed to mirror to Preferences:', err);
-      }
-    })
-    .catch((err) => {
-      console.error('[API Config Native Save] Error in write queue:', err);
-    });
-
-  return nativeWriteChain;
-}
-
-export function flushNativeApiConfig(): Promise<void> {
-  if (nativeDebounceTimer) {
-    clearTimeout(nativeDebounceTimer);
-    nativeDebounceTimer = null;
-  }
-  return executeNativeWrite();
-}
-
-function queueNativeApiConfigSave(nextConfig: ApiConfig, immediate = false): void {
-  latestNativeConfig = nextConfig;
-
-  if (nativeDebounceTimer) {
-    clearTimeout(nativeDebounceTimer);
-    nativeDebounceTimer = null;
-  }
-
-  if (immediate) {
-    executeNativeWrite();
-  } else {
-    nativeDebounceTimer = setTimeout(() => {
-      nativeDebounceTimer = null;
-      executeNativeWrite();
-    }, 200);
-  }
-}
-
 export interface KeyClearDiagnosticInfo {
   source: string;
   previousKeyLength: number;
@@ -546,71 +492,45 @@ export const resolveEffectiveTextConfig = (
   draft?: Partial<ApiConfig> | null,
   stored?: Partial<ApiConfig> | null
 ): { provider: ProviderType; apiKey: string; baseUrl: string; model: string } => {
-  const fallbackStored = stored || loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG);
-  const provider = (draft?.textProvider || fallbackStored?.textProvider || 'google_gemini') as ProviderType;
-
-  // Canonical priority order: draft root (textApiKey/textBaseUrl) -> draft provider -> stored root -> stored provider -> any provider with key
-  const draftRootKey = draft?.textApiKey?.trim();
-  const draftProvKey = draft?.providers?.[provider]?.apiKey?.trim();
-  const storedRootKey = fallbackStored?.textApiKey?.trim();
-  const storedProvKey = fallbackStored?.providers?.[provider]?.apiKey?.trim();
-
-  let anyProviderKey = '';
-  if (draft?.providers) {
-    for (const p of Object.values(draft.providers)) {
-      if (p?.apiKey?.trim()) {
-        anyProviderKey = p.apiKey.trim();
-        break;
-      }
-    }
-  }
-  if (!anyProviderKey && fallbackStored?.providers) {
-    for (const p of Object.values(fallbackStored.providers)) {
-      if (p?.apiKey?.trim()) {
-        anyProviderKey = p.apiKey.trim();
-        break;
-      }
-    }
-  }
-
-  const apiKey = draftRootKey || draftProvKey || storedRootKey || storedProvKey || anyProviderKey || '';
-
-  const draftRootBaseUrl = draft?.textBaseUrl?.trim();
-  const draftProvBaseUrl = draft?.providers?.[provider]?.baseUrl?.trim();
-  const storedRootBaseUrl = fallbackStored?.textBaseUrl?.trim();
-  const storedProvBaseUrl = fallbackStored?.providers?.[provider]?.baseUrl?.trim();
-  const baseUrl = draftRootBaseUrl || draftProvBaseUrl || storedRootBaseUrl || storedProvBaseUrl || '';
-
-  const draftProvModel = draft?.providers?.[provider]?.model?.trim();
-  const draftRootModel = draft?.textModel?.trim();
-  const storedProvModel = fallbackStored?.providers?.[provider]?.model?.trim();
-  const storedRootModel = fallbackStored?.textModel?.trim();
-  const model = draftProvModel || draftRootModel || storedProvModel || storedRootModel || 'gemini-3.6-flash';
+  const provider = (draft?.textProvider || stored?.textProvider || 'google_gemini') as ProviderType;
+  const apiKey = draft?.textApiKey ?? draft?.providers?.[provider]?.apiKey ?? stored?.textApiKey ?? stored?.providers?.[provider]?.apiKey ?? '';
+  const baseUrl = draft?.textBaseUrl ?? draft?.providers?.[provider]?.baseUrl ?? stored?.textBaseUrl ?? stored?.providers?.[provider]?.baseUrl ?? '';
+  const model = draft?.textModel || draft?.providers?.[provider]?.model || stored?.textModel || stored?.providers?.[provider]?.model || 'gemini-3.6-flash';
 
   return { provider, apiKey, baseUrl, model };
 };
 
 export const loadApiConfig = (): ApiConfig => {
-  const loaded = loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG) || { ...INITIAL_API_CONFIG };
-  const effective = resolveEffectiveTextConfig(loaded, INITIAL_API_CONFIG);
-
-  const providers: Record<string, ProviderConfigItem> = { ...(loaded.providers || {}) };
-  providers[effective.provider] = {
-    provider: effective.provider,
-    apiKey: effective.apiKey,
-    baseUrl: effective.baseUrl,
-    model: effective.model,
-  };
-
-  return {
-    ...INITIAL_API_CONFIG,
-    ...loaded,
-    textProvider: effective.provider,
-    textApiKey: effective.apiKey,
-    textBaseUrl: effective.baseUrl,
-    textModel: effective.model,
-    providers,
-  };
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.API_CONFIG);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        const provider = (parsed.textProvider || 'google_gemini') as ProviderType;
+        const providers = { ...(parsed.providers || {}) };
+        if (!providers[provider]) {
+          providers[provider] = {
+            provider,
+            apiKey: parsed.textApiKey || '',
+            baseUrl: parsed.textBaseUrl || '',
+            model: parsed.textModel || 'gemini-3.6-flash',
+          };
+        }
+        return {
+          ...INITIAL_API_CONFIG,
+          ...parsed,
+          textProvider: provider,
+          textApiKey: parsed.textApiKey ?? '',
+          textBaseUrl: parsed.textBaseUrl ?? '',
+          textModel: parsed.textModel ?? 'gemini-3.6-flash',
+          providers,
+        };
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load API config from storage:', err);
+  }
+  return { ...INITIAL_API_CONFIG };
 };
 
 export const clearApiKey = (providerType: 'text' | 'image' | 'voice', providerName?: string): void => {
@@ -621,129 +541,57 @@ export const clearApiKey = (providerType: 'text' | 'image' | 'voice', providerNa
     if (updatedProviders[p]) {
       updatedProviders[p] = { ...updatedProviders[p], apiKey: '' };
     }
-    saveApiConfig(
-      {
-        ...existing,
-        textApiKey: '',
-        providers: updatedProviders,
-      },
-      { explicitlyClearTextKey: true }
-    );
+    saveApiConfig({
+      ...existing,
+      textApiKey: '',
+      providers: updatedProviders,
+    });
   } else if (providerType === 'image') {
-    saveApiConfig(
-      {
-        ...existing,
-        imageApiKey: '',
-      },
-      { explicitlyClearImageKey: true }
-    );
+    saveApiConfig({
+      ...existing,
+      imageApiKey: '',
+    });
   } else if (providerType === 'voice') {
-    saveApiConfig(
-      {
-        ...existing,
-        voiceApiKey: '',
-      },
-      { explicitlyClearVoiceKey: true }
-    );
+    saveApiConfig({
+      ...existing,
+      voiceApiKey: '',
+    });
   }
 };
 
-function maskApiKey(key?: string): string {
-  if (!key || !key.trim()) return '[Empty]';
-  const k = key.trim();
-  if (k.length <= 8) return '****';
-  return `${k.slice(0, 3)}****${k.slice(-4)} (${k.length} chars)`;
-}
-
-/**
- * Hydrates phone_api_config from Capacitor Preferences into localStorage on Android startup.
- * Allows existing synchronous loadApiConfig() calls to seamlessly read the restored native config.
- */
 export async function hydrateApiConfigFromNativeStorage(): Promise<boolean> {
-  // Pure localStorage synchronous path: bypass Preferences hydration to prevent empty native reads from wiping localStorage
   return false;
 }
 
-export const saveApiConfig = (c: ApiConfig, options?: SaveApiConfigOptions): void => {
+export const saveApiConfig = (c: ApiConfig): void => {
   try {
-    const existing = loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG) || { ...INITIAL_API_CONFIG };
-    const existingProviders = existing.providers || {};
-    const newProviders = c.providers || {};
-
-    const currentProvider = (c.textProvider || existing.textProvider || 'google_gemini') as ProviderType;
-
-    // 1. Text API Key handling (canonical root field textApiKey takes highest priority)
-    let effectiveTextKey = '';
-    if (options?.explicitlyClearTextKey) {
-      const prevLen = existing.textApiKey?.length || existingProviders[currentProvider]?.apiKey?.length || 0;
-      recordKeyClearEvent('saveApiConfig (explicitlyClearTextKey)', prevLen, 0);
-      effectiveTextKey = '';
-    } else {
-      const incomingRootKey = c.textApiKey !== undefined ? c.textApiKey.trim() : '';
-      const incomingProvKey = newProviders[currentProvider]?.apiKey !== undefined ? newProviders[currentProvider].apiKey.trim() : '';
-      const existingRootKey = existing.textApiKey?.trim() || '';
-      const existingProvKey = existingProviders[currentProvider]?.apiKey?.trim() || '';
-      effectiveTextKey = incomingRootKey || incomingProvKey || existingRootKey || existingProvKey;
-    }
-
-    // 2. Base URL handling (canonical root field textBaseUrl takes highest priority)
-    const incomingRootBaseUrl = c.textBaseUrl !== undefined ? c.textBaseUrl.trim() : '';
-    const incomingProvBaseUrl = newProviders[currentProvider]?.baseUrl !== undefined ? newProviders[currentProvider].baseUrl.trim() : '';
-    const existingRootBaseUrl = existing.textBaseUrl?.trim() || '';
-    const existingProvBaseUrl = existingProviders[currentProvider]?.baseUrl?.trim() || '';
-    const effectiveTextBaseUrl = incomingRootBaseUrl || incomingProvBaseUrl || existingRootBaseUrl || existingProvBaseUrl;
-
-    // 3. Model handling
-    const incomingRootModel = c.textModel !== undefined ? c.textModel.trim() : '';
-    const incomingProvModel = newProviders[currentProvider]?.model !== undefined ? newProviders[currentProvider].model.trim() : '';
-    const existingRootModel = existing.textModel?.trim() || '';
-    const existingProvModel = existingProviders[currentProvider]?.model?.trim() || '';
-    const effectiveTextModel = incomingRootModel || incomingProvModel || existingRootModel || existingProvModel || 'gemini-3.6-flash';
-
-    // Merge providers map
-    const mergedProviders = { ...existingProviders, ...newProviders };
-    mergedProviders[currentProvider] = {
-      provider: currentProvider,
-      apiKey: effectiveTextKey,
-      baseUrl: effectiveTextBaseUrl,
-      model: effectiveTextModel,
+    const provider = (c.textProvider || 'google_gemini') as ProviderType;
+    const providers = { ...(c.providers || {}) };
+    providers[provider] = {
+      provider,
+      apiKey: c.textApiKey || '',
+      baseUrl: c.textBaseUrl || '',
+      model: c.textModel || 'gemini-3.6-flash',
     };
-
-    // 4. Image API Key handling
-    let effectiveImageKey = '';
-    if (options?.explicitlyClearImageKey) {
-      effectiveImageKey = '';
-    } else if (c.imageApiKey && c.imageApiKey.trim() !== '') {
-      effectiveImageKey = c.imageApiKey.trim();
-    } else {
-      effectiveImageKey = existing.imageApiKey?.trim() || '';
-    }
-
-    // 5. Voice API Key handling
-    let effectiveVoiceKey = '';
-    if (options?.explicitlyClearVoiceKey) {
-      effectiveVoiceKey = '';
-    } else if (c.voiceApiKey && c.voiceApiKey.trim() !== '') {
-      effectiveVoiceKey = c.voiceApiKey.trim();
-    } else {
-      effectiveVoiceKey = existing.voiceApiKey?.trim() || '';
-    }
 
     const nextConfig: ApiConfig = {
-      ...INITIAL_API_CONFIG,
-      ...existing,
       ...c,
-      textProvider: currentProvider,
-      textApiKey: effectiveTextKey,
-      textBaseUrl: effectiveTextBaseUrl,
-      textModel: effectiveTextModel,
-      imageApiKey: effectiveImageKey,
-      voiceApiKey: effectiveVoiceKey,
-      providers: mergedProviders,
+      textProvider: provider,
+      textApiKey: c.textApiKey ?? '',
+      textBaseUrl: c.textBaseUrl ?? '',
+      textModel: c.textModel ?? 'gemini-3.6-flash',
+      imageProvider: c.imageProvider || 'google_gemini',
+      imageApiKey: c.imageApiKey ?? '',
+      imageBaseUrl: c.imageBaseUrl ?? '',
+      imageModel: c.imageModel || 'gemini-3.1-flash-lite-image',
+      voiceProvider: c.voiceProvider || 'google_gemini',
+      voiceApiKey: c.voiceApiKey ?? '',
+      voiceBaseUrl: c.voiceBaseUrl ?? '',
+      voiceModel: c.voiceModel || 'gemini-3.1-flash-tts-preview',
+      providers,
     };
 
-    // Synchronously & immediately write full config to localStorage
-    saveToStorage(STORAGE_KEYS.API_CONFIG, nextConfig);
+    localStorage.setItem(STORAGE_KEYS.API_CONFIG, JSON.stringify(nextConfig));
   } catch (err) {
     console.error('Failed to save API config to storage:', err);
   }

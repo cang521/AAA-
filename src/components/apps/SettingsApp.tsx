@@ -86,100 +86,10 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   onAddApiLog,
   onDataChanged,
 }) => {
-  const buildUnifiedConfig = (
-    incomingConfig?: ApiConfig,
-    options?: Parameters<typeof saveApiConfig>[1],
-    currentDraft?: ApiConfig
-  ): ApiConfig => {
-    const stored = loadApiConfig();
-    const source = incomingConfig || apiConfig;
+  const [draftConfig, setDraftConfig] = useState<ApiConfig>(() => loadApiConfig());
 
-    const storedEffective = resolveEffectiveTextConfig(stored);
-    const sourceEffective = resolveEffectiveTextConfig(source);
-    const propEffective = resolveEffectiveTextConfig(apiConfig);
-    const draftEffective = resolveEffectiveTextConfig(currentDraft);
-
-    const provider =
-      sourceEffective.provider ||
-      draftEffective.provider ||
-      propEffective.provider ||
-      storedEffective.provider ||
-      'google_gemini';
-
-    let apiKey = '';
-    if (options?.explicitlyClearTextKey) {
-      const prevLen = draftEffective.apiKey.length || sourceEffective.apiKey.length || 0;
-      recordKeyClearEvent('buildUnifiedConfig (explicitlyClearTextKey)', prevLen, 0);
-      apiKey = '';
-    } else {
-      apiKey =
-        sourceEffective.apiKey ||
-        draftEffective.apiKey ||
-        propEffective.apiKey ||
-        storedEffective.apiKey ||
-        '';
-
-      if (draftEffective.apiKey.length > 0 && apiKey.length === 0) {
-        recordKeyClearEvent('buildUnifiedConfig key dropped', draftEffective.apiKey.length, 0);
-      }
-    }
-
-    const baseUrl =
-      sourceEffective.baseUrl ||
-      draftEffective.baseUrl ||
-      propEffective.baseUrl ||
-      storedEffective.baseUrl ||
-      '';
-
-    const model =
-      sourceEffective.model ||
-      draftEffective.model ||
-      propEffective.model ||
-      storedEffective.model ||
-      'gemini-3.6-flash';
-
-    const mergedProviders = {
-      ...(stored.providers || {}),
-      ...(apiConfig?.providers || {}),
-      ...(currentDraft?.providers || {}),
-      ...(source?.providers || {}),
-    };
-
-    mergedProviders[provider] = {
-      provider,
-      apiKey,
-      baseUrl,
-      model,
-    };
-
-    return {
-      ...stored,
-      ...apiConfig,
-      ...source,
-      ...(currentDraft || {}),
-      textProvider: provider,
-      textApiKey: apiKey,
-      textBaseUrl: baseUrl,
-      textModel: model,
-      providers: mergedProviders,
-    };
-  };
-
-  const [draftConfig, setDraftConfig] = useState<ApiConfig>(() => buildUnifiedConfig(apiConfig));
-
-  // Note: We intentionally do NOT reset draftConfig via useEffect([apiConfig]) while SettingsApp is open,
-  // to ensure user typing in draftConfig is never overwritten by top-level prop re-renders.
-
-  const updateApiDraft = (
-    nextConfig: ApiConfig,
-    options?: Parameters<typeof saveApiConfig>[1]
-  ) => {
-    setDraftConfig((prevDraft) => {
-      const unified = buildUnifiedConfig(nextConfig, options, prevDraft);
-      saveApiConfig(unified, options);
-      onSaveApiConfig(unified);
-      return unified;
-    });
+  const updateApiDraft = (nextConfig: ApiConfig) => {
+    setDraftConfig(nextConfig);
   };
 
   const [controls, setControls] = useState<AiControls>(aiControls);
@@ -305,86 +215,30 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         apiKey: '',
       },
     };
-    const updatedConfig: ApiConfig = {
+    updateApiDraft({
       ...draftConfig,
       textApiKey: '',
       providers: updatedProviders,
-    };
-    updateApiDraft(updatedConfig, { explicitlyClearTextKey: true });
+    });
   };
 
   const handleClearImageKey = () => {
-    const activeProvider = draftConfig.imageProvider || 'openai_compatible';
-    const updatedProviders = {
-      ...(draftConfig.providers || {}),
-      [activeProvider]: {
-        ...(draftConfig.providers?.[activeProvider] || {
-          provider: activeProvider,
-          baseUrl: draftConfig.imageBaseUrl || '',
-          model: draftConfig.imageModel || '',
-        }),
-        apiKey: '',
-      },
-    };
-    const updatedConfig: ApiConfig = {
+    updateApiDraft({
       ...draftConfig,
       imageApiKey: '',
-      providers: updatedProviders,
-    };
-    updateApiDraft(updatedConfig, { explicitlyClearImageKey: true });
+    });
   };
 
   const handleClearVoiceKey = () => {
-    const activeProvider = draftConfig.voiceProvider || 'openai_compatible';
-    const updatedProviders = {
-      ...(draftConfig.providers || {}),
-      [activeProvider]: {
-        ...(draftConfig.providers?.[activeProvider] || {
-          provider: activeProvider,
-          baseUrl: draftConfig.voiceBaseUrl || '',
-          model: draftConfig.voiceModel || '',
-        }),
-        apiKey: '',
-      },
-    };
-    const updatedConfig: ApiConfig = {
+    updateApiDraft({
       ...draftConfig,
       voiceApiKey: '',
-      providers: updatedProviders,
-    };
-    updateApiDraft(updatedConfig, { explicitlyClearVoiceKey: true });
+    });
   };
 
   const handleGlobalSave = () => {
-    const stored = loadApiConfig();
-    const effective = resolveEffectiveTextConfig(draftConfig, stored);
-
-    const updatedProviders = {
-      ...(draftConfig.providers || {}),
-      [effective.provider]: {
-        provider: effective.provider,
-        apiKey: effective.apiKey,
-        baseUrl: effective.baseUrl,
-        model: effective.model,
-      },
-    };
-
-    const finalConfig: ApiConfig = {
-      ...draftConfig,
-      textProvider: effective.provider,
-      textApiKey: effective.apiKey,
-      textBaseUrl: effective.baseUrl,
-      textModel: effective.model,
-      imageApiKey: draftConfig.imageApiKey ?? '',
-      imageBaseUrl: draftConfig.imageBaseUrl !== undefined ? draftConfig.imageBaseUrl.trim() : '',
-      imageModel: draftConfig.imageModel?.trim() || 'dall-e-3',
-      voiceApiKey: draftConfig.voiceApiKey ?? '',
-      voiceBaseUrl: draftConfig.voiceBaseUrl !== undefined ? draftConfig.voiceBaseUrl.trim() : '',
-      voiceModel: draftConfig.voiceModel?.trim() || 'tts-1',
-      providers: updatedProviders,
-    };
-
-    updateApiDraft(finalConfig, { flushImmediate: true });
+    saveApiConfig(draftConfig);
+    onSaveApiConfig(draftConfig);
     onSaveAiControls(controls);
 
     setSaveSuccessMsg('🎉 全局 API Provider 配置与系统设置已保存生效！');
@@ -397,50 +251,23 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     setConnectionResult(null);
     setModelTestResult(null);
 
-    const stored = loadApiConfig();
-    const effective = resolveEffectiveTextConfig(draftConfig, stored);
-
     const providerType = activeCategory === 'text'
-      ? effective.provider
+      ? (draftConfig.textProvider || 'google_gemini')
       : activeCategory === 'image'
-      ? (draftConfig.imageProvider || stored.imageProvider || 'openai_compatible')
-      : (draftConfig.voiceProvider || stored.voiceProvider || 'openai_compatible');
+      ? (draftConfig.imageProvider || 'google_gemini')
+      : (draftConfig.voiceProvider || 'google_gemini');
 
     const baseUrl = activeCategory === 'text'
-      ? effective.baseUrl
+      ? (draftConfig.textBaseUrl || '')
       : activeCategory === 'image'
-      ? (draftConfig.imageBaseUrl || stored.imageBaseUrl || '')
-      : (draftConfig.voiceBaseUrl || stored.voiceBaseUrl || '');
+      ? (draftConfig.imageBaseUrl || '')
+      : (draftConfig.voiceBaseUrl || '');
 
     const apiKey = activeCategory === 'text'
-      ? effective.apiKey
+      ? (draftConfig.textApiKey || '')
       : activeCategory === 'image'
-      ? (draftConfig.imageApiKey || stored.imageApiKey || '')
-      : (draftConfig.voiceApiKey || stored.voiceApiKey || '');
-
-    // Synchronize draft state and save normalized valid config to storage & parent state
-    if (activeCategory === 'text') {
-      const updatedProviders = {
-        ...(stored.providers || {}),
-        ...(draftConfig.providers || {}),
-      };
-      updatedProviders[effective.provider] = {
-        provider: effective.provider,
-        apiKey: effective.apiKey,
-        baseUrl: effective.baseUrl,
-        model: effective.model,
-      };
-      const next: ApiConfig = {
-        ...stored,
-        ...draftConfig,
-        textProvider: effective.provider,
-        textApiKey: effective.apiKey,
-        textBaseUrl: effective.baseUrl,
-        textModel: effective.model,
-        providers: updatedProviders,
-      };
-      updateApiDraft(next);
-    }
+      ? (draftConfig.imageApiKey || '')
+      : (draftConfig.voiceApiKey || '');
 
     try {
       const res = await apiFetch('/api/provider/test-connection', {
@@ -503,22 +330,20 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     setIsFetchingModels(true);
     setModelFetchResult(null);
 
-    const effective = resolveEffectiveTextConfig(draftConfig);
-
     const providerType = activeCategory === 'text'
-      ? effective.provider
+      ? (draftConfig.textProvider || 'google_gemini')
       : activeCategory === 'image'
-      ? (draftConfig.imageProvider || 'openai_compatible')
-      : (draftConfig.voiceProvider || 'openai_compatible');
+      ? (draftConfig.imageProvider || 'google_gemini')
+      : (draftConfig.voiceProvider || 'google_gemini');
 
     const baseUrl = activeCategory === 'text'
-      ? effective.baseUrl
+      ? (draftConfig.textBaseUrl || '')
       : activeCategory === 'image'
       ? (draftConfig.imageBaseUrl || '')
       : (draftConfig.voiceBaseUrl || '');
 
     const apiKey = activeCategory === 'text'
-      ? effective.apiKey
+      ? (draftConfig.textApiKey || '')
       : activeCategory === 'image'
       ? (draftConfig.imageApiKey || '')
       : (draftConfig.voiceApiKey || '');

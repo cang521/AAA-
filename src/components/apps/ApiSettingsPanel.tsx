@@ -87,7 +87,7 @@ const persistCustomPresets = (items: CustomPresetItem[]) => {
 export interface ApiSettingsPanelProps {
   draftConfig: ApiConfig;
   setDraftConfig: React.Dispatch<React.SetStateAction<ApiConfig>>;
-  updateApiDraft: (nextConfig: ApiConfig, options?: Parameters<typeof saveApiConfig>[1]) => void;
+  updateApiDraft: (nextConfig: ApiConfig) => void;
   activeCategory: 'text' | 'image' | 'voice';
   setActiveCategory: (cat: 'text' | 'image' | 'voice') => void;
 
@@ -217,15 +217,13 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
     };
   }, []);
 
-  // Derived single source of truth values
-  const effectiveText = resolveEffectiveTextConfig(draftConfig);
-  const currentProvider = effectiveText.provider;
-  const currentTextKey = effectiveText.apiKey;
-  const currentTextBaseUrl = effectiveText.baseUrl;
-  const currentTextModel = effectiveText.model;
+  // Derived single source of truth values directly from draftConfig state
+  const currentProvider = draftConfig.textProvider || 'google_gemini';
+  const currentTextKey = draftConfig.textApiKey || '';
+  const currentTextBaseUrl = draftConfig.textBaseUrl || '';
+  const currentTextModel = draftConfig.textModel || '';
   const currentImageKey = draftConfig.imageApiKey ?? '';
   const currentVoiceKey = draftConfig.voiceApiKey ?? '';
-  const keyClearInfo = getLastKeyClearDiagnostic();
 
   // 自定义配置列表状态
   const [customPresets, setCustomPresets] = useState<CustomPresetItem[]>(loadSavedPresets);
@@ -325,7 +323,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
         },
       },
     };
-    updateApiDraft(nextConfig, { explicitlyClearTextKey: true });
+    updateApiDraft(nextConfig);
     setSelectedPresetId('custom');
     showNotice('已清空当前自定义配置');
   };
@@ -391,15 +389,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={currentTextBaseUrl}
               onChange={(e) => {
                 const val = e.target.value;
-                const effective = resolveEffectiveTextConfig(draftConfig);
-                const provider = effective.provider;
-                console.log('[API Key Log - BaseURL Change]', {
-                  provider,
-                  baseUrl: val,
-                  keyIsEmpty: !effective.apiKey,
-                  keyLength: effective.apiKey ? effective.apiKey.length : 0,
-                  keyLast4: effective.apiKey ? effective.apiKey.slice(-4) : '',
-                });
+                const provider = draftConfig.textProvider || 'google_gemini';
                 const nextConfig: ApiConfig = {
                   ...draftConfig,
                   textBaseUrl: val,
@@ -408,9 +398,9 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                     [provider]: {
                       ...(draftConfig.providers?.[provider] || {
                         provider,
-                        apiKey: effective.apiKey,
+                        apiKey: draftConfig.textApiKey || '',
                         baseUrl: val,
-                        model: effective.model,
+                        model: draftConfig.textModel || '',
                       }),
                       baseUrl: val,
                     },
@@ -450,15 +440,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 value={currentTextKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  const effective = resolveEffectiveTextConfig(draftConfig);
-                  const provider = effective.provider;
-                  console.log('[API Key Log - Key Change]', {
-                    provider,
-                    baseUrl: effective.baseUrl,
-                    keyIsEmpty: !val,
-                    keyLength: val ? val.length : 0,
-                    keyLast4: val ? val.slice(-4) : '',
-                  });
+                  const provider = draftConfig.textProvider || 'google_gemini';
                   const nextConfig: ApiConfig = {
                     ...draftConfig,
                     textApiKey: val,
@@ -468,8 +450,8 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                         ...(draftConfig.providers?.[provider] || {
                           provider,
                           apiKey: val,
-                          baseUrl: effective.baseUrl,
-                          model: effective.model,
+                          baseUrl: draftConfig.textBaseUrl || '',
+                          model: draftConfig.textModel || '',
                         }),
                         apiKey: val,
                       },
@@ -510,9 +492,9 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                         [provider]: {
                           ...(draftConfig.providers?.[provider] || {
                             provider,
-                            apiKey: '',
+                            apiKey: draftConfig.textApiKey || '',
                             baseUrl: draftConfig.textBaseUrl || '',
-                            model: '',
+                            model: val,
                           }),
                           model: val,
                         },
@@ -546,9 +528,9 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                     [provider]: {
                       ...(draftConfig.providers?.[provider] || {
                         provider,
-                        apiKey: '',
+                        apiKey: draftConfig.textApiKey || '',
                         baseUrl: draftConfig.textBaseUrl || '',
-                        model: '',
+                        model: val,
                       }),
                       model: val,
                     },
@@ -1181,8 +1163,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
           <div>• draftConfig.textApiKey: {formatKeyInfo(draftConfig.textApiKey)}</div>
           <div>• draftConfig.textProvider: <span className="text-sky-300 font-bold">{draftConfig.textProvider || 'google_gemini'}</span></div>
           <div>• providers[{currentProvider}]?.apiKey: {formatKeyInfo(draftConfig.providers?.[currentProvider]?.apiKey)}</div>
-          <div>• resolveEffectiveTextConfig().apiKey: {formatKeyInfo(effectiveText.apiKey)}</div>
-          <div>• 当前 Base URL: <span className="text-sky-300">{effectiveText.baseUrl || '(默认/空)'}</span></div>
+          <div>• 当前 Base URL: <span className="text-sky-300">{currentTextBaseUrl || '(默认/空)'}</span></div>
         </div>
 
         {/* 2. Last Fetch Models Snapshot */}
@@ -1220,23 +1201,6 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
           <div>• /api/provider/fetch-models 到达 server.ts: <span className={fetchDebugInfo?.reachedServer ? 'text-emerald-400 font-bold' : fetchDebugInfo ? 'text-rose-400 font-bold' : 'text-zinc-500'}>{fetchDebugInfo ? (fetchDebugInfo.reachedServer ? '是 (Reached server.ts)' : '否 (未到达 / 离线代理拦截)') : '(等待点击拉取模型)'}</span></div>
           {fetchDebugInfo?.failureStage && (
             <div>• 当前失败/执行阶段 (Failure Stage): <span className="text-amber-300 font-bold">{fetchDebugInfo.failureStage}</span></div>
-          )}
-        </div>
-
-        {/* 4. API Key 清空来源诊断 Tracker */}
-        <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
-          <div className="text-rose-400 font-semibold mb-1 text-[11px] font-sans">
-            4. API Key 最后一次变为空值的来源 (Key Clear Tracker)：
-          </div>
-          {keyClearInfo ? (
-            <>
-              <div>• 清空来源 (lastKeyClearSource): <span className="text-rose-300 font-bold">{keyClearInfo.source}</span></div>
-              <div>• 触发时间: <span className="text-zinc-400">{keyClearInfo.timestamp}</span></div>
-              <div>• 清空前 length (previousKeyLength): <span className="text-amber-300 font-bold">{keyClearInfo.previousKeyLength}</span></div>
-              <div>• 清空后 length (nextKeyLength): <span className="text-rose-400 font-bold">{keyClearInfo.nextKeyLength}</span></div>
-            </>
-          ) : (
-            <div className="text-emerald-400 italic font-sans">• 尚未检测到 API Key 被从非空清空为 0 的异常操作 (lastKeyClearSource: None)</div>
           )}
         </div>
       </div>
