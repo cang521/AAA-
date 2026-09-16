@@ -167,19 +167,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
   const [draftConfig, setDraftConfig] = useState<ApiConfig>(() => buildUnifiedConfig(apiConfig));
 
-  useEffect(() => {
-    setDraftConfig((prevDraft) => {
-      const fresh = buildUnifiedConfig(apiConfig, undefined, prevDraft);
-      const prevKey = resolveEffectiveTextConfig(prevDraft).apiKey;
-      const freshKey = resolveEffectiveTextConfig(fresh).apiKey;
-
-      if (prevKey && !freshKey) {
-        recordKeyClearEvent('SettingsApp apiConfig useEffect blocked clear', prevKey.length, 0);
-        return prevDraft;
-      }
-      return fresh;
-    });
-  }, [apiConfig]);
+  // Note: We intentionally do NOT reset draftConfig via useEffect([apiConfig]) while SettingsApp is open,
+  // to ensure user typing in draftConfig is never overwritten by top-level prop re-renders.
 
   const updateApiDraft = (
     nextConfig: ApiConfig,
