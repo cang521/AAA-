@@ -549,11 +549,11 @@ export const resolveEffectiveTextConfig = (
   const fallbackStored = stored || loadFromStorage<ApiConfig>(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG);
   const provider = (draft?.textProvider || fallbackStored?.textProvider || 'google_gemini') as ProviderType;
 
-  // Non-empty preference order: draft provider -> draft root -> stored provider -> stored root -> any provider with key
-  const draftProvKey = draft?.providers?.[provider]?.apiKey?.trim();
+  // Canonical priority order: draft root (textApiKey/textBaseUrl) -> draft provider -> stored root -> stored provider -> any provider with key
   const draftRootKey = draft?.textApiKey?.trim();
-  const storedProvKey = fallbackStored?.providers?.[provider]?.apiKey?.trim();
+  const draftProvKey = draft?.providers?.[provider]?.apiKey?.trim();
   const storedRootKey = fallbackStored?.textApiKey?.trim();
+  const storedProvKey = fallbackStored?.providers?.[provider]?.apiKey?.trim();
 
   let anyProviderKey = '';
   if (draft?.providers) {
@@ -573,13 +573,13 @@ export const resolveEffectiveTextConfig = (
     }
   }
 
-  const apiKey = draftProvKey || draftRootKey || storedProvKey || storedRootKey || anyProviderKey || '';
+  const apiKey = draftRootKey || draftProvKey || storedRootKey || storedProvKey || anyProviderKey || '';
 
-  const draftProvBaseUrl = draft?.providers?.[provider]?.baseUrl?.trim();
   const draftRootBaseUrl = draft?.textBaseUrl?.trim();
-  const storedProvBaseUrl = fallbackStored?.providers?.[provider]?.baseUrl?.trim();
+  const draftProvBaseUrl = draft?.providers?.[provider]?.baseUrl?.trim();
   const storedRootBaseUrl = fallbackStored?.textBaseUrl?.trim();
-  const baseUrl = draftProvBaseUrl || draftRootBaseUrl || storedProvBaseUrl || storedRootBaseUrl || '';
+  const storedProvBaseUrl = fallbackStored?.providers?.[provider]?.baseUrl?.trim();
+  const baseUrl = draftRootBaseUrl || draftProvBaseUrl || storedRootBaseUrl || storedProvBaseUrl || '';
 
   const draftProvModel = draft?.providers?.[provider]?.model?.trim();
   const draftRootModel = draft?.textModel?.trim();
@@ -660,76 +660,7 @@ function maskApiKey(key?: string): string {
  * Allows existing synchronous loadApiConfig() calls to seamlessly read the restored native config.
  */
 export async function hydrateApiConfigFromNativeStorage(): Promise<boolean> {
-  if (!Capacitor.isNativePlatform()) {
-    return false;
-  }
-
-  try {
-    const { value } = await Preferences.get({ key: STORAGE_KEYS.API_CONFIG });
-    if (value && value.trim()) {
-      const parsed = JSON.parse(value) as ApiConfig;
-      if (parsed && typeof parsed === 'object') {
-        const localRaw = localStorage.getItem(STORAGE_KEYS.API_CONFIG);
-        let shouldOverwriteLocal = true;
-
-        if (localRaw) {
-          try {
-            const localParsed = JSON.parse(localRaw) as ApiConfig;
-            // Check if Native snapshot is empty/default while localStorage has user-configured settings
-            const nativeHasData = Boolean(
-              (parsed.textApiKey && parsed.textApiKey.trim()) ||
-              (parsed.textBaseUrl && parsed.textBaseUrl.trim()) ||
-              (parsed.providers && Object.values(parsed.providers).some(p => p?.apiKey?.trim() || p?.baseUrl?.trim()))
-            );
-            const localHasData = Boolean(
-              (localParsed.textApiKey && localParsed.textApiKey.trim()) ||
-              (localParsed.textBaseUrl && localParsed.textBaseUrl.trim()) ||
-              (localParsed.providers && Object.values(localParsed.providers).some(p => p?.apiKey?.trim() || p?.baseUrl?.trim()))
-            );
-
-            if (!nativeHasData && localHasData) {
-              shouldOverwriteLocal = false;
-              console.warn('[API Config Hydration] Native Preferences snapshot is empty, but localStorage has valid settings! Preserving localStorage.');
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        if (shouldOverwriteLocal) {
-          localStorage.setItem(STORAGE_KEYS.API_CONFIG, value);
-          console.log(
-            '[API Config Hydration] Restored phone_api_config from Capacitor Preferences.',
-            'Provider:', parsed.textProvider || 'google_gemini',
-            'BaseUrl:', parsed.textBaseUrl || '[default]',
-            'ApiKey:', maskApiKey(parsed.textApiKey)
-          );
-          return true;
-        }
-      }
-    }
-    console.log('[API Config Hydration] No Preferences value found for phone_api_config, falling back to localStorage.');
-  } catch (err) {
-    console.warn('[API Config Hydration] Error reading phone_api_config from Preferences, falling back to localStorage:', err);
-  }
-
-  try {
-    const localRaw = localStorage.getItem(STORAGE_KEYS.API_CONFIG);
-    if (localRaw) {
-      const localParsed = JSON.parse(localRaw) as ApiConfig;
-      console.log(
-        '[API Config Hydration] Using localStorage fallback.',
-        'Provider:', localParsed.textProvider || 'google_gemini',
-        'BaseUrl:', localParsed.textBaseUrl || '[default]',
-        'ApiKey:', maskApiKey(localParsed.textApiKey)
-      );
-    } else {
-      console.log('[API Config Hydration] Neither Preferences nor localStorage found for phone_api_config. Will use INITIAL_API_CONFIG.');
-    }
-  } catch {
-    // ignore
-  }
-
+  // Pure localStorage synchronous path: bypass Preferences hydration to prevent empty native reads from wiping localStorage
   return false;
 }
 
@@ -741,33 +672,33 @@ export const saveApiConfig = (c: ApiConfig, options?: SaveApiConfigOptions): voi
 
     const currentProvider = (c.textProvider || existing.textProvider || 'google_gemini') as ProviderType;
 
-    // 1. Text API Key handling
+    // 1. Text API Key handling (canonical root field textApiKey takes highest priority)
     let effectiveTextKey = '';
     if (options?.explicitlyClearTextKey) {
       const prevLen = existing.textApiKey?.length || existingProviders[currentProvider]?.apiKey?.length || 0;
       recordKeyClearEvent('saveApiConfig (explicitlyClearTextKey)', prevLen, 0);
       effectiveTextKey = '';
     } else {
-      const incomingProvKey = newProviders[currentProvider]?.apiKey?.trim();
-      const incomingRootKey = c.textApiKey?.trim();
-      const existingProvKey = existingProviders[currentProvider]?.apiKey?.trim();
-      const existingRootKey = existing.textApiKey?.trim();
-      effectiveTextKey = incomingProvKey || incomingRootKey || existingProvKey || existingRootKey || '';
+      const incomingRootKey = c.textApiKey !== undefined ? c.textApiKey.trim() : '';
+      const incomingProvKey = newProviders[currentProvider]?.apiKey !== undefined ? newProviders[currentProvider].apiKey.trim() : '';
+      const existingRootKey = existing.textApiKey?.trim() || '';
+      const existingProvKey = existingProviders[currentProvider]?.apiKey?.trim() || '';
+      effectiveTextKey = incomingRootKey || incomingProvKey || existingRootKey || existingProvKey;
     }
 
-    // 2. Base URL handling
-    const incomingProvBaseUrl = newProviders[currentProvider]?.baseUrl?.trim();
-    const incomingRootBaseUrl = c.textBaseUrl?.trim();
-    const existingProvBaseUrl = existingProviders[currentProvider]?.baseUrl?.trim();
-    const existingRootBaseUrl = existing.textBaseUrl?.trim();
-    const effectiveTextBaseUrl = incomingProvBaseUrl || incomingRootBaseUrl || existingProvBaseUrl || existingRootBaseUrl || '';
+    // 2. Base URL handling (canonical root field textBaseUrl takes highest priority)
+    const incomingRootBaseUrl = c.textBaseUrl !== undefined ? c.textBaseUrl.trim() : '';
+    const incomingProvBaseUrl = newProviders[currentProvider]?.baseUrl !== undefined ? newProviders[currentProvider].baseUrl.trim() : '';
+    const existingRootBaseUrl = existing.textBaseUrl?.trim() || '';
+    const existingProvBaseUrl = existingProviders[currentProvider]?.baseUrl?.trim() || '';
+    const effectiveTextBaseUrl = incomingRootBaseUrl || incomingProvBaseUrl || existingRootBaseUrl || existingProvBaseUrl;
 
     // 3. Model handling
-    const incomingProvModel = newProviders[currentProvider]?.model?.trim();
-    const incomingRootModel = c.textModel?.trim();
-    const existingProvModel = existingProviders[currentProvider]?.model?.trim();
-    const existingRootModel = existing.textModel?.trim();
-    const effectiveTextModel = incomingProvModel || incomingRootModel || existingProvModel || existingRootModel || 'gemini-3.6-flash';
+    const incomingRootModel = c.textModel !== undefined ? c.textModel.trim() : '';
+    const incomingProvModel = newProviders[currentProvider]?.model !== undefined ? newProviders[currentProvider].model.trim() : '';
+    const existingRootModel = existing.textModel?.trim() || '';
+    const existingProvModel = existingProviders[currentProvider]?.model?.trim() || '';
+    const effectiveTextModel = incomingRootModel || incomingProvModel || existingRootModel || existingProvModel || 'gemini-3.6-flash';
 
     // Merge providers map
     const mergedProviders = { ...existingProviders, ...newProviders };
@@ -811,11 +742,8 @@ export const saveApiConfig = (c: ApiConfig, options?: SaveApiConfigOptions): voi
       providers: mergedProviders,
     };
 
-    // Synchronously write to localStorage
+    // Synchronously & immediately write full config to localStorage
     saveToStorage(STORAGE_KEYS.API_CONFIG, nextConfig);
-
-    // Asynchronously & serially queue mirroring phone_api_config to Capacitor Preferences with 200ms debounce
-    queueNativeApiConfigSave(nextConfig, Boolean(options?.flushImmediate));
   } catch (err) {
     console.error('Failed to save API config to storage:', err);
   }
