@@ -395,7 +395,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       providers: updatedProviders,
     };
 
-    updateApiDraft(finalConfig);
+    updateApiDraft(finalConfig, { flushImmediate: true });
     onSaveAiControls(controls);
 
     setSaveSuccessMsg('🎉 全局 API Provider 配置与系统设置已保存生效！');

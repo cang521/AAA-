@@ -454,6 +454,84 @@ export interface SaveApiConfigOptions {
   explicitlyClearTextKey?: boolean;
   explicitlyClearImageKey?: boolean;
   explicitlyClearVoiceKey?: boolean;
+  flushImmediate?: boolean;
+}
+
+/**
+ * Single-Queue Serialized Native Preferences Persistence Engine for phone_api_config
+ */
+let currentNativeRevision = 0;
+let lastWrittenNativeRevision = 0;
+let pendingNativeConfig: ApiConfig | null = null;
+let pendingNativeRevision = 0;
+let nativeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let nativeWritePromiseQueue: Promise<void> = Promise.resolve();
+
+function processPendingNativeSave(): Promise<void> {
+  if (!pendingNativeConfig || pendingNativeRevision <= lastWrittenNativeRevision) {
+    return Promise.resolve();
+  }
+
+  const configToWrite = pendingNativeConfig;
+  const revisionToWrite = pendingNativeRevision;
+  pendingNativeConfig = null;
+
+  nativeWritePromiseQueue = nativeWritePromiseQueue
+    .then(async () => {
+      if (revisionToWrite <= lastWrittenNativeRevision) {
+        return;
+      }
+      if (!Capacitor.isNativePlatform()) {
+        lastWrittenNativeRevision = revisionToWrite;
+        return;
+      }
+      try {
+        const jsonStr = JSON.stringify(configToWrite);
+        await Preferences.set({ key: STORAGE_KEYS.API_CONFIG, value: jsonStr });
+        lastWrittenNativeRevision = revisionToWrite;
+        console.log(
+          `[API Config Native Save] (rev ${revisionToWrite}) Mirrored phone_api_config to Preferences successfully.`,
+          'Provider:', configToWrite.textProvider,
+          'BaseUrl:', configToWrite.textBaseUrl || '[default]',
+          'ApiKey:', maskApiKey(configToWrite.textApiKey)
+        );
+      } catch (err) {
+        console.warn(`[API Config Native Save] (rev ${revisionToWrite}) Failed to mirror to Preferences:`, err);
+      }
+    })
+    .catch((err) => {
+      console.error('[API Config Native Save] Queue execution error:', err);
+    });
+
+  return nativeWritePromiseQueue;
+}
+
+export function flushNativeApiConfig(): Promise<void> {
+  if (nativeDebounceTimer) {
+    clearTimeout(nativeDebounceTimer);
+    nativeDebounceTimer = null;
+  }
+  return processPendingNativeSave();
+}
+
+function enqueueNativeApiConfigSave(nextConfig: ApiConfig, immediate = false): void {
+  currentNativeRevision++;
+  pendingNativeConfig = nextConfig;
+  pendingNativeRevision = currentNativeRevision;
+
+  if (nativeDebounceTimer) {
+    clearTimeout(nativeDebounceTimer);
+    nativeDebounceTimer = null;
+  }
+
+  if (immediate) {
+    processPendingNativeSave();
+  } else {
+    nativeDebounceTimer = setTimeout(() => {
+      nativeDebounceTimer = null;
+      processPendingNativeSave();
+    }, 400);
+  }
 }
 
 export interface KeyClearDiagnosticInfo {
@@ -724,22 +802,8 @@ export const saveApiConfig = (c: ApiConfig, options?: SaveApiConfigOptions): voi
     // Synchronously write to localStorage
     saveToStorage(STORAGE_KEYS.API_CONFIG, nextConfig);
 
-    // Asynchronously mirror phone_api_config to Capacitor Preferences in Android Native environment
-    if (Capacitor.isNativePlatform()) {
-      const jsonStr = JSON.stringify(nextConfig);
-      Preferences.set({ key: STORAGE_KEYS.API_CONFIG, value: jsonStr })
-        .then(() => {
-          console.log(
-            '[API Config Save] Mirrored phone_api_config to Capacitor Preferences successfully.',
-            'Provider:', nextConfig.textProvider,
-            'BaseUrl:', nextConfig.textBaseUrl || '[default]',
-            'ApiKey:', maskApiKey(nextConfig.textApiKey)
-          );
-        })
-        .catch((err) => {
-          console.warn('[API Config Save] Failed to mirror phone_api_config to Preferences:', err);
-        });
-    }
+    // Asynchronously & serially queue mirroring phone_api_config to Capacitor Preferences with debounce & revision control
+    enqueueNativeApiConfigSave(nextConfig, Boolean(options?.flushImmediate));
   } catch (err) {
     console.error('Failed to save API config to storage:', err);
   }
