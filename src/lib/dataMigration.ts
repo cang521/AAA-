@@ -256,11 +256,11 @@ function migrateV1ToV2(logItems: UpgradeLogItem[]): void {
 
   // 1. API 配置增量补充
   try {
-    const existingApi = safeGetJson<ApiConfig>('phone_api_config');
+    const existingApi = safeGetJson<ApiConfig>('phone_api_config_v2') || safeGetJson<ApiConfig>('phone_api_config');
     if (existingApi) {
       const { result, addedFields } = supplementMissingFields(existingApi, INITIAL_API_CONFIG);
       if (addedFields.length > 0) {
-        safeSetJson('phone_api_config', result);
+        safeSetJson('phone_api_config_v2', result);
         logItems.push({
           name: 'API配置',
           status: 'supplemented',
@@ -534,6 +534,7 @@ export async function executeAppUpgradeCheck(): Promise<{
         localStorage.getItem('phone_ai_characters') ||
         localStorage.getItem('phone_chat_messages') ||
         localStorage.getItem('phone_desktop_wallpaper') ||
+        localStorage.getItem('phone_api_config_v2') ||
         localStorage.getItem('phone_api_config')
     );
 

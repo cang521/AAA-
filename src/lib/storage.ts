@@ -502,8 +502,42 @@ export const resolveEffectiveTextConfig = (
 
 export const loadApiConfig = (): ApiConfig => {
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.API_CONFIG);
-    if (raw) {
+    let raw = localStorage.getItem(STORAGE_KEYS.API_CONFIG);
+    if (!raw) {
+      // 检查旧 phone_api_config 是否存在，若存在且 v2 不存在，则进行一次性平滑迁移
+      const legacyRaw = localStorage.getItem('phone_api_config');
+      if (legacyRaw) {
+        try {
+          const legacyParsed = JSON.parse(legacyRaw);
+          if (legacyParsed && typeof legacyParsed === 'object') {
+            const provider = (legacyParsed.textProvider || 'google_gemini') as ProviderType;
+            const providers = { ...(legacyParsed.providers || {}) };
+            if (!providers[provider]) {
+              providers[provider] = {
+                provider,
+                apiKey: legacyParsed.textApiKey || '',
+                baseUrl: legacyParsed.textBaseUrl || '',
+                model: legacyParsed.textModel || 'gemini-3.6-flash',
+              };
+            }
+            const migratedConfig: ApiConfig = {
+              ...INITIAL_API_CONFIG,
+              ...legacyParsed,
+              textProvider: provider,
+              textApiKey: legacyParsed.textApiKey ?? '',
+              textBaseUrl: legacyParsed.textBaseUrl ?? '',
+              textModel: legacyParsed.textModel ?? 'gemini-3.6-flash',
+              providers,
+            };
+            saveApiConfig(migratedConfig);
+            console.log('[API Config Migration] Migrated legacy phone_api_config to phone_api_config_v2 successfully');
+            return migratedConfig;
+          }
+        } catch (e) {
+          console.warn('[API Config Migration] Failed to parse legacy phone_api_config:', e);
+        }
+      }
+    } else {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object') {
         const provider = (parsed.textProvider || 'google_gemini') as ProviderType;
