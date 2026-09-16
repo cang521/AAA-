@@ -155,8 +155,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     return {
       ...stored,
       ...apiConfig,
-      ...(currentDraft || {}),
       ...source,
+      ...(currentDraft || {}),
       textProvider: provider,
       textApiKey: apiKey,
       textBaseUrl: baseUrl,

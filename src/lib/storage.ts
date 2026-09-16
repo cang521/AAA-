@@ -460,50 +460,35 @@ export interface SaveApiConfigOptions {
 /**
  * Single-Queue Serialized Native Preferences Persistence Engine for phone_api_config
  */
-let currentNativeRevision = 0;
-let lastWrittenNativeRevision = 0;
-let pendingNativeConfig: ApiConfig | null = null;
-let pendingNativeRevision = 0;
+let latestNativeConfig: ApiConfig | null = null;
 let nativeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-let nativeWritePromiseQueue: Promise<void> = Promise.resolve();
+let nativeWriteChain: Promise<void> = Promise.resolve();
 
-function processPendingNativeSave(): Promise<void> {
-  if (!pendingNativeConfig || pendingNativeRevision <= lastWrittenNativeRevision) {
-    return Promise.resolve();
-  }
+function executeNativeWrite(): Promise<void> {
+  if (!latestNativeConfig) return Promise.resolve();
+  const configToWrite = latestNativeConfig;
 
-  const configToWrite = pendingNativeConfig;
-  const revisionToWrite = pendingNativeRevision;
-  pendingNativeConfig = null;
-
-  nativeWritePromiseQueue = nativeWritePromiseQueue
+  nativeWriteChain = nativeWriteChain
     .then(async () => {
-      if (revisionToWrite <= lastWrittenNativeRevision) {
-        return;
-      }
-      if (!Capacitor.isNativePlatform()) {
-        lastWrittenNativeRevision = revisionToWrite;
-        return;
-      }
+      if (!Capacitor.isNativePlatform()) return;
       try {
         const jsonStr = JSON.stringify(configToWrite);
         await Preferences.set({ key: STORAGE_KEYS.API_CONFIG, value: jsonStr });
-        lastWrittenNativeRevision = revisionToWrite;
         console.log(
-          `[API Config Native Save] (rev ${revisionToWrite}) Mirrored phone_api_config to Preferences successfully.`,
+          '[API Config Native Save] Mirrored phone_api_config to Preferences successfully.',
           'Provider:', configToWrite.textProvider,
           'BaseUrl:', configToWrite.textBaseUrl || '[default]',
           'ApiKey:', maskApiKey(configToWrite.textApiKey)
         );
       } catch (err) {
-        console.warn(`[API Config Native Save] (rev ${revisionToWrite}) Failed to mirror to Preferences:`, err);
+        console.warn('[API Config Native Save] Failed to mirror to Preferences:', err);
       }
     })
     .catch((err) => {
-      console.error('[API Config Native Save] Queue execution error:', err);
+      console.error('[API Config Native Save] Error in write queue:', err);
     });
 
-  return nativeWritePromiseQueue;
+  return nativeWriteChain;
 }
 
 export function flushNativeApiConfig(): Promise<void> {
@@ -511,13 +496,11 @@ export function flushNativeApiConfig(): Promise<void> {
     clearTimeout(nativeDebounceTimer);
     nativeDebounceTimer = null;
   }
-  return processPendingNativeSave();
+  return executeNativeWrite();
 }
 
-function enqueueNativeApiConfigSave(nextConfig: ApiConfig, immediate = false): void {
-  currentNativeRevision++;
-  pendingNativeConfig = nextConfig;
-  pendingNativeRevision = currentNativeRevision;
+function queueNativeApiConfigSave(nextConfig: ApiConfig, immediate = false): void {
+  latestNativeConfig = nextConfig;
 
   if (nativeDebounceTimer) {
     clearTimeout(nativeDebounceTimer);
@@ -525,12 +508,12 @@ function enqueueNativeApiConfigSave(nextConfig: ApiConfig, immediate = false): v
   }
 
   if (immediate) {
-    processPendingNativeSave();
+    executeNativeWrite();
   } else {
     nativeDebounceTimer = setTimeout(() => {
       nativeDebounceTimer = null;
-      processPendingNativeSave();
-    }, 400);
+      executeNativeWrite();
+    }, 200);
   }
 }
 
@@ -686,14 +669,43 @@ export async function hydrateApiConfigFromNativeStorage(): Promise<boolean> {
     if (value && value.trim()) {
       const parsed = JSON.parse(value) as ApiConfig;
       if (parsed && typeof parsed === 'object') {
-        localStorage.setItem(STORAGE_KEYS.API_CONFIG, value);
-        console.log(
-          '[API Config Hydration] Restored phone_api_config from Capacitor Preferences.',
-          'Provider:', parsed.textProvider || 'google_gemini',
-          'BaseUrl:', parsed.textBaseUrl || '[default]',
-          'ApiKey:', maskApiKey(parsed.textApiKey)
-        );
-        return true;
+        const localRaw = localStorage.getItem(STORAGE_KEYS.API_CONFIG);
+        let shouldOverwriteLocal = true;
+
+        if (localRaw) {
+          try {
+            const localParsed = JSON.parse(localRaw) as ApiConfig;
+            // Check if Native snapshot is empty/default while localStorage has user-configured settings
+            const nativeHasData = Boolean(
+              (parsed.textApiKey && parsed.textApiKey.trim()) ||
+              (parsed.textBaseUrl && parsed.textBaseUrl.trim()) ||
+              (parsed.providers && Object.values(parsed.providers).some(p => p?.apiKey?.trim() || p?.baseUrl?.trim()))
+            );
+            const localHasData = Boolean(
+              (localParsed.textApiKey && localParsed.textApiKey.trim()) ||
+              (localParsed.textBaseUrl && localParsed.textBaseUrl.trim()) ||
+              (localParsed.providers && Object.values(localParsed.providers).some(p => p?.apiKey?.trim() || p?.baseUrl?.trim()))
+            );
+
+            if (!nativeHasData && localHasData) {
+              shouldOverwriteLocal = false;
+              console.warn('[API Config Hydration] Native Preferences snapshot is empty, but localStorage has valid settings! Preserving localStorage.');
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        if (shouldOverwriteLocal) {
+          localStorage.setItem(STORAGE_KEYS.API_CONFIG, value);
+          console.log(
+            '[API Config Hydration] Restored phone_api_config from Capacitor Preferences.',
+            'Provider:', parsed.textProvider || 'google_gemini',
+            'BaseUrl:', parsed.textBaseUrl || '[default]',
+            'ApiKey:', maskApiKey(parsed.textApiKey)
+          );
+          return true;
+        }
       }
     }
     console.log('[API Config Hydration] No Preferences value found for phone_api_config, falling back to localStorage.');
@@ -802,8 +814,8 @@ export const saveApiConfig = (c: ApiConfig, options?: SaveApiConfigOptions): voi
     // Synchronously write to localStorage
     saveToStorage(STORAGE_KEYS.API_CONFIG, nextConfig);
 
-    // Asynchronously & serially queue mirroring phone_api_config to Capacitor Preferences with debounce & revision control
-    enqueueNativeApiConfigSave(nextConfig, Boolean(options?.flushImmediate));
+    // Asynchronously & serially queue mirroring phone_api_config to Capacitor Preferences with 200ms debounce
+    queueNativeApiConfigSave(nextConfig, Boolean(options?.flushImmediate));
   } catch (err) {
     console.error('Failed to save API config to storage:', err);
   }
