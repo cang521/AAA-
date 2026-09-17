@@ -499,7 +499,7 @@ export function loadSingleApiConfig(type: 'text' | 'image' | 'voice'): SingleApi
         return {
           provider: parsed.provider || defaultVal.provider,
           baseUrl: typeof parsed.baseUrl === 'string' ? parsed.baseUrl : '',
-          apiKey: parsed.apiKey || '',
+          apiKey: typeof parsed.apiKey === 'string' ? parsed.apiKey : '',
           model: parsed.model || defaultVal.model,
         };
       }

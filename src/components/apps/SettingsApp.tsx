@@ -88,7 +88,34 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   const [draftConfig, setDraftConfig] = useState<ApiConfig>(() => loadApiConfig());
 
   const updateApiDraft = (nextConfig: ApiConfig) => {
-    setDraftConfig(nextConfig);
+    setDraftConfig((prev) => {
+      const prevText = prev.textApiConfig;
+      const nextText = nextConfig.textApiConfig;
+
+      if (prevText && nextText) {
+        // Protection: If previous apiKey existed (len > 0) but nextText key is empty, preserve previous key
+        const preservedKey =
+          prevText.apiKey && (!nextText.apiKey || !nextText.apiKey.trim())
+            ? prevText.apiKey
+            : nextText.apiKey;
+
+        const preservedBaseUrl =
+          prevText.baseUrl && typeof nextText.baseUrl !== 'string'
+            ? prevText.baseUrl
+            : nextText.baseUrl;
+
+        return {
+          ...nextConfig,
+          textApiConfig: {
+            ...nextText,
+            apiKey: preservedKey ?? '',
+            baseUrl: preservedBaseUrl ?? '',
+          },
+        };
+      }
+
+      return nextConfig;
+    });
   };
 
   const [controls, setControls] = useState<AiControls>(aiControls);
