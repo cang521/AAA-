@@ -498,7 +498,7 @@ export function loadSingleApiConfig(type: 'text' | 'image' | 'voice'): SingleApi
       if (parsed && typeof parsed === 'object') {
         return {
           provider: parsed.provider || defaultVal.provider,
-          baseUrl: parsed.baseUrl || '',
+          baseUrl: typeof parsed.baseUrl === 'string' ? parsed.baseUrl : '',
           apiKey: parsed.apiKey || '',
           model: parsed.model || defaultVal.model,
         };

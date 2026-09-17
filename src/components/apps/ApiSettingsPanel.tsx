@@ -220,7 +220,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   // Derived single source of truth values directly from draftConfig state
   const currentProvider = draftConfig.textApiConfig?.provider || 'google_gemini';
   const currentTextKey = draftConfig.textApiConfig?.apiKey || '';
-  const currentTextBaseUrl = draftConfig.textApiConfig?.baseUrl || '';
+  const currentTextBaseUrl = draftConfig.textApiConfig?.baseUrl ?? '';
   const currentTextModel = draftConfig.textApiConfig?.model || '';
   const currentImageKey = draftConfig.imageApiConfig?.apiKey || '';
   const currentVoiceKey = draftConfig.voiceApiConfig?.apiKey || '';
