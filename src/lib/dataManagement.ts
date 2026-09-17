@@ -210,7 +210,9 @@ export async function createDataSnapshot(note = '导入前自动备份'): Promis
     'phone_memos',
     'phone_world_books',
     'phone_ai_permissions',
-    'phone_api_config_v2',
+    'new_text_api_config',
+    'new_image_api_config',
+    'new_voice_api_config',
     'phone_ai_controls',
     'phone_group_chats',
   ];

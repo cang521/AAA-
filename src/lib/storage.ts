@@ -10,8 +10,8 @@ import {
   ApiLog,
   AiPermissions,
   ApiConfig,
+  SingleApiConfig,
   ProviderType,
-  ProviderConfigItem,
   AiControls,
   WidgetConfig,
   AppIconConfig,
@@ -44,7 +44,9 @@ const STORAGE_KEYS = {
   WORLD_BOOKS: 'phone_world_books',
   API_LOGS: 'phone_api_logs',
   PERMISSIONS: 'phone_ai_permissions',
-  API_CONFIG: 'phone_api_config_v2',
+  TEXT_API_CONFIG: 'new_text_api_config',
+  IMAGE_API_CONFIG: 'new_image_api_config',
+  VOICE_API_CONFIG: 'new_voice_api_config',
   AI_CONTROLS: 'phone_ai_controls',
   LAUNCHER_PAGES: 'phone_launcher_pages_count',
   LAUNCHER_ICONS: 'phone_launcher_icons',
@@ -309,33 +311,31 @@ const INITIAL_PERMISSIONS: AiPermissions = {
   },
 };
 
-const INITIAL_API_CONFIG: ApiConfig = {
-  textApiKey: '',
-  textModel: 'gemini-3.6-flash',
-  textBaseUrl: '',
-  textProvider: 'google_gemini',
-  providers: {
-    google_gemini: {
-      provider: 'google_gemini',
-      apiKey: '',
-      baseUrl: 'https://generativelanguage.googleapis.com',
-      model: 'gemini-3.6-flash',
-    },
-    custom: {
-      provider: 'custom',
-      apiKey: '',
-      baseUrl: '',
-      model: 'gpt-4o',
-    },
-  },
-  imageApiKey: '',
-  imageModel: 'gemini-3.1-flash-lite-image',
-  imageBaseUrl: '',
-  imageProvider: 'google_gemini',
-  voiceApiKey: '',
-  voiceModel: 'gemini-3.1-flash-tts-preview',
-  voiceBaseUrl: '',
-  voiceProvider: 'google_gemini',
+export const DEFAULT_TEXT_API_CONFIG: SingleApiConfig = {
+  provider: 'google_gemini',
+  baseUrl: '',
+  apiKey: '',
+  model: 'gemini-3.6-flash',
+};
+
+export const DEFAULT_IMAGE_API_CONFIG: SingleApiConfig = {
+  provider: 'google_gemini',
+  baseUrl: '',
+  apiKey: '',
+  model: 'gemini-3.1-flash-lite-image',
+};
+
+export const DEFAULT_VOICE_API_CONFIG: SingleApiConfig = {
+  provider: 'google_gemini',
+  baseUrl: '',
+  apiKey: '',
+  model: 'gemini-3.1-flash-tts-preview',
+};
+
+export const INITIAL_API_CONFIG: ApiConfig = {
+  textApiConfig: DEFAULT_TEXT_API_CONFIG,
+  imageApiConfig: DEFAULT_IMAGE_API_CONFIG,
+  voiceApiConfig: DEFAULT_VOICE_API_CONFIG,
 };
 
 const INITIAL_AI_CONTROLS: AiControls = {
@@ -488,148 +488,50 @@ export const getLastKeyClearDiagnostic = (): KeyClearDiagnosticInfo | null => {
   return lastKeyClearDiagnostic;
 };
 
-export const resolveEffectiveTextConfig = (
-  draft?: Partial<ApiConfig> | null,
-  stored?: Partial<ApiConfig> | null
-): { provider: ProviderType; apiKey: string; baseUrl: string; model: string } => {
-  const provider = (draft?.textProvider || stored?.textProvider || 'google_gemini') as ProviderType;
-  const apiKey = draft?.textApiKey ?? draft?.providers?.[provider]?.apiKey ?? stored?.textApiKey ?? stored?.providers?.[provider]?.apiKey ?? '';
-  const baseUrl = draft?.textBaseUrl ?? draft?.providers?.[provider]?.baseUrl ?? stored?.textBaseUrl ?? stored?.providers?.[provider]?.baseUrl ?? '';
-  const model = draft?.textModel || draft?.providers?.[provider]?.model || stored?.textModel || stored?.providers?.[provider]?.model || 'gemini-3.6-flash';
-
-  return { provider, apiKey, baseUrl, model };
-};
-
-export const loadApiConfig = (): ApiConfig => {
+export function loadSingleApiConfig(type: 'text' | 'image' | 'voice'): SingleApiConfig {
+  const key = type === 'text' ? 'new_text_api_config' : type === 'image' ? 'new_image_api_config' : 'new_voice_api_config';
+  const defaultVal = type === 'text' ? DEFAULT_TEXT_API_CONFIG : type === 'image' ? DEFAULT_IMAGE_API_CONFIG : DEFAULT_VOICE_API_CONFIG;
   try {
-    let raw = localStorage.getItem(STORAGE_KEYS.API_CONFIG);
-    if (!raw) {
-      // 检查旧 phone_api_config 是否存在，若存在且 v2 不存在，则进行一次性平滑迁移
-      const legacyRaw = localStorage.getItem('phone_api_config');
-      if (legacyRaw) {
-        try {
-          const legacyParsed = JSON.parse(legacyRaw);
-          if (legacyParsed && typeof legacyParsed === 'object') {
-            const provider = (legacyParsed.textProvider || 'google_gemini') as ProviderType;
-            const providers = { ...(legacyParsed.providers || {}) };
-            if (!providers[provider]) {
-              providers[provider] = {
-                provider,
-                apiKey: legacyParsed.textApiKey || '',
-                baseUrl: legacyParsed.textBaseUrl || '',
-                model: legacyParsed.textModel || 'gemini-3.6-flash',
-              };
-            }
-            const migratedConfig: ApiConfig = {
-              ...INITIAL_API_CONFIG,
-              ...legacyParsed,
-              textProvider: provider,
-              textApiKey: legacyParsed.textApiKey ?? '',
-              textBaseUrl: legacyParsed.textBaseUrl ?? '',
-              textModel: legacyParsed.textModel ?? 'gemini-3.6-flash',
-              providers,
-            };
-            saveApiConfig(migratedConfig);
-            console.log('[API Config Migration] Migrated legacy phone_api_config to phone_api_config_v2 successfully');
-            return migratedConfig;
-          }
-        } catch (e) {
-          console.warn('[API Config Migration] Failed to parse legacy phone_api_config:', e);
-        }
-      }
-    } else {
+    const raw = localStorage.getItem(key);
+    if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object') {
-        const provider = (parsed.textProvider || 'google_gemini') as ProviderType;
-        const providers = { ...(parsed.providers || {}) };
-        if (!providers[provider]) {
-          providers[provider] = {
-            provider,
-            apiKey: parsed.textApiKey || '',
-            baseUrl: parsed.textBaseUrl || '',
-            model: parsed.textModel || 'gemini-3.6-flash',
-          };
-        }
         return {
-          ...INITIAL_API_CONFIG,
-          ...parsed,
-          textProvider: provider,
-          textApiKey: parsed.textApiKey ?? '',
-          textBaseUrl: parsed.textBaseUrl ?? '',
-          textModel: parsed.textModel ?? 'gemini-3.6-flash',
-          providers,
+          provider: parsed.provider || defaultVal.provider,
+          baseUrl: parsed.baseUrl || '',
+          apiKey: parsed.apiKey || '',
+          model: parsed.model || defaultVal.model,
         };
       }
     }
   } catch (err) {
-    console.error('Failed to load API config from storage:', err);
+    console.error(`Failed to load ${key}:`, err);
   }
-  return { ...INITIAL_API_CONFIG };
-};
-
-export const clearApiKey = (providerType: 'text' | 'image' | 'voice', providerName?: string): void => {
-  const existing = loadApiConfig();
-  if (providerType === 'text') {
-    const p = providerName || existing.textProvider || 'google_gemini';
-    const updatedProviders = { ...(existing.providers || {}) };
-    if (updatedProviders[p]) {
-      updatedProviders[p] = { ...updatedProviders[p], apiKey: '' };
-    }
-    saveApiConfig({
-      ...existing,
-      textApiKey: '',
-      providers: updatedProviders,
-    });
-  } else if (providerType === 'image') {
-    saveApiConfig({
-      ...existing,
-      imageApiKey: '',
-    });
-  } else if (providerType === 'voice') {
-    saveApiConfig({
-      ...existing,
-      voiceApiKey: '',
-    });
-  }
-};
-
-export async function hydrateApiConfigFromNativeStorage(): Promise<boolean> {
-  return false;
+  return { ...defaultVal };
 }
 
-export const saveApiConfig = (c: ApiConfig): void => {
+export function saveSingleApiConfig(type: 'text' | 'image' | 'voice', config: SingleApiConfig): void {
+  const key = type === 'text' ? 'new_text_api_config' : type === 'image' ? 'new_image_api_config' : 'new_voice_api_config';
   try {
-    const provider = (c.textProvider || 'google_gemini') as ProviderType;
-    const providers = { ...(c.providers || {}) };
-    providers[provider] = {
-      provider,
-      apiKey: c.textApiKey || '',
-      baseUrl: c.textBaseUrl || '',
-      model: c.textModel || 'gemini-3.6-flash',
-    };
-
-    const nextConfig: ApiConfig = {
-      ...c,
-      textProvider: provider,
-      textApiKey: c.textApiKey ?? '',
-      textBaseUrl: c.textBaseUrl ?? '',
-      textModel: c.textModel ?? 'gemini-3.6-flash',
-      imageProvider: c.imageProvider || 'google_gemini',
-      imageApiKey: c.imageApiKey ?? '',
-      imageBaseUrl: c.imageBaseUrl ?? '',
-      imageModel: c.imageModel || 'gemini-3.1-flash-lite-image',
-      voiceProvider: c.voiceProvider || 'google_gemini',
-      voiceApiKey: c.voiceApiKey ?? '',
-      voiceBaseUrl: c.voiceBaseUrl ?? '',
-      voiceModel: c.voiceModel || 'gemini-3.1-flash-tts-preview',
-      providers,
-    };
-
-    localStorage.setItem(STORAGE_KEYS.API_CONFIG, JSON.stringify(nextConfig));
+    localStorage.setItem(key, JSON.stringify(config));
   } catch (err) {
-    console.error('Failed to save API config to storage:', err);
+    console.error(`Failed to save ${key}:`, err);
   }
-};
+}
+
+export function loadApiConfig(): ApiConfig {
+  return {
+    textApiConfig: loadSingleApiConfig('text'),
+    imageApiConfig: loadSingleApiConfig('image'),
+    voiceApiConfig: loadSingleApiConfig('voice'),
+  };
+}
+
+export function saveApiConfig(c: ApiConfig): void {
+  if (c.textApiConfig) saveSingleApiConfig('text', c.textApiConfig);
+  if (c.imageApiConfig) saveSingleApiConfig('image', c.imageApiConfig);
+  if (c.voiceApiConfig) saveSingleApiConfig('voice', c.voiceApiConfig);
+}
 
 export const loadAiControls = (): AiControls => {
   const loaded = loadFromStorage<AiControls>(STORAGE_KEYS.AI_CONTROLS, INITIAL_AI_CONTROLS);
@@ -1043,7 +945,6 @@ export {
   INITIAL_WIDGETS,
   INITIAL_API_LOGS,
   INITIAL_PERMISSIONS,
-  INITIAL_API_CONFIG,
   INITIAL_AI_CONTROLS,
   INITIAL_GOMOKU_RECORDS,
   INITIAL_TICTACTOE_RECORDS,
@@ -1083,10 +984,7 @@ export function resetStorageToFactoryDefaults(): void {
   saveToStorage(STORAGE_KEYS.LAUNCHER_WIDGETS, INITIAL_WIDGETS);
   saveToStorage(STORAGE_KEYS.API_LOGS, INITIAL_API_LOGS);
   saveToStorage(STORAGE_KEYS.PERMISSIONS, INITIAL_PERMISSIONS);
-  saveToStorage(STORAGE_KEYS.API_CONFIG, INITIAL_API_CONFIG);
-  if (Capacitor.isNativePlatform()) {
-    Preferences.set({ key: STORAGE_KEYS.API_CONFIG, value: JSON.stringify(INITIAL_API_CONFIG) }).catch(() => {});
-  }
+  saveApiConfig(INITIAL_API_CONFIG);
   saveToStorage(STORAGE_KEYS.AI_CONTROLS, INITIAL_AI_CONTROLS);
   saveToStorage(STORAGE_KEYS.GOMOKU_RECORDS, INITIAL_GOMOKU_RECORDS);
   saveToStorage(STORAGE_KEYS.TICTACTOE_RECORDS, INITIAL_TICTACTOE_RECORDS);

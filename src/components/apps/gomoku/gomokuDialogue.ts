@@ -132,8 +132,8 @@ export async function getGomokuDialogue({
 }: GetDialogueParams): Promise<string> {
   const fallback = getTemplateDialogue(character, situation);
 
-  // If no API key configured or background active, return fallback immediately
-  if (!apiConfig?.textApiKey && !apiConfig?.textBaseUrl) {
+  // If no API key or Base URL configured, return fallback immediately
+  if (!apiConfig?.textApiConfig?.apiKey && !apiConfig?.textApiConfig?.baseUrl) {
     return fallback;
   }
 

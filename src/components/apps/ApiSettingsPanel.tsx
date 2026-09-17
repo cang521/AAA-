@@ -9,7 +9,7 @@ import {
   ModelFetchResult,
   ModelTestResult,
 } from '../../types';
-import { saveApiConfig, loadApiConfig, resolveEffectiveTextConfig, getLastKeyClearDiagnostic } from '../../lib/storage';
+import { saveApiConfig, loadApiConfig, getLastKeyClearDiagnostic } from '../../lib/storage';
 import {
   Eye,
   EyeOff,
@@ -218,12 +218,12 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   }, []);
 
   // Derived single source of truth values directly from draftConfig state
-  const currentProvider = draftConfig.textProvider || 'google_gemini';
-  const currentTextKey = draftConfig.textApiKey || '';
-  const currentTextBaseUrl = draftConfig.textBaseUrl || '';
-  const currentTextModel = draftConfig.textModel || '';
-  const currentImageKey = draftConfig.imageApiKey ?? '';
-  const currentVoiceKey = draftConfig.voiceApiKey ?? '';
+  const currentProvider = draftConfig.textApiConfig?.provider || 'google_gemini';
+  const currentTextKey = draftConfig.textApiConfig?.apiKey || '';
+  const currentTextBaseUrl = draftConfig.textApiConfig?.baseUrl || '';
+  const currentTextModel = draftConfig.textApiConfig?.model || '';
+  const currentImageKey = draftConfig.imageApiConfig?.apiKey || '';
+  const currentVoiceKey = draftConfig.voiceApiConfig?.apiKey || '';
 
   // 自定义配置列表状态
   const [customPresets, setCustomPresets] = useState<CustomPresetItem[]>(loadSavedPresets);
@@ -247,28 +247,23 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   const handleSelectPreset = (id: string) => {
     setSelectedPresetId(id);
     if (id === 'custom') {
-      const nextConfig: ApiConfig = { ...draftConfig, textProvider: 'custom' };
+      const nextConfig: ApiConfig = {
+        ...draftConfig,
+        textApiConfig: { ...draftConfig.textApiConfig, provider: 'custom' },
+      };
       updateApiDraft(nextConfig);
       return;
     }
     const found = customPresets.find((p) => p.id === id);
     if (found) {
-      const updatedProviders = {
-        ...(draftConfig.providers || {}),
-        custom: {
-          provider: 'custom' as const,
-          baseUrl: found.baseUrl,
-          model: found.model,
-          apiKey: found.apiKey || draftConfig.providers?.custom?.apiKey || draftConfig.textApiKey || '',
-        },
-      };
       const nextConfig: ApiConfig = {
         ...draftConfig,
-        textProvider: 'custom',
-        textBaseUrl: found.baseUrl,
-        textModel: found.model,
-        textApiKey: found.apiKey || draftConfig.textApiKey || '',
-        providers: updatedProviders,
+        textApiConfig: {
+          provider: 'custom',
+          baseUrl: found.baseUrl,
+          apiKey: found.apiKey || draftConfig.textApiConfig?.apiKey || '',
+          model: found.model,
+        },
       };
       updateApiDraft(nextConfig);
       showNotice(`已切换到预设：${found.name}`);
@@ -281,9 +276,9 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
     const newPreset: CustomPresetItem = {
       id: 'custom_' + Date.now(),
       name,
-      baseUrl: draftConfig.textBaseUrl || '',
+      baseUrl: draftConfig.textApiConfig?.baseUrl || '',
       apiKey: currentTextKey,
-      model: draftConfig.textModel || '',
+      model: draftConfig.textApiConfig?.model || '',
       createdAt: Date.now(),
     };
     const updated = [...customPresets, newPreset];
@@ -306,24 +301,15 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
 
   // 清空 / 删除当前的自定义配置内容
   const handleClearCurrentConfig = () => {
-    handleClearTextKey();
-    const nextConfig: ApiConfig = {
+    updateApiDraft({
       ...draftConfig,
-      textBaseUrl: '',
-      textApiKey: '',
-      textModel: '',
-      textProvider: 'custom',
-      providers: {
-        ...(draftConfig.providers || {}),
-        custom: {
-          provider: 'custom' as const,
-          apiKey: '',
-          baseUrl: '',
-          model: '',
-        },
+      textApiConfig: {
+        provider: 'custom',
+        baseUrl: '',
+        apiKey: '',
+        model: '',
       },
-    };
-    updateApiDraft(nextConfig);
+    });
     setSelectedPresetId('custom');
     showNotice('已清空当前自定义配置');
   };
@@ -389,24 +375,13 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={currentTextBaseUrl}
               onChange={(e) => {
                 const val = e.target.value;
-                const provider = draftConfig.textProvider || 'google_gemini';
-                const nextConfig: ApiConfig = {
+                updateApiDraft({
                   ...draftConfig,
-                  textBaseUrl: val,
-                  providers: {
-                    ...(draftConfig.providers || {}),
-                    [provider]: {
-                      ...(draftConfig.providers?.[provider] || {
-                        provider,
-                        apiKey: draftConfig.textApiKey || '',
-                        baseUrl: val,
-                        model: draftConfig.textModel || '',
-                      }),
-                      baseUrl: val,
-                    },
+                  textApiConfig: {
+                    ...draftConfig.textApiConfig,
+                    baseUrl: val,
                   },
-                };
-                updateApiDraft(nextConfig);
+                });
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
@@ -440,24 +415,13 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 value={currentTextKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  const provider = draftConfig.textProvider || 'google_gemini';
-                  const nextConfig: ApiConfig = {
+                  updateApiDraft({
                     ...draftConfig,
-                    textApiKey: val,
-                    providers: {
-                      ...(draftConfig.providers || {}),
-                      [provider]: {
-                        ...(draftConfig.providers?.[provider] || {
-                          provider,
-                          apiKey: val,
-                          baseUrl: draftConfig.textBaseUrl || '',
-                          model: draftConfig.textModel || '',
-                        }),
-                        apiKey: val,
-                      },
+                    textApiConfig: {
+                      ...draftConfig.textApiConfig,
+                      apiKey: val,
                     },
-                  };
-                  updateApiDraft(nextConfig);
+                  });
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
               />
@@ -479,28 +443,17 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             </label>
             {fetchedModels.length > 0 && (
               <select
-                value={draftConfig.textModel || ''}
+                value={draftConfig.textApiConfig?.model || ''}
                 onChange={(e) => {
                   const val = e.target.value;
                   if (val) {
-                    const provider = draftConfig.textProvider || 'google_gemini';
-                    const nextConfig: ApiConfig = {
+                    updateApiDraft({
                       ...draftConfig,
-                      textModel: val,
-                      providers: {
-                        ...(draftConfig.providers || {}),
-                        [provider]: {
-                          ...(draftConfig.providers?.[provider] || {
-                            provider,
-                            apiKey: draftConfig.textApiKey || '',
-                            baseUrl: draftConfig.textBaseUrl || '',
-                            model: val,
-                          }),
-                          model: val,
-                        },
+                      textApiConfig: {
+                        ...draftConfig.textApiConfig,
+                        model: val,
                       },
-                    };
-                    updateApiDraft(nextConfig);
+                    });
                   }
                 }}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs font-mono focus:outline-none focus:border-zinc-500 mb-1.5"
@@ -516,27 +469,16 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="手动输入模型名 (如: gemini-3.6-flash, deepseek-chat, gpt-4o)"
-              value={draftConfig.textModel || ''}
+              value={draftConfig.textApiConfig?.model || ''}
               onChange={(e) => {
                 const val = e.target.value;
-                const provider = draftConfig.textProvider || 'google_gemini';
-                const nextConfig: ApiConfig = {
+                updateApiDraft({
                   ...draftConfig,
-                  textModel: val,
-                  providers: {
-                    ...(draftConfig.providers || {}),
-                    [provider]: {
-                      ...(draftConfig.providers?.[provider] || {
-                        provider,
-                        apiKey: draftConfig.textApiKey || '',
-                        baseUrl: draftConfig.textBaseUrl || '',
-                        model: val,
-                      }),
-                      model: val,
-                    },
+                  textApiConfig: {
+                    ...draftConfig.textApiConfig,
+                    model: val,
                   },
-                };
-                updateApiDraft(nextConfig);
+                });
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
@@ -683,10 +625,16 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 <div className="space-y-1.5">
                   <label className="text-zinc-400 font-medium block">底层 Provider 协议类型</label>
                   <select
-                    value={draftConfig.textProvider || 'custom'}
+                    value={draftConfig.textApiConfig?.provider || 'custom'}
                     onChange={(e) => {
                       const newP = e.target.value as ProviderType;
-                      const nextConfig: ApiConfig = { ...draftConfig, textProvider: newP };
+                      const nextConfig: ApiConfig = {
+                        ...draftConfig,
+                        textApiConfig: {
+                          ...draftConfig.textApiConfig,
+                          provider: newP,
+                        },
+                      };
                       updateApiDraft(nextConfig);
                     }}
                     className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs focus:outline-none"
@@ -703,11 +651,11 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   <button
                     type="button"
                     onClick={handleTestSelectedModel}
-                    disabled={isTestingModel || !draftConfig.textModel}
+                    disabled={isTestingModel || !draftConfig.textApiConfig?.model}
                     className="w-full py-2 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition disabled:opacity-50"
                   >
                     <Play className="w-3 h-3 text-zinc-300" />
-                    <span>{isTestingModel ? '测试中...' : `向 [${draftConfig.textModel || '当前模型'}] 发送测试问候`}</span>
+                    <span>{isTestingModel ? '测试中...' : `向 [${draftConfig.textApiConfig?.model || '当前模型'}] 发送测试问候`}</span>
                   </button>
                   {modelTestResult && (
                     <div className="p-3 rounded-xl bg-black/60 border border-zinc-800 text-xs space-y-1">
@@ -753,11 +701,16 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="https://api.openai.com/v1"
-              value={draftConfig.imageBaseUrl || ''}
+              value={draftConfig.imageApiConfig?.baseUrl || ''}
               onChange={(e) => {
-                const val = e.target.value.trim();
-                const nextConfig: ApiConfig = { ...draftConfig, imageBaseUrl: val };
-                updateApiDraft(nextConfig);
+                const val = e.target.value;
+                updateApiDraft({
+                  ...draftConfig,
+                  imageApiConfig: {
+                    ...draftConfig.imageApiConfig,
+                    baseUrl: val,
+                  },
+                });
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
@@ -790,23 +743,13 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 value={currentImageKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  const provider = draftConfig.imageProvider || 'openai_compatible';
-                  const nextConfig: ApiConfig = {
+                  updateApiDraft({
                     ...draftConfig,
-                    imageApiKey: val,
-                    providers: {
-                      ...(draftConfig.providers || {}),
-                      [provider]: {
-                        ...(draftConfig.providers?.[provider] || {
-                          provider,
-                          baseUrl: draftConfig.imageBaseUrl || '',
-                          model: draftConfig.imageModel || '',
-                        }),
-                        apiKey: val,
-                      },
+                    imageApiConfig: {
+                      ...draftConfig.imageApiConfig,
+                      apiKey: val,
                     },
-                  };
-                  updateApiDraft(nextConfig);
+                  });
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
               />
@@ -827,11 +770,16 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="dall-e-3, imagen-3.0-generate-002, flux-schnell..."
-              value={draftConfig.imageModel || 'dall-e-3'}
+              value={draftConfig.imageApiConfig?.model || ''}
               onChange={(e) => {
-                const val = e.target.value.trim();
-                const nextConfig: ApiConfig = { ...draftConfig, imageModel: val };
-                updateApiDraft(nextConfig);
+                const val = e.target.value;
+                updateApiDraft({
+                  ...draftConfig,
+                  imageApiConfig: {
+                    ...draftConfig.imageApiConfig,
+                    model: val,
+                  },
+                });
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition"
             />
@@ -888,11 +836,16 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="https://api.openai.com/v1"
-              value={draftConfig.voiceBaseUrl || ''}
+              value={draftConfig.voiceApiConfig?.baseUrl || ''}
               onChange={(e) => {
-                const val = e.target.value.trim();
-                const nextConfig: ApiConfig = { ...draftConfig, voiceBaseUrl: val };
-                updateApiDraft(nextConfig);
+                const val = e.target.value;
+                updateApiDraft({
+                  ...draftConfig,
+                  voiceApiConfig: {
+                    ...draftConfig.voiceApiConfig,
+                    baseUrl: val,
+                  },
+                });
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
@@ -925,23 +878,13 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 value={currentVoiceKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  const provider = draftConfig.voiceProvider || 'openai_compatible';
-                  const nextConfig: ApiConfig = {
+                  updateApiDraft({
                     ...draftConfig,
-                    voiceApiKey: val,
-                    providers: {
-                      ...(draftConfig.providers || {}),
-                      [provider]: {
-                        ...(draftConfig.providers?.[provider] || {
-                          provider,
-                          baseUrl: draftConfig.voiceBaseUrl || '',
-                          model: draftConfig.voiceModel || '',
-                        }),
-                        apiKey: val,
-                      },
+                    voiceApiConfig: {
+                      ...draftConfig.voiceApiConfig,
+                      apiKey: val,
                     },
-                  };
-                  updateApiDraft(nextConfig);
+                  });
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
               />
@@ -962,11 +905,16 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="tts-1, tts-1-hd, whisper-1..."
-              value={draftConfig.voiceModel || 'tts-1'}
+              value={draftConfig.voiceApiConfig?.model || ''}
               onChange={(e) => {
-                const val = e.target.value.trim();
-                const nextConfig: ApiConfig = { ...draftConfig, voiceModel: val };
-                updateApiDraft(nextConfig);
+                const val = e.target.value;
+                updateApiDraft({
+                  ...draftConfig,
+                  voiceApiConfig: {
+                    ...draftConfig.voiceApiConfig,
+                    model: val,
+                  },
+                });
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition"
             />
@@ -1160,9 +1108,9 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
         <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
           <div className="text-amber-300 font-semibold mb-1 text-[11px] font-sans">1. 实时 Input & State 状态：</div>
           <div>• Input 当前显示 Key: {formatKeyInfo(currentTextKey)}</div>
-          <div>• draftConfig.textApiKey: {formatKeyInfo(draftConfig.textApiKey)}</div>
-          <div>• draftConfig.textProvider: <span className="text-sky-300 font-bold">{draftConfig.textProvider || 'google_gemini'}</span></div>
-          <div>• providers[{currentProvider}]?.apiKey: {formatKeyInfo(draftConfig.providers?.[currentProvider]?.apiKey)}</div>
+          <div>• draftConfig.textApiConfig.apiKey: {formatKeyInfo(draftConfig.textApiConfig?.apiKey)}</div>
+          <div>• draftConfig.textApiConfig.provider: <span className="text-sky-300 font-bold">{draftConfig.textApiConfig?.provider || 'google_gemini'}</span></div>
+          <div>• draftConfig.textApiConfig.model: <span className="text-sky-300 font-bold">{draftConfig.textApiConfig?.model || 'gemini-3.6-flash'}</span></div>
           <div>• 当前 Base URL: <span className="text-sky-300">{currentTextBaseUrl || '(默认/空)'}</span></div>
         </div>
 

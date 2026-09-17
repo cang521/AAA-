@@ -31,7 +31,6 @@ import {
   saveMenstrualData,
   loadApiConfig,
   saveApiConfig,
-  resolveEffectiveTextConfig,
   recordKeyClearEvent,
   loadAiControls,
   saveAiControls,

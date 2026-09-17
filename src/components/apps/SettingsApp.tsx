@@ -6,7 +6,6 @@ import {
   AiControls,
   ApiLog,
   ProviderType,
-  ProviderConfigItem,
   RemoteModelItem,
   ConnectionTestResult,
   ModelFetchResult,
@@ -51,7 +50,7 @@ import {
 import { DataManagementModal } from '../data/DataManagementModal';
 import { clearAllChatMessages } from '../../lib/chatDb';
 import { clearAllAiMemoryVaults } from '../../lib/aiMemoryVaultDb';
-import { resetStorageToFactoryDefaults, loadApiConfig, saveApiConfig, resolveEffectiveTextConfig, recordKeyClearEvent } from '../../lib/storage';
+import { resetStorageToFactoryDefaults, loadApiConfig, saveApiConfig, recordKeyClearEvent } from '../../lib/storage';
 import {
   getUpgradeProtectionLogs,
   CURRENT_APP_DATA_VERSION,
@@ -203,36 +202,32 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   }, []);
 
   const handleClearTextKey = () => {
-    const activeProvider = draftConfig.textProvider || 'google_gemini';
-    const updatedProviders = {
-      ...(draftConfig.providers || {}),
-      [activeProvider]: {
-        ...(draftConfig.providers?.[activeProvider] || {
-          provider: activeProvider,
-          baseUrl: draftConfig.textBaseUrl || '',
-          model: draftConfig.textModel || '',
-        }),
-        apiKey: '',
-      },
-    };
     updateApiDraft({
       ...draftConfig,
-      textApiKey: '',
-      providers: updatedProviders,
+      textApiConfig: {
+        ...draftConfig.textApiConfig,
+        apiKey: '',
+      },
     });
   };
 
   const handleClearImageKey = () => {
     updateApiDraft({
       ...draftConfig,
-      imageApiKey: '',
+      imageApiConfig: {
+        ...draftConfig.imageApiConfig,
+        apiKey: '',
+      },
     });
   };
 
   const handleClearVoiceKey = () => {
     updateApiDraft({
       ...draftConfig,
-      voiceApiKey: '',
+      voiceApiConfig: {
+        ...draftConfig.voiceApiConfig,
+        apiKey: '',
+      },
     });
   };
 
@@ -251,23 +246,15 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     setConnectionResult(null);
     setModelTestResult(null);
 
-    const providerType = activeCategory === 'text'
-      ? (draftConfig.textProvider || 'google_gemini')
+    const activeSingleConfig = activeCategory === 'text'
+      ? draftConfig.textApiConfig
       : activeCategory === 'image'
-      ? (draftConfig.imageProvider || 'google_gemini')
-      : (draftConfig.voiceProvider || 'google_gemini');
+      ? draftConfig.imageApiConfig
+      : draftConfig.voiceApiConfig;
 
-    const baseUrl = activeCategory === 'text'
-      ? (draftConfig.textBaseUrl || '')
-      : activeCategory === 'image'
-      ? (draftConfig.imageBaseUrl || '')
-      : (draftConfig.voiceBaseUrl || '');
-
-    const apiKey = activeCategory === 'text'
-      ? (draftConfig.textApiKey || '')
-      : activeCategory === 'image'
-      ? (draftConfig.imageApiKey || '')
-      : (draftConfig.voiceApiKey || '');
+    const providerType = activeSingleConfig?.provider || 'google_gemini';
+    const baseUrl = activeSingleConfig?.baseUrl || '';
+    const apiKey = activeSingleConfig?.apiKey || '';
 
     try {
       const res = await apiFetch('/api/provider/test-connection', {
@@ -330,23 +317,15 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     setIsFetchingModels(true);
     setModelFetchResult(null);
 
-    const providerType = activeCategory === 'text'
-      ? (draftConfig.textProvider || 'google_gemini')
+    const activeSingleConfig = activeCategory === 'text'
+      ? draftConfig.textApiConfig
       : activeCategory === 'image'
-      ? (draftConfig.imageProvider || 'google_gemini')
-      : (draftConfig.voiceProvider || 'google_gemini');
+      ? draftConfig.imageApiConfig
+      : draftConfig.voiceApiConfig;
 
-    const baseUrl = activeCategory === 'text'
-      ? (draftConfig.textBaseUrl || '')
-      : activeCategory === 'image'
-      ? (draftConfig.imageBaseUrl || '')
-      : (draftConfig.voiceBaseUrl || '');
-
-    const apiKey = activeCategory === 'text'
-      ? (draftConfig.textApiKey || '')
-      : activeCategory === 'image'
-      ? (draftConfig.imageApiKey || '')
-      : (draftConfig.voiceApiKey || '');
+    const providerType = activeSingleConfig?.provider || 'google_gemini';
+    const baseUrl = activeSingleConfig?.baseUrl || '';
+    const apiKey = activeSingleConfig?.apiKey || '';
 
     const isNative = Capacitor.isNativePlatform();
     const capPlatform = Capacitor.getPlatform();
@@ -472,55 +451,16 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     setIsTestingModel(true);
     setModelTestResult(null);
 
-    const stored = loadApiConfig();
-    const effective = resolveEffectiveTextConfig(draftConfig, stored);
-
-    const providerType = activeCategory === 'text'
-      ? effective.provider
+    const activeSingleConfig = activeCategory === 'text'
+      ? draftConfig.textApiConfig
       : activeCategory === 'image'
-      ? (draftConfig.imageProvider || stored.imageProvider || 'openai_compatible')
-      : (draftConfig.voiceProvider || stored.voiceProvider || 'openai_compatible');
+      ? draftConfig.imageApiConfig
+      : draftConfig.voiceApiConfig;
 
-    const baseUrl = activeCategory === 'text'
-      ? effective.baseUrl
-      : activeCategory === 'image'
-      ? (draftConfig.imageBaseUrl || stored.imageBaseUrl || '')
-      : (draftConfig.voiceBaseUrl || stored.voiceBaseUrl || '');
-
-    const apiKey = activeCategory === 'text'
-      ? effective.apiKey
-      : activeCategory === 'image'
-      ? (draftConfig.imageApiKey || stored.imageApiKey || '')
-      : (draftConfig.voiceApiKey || stored.voiceApiKey || '');
-
-    const model = activeCategory === 'text'
-      ? effective.model
-      : activeCategory === 'image'
-      ? (draftConfig.imageModel || stored.imageModel || '')
-      : (draftConfig.voiceModel || stored.voiceModel || '');
-
-    if (activeCategory === 'text') {
-      const updatedProviders = {
-        ...(stored.providers || {}),
-        ...(draftConfig.providers || {}),
-      };
-      updatedProviders[effective.provider] = {
-        provider: effective.provider,
-        apiKey: effective.apiKey,
-        baseUrl: effective.baseUrl,
-        model: effective.model,
-      };
-      const next: ApiConfig = {
-        ...stored,
-        ...draftConfig,
-        textProvider: effective.provider,
-        textApiKey: effective.apiKey,
-        textBaseUrl: effective.baseUrl,
-        textModel: effective.model,
-        providers: updatedProviders,
-      };
-      updateApiDraft(next);
-    }
+    const providerType = activeSingleConfig?.provider || 'google_gemini';
+    const baseUrl = activeSingleConfig?.baseUrl || '';
+    const apiKey = activeSingleConfig?.apiKey || '';
+    const model = activeSingleConfig?.model || '';
 
     try {
       const res = await apiFetch('/api/provider/test-model', {
@@ -571,51 +511,17 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     }
   };
 
-  // Quick Preset Selection (with multi-provider preservation)
+  // Quick Preset Selection
   const applyTextPreset = (preset: ProviderPreset) => {
     setDraftConfig((prev) => {
-      const currentProvider = prev.textProvider || 'google_gemini';
-      const currentKey = prev.providers?.[currentProvider]?.apiKey ?? prev.textApiKey ?? '';
-      const currentBaseUrl = prev.textBaseUrl !== undefined ? prev.textBaseUrl.trim() : '';
-      const currentModel = prev.textModel || '';
-
-      const updatedProviders = {
-        ...(prev.providers || {}),
-        [currentProvider]: {
-          provider: currentProvider,
-          apiKey: currentKey,
-          baseUrl: currentBaseUrl,
-          model: currentModel,
-        },
-      };
-
-      const existingTarget = updatedProviders[preset.id];
-      const targetKey = (existingTarget && existingTarget.apiKey !== undefined && existingTarget.apiKey !== '')
-        ? existingTarget.apiKey
-        : (currentKey || prev.textApiKey || '');
-
-      const targetBaseUrl = (existingTarget && existingTarget.baseUrl !== undefined && existingTarget.baseUrl !== '')
-        ? existingTarget.baseUrl
-        : preset.defaultBaseUrl;
-
-      const targetModel = (existingTarget && existingTarget.model)
-        ? existingTarget.model
-        : preset.defaultModel;
-
-      updatedProviders[preset.id] = {
-        provider: preset.id,
-        apiKey: targetKey,
-        baseUrl: targetBaseUrl,
-        model: targetModel,
-      };
-
       const nextConfig: ApiConfig = {
         ...prev,
-        textProvider: preset.id,
-        textBaseUrl: targetBaseUrl,
-        textModel: targetModel,
-        textApiKey: targetKey,
-        providers: updatedProviders,
+        textApiConfig: {
+          ...prev.textApiConfig,
+          provider: preset.id,
+          baseUrl: prev.textApiConfig.baseUrl || preset.defaultBaseUrl,
+          model: prev.textApiConfig.model || preset.defaultModel,
+        },
       };
       saveApiConfig(nextConfig);
       return nextConfig;
@@ -627,14 +533,17 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   };
 
   const getSelectedPresetId = (): string => {
-    const currentProvider = draftConfig.textProvider || 'google_gemini';
+    const currentProvider = draftConfig.textApiConfig?.provider || 'google_gemini';
     const match = TEXT_PROVIDER_PRESETS.find((p) => p.id === currentProvider);
     return match ? match.id : 'custom';
   };
 
   const handlePresetChange = (presetId: string) => {
     if (presetId === 'custom') {
-      setDraftConfig((prev) => ({ ...prev, textProvider: 'custom' }));
+      setDraftConfig((prev) => ({
+        ...prev,
+        textApiConfig: { ...prev.textApiConfig, provider: 'custom' },
+      }));
       return;
     }
     const preset = TEXT_PROVIDER_PRESETS.find((p) => p.id === presetId);
@@ -689,10 +598,9 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       <div className="h-12 px-3 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between z-20 shrink-0">
         <button
           onClick={() => {
-            // Auto persist any effective configuration before leaving
-            const currentProvider = draftConfig.textProvider || 'google_gemini';
-            const currentKey = draftConfig.providers?.[currentProvider]?.apiKey ?? draftConfig.textApiKey ?? '';
-            if (currentKey || draftConfig.textBaseUrl) {
+            // Auto persist configuration before leaving if key or baseUrl exists
+            const textConfig = draftConfig.textApiConfig;
+            if (textConfig?.apiKey || textConfig?.baseUrl) {
               handleGlobalSave();
             }
             onBackToLauncher();

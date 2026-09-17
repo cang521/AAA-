@@ -254,36 +254,12 @@ async function inspectIndexedDbHealth(): Promise<{
 function migrateV1ToV2(logItems: UpgradeLogItem[]): void {
   console.log('[SafeMigration] Running migration v1 -> v2...');
 
-  // 1. API 配置增量补充
-  try {
-    const existingApi = safeGetJson<ApiConfig>('phone_api_config_v2') || safeGetJson<ApiConfig>('phone_api_config');
-    if (existingApi) {
-      const { result, addedFields } = supplementMissingFields(existingApi, INITIAL_API_CONFIG);
-      if (addedFields.length > 0) {
-        safeSetJson('phone_api_config_v2', result);
-        logItems.push({
-          name: 'API配置',
-          status: 'supplemented',
-          detail: `保留原有模型与Key设置，补充字段: ${addedFields.join(', ')}`,
-        });
-      } else {
-        logItems.push({
-          name: 'API配置',
-          status: 'preserved',
-          detail: '保留已有 Provider 与密钥配置，完整无变动',
-        });
-      }
-    } else {
-      logItems.push({
-        name: 'API配置',
-        status: 'initialized',
-        detail: '初始写入默认 API 结构模板',
-      });
-    }
-  } catch (e) {
-    console.warn('[SafeMigration] API config migration warning:', e);
-    logItems.push({ name: 'API配置', status: 'preserved', detail: '保持原配置使用' });
-  }
+  // 1. 全新 API 配置系统独立初始化（不迁移旧数据）
+  logItems.push({
+    name: 'API配置',
+    status: 'initialized',
+    detail: '全新独立 API 配置体系就绪',
+  });
 
   // 2. 桌面图标与新系统应用增量补充（保持用户原有个性化排序与自定义图标）
   try {
@@ -534,8 +510,7 @@ export async function executeAppUpgradeCheck(): Promise<{
         localStorage.getItem('phone_ai_characters') ||
         localStorage.getItem('phone_chat_messages') ||
         localStorage.getItem('phone_desktop_wallpaper') ||
-        localStorage.getItem('phone_api_config_v2') ||
-        localStorage.getItem('phone_api_config')
+        localStorage.getItem('new_text_api_config')
     );
 
     let fromDataVersion = rawSavedDataVer ? parseInt(rawSavedDataVer, 10) : 0;

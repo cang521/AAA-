@@ -132,8 +132,8 @@ export async function getTicTacToeDialogue({
 }: GetTicTacToeDialogueParams): Promise<string> {
   const fallback = getTemplateDialogue(character, situation);
 
-  // If no API key configured, return fallback immediately
-  if (!apiConfig?.textApiKey && !apiConfig?.textBaseUrl) {
+  // If no API key or Base URL configured, return fallback immediately
+  if (!apiConfig?.textApiConfig?.apiKey && !apiConfig?.textApiConfig?.baseUrl) {
     return fallback;
   }
 

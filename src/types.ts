@@ -321,39 +321,17 @@ export interface ModelTestResult {
   errorType?: string;
 }
 
-export interface ProviderConfigItem {
-  provider: ProviderType;
-  apiKey: string;
+export interface SingleApiConfig {
+  provider: string;
   baseUrl: string;
+  apiKey: string;
   model: string;
 }
 
 export interface ApiConfig {
-  // 文本 / 对话 LLM
-  textProvider?: ProviderType;
-  textApiKey: string;
-  textModel: string;
-  textBaseUrl?: string;
-  textEnableStream?: boolean;
-
-  // 各个 Provider 的独立配置映射，确保切换不同 Provider 时不会相互覆盖配置
-  providers?: Record<string, ProviderConfigItem>;
-
-  // 图像生成
-  imageProvider?: ProviderType;
-  imageApiKey: string;
-  imageModel: string;
-  imageBaseUrl?: string;
-
-  // 语音合成
-  voiceProvider?: ProviderType;
-  voiceApiKey: string;
-  voiceModel: string;
-  voiceBaseUrl?: string;
-  voiceVoiceName?: string;
-
-  // 全局网络配置
-  timeoutMs?: number;
+  textApiConfig: SingleApiConfig;
+  imageApiConfig: SingleApiConfig;
+  voiceApiConfig: SingleApiConfig;
   customHeaders?: Record<string, string>;
 }
 
