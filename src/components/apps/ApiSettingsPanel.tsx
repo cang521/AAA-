@@ -2,14 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { pingBackendHealth } from '../../lib/localBackend';
 import {
-  ApiConfig,
   ProviderType,
   RemoteModelItem,
   ConnectionTestResult,
   ModelFetchResult,
   ModelTestResult,
 } from '../../types';
-import { saveApiConfig, loadApiConfig, getLastKeyClearDiagnostic } from '../../lib/storage';
+import {
+  ApiSettings,
+  loadApiSettings,
+} from '../../lib/apiConfigStore';
 import {
   Eye,
   EyeOff,
@@ -18,9 +20,6 @@ import {
   Check,
   CheckCircle2,
   AlertCircle,
-  Sliders,
-  ChevronDown,
-  Play,
   X,
   Settings2,
   Trash2,
@@ -85,9 +84,8 @@ const persistCustomPresets = (items: CustomPresetItem[]) => {
 };
 
 export interface ApiSettingsPanelProps {
-  draftConfig: ApiConfig;
-  setDraftConfig: React.Dispatch<React.SetStateAction<ApiConfig>>;
-  updateApiDraft: (nextConfig: ApiConfig) => void;
+  settings: ApiSettings;
+  setSettings: React.Dispatch<React.SetStateAction<ApiSettings>>;
   activeCategory: 'text' | 'image' | 'voice';
   setActiveCategory: (cat: 'text' | 'image' | 'voice') => void;
 
@@ -135,12 +133,12 @@ export interface ApiSettingsPanelProps {
     backendHealthOk?: boolean;
     failureStage?: string;
   } | null;
+  savedVerification?: ApiSettings | null;
 }
 
 export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
-  draftConfig,
-  setDraftConfig,
-  updateApiDraft,
+  settings,
+  setSettings,
   activeCategory,
   setActiveCategory,
   showTextKey,
@@ -159,16 +157,10 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   isFetchingModels,
   modelFetchResult,
   handleFetchModels,
-  isTestingModel,
-  modelTestResult,
-  handleTestSelectedModel,
   handleGlobalSave,
-  applyTextPreset,
   fetchDebugInfo,
+  savedVerification,
 }) => {
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showPresetManager, setShowPresetManager] = useState(false);
-
   const formatKeyInfo = (key?: string) => {
     if (!key || !key.trim()) {
       return <span className="text-rose-400 font-bold">[为空] len=0</span>;
@@ -217,16 +209,15 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
     };
   }, []);
 
-  // Derived single source of truth values directly from draftConfig state
-  const currentProvider = draftConfig.textApiConfig?.provider || 'google_gemini';
-  const currentTextKey = draftConfig.textApiConfig?.apiKey || '';
-  const currentTextBaseUrl = draftConfig.textApiConfig?.baseUrl ?? '';
-  const currentTextModel = draftConfig.textApiConfig?.model || '';
-  const currentImageKey = draftConfig.imageApiConfig?.apiKey || '';
-  const currentVoiceKey = draftConfig.voiceApiConfig?.apiKey || '';
+  const currentCategoryConfig = settings[activeCategory];
+  const currentTextKey = settings.text.apiKey || '';
+  const currentTextBaseUrl = settings.text.baseUrl || '';
+  const currentImageKey = settings.image.apiKey || '';
+  const currentVoiceKey = settings.voice.apiKey || '';
 
   // 自定义配置列表状态
   const [customPresets, setCustomPresets] = useState<CustomPresetItem[]>(loadSavedPresets);
+  const [showPresetManager, setShowPresetManager] = useState<boolean>(false);
   const [selectedPresetId, setSelectedPresetId] = useState<string>('custom');
   const [newPresetName, setNewPresetName] = useState<string>('');
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -247,25 +238,24 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   const handleSelectPreset = (id: string) => {
     setSelectedPresetId(id);
     if (id === 'custom') {
-      const nextConfig: ApiConfig = {
-        ...draftConfig,
-        textApiConfig: { ...draftConfig.textApiConfig, provider: 'custom' },
-      };
-      updateApiDraft(nextConfig);
+      setSettings((prev) => ({
+        ...prev,
+        text: { ...prev.text, provider: 'custom' },
+      }));
       return;
     }
     const found = customPresets.find((p) => p.id === id);
     if (found) {
-      const nextConfig: ApiConfig = {
-        ...draftConfig,
-        textApiConfig: {
+      setSettings((prev) => ({
+        ...prev,
+        text: {
+          ...prev.text,
           provider: 'custom',
           baseUrl: found.baseUrl,
-          apiKey: found.apiKey || draftConfig.textApiConfig?.apiKey || '',
+          apiKey: found.apiKey || prev.text.apiKey || '',
           model: found.model,
         },
-      };
-      updateApiDraft(nextConfig);
+      }));
       showNotice(`已切换到预设：${found.name}`);
     }
   };
@@ -276,9 +266,9 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
     const newPreset: CustomPresetItem = {
       id: 'custom_' + Date.now(),
       name,
-      baseUrl: draftConfig.textApiConfig?.baseUrl || '',
+      baseUrl: settings.text.baseUrl || '',
       apiKey: currentTextKey,
-      model: draftConfig.textApiConfig?.model || '',
+      model: settings.text.model || '',
       createdAt: Date.now(),
     };
     const updated = [...customPresets, newPreset];
@@ -301,15 +291,15 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
 
   // 清空 / 删除当前的自定义配置内容
   const handleClearCurrentConfig = () => {
-    updateApiDraft({
-      ...draftConfig,
-      textApiConfig: {
+    setSettings((prev) => ({
+      ...prev,
+      text: {
         provider: 'custom',
         baseUrl: '',
         apiKey: '',
         model: '',
       },
-    });
+    }));
     setSelectedPresetId('custom');
     showNotice('已清空当前自定义配置');
   };
@@ -375,13 +365,10 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={currentTextBaseUrl}
               onChange={(e) => {
                 const val = e.target.value;
-                updateApiDraft({
-                  ...draftConfig,
-                  textApiConfig: {
-                    ...draftConfig.textApiConfig,
-                    baseUrl: val,
-                  },
-                });
+                setSettings((prev) => ({
+                  ...prev,
+                  text: { ...prev.text, baseUrl: val },
+                }));
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
@@ -415,13 +402,10 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 value={currentTextKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  updateApiDraft({
-                    ...draftConfig,
-                    textApiConfig: {
-                      ...draftConfig.textApiConfig,
-                      apiKey: val,
-                    },
-                  });
+                  setSettings((prev) => ({
+                    ...prev,
+                    text: { ...prev.text, apiKey: val },
+                  }));
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
               />
@@ -443,17 +427,14 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             </label>
             {fetchedModels.length > 0 && (
               <select
-                value={draftConfig.textApiConfig?.model || ''}
+                value={settings.text.model || ''}
                 onChange={(e) => {
                   const val = e.target.value;
                   if (val) {
-                    updateApiDraft({
-                      ...draftConfig,
-                      textApiConfig: {
-                        ...draftConfig.textApiConfig,
-                        model: val,
-                      },
-                    });
+                    setSettings((prev) => ({
+                      ...prev,
+                      text: { ...prev.text, model: val },
+                    }));
                   }
                 }}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs font-mono focus:outline-none focus:border-zinc-500 mb-1.5"
@@ -469,22 +450,19 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="手动输入模型名 (如: gemini-3.6-flash, deepseek-chat, gpt-4o)"
-              value={draftConfig.textApiConfig?.model || ''}
+              value={settings.text.model || ''}
               onChange={(e) => {
                 const val = e.target.value;
-                updateApiDraft({
-                  ...draftConfig,
-                  textApiConfig: {
-                    ...draftConfig.textApiConfig,
-                    model: val,
-                  },
-                });
+                setSettings((prev) => ({
+                  ...prev,
+                  text: { ...prev.text, model: val },
+                }));
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
           </div>
 
-          {/* 4. 预设配置 (只有自定义，支持删除) */}
+          {/* 4. 预设配置 */}
           <div className="space-y-1.5">
             <label className="text-xs text-zinc-300 font-medium block">
               4. 预设配置
@@ -503,7 +481,6 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 ))}
               </select>
 
-              {/* 若当前选中的是保存的自定义配置，提供快捷删除按钮 */}
               {selectedPresetId !== 'custom' && (
                 <button
                   type="button"
@@ -601,93 +578,6 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               </div>
             )}
           </div>
-
-          {/* 高级设置 (折叠区 - 仅放底层协议切换与单模型单次测试) */}
-          <div className="pt-2 border-t border-zinc-800/80">
-            <button
-              type="button"
-              onClick={() => setShowAdvanced(!showAdvanced)}
-              className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-zinc-200 transition py-1"
-            >
-              <span className="font-medium flex items-center gap-1.5">
-                <Sliders className="w-3.5 h-3.5" />
-                高级设置
-              </span>
-              <ChevronDown
-                className={`w-3.5 h-3.5 transition-transform duration-200 ${
-                  showAdvanced ? 'rotate-180' : ''
-                }`}
-              />
-            </button>
-
-            {showAdvanced && (
-              <div className="mt-3 p-3.5 rounded-xl bg-zinc-900/60 border border-zinc-800 space-y-4 text-xs">
-                <div className="space-y-1.5">
-                  <label className="text-zinc-400 font-medium block">底层 Provider 协议类型</label>
-                  <select
-                    value={draftConfig.textApiConfig?.provider || 'custom'}
-                    onChange={(e) => {
-                      const newP = e.target.value as ProviderType;
-                      const nextConfig: ApiConfig = {
-                        ...draftConfig,
-                        textApiConfig: {
-                          ...draftConfig.textApiConfig,
-                          provider: newP,
-                        },
-                      };
-                      updateApiDraft(nextConfig);
-                    }}
-                    className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs focus:outline-none"
-                  >
-                    <option value="custom">自定义反代协议 (OpenAI /v1 规范)</option>
-                    <option value="google_gemini">Google Gemini (原生 / 官方反代)</option>
-                    <option value="openai_compatible">OpenAI Compatible (兼容协议)</option>
-                    <option value="deepseek">DeepSeek 协议</option>
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-zinc-400 font-medium block">单模型对话实时测试</label>
-                  <button
-                    type="button"
-                    onClick={handleTestSelectedModel}
-                    disabled={isTestingModel || !draftConfig.textApiConfig?.model}
-                    className="w-full py-2 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition disabled:opacity-50"
-                  >
-                    <Play className="w-3 h-3 text-zinc-300" />
-                    <span>{isTestingModel ? '测试中...' : `向 [${draftConfig.textApiConfig?.model || '当前模型'}] 发送测试问候`}</span>
-                  </button>
-                  {modelTestResult && (
-                    <div className="p-3 rounded-xl bg-black/60 border border-zinc-800 text-xs space-y-1">
-                      <div className="flex items-center justify-between text-zinc-400 font-mono text-[10px]">
-                        <span>{modelTestResult.success ? '✓ 响应成功' : '✕ 响应失败'}</span>
-                        <span>{modelTestResult.latencyMs}ms</span>
-                      </div>
-                      {modelTestResult.reply && (
-                        <p className="text-zinc-200 leading-relaxed">"{modelTestResult.reply}"</p>
-                      )}
-                      {modelTestResult.error && (
-                        <p className="text-rose-400 font-mono text-[10px] break-all">{modelTestResult.error}</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {currentTextKey ? (
-                  <div className="pt-2 border-t border-zinc-800 flex items-center justify-between">
-                    <span className="text-zinc-400">清除已保存密钥</span>
-                    <button
-                      type="button"
-                      onClick={handleClearTextKey}
-                      className="text-rose-400 hover:text-rose-300 transition underline underline-offset-2"
-                    >
-                      清除当前 Key
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </div>
         </div>
       )}
 
@@ -701,16 +591,13 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="https://api.openai.com/v1"
-              value={draftConfig.imageApiConfig?.baseUrl || ''}
+              value={settings.image.baseUrl || ''}
               onChange={(e) => {
                 const val = e.target.value;
-                updateApiDraft({
-                  ...draftConfig,
-                  imageApiConfig: {
-                    ...draftConfig.imageApiConfig,
-                    baseUrl: val,
-                  },
-                });
+                setSettings((prev) => ({
+                  ...prev,
+                  image: { ...prev.image, baseUrl: val },
+                }));
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
@@ -743,13 +630,10 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 value={currentImageKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  updateApiDraft({
-                    ...draftConfig,
-                    imageApiConfig: {
-                      ...draftConfig.imageApiConfig,
-                      apiKey: val,
-                    },
-                  });
+                  setSettings((prev) => ({
+                    ...prev,
+                    image: { ...prev.image, apiKey: val },
+                  }));
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
               />
@@ -770,16 +654,13 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="dall-e-3, imagen-3.0-generate-002, flux-schnell..."
-              value={draftConfig.imageApiConfig?.model || ''}
+              value={settings.image.model || ''}
               onChange={(e) => {
                 const val = e.target.value;
-                updateApiDraft({
-                  ...draftConfig,
-                  imageApiConfig: {
-                    ...draftConfig.imageApiConfig,
-                    model: val,
-                  },
-                });
+                setSettings((prev) => ({
+                  ...prev,
+                  image: { ...prev.image, model: val },
+                }));
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition"
             />
@@ -836,16 +717,13 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="https://api.openai.com/v1"
-              value={draftConfig.voiceApiConfig?.baseUrl || ''}
+              value={settings.voice.baseUrl || ''}
               onChange={(e) => {
                 const val = e.target.value;
-                updateApiDraft({
-                  ...draftConfig,
-                  voiceApiConfig: {
-                    ...draftConfig.voiceApiConfig,
-                    baseUrl: val,
-                  },
-                });
+                setSettings((prev) => ({
+                  ...prev,
+                  voice: { ...prev.voice, baseUrl: val },
+                }));
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
             />
@@ -878,13 +756,10 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 value={currentVoiceKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  updateApiDraft({
-                    ...draftConfig,
-                    voiceApiConfig: {
-                      ...draftConfig.voiceApiConfig,
-                      apiKey: val,
-                    },
-                  });
+                  setSettings((prev) => ({
+                    ...prev,
+                    voice: { ...prev.voice, apiKey: val },
+                  }));
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
               />
@@ -905,16 +780,13 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <input
               type="text"
               placeholder="tts-1, tts-1-hd, whisper-1..."
-              value={draftConfig.voiceApiConfig?.model || ''}
+              value={settings.voice.model || ''}
               onChange={(e) => {
                 const val = e.target.value;
-                updateApiDraft({
-                  ...draftConfig,
-                  voiceApiConfig: {
-                    ...draftConfig.voiceApiConfig,
-                    model: val,
-                  },
-                });
+                setSettings((prev) => ({
+                  ...prev,
+                  voice: { ...prev.voice, model: val },
+                }));
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition"
             />
@@ -1092,6 +964,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
           </div>
         </div>
       )}
+
       {/* ========================================================================= */}
       {/* 4. 🔧 真机可视化 API 状态实时诊断看板 */}
       {/* ========================================================================= */}
@@ -1104,52 +977,69 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
           <span className="text-[10px] text-amber-300/60 font-sans">密钥脱敏保护中</span>
         </div>
 
-        {/* 1. Realtime Form & State */}
+        {/* 1. 当前 Input & State 状态 */}
         <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
-          <div className="text-amber-300 font-semibold mb-1 text-[11px] font-sans">1. 实时 Input & State 状态：</div>
-          <div>• Input 当前显示 Key: {formatKeyInfo(currentTextKey)}</div>
-          <div>• draftConfig.textApiConfig.apiKey: {formatKeyInfo(draftConfig.textApiConfig?.apiKey)}</div>
-          <div>• draftConfig.textApiConfig.provider: <span className="text-sky-300 font-bold">{draftConfig.textApiConfig?.provider || 'google_gemini'}</span></div>
-          <div>• draftConfig.textApiConfig.model: <span className="text-sky-300 font-bold">{draftConfig.textApiConfig?.model || 'gemini-3.6-flash'}</span></div>
-          <div>• 当前 Base URL: <span className="text-sky-300">{currentTextBaseUrl || '(默认/空)'}</span></div>
+          <div className="text-amber-300 font-semibold mb-1 text-[11px] font-sans">1. 当前 Input & State 内存状态：</div>
+          <div>• Base URL: <span className="text-sky-300">{currentCategoryConfig.baseUrl ? `[有值] len=${currentCategoryConfig.baseUrl.length}` : '[为空] len=0'}</span></div>
+          <div>• API Key: {formatKeyInfo(currentCategoryConfig.apiKey)}</div>
+          <div>• Provider: <span className="text-sky-300 font-bold">{currentCategoryConfig.provider || 'google_gemini'}</span></div>
+          <div>• Model: <span className="text-sky-300 font-bold">{currentCategoryConfig.model || 'gemini-3.6-flash'}</span></div>
         </div>
 
-        {/* 2. Last Fetch Models Snapshot */}
+        {/* 2. ai_phone_api_settings_v1 校验 */}
         <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
-          <div className="text-sky-300 font-semibold mb-1 text-[11px] font-sans">2. 点击「拉取模型」抓拍与 HTTP 响应：</div>
+          <div className="text-emerald-300 font-semibold mb-1 text-[11px] font-sans">2. localStorage [ai_phone_api_settings_v1] 校验：</div>
+          {(() => {
+            const saved = savedVerification || loadApiSettings();
+            const savedCat = saved[activeCategory];
+            return (
+              <>
+                <div>• 保存的 Base URL: <span className="text-sky-300">{savedCat?.baseUrl ? `[有值] len=${savedCat.baseUrl.length}` : '[为空] len=0'}</span></div>
+                <div>• 保存的 API Key: {formatKeyInfo(savedCat?.apiKey)}</div>
+                <div>• 保存的 Provider: <span className="text-sky-300">{savedCat?.provider}</span></div>
+                <div>• 保存的 Model: <span className="text-sky-300">{savedCat?.model}</span></div>
+              </>
+            );
+          })()}
+        </div>
+
+        {/* 3. 点击拉取模型时实际 Request Payload */}
+        <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
+          <div className="text-sky-300 font-semibold mb-1 text-[11px] font-sans">3. 点击「拉取模型」实际 Request Payload：</div>
           {fetchDebugInfo ? (
             <>
               <div>• 抓拍时间: <span className="text-zinc-400">{fetchDebugInfo.timestamp}</span></div>
-              <div>• 实际发送 providerType: <span className="text-amber-300">{fetchDebugInfo.providerType}</span></div>
-              <div>• 实际发送 baseUrl: <span className="text-sky-300">{fetchDebugInfo.baseUrl || '(空)'}</span></div>
-              <div>• 实际发送 apiKey: {formatKeyInfoFromFields(fetchDebugInfo.keyIsEmpty, fetchDebugInfo.keyLength, fetchDebugInfo.keyLast4)}</div>
-              <div className="pt-1 mt-1 border-t border-zinc-800">
-                • HTTP Status: <span className={fetchDebugInfo.httpStatus === 200 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{fetchDebugInfo.httpStatus}</span>
-              </div>
-              <div>• 到达 server.ts 端点: <span className={fetchDebugInfo.reachedServer ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{fetchDebugInfo.reachedServer ? '是 (Reached server.ts)' : '否 (未到达 / 离线代理拦截)'}</span></div>
-              {fetchDebugInfo.responseMessage && (
-                <div>• response message: <span className="text-amber-300">{fetchDebugInfo.responseMessage}</span></div>
-              )}
-              {fetchDebugInfo.responseError && (
-                <div>• response error: <span className="text-rose-300">{fetchDebugInfo.responseError}</span></div>
-              )}
+              <div>• 实际发送 Base URL: <span className="text-sky-300">{fetchDebugInfo.baseUrl ? `[有值] len=${fetchDebugInfo.baseUrl.length}` : '[为空] len=0'}</span></div>
+              <div>• 实际发送 API Key: {formatKeyInfoFromFields(fetchDebugInfo.keyIsEmpty, fetchDebugInfo.keyLength, fetchDebugInfo.keyLast4)}</div>
+              <div>• 实际发送 Provider: <span className="text-amber-300">{fetchDebugInfo.providerType}</span></div>
             </>
           ) : (
             <div className="text-zinc-500 italic">尚未点击「拉取模型」按钮</div>
           )}
         </div>
 
-        {/* 3. Android APK Specific Link Diagnostic */}
+        {/* 4. server.ts 接收与响应状态 */}
         <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
-          <div className="text-purple-300 font-semibold mb-1 text-[11px] font-sans">3. Android APK 特有网络与 Node 后端链路诊断：</div>
-          <div>• 是否 Capacitor Native 平台: <span className="text-amber-300 font-bold">{Capacitor.isNativePlatform() ? '是 (Native APK)' : '否 (Web/Preview)'}</span></div>
-          <div>• Capacitor 平台类型: <span className="text-sky-300">{Capacitor.getPlatform()}</span></div>
-          <div>• apiFetch 映射目标地址 (Target URL): <span className="text-sky-300">{fetchDebugInfo?.targetUrl || (Capacitor.isNativePlatform() ? 'http://127.0.0.1:3000/api/provider/fetch-models' : '/api/provider/fetch-models')}</span></div>
-          <div>• 127.0.0.1:3000 本地后端健康状态: <span className={liveHealth.includes('健康') ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{liveHealth}</span></div>
-          <div>• /api/provider/fetch-models 到达 server.ts: <span className={fetchDebugInfo?.reachedServer ? 'text-emerald-400 font-bold' : fetchDebugInfo ? 'text-rose-400 font-bold' : 'text-zinc-500'}>{fetchDebugInfo ? (fetchDebugInfo.reachedServer ? '是 (Reached server.ts)' : '否 (未到达 / 离线代理拦截)') : '(等待点击拉取模型)'}</span></div>
-          {fetchDebugInfo?.failureStage && (
-            <div>• 当前失败/执行阶段 (Failure Stage): <span className="text-amber-300 font-bold">{fetchDebugInfo.failureStage}</span></div>
+          <div className="text-purple-300 font-semibold mb-1 text-[11px] font-sans">4. server.ts 接收与响应状态：</div>
+          <div>• HTTP Status: <span className={fetchDebugInfo?.httpStatus === 200 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{fetchDebugInfo?.httpStatus || '未发送'}</span></div>
+          <div>• 到达 server.ts: <span className={fetchDebugInfo?.reachedServer ? 'text-emerald-400 font-bold' : fetchDebugInfo ? 'text-rose-400 font-bold' : 'text-zinc-500'}>{fetchDebugInfo ? (fetchDebugInfo.reachedServer ? '是 (Reached server.ts)' : '否 (未到达 / 离线代理拦截)') : '(等待点击)'}</span></div>
+          {fetchDebugInfo?.responseMessage && (
+            <div>• Response Message: <span className="text-amber-300">{fetchDebugInfo.responseMessage}</span></div>
           )}
+          {fetchDebugInfo?.responseError && (
+            <div>• Response Error: <span className="text-rose-300">{fetchDebugInfo.responseError}</span></div>
+          )}
+          {fetchDebugInfo?.failureStage && (
+            <div>• 当前链路阶段: <span className="text-amber-300 font-bold">{fetchDebugInfo.failureStage}</span></div>
+          )}
+        </div>
+
+        {/* 5. Android APK 特有 Node 后端链路 */}
+        <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
+          <div className="text-purple-300 font-semibold mb-1 text-[11px] font-sans">5. Android APK 特有网络与 Node 后端链路诊断：</div>
+          <div>• 是否 Native 平台: <span className="text-amber-300 font-bold">{Capacitor.isNativePlatform() ? '是 (Native APK)' : '否 (Web/Preview)'}</span></div>
+          <div>• Capacitor 平台: <span className="text-sky-300">{Capacitor.getPlatform()}</span></div>
+          <div>• 127.0.0.1:3000 健康状态: <span className={liveHealth.includes('健康') ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{liveHealth}</span></div>
         </div>
       </div>
     </div>

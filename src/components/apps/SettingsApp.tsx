@@ -2,10 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch, pingBackendHealth } from '../../lib/localBackend';
 import { Capacitor } from '@capacitor/core';
 import {
-  ApiConfig,
   AiControls,
   ApiLog,
-  ProviderType,
   RemoteModelItem,
   ConnectionTestResult,
   ModelFetchResult,
@@ -46,11 +44,12 @@ import {
   ChevronDown,
   Check,
   Sliders,
+  X,
 } from 'lucide-react';
 import { DataManagementModal } from '../data/DataManagementModal';
 import { clearAllChatMessages } from '../../lib/chatDb';
 import { clearAllAiMemoryVaults } from '../../lib/aiMemoryVaultDb';
-import { resetStorageToFactoryDefaults, loadApiConfig, saveApiConfig, recordKeyClearEvent } from '../../lib/storage';
+import { resetStorageToFactoryDefaults } from '../../lib/storage';
 import {
   getUpgradeProtectionLogs,
   CURRENT_APP_DATA_VERSION,
@@ -58,13 +57,17 @@ import {
   CURRENT_APP_VERSION_NAME,
   UpgradeProtectionLog,
 } from '../../lib/dataMigration';
-import { ApiSettingsPanel, TEXT_PROVIDER_PRESETS, ProviderPreset } from './ApiSettingsPanel';
+import { ApiSettingsPanel, ProviderPreset } from './ApiSettingsPanel';
+import {
+  ApiSettings,
+  loadApiSettings,
+  saveApiSettings,
+  getApiConfigForEngine,
+} from '../../lib/apiConfigStore';
 
 interface SettingsAppProps {
   onBackToLauncher: () => void;
-  apiConfig: ApiConfig;
   aiControls: AiControls;
-  onSaveApiConfig: (config: ApiConfig) => void;
   onSaveAiControls: (controls: AiControls) => void;
   onClearChats?: () => void;
   onExportData: () => void;
@@ -75,9 +78,7 @@ interface SettingsAppProps {
 
 export const SettingsApp: React.FC<SettingsAppProps> = ({
   onBackToLauncher,
-  apiConfig,
   aiControls,
-  onSaveApiConfig,
   onSaveAiControls,
   onClearChats,
   onExportData,
@@ -85,17 +86,9 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   onAddApiLog,
   onDataChanged,
 }) => {
-  const [draftConfig, setDraftConfig] = useState<ApiConfig>(() => apiConfig || loadApiConfig());
-
-  useEffect(() => {
-    if (apiConfig) {
-      setDraftConfig(apiConfig);
-    }
-  }, [apiConfig]);
-
-  const updateApiDraft = (nextConfig: ApiConfig) => {
-    setDraftConfig(nextConfig);
-  };
+  // 唯一 API 配置 State：从 apiConfigStore 初始化
+  const [settings, setSettings] = useState<ApiSettings>(() => loadApiSettings());
+  const [savedVerification, setSavedVerification] = useState<ApiSettings | null>(null);
 
   const [controls, setControls] = useState<AiControls>(aiControls);
 
@@ -115,7 +108,6 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<RemoteModelItem[]>([]);
   const [modelFetchResult, setModelFetchResult] = useState<ModelFetchResult | null>(null);
-  const [modelFilterQuery, setModelFilterQuery] = useState('');
   const [fetchDebugInfo, setFetchDebugInfo] = useState<{
     timestamp: string;
     providerType: string;
@@ -148,15 +140,11 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   const [showDataModal, setShowDataModal] = useState(false);
   const [dataModalTab, setDataModalTab] = useState<'import' | 'export' | 'snapshots'>('import');
 
-  // Preset & Advanced Collapsible states
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showPresetManager, setShowPresetManager] = useState(false);
-
   // Upgrade Protection Logs Modal states
   const [showUpgradeLogsModal, setShowUpgradeLogsModal] = useState(false);
   const [upgradeLogs, setUpgradeLogs] = useState<UpgradeProtectionLog[]>([]);
 
-  // Factory Reset (恢复出厂设置) Modal states
+  // Factory Reset Modal states
   const [showResetConfirmModal, setShowResetConfirmModal] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [resetSuccessMessage, setResetSuccessMessage] = useState('');
@@ -164,33 +152,27 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   const handleExecuteFactoryReset = async () => {
     setIsResetting(true);
     try {
-      // 1. Wipe IndexedDB chat messages
       await clearAllChatMessages();
-      // 2. Wipe IndexedDB AI Memory Vaults, files and chunks
       await clearAllAiMemoryVaults();
-      // 3. Reset localStorage to pristine default initial values
       resetStorageToFactoryDefaults();
 
       setResetSuccessMessage('恢复出厂设置成功！系统即将重新加载...');
 
-      // Notify parent state if needed
       if (onDataChanged) {
         onDataChanged();
       }
 
-      // Reload page to re-initialize all states from pristine default storage
       setTimeout(() => {
         window.location.reload();
       }, 900);
     } catch (err) {
       console.error('Failed to execute factory reset:', err);
-      // Fallback: still reset storage and reload
       resetStorageToFactoryDefaults();
       window.location.reload();
     }
   };
 
-  // Auto load some initial baseline models if none loaded yet
+  // Auto load default baseline models
   useEffect(() => {
     if (fetchedModels.length === 0) {
       setFetchedModels([
@@ -208,59 +190,46 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   }, []);
 
   const handleClearTextKey = () => {
-    updateApiDraft({
-      ...draftConfig,
-      textApiConfig: {
-        ...draftConfig.textApiConfig,
-        apiKey: '',
-      },
-    });
+    setSettings((prev) => ({
+      ...prev,
+      text: { ...prev.text, apiKey: '' },
+    }));
   };
 
   const handleClearImageKey = () => {
-    updateApiDraft({
-      ...draftConfig,
-      imageApiConfig: {
-        ...draftConfig.imageApiConfig,
-        apiKey: '',
-      },
-    });
+    setSettings((prev) => ({
+      ...prev,
+      image: { ...prev.image, apiKey: '' },
+    }));
   };
 
   const handleClearVoiceKey = () => {
-    updateApiDraft({
-      ...draftConfig,
-      voiceApiConfig: {
-        ...draftConfig.voiceApiConfig,
-        apiKey: '',
-      },
-    });
+    setSettings((prev) => ({
+      ...prev,
+      voice: { ...prev.voice, apiKey: '' },
+    }));
   };
 
   const handleGlobalSave = () => {
-    saveApiConfig(draftConfig);
-    onSaveApiConfig(draftConfig);
+    saveApiSettings(settings);
+    const verify = loadApiSettings();
+    setSavedVerification(verify);
     onSaveAiControls(controls);
 
     setSaveSuccessMsg('🎉 全局 API Provider 配置与系统设置已保存生效！');
     setTimeout(() => setSaveSuccessMsg(''), 3500);
   };
 
-  // 1. Real Connection Test
+  // 1. Connection Test
   const handleTestConnection = async () => {
     setIsTestingConnection(true);
     setConnectionResult(null);
     setModelTestResult(null);
 
-    const activeSingleConfig = activeCategory === 'text'
-      ? draftConfig.textApiConfig
-      : activeCategory === 'image'
-      ? draftConfig.imageApiConfig
-      : draftConfig.voiceApiConfig;
-
-    const providerType = activeSingleConfig?.provider || 'google_gemini';
-    const baseUrl = activeSingleConfig?.baseUrl || '';
-    const apiKey = activeSingleConfig?.apiKey || '';
+    const activeConfig = settings[activeCategory];
+    const providerType = activeConfig.provider || 'google_gemini';
+    const baseUrl = activeConfig.baseUrl || '';
+    const apiKey = activeConfig.apiKey || '';
 
     try {
       const res = await apiFetch('/api/provider/test-connection', {
@@ -271,7 +240,6 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           baseUrl,
           apiKey,
           serviceType: activeCategory,
-          customHeaders: draftConfig.customHeaders,
         }),
       });
 
@@ -318,20 +286,16 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     }
   };
 
-  // 2. Real Models Fetching from Server
+  // 2. Real Models Fetching from Server (读取当前内存 state，完全绕过持久化/localStorage)
   const handleFetchModels = async () => {
     setIsFetchingModels(true);
     setModelFetchResult(null);
 
-    const activeSingleConfig = activeCategory === 'text'
-      ? draftConfig.textApiConfig
-      : activeCategory === 'image'
-      ? draftConfig.imageApiConfig
-      : draftConfig.voiceApiConfig;
-
-    const providerType = activeSingleConfig?.provider || 'google_gemini';
-    const baseUrl = activeSingleConfig?.baseUrl || '';
-    const apiKey = activeSingleConfig?.apiKey || '';
+    // 直接使用点击这一刻的当前内存 state，禁止重新读取 localStorage
+    const activeConfig = settings[activeCategory];
+    const providerType = activeConfig.provider || 'google_gemini';
+    const baseUrl = activeConfig.baseUrl || '';
+    const apiKey = activeConfig.apiKey || '';
 
     const isNative = Capacitor.isNativePlatform();
     const capPlatform = Capacitor.getPlatform();
@@ -364,15 +328,6 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     };
     setFetchDebugInfo(debugSnapshot);
 
-    console.log('[API Key Log - Fetch Models Request]', {
-      activeCategory,
-      providerType: providerType || 'custom',
-      baseUrl,
-      keyIsEmpty: !apiKey,
-      keyLength: apiKey ? apiKey.length : 0,
-      keyLast4: apiKey ? apiKey.slice(-4) : '',
-    });
-
     try {
       const res = await apiFetch('/api/provider/fetch-models', {
         method: 'POST',
@@ -382,7 +337,6 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           baseUrl,
           apiKey,
           serviceType: activeCategory,
-          customHeaders: draftConfig.customHeaders,
         }),
       });
 
@@ -452,21 +406,16 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     }
   };
 
-  // 3. Real Single Model Execution Test
+  // 3. Test Selected Model
   const handleTestSelectedModel = async () => {
     setIsTestingModel(true);
     setModelTestResult(null);
 
-    const activeSingleConfig = activeCategory === 'text'
-      ? draftConfig.textApiConfig
-      : activeCategory === 'image'
-      ? draftConfig.imageApiConfig
-      : draftConfig.voiceApiConfig;
-
-    const providerType = activeSingleConfig?.provider || 'google_gemini';
-    const baseUrl = activeSingleConfig?.baseUrl || '';
-    const apiKey = activeSingleConfig?.apiKey || '';
-    const model = activeSingleConfig?.model || '';
+    const activeConfig = settings[activeCategory];
+    const providerType = activeConfig.provider || 'google_gemini';
+    const baseUrl = activeConfig.baseUrl || '';
+    const apiKey = activeConfig.apiKey || '';
+    const model = activeConfig.model || '';
 
     try {
       const res = await apiFetch('/api/provider/test-model', {
@@ -478,8 +427,6 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           apiKey,
           model,
           serviceType: activeCategory,
-          testPrompt: '请用一句话回答：当前 API Provider 与指定模型已成功连接，可以正常对话！',
-          customHeaders: draftConfig.customHeaders,
         }),
       });
 
@@ -493,421 +440,331 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           latencyMs: 0,
           model,
           reply: '',
-          error: 'Android 内置后端未启动：后端未就绪或未返回 JSON 响应。',
+          error: '后端响应异常或尚未启动。',
         };
       }
 
       setModelTestResult(data);
-
-      if (data.success) {
-        setSaveSuccessMsg(`✨ 模型 [${model}] 真实调用测试成功！(耗时: ${data.latencyMs}ms)`);
-        setTimeout(() => setSaveSuccessMsg(''), 4000);
-      }
     } catch (e: any) {
-      const isOffline = (e.message || '').includes('Android 内置后端未启动') || (e.message || '').includes('Failed to fetch');
       setModelTestResult({
         success: false,
         latencyMs: 0,
         model,
         reply: '',
-        error: isOffline ? 'Android 内置后端未启动' : (e.message || '请求异常'),
+        error: e.message || '网络请求失败',
       });
     } finally {
       setIsTestingModel(false);
     }
   };
 
-  // Quick Preset Selection
+  // Preset Selection
   const applyTextPreset = (preset: ProviderPreset) => {
-    const nextConfig: ApiConfig = {
-      ...draftConfig,
-      textApiConfig: {
-        ...draftConfig.textApiConfig,
+    setSettings((prev) => ({
+      ...prev,
+      text: {
+        ...prev.text,
         provider: preset.id,
-        baseUrl: preset.defaultBaseUrl || draftConfig.textApiConfig?.baseUrl || '',
-        model: preset.defaultModel || draftConfig.textApiConfig?.model || '',
-        apiKey: draftConfig.textApiConfig?.apiKey || '',
+        baseUrl: preset.defaultBaseUrl || prev.text.baseUrl || '',
+        model: preset.defaultModel || prev.text.model || '',
+        apiKey: prev.text.apiKey || '', // 保留当前 apiKey，禁止改为空
       },
-    };
-    setDraftConfig(nextConfig);
-    saveApiConfig(nextConfig);
-    onSaveApiConfig(nextConfig);
+    }));
 
     setConnectionResult(null);
     setModelFetchResult(null);
-    setModelTestResult(null);
   };
 
-  const getSelectedPresetId = (): string => {
-    const currentProvider = draftConfig.textApiConfig?.provider || 'google_gemini';
-    const match = TEXT_PROVIDER_PRESETS.find((p) => p.id === currentProvider);
-    return match ? match.id : 'custom';
-  };
-
-  const handlePresetChange = (presetId: string) => {
-    if (presetId === 'custom') {
-      setDraftConfig((prev) => ({
-        ...prev,
-        textApiConfig: { ...prev.textApiConfig, provider: 'custom' },
-      }));
-      return;
-    }
-    const preset = TEXT_PROVIDER_PRESETS.find((p) => p.id === presetId);
-    if (preset) {
-      applyTextPreset(preset);
-    }
-  };
-
-  // JSON format adapter handler
-  const handleAdapterJson = async () => {
+  // JSON Format Adapter
+  const handleAdaptJsonConfig = async () => {
     if (!rawJsonInput.trim()) return;
     setIsAdaptingJson(true);
     try {
-      const res = await apiFetch('/api/gemini/adapter-json', {
+      const res = await apiFetch('/api/provider/adapt-json', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rawJson: rawJsonInput, apiConfig: draftConfig }),
+        body: JSON.stringify({ rawJson: rawJsonInput, apiConfig: getApiConfigForEngine() }),
       });
       const data = await res.json();
-      if (data.success) {
-        setAdaptedJsonOutput(data.json);
-        if (data.apiLog) onAddApiLog(data.apiLog);
+      if (data.success && data.adaptedJson) {
+        setAdaptedJsonOutput(JSON.stringify(data.adaptedJson, null, 2));
+      } else {
+        setAdaptedJsonOutput(JSON.stringify({ error: data.error || '适配解析失败' }, null, 2));
       }
-    } catch (e) {
-      console.error('JSON adapter error', e);
+    } catch (e: any) {
+      setAdaptedJsonOutput(JSON.stringify({ error: e.message || '适配工具请求失败' }, null, 2));
     } finally {
       setIsAdaptingJson(false);
     }
   };
 
-  const handleImportFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const text = ev.target?.result as string;
-        onImportData(text);
-      };
-      reader.readAsText(file);
-    }
+  const handleOpenUpgradeLogsModal = () => {
+    setUpgradeLogs(getUpgradeProtectionLogs());
+    setShowUpgradeLogsModal(true);
   };
 
-  const filteredModels = fetchedModels.filter((m) => {
-    if (!modelFilterQuery.trim()) return true;
-    const q = modelFilterQuery.toLowerCase();
-    return (m.id || '').toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q);
-  });
-
   return (
-    <div className="relative w-full h-full flex flex-col bg-zinc-950 text-white font-sans overflow-hidden">
-      {/* Top Navigation Bar */}
+    <div className="flex flex-col h-full bg-black text-zinc-100 font-sans select-none overflow-hidden">
+      {/* 顶部导航 */}
       <div className="h-12 px-3 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between z-20 shrink-0">
         <button
           onClick={() => {
-            handleGlobalSave();
             onBackToLauncher();
           }}
           className="flex items-center gap-1 text-xs text-zinc-300 hover:text-white font-medium px-2.5 py-1 rounded-xl bg-zinc-800 transition active:scale-95"
         >
-          <ArrowLeft className="w-4 h-4" />
-          <span>⬅ 返回桌面</span>
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>返回桌面</span>
         </button>
-        <span className="font-bold text-sm text-zinc-100 flex items-center gap-1.5">
-          <Settings className="w-4 h-4 text-emerald-400" />
-          API Provider & 系统设置
-        </span>
-        <div className="w-16" />
+        <div className="flex items-center gap-1.5">
+          <Settings className="w-4 h-4 text-zinc-400" />
+          <span className="text-xs font-semibold text-zinc-100">系统与 API 设置</span>
+        </div>
+        <button
+          onClick={handleGlobalSave}
+          className="flex items-center gap-1 text-xs text-zinc-950 font-bold px-3 py-1 rounded-xl bg-white hover:bg-zinc-200 transition active:scale-95 shadow-sm"
+        >
+          <Save className="w-3.5 h-3.5" />
+          <span>保存</span>
+        </button>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 overflow-y-auto p-3.5 space-y-4 pb-28 text-xs">
-        {saveSuccessMsg && (
-          <div className="p-3 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 flex items-center gap-2 font-medium animate-in fade-in">
-            <CheckCircle className="w-4 h-4 shrink-0 text-emerald-400" />
-            <span className="leading-snug">{saveSuccessMsg}</span>
-          </div>
-        )}
-
-        {/* ========================================================================= */}
-        {/* 1. API 连接设置 (Clean Black Mobile Settings) */}
-        {/* ========================================================================= */}
-        <ApiSettingsPanel
-          draftConfig={draftConfig}
-          setDraftConfig={setDraftConfig}
-          updateApiDraft={updateApiDraft}
-          activeCategory={activeCategory}
-          setActiveCategory={setActiveCategory}
-          showTextKey={showTextKey}
-          setShowTextKey={setShowTextKey}
-          showImageKey={showImageKey}
-          setShowImageKey={setShowImageKey}
-          showVoiceKey={showVoiceKey}
-          setShowVoiceKey={setShowVoiceKey}
-          handleClearTextKey={handleClearTextKey}
-          handleClearImageKey={handleClearImageKey}
-          handleClearVoiceKey={handleClearVoiceKey}
-          fetchedModels={fetchedModels}
-          isTestingConnection={isTestingConnection}
-          connectionResult={connectionResult}
-          handleTestConnection={handleTestConnection}
-          isFetchingModels={isFetchingModels}
-          modelFetchResult={modelFetchResult}
-          handleFetchModels={handleFetchModels}
-          isTestingModel={isTestingModel}
-          modelTestResult={modelTestResult}
-          handleTestSelectedModel={handleTestSelectedModel}
-          handleGlobalSave={handleGlobalSave}
-          applyTextPreset={applyTextPreset}
-          fetchDebugInfo={fetchDebugInfo}
-        />
-
-        {/* ========================================================================= */}
-        {/* 2. AI Behavior & System Permissions Controls */}
-        {/* ========================================================================= */}
-        <div className="p-4 rounded-3xl bg-zinc-900 border border-zinc-800 space-y-3 shadow-sm">
-          <h3 className="font-bold text-sm text-purple-400 flex items-center gap-2">
-            <Bot className="w-4 h-4" />
-            2. AI 行为与智能感知
-          </h3>
-
-          <div className="flex items-center justify-between py-1">
-            <div>
-              <span className="block font-medium text-zinc-200">AI 后台静默感知活动</span>
-              <span className="text-[10px] text-zinc-400">允许 AI 自动根据天气、日程与健康数据进行推演</span>
-            </div>
-            <input
-              type="checkbox"
-              checked={controls.backgroundActive}
-              onChange={(e) => setControls({ ...controls, backgroundActive: e.target.checked })}
-              className="w-5 h-5 accent-purple-500 cursor-pointer"
-            />
-          </div>
-
-          <div className="flex items-center justify-between py-1 border-t border-zinc-800">
-            <div>
-              <span className="block font-medium text-zinc-200">AI 主动关怀与通知弹窗</span>
-              <span className="text-[10px] text-zinc-400">遇到突发降雨或特殊健康阶段时主动发来消息</span>
-            </div>
-            <input
-              type="checkbox"
-              checked={controls.proactivePopups}
-              onChange={(e) => setControls({ ...controls, proactivePopups: e.target.checked })}
-              className="w-5 h-5 accent-purple-500 cursor-pointer"
-            />
-          </div>
+      {/* 提示 Banner */}
+      {saveSuccessMsg && (
+        <div className="bg-emerald-500/10 border-b border-emerald-500/20 px-4 py-2 text-xs text-emerald-400 flex items-center gap-2 animate-in fade-in">
+          <CheckCircle className="w-4 h-4 shrink-0 text-emerald-400" />
+          <span className="font-medium">{saveSuccessMsg}</span>
         </div>
+      )}
 
-        {/* ========================================================================= */}
-        {/* 3. JSON Format Adapter Tool */}
-        {/* ========================================================================= */}
-        <div className="p-4 rounded-3xl bg-zinc-900 border border-zinc-800 space-y-3 shadow-sm">
-          <h3 className="font-bold text-sm text-amber-400 flex items-center gap-2">
-            <FileCode className="w-4 h-4" />
-            3. JSON 格式适配与校验工具
-          </h3>
-          <p className="text-[11px] text-zinc-400">
-            粘贴非标准、乱序或语法错误的 raw JSON，一键调用配置的 API 校验并格式化为合法标准 JSON。
-          </p>
+      {/* 主面板内容滚动区 */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-5 pb-12">
+        {/* API Settings Section */}
+        <section className="space-y-2">
+          <div className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider px-1">
+            <Key className="w-3.5 h-3.5 text-zinc-400" />
+            <span>核心 API Provider 连接设置</span>
+          </div>
 
-          <textarea
-            rows={3}
-            placeholder="在此粘贴 raw / 混淆 JSON 字符串..."
-            value={rawJsonInput}
-            onChange={(e) => setRawJsonInput(e.target.value)}
-            className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white font-mono text-[11px]"
+          <ApiSettingsPanel
+            settings={settings}
+            setSettings={setSettings}
+            activeCategory={activeCategory}
+            setActiveCategory={setActiveCategory}
+            showTextKey={showTextKey}
+            setShowTextKey={setShowTextKey}
+            showImageKey={showImageKey}
+            setShowImageKey={setShowImageKey}
+            showVoiceKey={showVoiceKey}
+            setShowVoiceKey={setShowVoiceKey}
+            handleClearTextKey={handleClearTextKey}
+            handleClearImageKey={handleClearImageKey}
+            handleClearVoiceKey={handleClearVoiceKey}
+            fetchedModels={fetchedModels}
+            isTestingConnection={isTestingConnection}
+            connectionResult={connectionResult}
+            handleTestConnection={handleTestConnection}
+            isFetchingModels={isFetchingModels}
+            modelFetchResult={modelFetchResult}
+            handleFetchModels={handleFetchModels}
+            isTestingModel={isTestingModel}
+            modelTestResult={modelTestResult}
+            handleTestSelectedModel={handleTestSelectedModel}
+            handleGlobalSave={handleGlobalSave}
+            applyTextPreset={applyTextPreset}
+            fetchDebugInfo={fetchDebugInfo}
+            savedVerification={savedVerification}
           />
+        </section>
 
-          <button
-            onClick={handleAdapterJson}
-            disabled={isAdaptingJson || !rawJsonInput.trim()}
-            className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-zinc-950 font-bold flex items-center justify-center gap-2 shadow-sm transition"
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>{isAdaptingJson ? 'API 自动解析校验 JSON 中...' : '一键调用 API 校验重构 JSON'}</span>
-          </button>
+        {/* 系统 AI 控制开关 */}
+        <section className="space-y-2">
+          <div className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider px-1">
+            <Bot className="w-3.5 h-3.5 text-zinc-400" />
+            <span>AI 人格智能行为机制</span>
+          </div>
 
-          {adaptedJsonOutput && (
-            <div className="space-y-2 pt-2 border-t border-zinc-800">
-              <span className="block font-medium text-amber-300">重构标准 JSON 结果:</span>
-              <pre className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 font-mono text-[11px] text-emerald-400 max-h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+          <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs font-semibold text-zinc-200">启用 AI 后台思考与响应</div>
+                <div className="text-[11px] text-zinc-500">允许 AI 角色根据对话上下文维持后台思考机制</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={controls.backgroundActive ?? true}
+                onChange={(e) => setControls({ ...controls, backgroundActive: e.target.checked })}
+                className="w-4 h-4 accent-white rounded cursor-pointer"
+              />
+            </div>
+
+            <div className="flex items-center justify-between border-t border-zinc-850 pt-3">
+              <div>
+                <div className="text-xs font-semibold text-zinc-200">允许 AI 主动气泡与交互弹窗</div>
+                <div className="text-[11px] text-zinc-500">允许 AI 角色发起主动提醒与气泡提示</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={controls.proactivePopups ?? true}
+                onChange={(e) => setControls({ ...controls, proactivePopups: e.target.checked })}
+                className="w-4 h-4 accent-white rounded cursor-pointer"
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* 数据与备份管理 */}
+        <section className="space-y-2">
+          <div className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider px-1">
+            <Database className="w-3.5 h-3.5 text-zinc-400" />
+            <span>系统数据管理与导入导出</span>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDataModalTab('export');
+                  setShowDataModal(true);
+                }}
+                className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-200 flex items-center justify-center gap-1.5 transition active:scale-95"
+              >
+                <Download className="w-3.5 h-3.5 text-zinc-400" />
+                <span>导出全量备份</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setDataModalTab('import');
+                  setShowDataModal(true);
+                }}
+                className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-200 flex items-center justify-center gap-1.5 transition active:scale-95"
+              >
+                <Upload className="w-3.5 h-3.5 text-zinc-400" />
+                <span>导入数据备份</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-zinc-850">
+              <button
+                type="button"
+                onClick={handleOpenUpgradeLogsModal}
+                className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-300 flex items-center justify-center gap-1.5 transition active:scale-95"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>系统升级无损日志</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowResetConfirmModal(true)}
+                className="py-2.5 px-3 rounded-xl bg-rose-950/20 hover:bg-rose-950/40 border border-rose-900/30 text-xs font-medium text-rose-300 flex items-center justify-center gap-1.5 transition active:scale-95"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+                <span>恢复出厂设置</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* JSON 规范适配适配器 */}
+        <section className="space-y-2">
+          <div className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider px-1">
+            <FileCode className="w-3.5 h-3.5 text-zinc-400" />
+            <span>智能 JSON 结构兼容解析器</span>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-3">
+            <textarea
+              placeholder="粘贴包含配置的任意原始 JSON 文本..."
+              value={rawJsonInput}
+              onChange={(e) => setRawJsonInput(e.target.value)}
+              rows={3}
+              className="w-full p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
+            />
+
+            <button
+              type="button"
+              onClick={handleAdaptJsonConfig}
+              disabled={isAdaptingJson || !rawJsonInput.trim()}
+              className="w-full py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>{isAdaptingJson ? '解析适配中...' : '解析转换并标准化 JSON'}</span>
+            </button>
+
+            {adaptedJsonOutput && (
+              <pre className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-40">
                 {adaptedJsonOutput}
               </pre>
-            </div>
-          )}
-        </div>
-
-        {/* ========================================================================= */}
-        {/* 4. Data Management & Backup */}
-        {/* ========================================================================= */}
-        <div className="p-4 rounded-3xl bg-zinc-900 border border-zinc-800 space-y-3.5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <h3 className="font-bold text-sm text-blue-400 flex items-center gap-2">
-              <Database className="w-4 h-4" />
-              4. 数据管理与备份回滚中心
-            </h3>
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
-              本地安全解析
-            </span>
+            )}
           </div>
+        </section>
 
-          <p className="text-[11px] text-zinc-400 leading-relaxed">
-            支持 ZIP、JSON、JSONL、TXT 多格式数据导入导出，自动识别 AI 角色/人设/聊天记录/长期记忆/群聊，智能去重合并与多重历史快照回滚。
-          </p>
-
-          {/* Primary Action Button */}
-          <button
-            onClick={() => {
-              setDataModalTab('import');
-              setShowDataModal(true);
-            }}
-            className="w-full py-3 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-blue-600/25 flex items-center justify-center gap-2 transition active:scale-98"
-          >
-            <Database className="w-4 h-4" />
-            <span>打开数据管理中心 (导入/导出/去重/回滚)</span>
-          </button>
-
-          {/* Quick Action Buttons Grid */}
-          <div className="grid grid-cols-3 gap-2 text-xs">
-            <button
-              onClick={() => {
-                setDataModalTab('import');
-                setShowDataModal(true);
-              }}
-              className="p-3 rounded-2xl bg-zinc-800/80 hover:bg-zinc-750 border border-zinc-700 flex flex-col items-center justify-center gap-1 text-zinc-200 font-medium transition"
-            >
-              <Upload className="w-4 h-4 text-blue-400" />
-              <span>导入数据</span>
-              <span className="text-[9px] text-zinc-400">ZIP/JSON/TXT</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setDataModalTab('export');
-                setShowDataModal(true);
-              }}
-              className="p-3 rounded-2xl bg-zinc-800/80 hover:bg-zinc-750 border border-zinc-700 flex flex-col items-center justify-center gap-1 text-zinc-200 font-medium transition"
-            >
-              <Download className="w-4 h-4 text-emerald-400" />
-              <span>导出数据</span>
-              <span className="text-[9px] text-zinc-400">4种格式可选</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setDataModalTab('snapshots');
-                setShowDataModal(true);
-              }}
-              className="p-3 rounded-2xl bg-zinc-800/80 hover:bg-zinc-750 border border-zinc-700 flex flex-col items-center justify-center gap-1 text-zinc-200 font-medium transition"
-            >
-              <History className="w-4 h-4 text-purple-400" />
-              <span>快照回滚</span>
-              <span className="text-[9px] text-zinc-400">安全防误删</span>
-            </button>
-          </div>
-
-          {/* Upgrade Protection & Version Status Card */}
-          <div className="p-3.5 rounded-2xl bg-zinc-950/70 border border-emerald-500/30 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
-                  <Shield className="w-3.5 h-3.5" />
-                </div>
-                <div>
-                  <h4 className="font-bold text-xs text-white">安全增量升级 / 用户数据保护</h4>
-                  <p className="text-[10px] text-zinc-400">覆盖安装与 APK 更新时 100% 保留所有聊天、角色与记忆</p>
-                </div>
-              </div>
-              <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">
-                保护生效中
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 text-[10px]">
-              <div className="p-2 rounded-xl bg-zinc-900 border border-zinc-800">
-                <span className="text-zinc-400 block">应用包名 (固定不变)</span>
-                <span className="font-mono text-zinc-200 font-semibold truncate block">com.aistudio.aiphone</span>
-              </div>
-              <div className="p-2 rounded-xl bg-zinc-900 border border-zinc-800">
-                <span className="text-zinc-400 block">版本与模式结构</span>
-                <span className="font-mono text-emerald-400 font-semibold block">
-                  v{CURRENT_APP_VERSION_NAME} (code {CURRENT_APP_VERSION_CODE}) / schema v{CURRENT_APP_DATA_VERSION}
-                </span>
-              </div>
-            </div>
-
-            <button
-              onClick={() => {
-                setUpgradeLogs(getUpgradeProtectionLogs());
-                setShowUpgradeLogsModal(true);
-              }}
-              className="w-full py-2 rounded-xl bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-500/30 text-emerald-300 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-[0.99]"
-            >
-              <FileCheck className="w-3.5 h-3.5 text-emerald-400" />
-              <span>查看升级数据保护日志 (Migration Logs)</span>
-            </button>
-          </div>
-
-          <button
-            onClick={() => setShowResetConfirmModal(true)}
-            className="w-full py-2.5 rounded-2xl bg-rose-950/30 hover:bg-rose-900/50 border border-rose-500/30 text-rose-300 hover:text-rose-200 font-medium text-xs flex items-center justify-center gap-2 transition active:scale-[0.99]"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
-            恢复出厂设置 (清空所有后加内容)
-          </button>
+        {/* 版本信息 */}
+        <div className="pt-4 pb-6 text-center text-xs text-zinc-600 space-y-1">
+          <div>AI OS Phone Kernel v{CURRENT_APP_VERSION_NAME} (Build {CURRENT_APP_VERSION_CODE})</div>
+          <div>Data Schema Specification v{CURRENT_APP_DATA_VERSION}</div>
         </div>
       </div>
 
-      {/* Confirmation Modal for Factory Reset (恢复出厂设置) */}
+      {/* 数据管理 Full Modal */}
+      {showDataModal && (
+        <DataManagementModal
+          isOpen={showDataModal}
+          onClose={() => setShowDataModal(false)}
+          onDataChanged={onDataChanged || (() => {})}
+          initialTab={dataModalTab}
+        />
+      )}
+
+      {/* 恢复出厂设置确认 Modal */}
       {showResetConfirmModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-rose-500/30 rounded-3xl p-5 max-w-sm w-full shadow-2xl shadow-rose-950/40 text-center flex flex-col items-center">
-            <div className="w-14 h-14 rounded-2xl bg-rose-950/50 border border-rose-500/30 flex items-center justify-center mb-3">
-              <AlertTriangle className="w-8 h-8 text-rose-400 animate-pulse" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-zinc-950 border border-rose-900/50 rounded-2xl p-5 w-full max-w-sm shadow-2xl space-y-4">
+            <div className="flex items-center gap-2 text-rose-400 font-bold text-sm">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <span>确认恢复出厂设置？</span>
             </div>
 
-            <h3 className="text-base font-bold text-white mb-1.5">确认要恢复出厂设置吗？</h3>
-            
-            <p className="text-xs text-zinc-300 leading-relaxed mb-4 text-left bg-zinc-950/60 p-3 rounded-xl border border-zinc-800">
-              ⚠️ <span className="font-semibold text-rose-300">警告：</span>点击确认后，将执行实打实的彻底清除：
-              <br />• 清空所有后来添加的 AI 角色与自定义设定
-              <br />• 清空所有聊天记录与 AI 独立记忆空间 (文件与知识切片)
-              <br />• 清空所有动态、便签、世界书设定与游戏战绩
-              <br />• 恢复系统默认壁纸、主题及初始状态
-              <br /><span className="text-zinc-400 text-[11px] block mt-1">此操作无法撤销，请谨慎操作！</span>
-            </p>
+            <div className="text-xs text-zinc-300 space-y-2 leading-relaxed">
+              <p>该操作将彻底清空以下本地数据：</p>
+              <ul className="list-disc pl-4 space-y-1 text-zinc-400 font-mono text-[11px]">
+                <li>所有聊天会话历史记录 (IndexedDB)</li>
+                <li>AI 角色与独立记忆库 (Memory Vaults)</li>
+                <li>自定义 API 配置与基础设定 (localStorage)</li>
+              </ul>
+              <p className="text-rose-400 font-medium pt-1">重置后系统将恢复至最初安装状态，且不可撤销。</p>
+            </div>
 
             {resetSuccessMessage ? (
-              <div className="w-full py-2.5 px-3 rounded-xl bg-emerald-950/50 border border-emerald-500/30 text-emerald-300 text-xs font-medium flex items-center justify-center gap-2 mb-2">
-                <CheckCircle className="w-4 h-4 text-emerald-400 animate-spin" />
-                <span>{resetSuccessMessage}</span>
+              <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-800 text-emerald-400 text-xs font-semibold text-center animate-in fade-in">
+                {resetSuccessMessage}
               </div>
             ) : (
-              <div className="flex gap-2.5 w-full">
+              <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  disabled={isResetting}
                   onClick={() => setShowResetConfirmModal(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold transition active:scale-95 disabled:opacity-50"
+                  disabled={isResetting}
+                  className="flex-1 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 transition"
                 >
                   取消
                 </button>
                 <button
                   type="button"
-                  disabled={isResetting}
                   onClick={handleExecuteFactoryReset}
-                  className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition active:scale-95 shadow-md shadow-rose-600/30 disabled:opacity-50"
+                  disabled={isResetting}
+                  className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-lg shadow-rose-900/30"
                 >
                   {isResetting ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>正在清空重置...</span>
-                    </>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                   ) : (
-                    <>
-                      <RotateCcw className="w-3.5 h-3.5" />
-                      <span>确认恢复出厂</span>
-                    </>
+                    <Trash2 className="w-3.5 h-3.5" />
                   )}
+                  <span>{isResetting ? '清空中...' : '确定重置'}</span>
                 </button>
               </div>
             )}
@@ -915,76 +772,50 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         </div>
       )}
 
-      {/* Upgrade Protection Logs Modal */}
+      {/* 系统无损升级日志 Modal */}
       {showUpgradeLogsModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-emerald-500/30 rounded-3xl p-5 max-w-md w-full max-h-[85vh] shadow-2xl flex flex-col">
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-5 w-full max-w-md shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-zinc-850 pb-3">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
-                  <Shield className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-sm text-white">升级数据保护日志</h3>
-                  <p className="text-[10px] text-zinc-400">仅记录保护结果与补充项，不泄露任何私密内容或密钥</p>
-                </div>
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-sm font-semibold text-zinc-100">系统升级无损防崩保护日志</h3>
               </div>
               <button
+                type="button"
                 onClick={() => setShowUpgradeLogsModal(false)}
-                className="w-7 h-7 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white flex items-center justify-center text-xs"
+                className="text-zinc-400 hover:text-zinc-200 p-1 transition"
               >
-                ✕
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto py-3 space-y-3">
+            <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
               {upgradeLogs.length === 0 ? (
-                <div className="py-8 text-center text-zinc-500 text-xs">
-                  暂无升级日志记录（当前为初始版本或未发生跨版本迁移）
+                <div className="p-4 rounded-xl bg-zinc-900/40 border border-zinc-800 text-center text-xs text-zinc-500">
+                  暂无数据迁移触发记录，当前系统为原生数据规格。
                 </div>
               ) : (
-                upgradeLogs.map((log, idx) => (
-                  <div key={idx} className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800/80 space-y-2">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-bold text-emerald-400">
-                        从版本 {log.fromDataVersion} 升级至版本 {log.toDataVersion}
-                      </span>
-                      <span className="text-zinc-500 text-[10px]">
-                        {new Date(log.timestamp).toLocaleString()}
-                      </span>
+                upgradeLogs.map((log) => (
+                  <div key={log.id} className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800 space-y-1 font-mono text-[11px]">
+                    <div className="flex items-center justify-between">
+                      <span className="text-emerald-400 font-bold">{log.summary || '版本兼容校验'}</span>
+                      <span className="text-zinc-500 text-[10px]">{new Date(log.timestamp).toLocaleTimeString()}</span>
                     </div>
-
-                    <div className="text-[10px] text-zinc-400">
-                      版本代码: versionCode {log.toVersionCode} (旧版: {log.fromVersionCode})
-                    </div>
-
-                    <div className="space-y-1.5 pt-1 border-t border-zinc-800/50">
-                      {log.items.map((item, itemIdx) => (
-                        <div key={itemIdx} className="flex items-start justify-between gap-2 text-[11px]">
-                          <span className="text-zinc-200 font-medium shrink-0">{item.name}:</span>
-                          <span
-                            className={`text-right leading-tight ${
-                              item.status === 'preserved'
-                                ? 'text-emerald-400'
-                                : item.status === 'supplemented'
-                                ? 'text-blue-400'
-                                : 'text-zinc-400'
-                            }`}
-                          >
-                            {item.detail}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+                    <div className="text-zinc-500 text-[10px]">VersionCode: {log.fromVersionCode} → {log.toVersionCode}</div>
+                    {log.items && log.items.map((item, idx) => (
+                      <div key={idx} className="text-zinc-300 text-[10px]">• {item.name}: {item.detail}</div>
+                    ))}
                   </div>
                 ))
               )}
             </div>
 
-            <div className="pt-3 border-t border-zinc-800 flex justify-end">
+            <div className="pt-2 border-t border-zinc-850 text-right">
               <button
+                type="button"
                 onClick={() => setShowUpgradeLogsModal(false)}
-                className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium text-xs transition"
+                className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 text-xs font-medium transition"
               >
                 关闭
               </button>
@@ -992,27 +823,6 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           </div>
         </div>
       )}
-
-      {/* Full-featured Data Management Modal */}
-      <DataManagementModal
-        isOpen={showDataModal}
-        onClose={() => setShowDataModal(false)}
-        initialTab={dataModalTab}
-        onDataChanged={() => {
-          if (onDataChanged) onDataChanged();
-        }}
-      />
-
-      {/* Sticky Bottom Save Settings Bar */}
-      <div className="absolute bottom-0 left-0 right-0 p-3.5 bg-zinc-900/95 backdrop-blur-md border-t border-zinc-800 z-30">
-        <button
-          onClick={handleGlobalSave}
-          className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 font-bold text-sm text-white shadow-lg shadow-emerald-500/25 active:scale-95 transition flex items-center justify-center gap-2"
-        >
-          <Save className="w-4 h-4" />
-          保存全局系统设置 (Save Settings)
-        </button>
-      </div>
     </div>
   );
 };

@@ -7,7 +7,6 @@ import {
   MomentPost,
   UserProfile,
   MenstrualData,
-  ApiConfig,
   AiControls,
   AiPermissions,
   ApiLog,
@@ -29,9 +28,6 @@ import {
   saveUserProfile,
   loadMenstrualData,
   saveMenstrualData,
-  loadApiConfig,
-  saveApiConfig,
-  recordKeyClearEvent,
   loadAiControls,
   saveAiControls,
   loadPermissions,
@@ -55,7 +51,6 @@ import { MenstrualApp } from './components/apps/MenstrualApp';
 import { SettingsApp } from './components/apps/SettingsApp';
 import { BeautificationApp } from './components/apps/BeautificationApp';
 import { ConnectivityApp } from './components/apps/ConnectivityApp';
-import { PermissionsApp } from './components/apps/PermissionsApp';
 import { AiPermissionsApp } from './components/apps/AiPermissionsApp';
 import { AiActivityLogsApp } from './components/apps/AiActivityLogsApp';
 import { ApiMonitorApp } from './components/apps/ApiMonitorApp';
@@ -63,7 +58,6 @@ import { MemoApp } from './components/apps/MemoApp';
 import { WorldBookApp } from './components/apps/WorldBookApp';
 import { GameCenterApp } from './components/apps/GameCenterApp';
 import { WeatherApp } from './components/apps/WeatherApp';
-import { weatherService } from './lib/weatherService';
 import { initAllAiMemoryVaults } from './lib/aiMemoryVaultDb';
 import { Terminal } from 'lucide-react';
 import { InPhoneAskDialog } from './components/agent/InPhoneAskDialog';
@@ -71,6 +65,7 @@ import { InPhoneNotificationBanner } from './components/agent/InPhoneNotificatio
 import { AgentSimulatorModal } from './components/agent/AgentSimulatorModal';
 import { agentOrchestrator } from './lib/agent/AgentOrchestrator';
 import { AgentAskPrompt, InPhoneNotification } from './lib/agent/types';
+import { getApiConfigForEngine } from './lib/apiConfigStore';
 
 export function App() {
   // Lock state
@@ -87,7 +82,6 @@ export function App() {
   const [moments, setMomentsState] = useState<MomentPost[]>(loadMoments());
   const [userProfile, setUserProfileState] = useState<UserProfile>(loadUserProfile());
   const [menstrualData, setMenstrualDataState] = useState<MenstrualData>(loadMenstrualData());
-  const [apiConfig, setApiConfigState] = useState<ApiConfig>(loadApiConfig());
   const [aiControls, setAiControlsState] = useState<AiControls>(loadAiControls());
   const [permissions, setPermissionsState] = useState<AiPermissions>(loadPermissions());
   const [apiLogs, setApiLogsState] = useState<ApiLog[]>(loadApiLogs());
@@ -170,11 +164,6 @@ export function App() {
     saveMenstrualData(newData);
   };
 
-  const updateApiConfig = (newConfig: ApiConfig) => {
-    setApiConfigState(newConfig);
-    saveApiConfig(newConfig);
-  };
-
   const updateAiControls = (newControls: AiControls) => {
     setAiControlsState(newControls);
     saveAiControls(newControls);
@@ -225,7 +214,6 @@ export function App() {
       characters,
       userProfile,
       menstrualData,
-      apiConfig,
       aiControls,
       permissions,
       memos,
@@ -250,7 +238,6 @@ export function App() {
     setMomentsState(loadMoments());
     setUserProfileState(loadUserProfile());
     setMenstrualDataState(loadMenstrualData());
-    setApiConfigState(loadApiConfig());
     setAiControlsState(loadAiControls());
     setPermissionsState(loadPermissions());
     setApiLogsState(loadApiLogs());
@@ -269,7 +256,6 @@ export function App() {
       if (parsed.characters) updateCharacters(parsed.characters);
       if (parsed.userProfile) updateUserProfile(parsed.userProfile);
       if (parsed.menstrualData) updateMenstrualData(parsed.menstrualData);
-      if (parsed.apiConfig) updateApiConfig(parsed.apiConfig);
       if (parsed.aiControls) updateAiControls(parsed.aiControls);
       if (parsed.permissions) updatePermissions(parsed.permissions);
       if (parsed.memos) updateMemos(parsed.memos);
@@ -297,6 +283,8 @@ export function App() {
     styleEl.innerHTML = safeCss;
   }, [settings?.customCss]);
 
+  const currentEngineConfig = getApiConfigForEngine();
+
   return (
     <div className="w-full h-screen bg-zinc-950 flex items-center justify-center select-none overflow-hidden">
       <PhoneContainer
@@ -314,7 +302,7 @@ export function App() {
             onUnlock={() => setIsLocked(false)}
           />
         ) : activeAppId ? (
-          /* SUB-APP ACTIVE VIEW LAYER - Automatically offsets for Android status bar and navigation bar */
+          /* SUB-APP ACTIVE VIEW LAYER */
           <div className="w-full h-full relative flex flex-col pt-safe pb-safe pl-safe pr-safe bg-zinc-900">
             {activeAppId === 'wechat' && (
               <WeChatApp
@@ -326,7 +314,7 @@ export function App() {
                 menstrualData={menstrualData}
                 memos={memos}
                 permissions={permissions}
-                apiConfig={apiConfig}
+                apiConfig={currentEngineConfig}
                 worldBooks={worldBooks}
                 onUpdateCharacters={updateCharacters}
                 onUpdateMessages={updateMessages}
@@ -342,7 +330,7 @@ export function App() {
                 onBackToLauncher={() => setActiveAppId(null)}
                 worldBooks={worldBooks}
                 characters={characters}
-                apiConfig={apiConfig}
+                apiConfig={currentEngineConfig}
                 onUpdateWorldBooks={updateWorldBooks}
                 onAddApiLog={addApiLog}
               />
@@ -352,7 +340,7 @@ export function App() {
               <GameCenterApp
                 onBackToLauncher={() => setActiveAppId(null)}
                 characters={characters}
-                apiConfig={apiConfig}
+                apiConfig={currentEngineConfig}
                 onAddApiLog={addApiLog}
               />
             )}
@@ -368,9 +356,7 @@ export function App() {
             {activeAppId === 'settings' && (
               <SettingsApp
                 onBackToLauncher={() => setActiveAppId(null)}
-                apiConfig={apiConfig}
                 aiControls={aiControls}
-                onSaveApiConfig={updateApiConfig}
                 onSaveAiControls={updateAiControls}
                 onClearChats={() => updateMessages([])}
                 onExportData={handleExportData}
@@ -389,7 +375,7 @@ export function App() {
                 pinCode={settings.pinCode}
                 isPinEnabled={settings.isPinEnabled}
                 icons={icons}
-                apiConfig={apiConfig}
+                apiConfig={currentEngineConfig}
                 onUpdateDesktopWallpaper={(url) => {
                   const updated = { ...settings, desktopWallpaper: url };
                   setSettingsState(updated);
@@ -425,7 +411,7 @@ export function App() {
                 onBackToLauncher={() => setActiveAppId(null)}
                 permissions={permissions}
                 onUpdatePermissions={updatePermissions}
-                apiConfig={apiConfig}
+                apiConfig={currentEngineConfig}
                 onSaveMemo={saveMemo}
                 onAddApiLog={addApiLog}
               />
@@ -524,7 +510,7 @@ export function App() {
         {activeNotification && (
           <InPhoneNotificationBanner
             notification={activeNotification}
-            onOpenWechat={(charId) => {
+            onOpenWechat={() => {
               setIsLocked(false);
               setActiveAppId('wechat');
             }}
@@ -552,7 +538,7 @@ export function App() {
       <AgentSimulatorModal
         isOpen={isSimulatorOpen}
         onClose={() => setIsSimulatorOpen(false)}
-        onNavigateToWechat={(charId) => {
+        onNavigateToWechat={() => {
           setIsLocked(false);
           setActiveAppId('wechat');
         }}

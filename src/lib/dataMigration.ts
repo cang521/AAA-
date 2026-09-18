@@ -510,7 +510,7 @@ export async function executeAppUpgradeCheck(): Promise<{
         localStorage.getItem('phone_ai_characters') ||
         localStorage.getItem('phone_chat_messages') ||
         localStorage.getItem('phone_desktop_wallpaper') ||
-        localStorage.getItem('new_text_api_config')
+        localStorage.getItem('ai_phone_api_settings_v1')
     );
 
     let fromDataVersion = rawSavedDataVer ? parseInt(rawSavedDataVer, 10) : 0;

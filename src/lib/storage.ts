@@ -488,49 +488,38 @@ export const getLastKeyClearDiagnostic = (): KeyClearDiagnosticInfo | null => {
   return lastKeyClearDiagnostic;
 };
 
-export function loadSingleApiConfig(type: 'text' | 'image' | 'voice'): SingleApiConfig {
-  const key = type === 'text' ? 'new_text_api_config' : type === 'image' ? 'new_image_api_config' : 'new_voice_api_config';
-  const defaultVal = type === 'text' ? DEFAULT_TEXT_API_CONFIG : type === 'image' ? DEFAULT_IMAGE_API_CONFIG : DEFAULT_VOICE_API_CONFIG;
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
-        return {
-          provider: typeof parsed.provider === 'string' && parsed.provider ? parsed.provider : defaultVal.provider,
-          baseUrl: typeof parsed.baseUrl === 'string' ? parsed.baseUrl : defaultVal.baseUrl,
-          apiKey: typeof parsed.apiKey === 'string' ? parsed.apiKey : defaultVal.apiKey,
-          model: typeof parsed.model === 'string' && parsed.model ? parsed.model : defaultVal.model,
-        };
-      }
-    }
-  } catch (err) {
-    console.error(`Failed to load ${key}:`, err);
-  }
-  return { ...defaultVal };
-}
-
-export function saveSingleApiConfig(type: 'text' | 'image' | 'voice', config: SingleApiConfig): void {
-  const key = type === 'text' ? 'new_text_api_config' : type === 'image' ? 'new_image_api_config' : 'new_voice_api_config';
-  try {
-    localStorage.setItem(key, JSON.stringify(config));
-  } catch (err) {
-    console.error(`Failed to save ${key}:`, err);
-  }
-}
+import {
+  loadApiSettings,
+  saveApiSettings,
+  getApiConfigForEngine,
+} from './apiConfigStore';
 
 export function loadApiConfig(): ApiConfig {
-  return {
-    textApiConfig: loadSingleApiConfig('text'),
-    imageApiConfig: loadSingleApiConfig('image'),
-    voiceApiConfig: loadSingleApiConfig('voice'),
-  };
+  return getApiConfigForEngine();
 }
 
 export function saveApiConfig(c: ApiConfig): void {
-  if (c.textApiConfig) saveSingleApiConfig('text', c.textApiConfig);
-  if (c.imageApiConfig) saveSingleApiConfig('image', c.imageApiConfig);
-  if (c.voiceApiConfig) saveSingleApiConfig('voice', c.voiceApiConfig);
+  const current = loadApiSettings();
+  saveApiSettings({
+    text: {
+      provider: c.textApiConfig?.provider || current.text.provider,
+      baseUrl: c.textApiConfig?.baseUrl ?? current.text.baseUrl,
+      apiKey: c.textApiConfig?.apiKey ?? current.text.apiKey,
+      model: c.textApiConfig?.model || current.text.model,
+    },
+    image: {
+      provider: c.imageApiConfig?.provider || current.image.provider,
+      baseUrl: c.imageApiConfig?.baseUrl ?? current.image.baseUrl,
+      apiKey: c.imageApiConfig?.apiKey ?? current.image.apiKey,
+      model: c.imageApiConfig?.model || current.image.model,
+    },
+    voice: {
+      provider: c.voiceApiConfig?.provider || current.voice.provider,
+      baseUrl: c.voiceApiConfig?.baseUrl ?? current.voice.baseUrl,
+      apiKey: c.voiceApiConfig?.apiKey ?? current.voice.apiKey,
+      model: c.voiceApiConfig?.model || current.voice.model,
+    },
+  });
 }
 
 export const loadAiControls = (): AiControls => {
