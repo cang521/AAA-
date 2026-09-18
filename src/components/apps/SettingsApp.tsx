@@ -85,37 +85,16 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   onAddApiLog,
   onDataChanged,
 }) => {
-  const [draftConfig, setDraftConfig] = useState<ApiConfig>(() => loadApiConfig());
+  const [draftConfig, setDraftConfig] = useState<ApiConfig>(() => apiConfig || loadApiConfig());
+
+  useEffect(() => {
+    if (apiConfig) {
+      setDraftConfig(apiConfig);
+    }
+  }, [apiConfig]);
 
   const updateApiDraft = (nextConfig: ApiConfig) => {
-    setDraftConfig((prev) => {
-      const prevText = prev.textApiConfig;
-      const nextText = nextConfig.textApiConfig;
-
-      if (prevText && nextText) {
-        // Protection: If previous apiKey existed (len > 0) but nextText key is empty, preserve previous key
-        const preservedKey =
-          prevText.apiKey && (!nextText.apiKey || !nextText.apiKey.trim())
-            ? prevText.apiKey
-            : nextText.apiKey;
-
-        const preservedBaseUrl =
-          prevText.baseUrl && typeof nextText.baseUrl !== 'string'
-            ? prevText.baseUrl
-            : nextText.baseUrl;
-
-        return {
-          ...nextConfig,
-          textApiConfig: {
-            ...nextText,
-            apiKey: preservedKey ?? '',
-            baseUrl: preservedBaseUrl ?? '',
-          },
-        };
-      }
-
-      return nextConfig;
-    });
+    setDraftConfig(nextConfig);
   };
 
   const [controls, setControls] = useState<AiControls>(aiControls);
@@ -540,19 +519,19 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
   // Quick Preset Selection
   const applyTextPreset = (preset: ProviderPreset) => {
-    setDraftConfig((prev) => {
-      const nextConfig: ApiConfig = {
-        ...prev,
-        textApiConfig: {
-          ...prev.textApiConfig,
-          provider: preset.id,
-          baseUrl: prev.textApiConfig.baseUrl || preset.defaultBaseUrl,
-          model: prev.textApiConfig.model || preset.defaultModel,
-        },
-      };
-      saveApiConfig(nextConfig);
-      return nextConfig;
-    });
+    const nextConfig: ApiConfig = {
+      ...draftConfig,
+      textApiConfig: {
+        ...draftConfig.textApiConfig,
+        provider: preset.id,
+        baseUrl: preset.defaultBaseUrl || draftConfig.textApiConfig?.baseUrl || '',
+        model: preset.defaultModel || draftConfig.textApiConfig?.model || '',
+        apiKey: draftConfig.textApiConfig?.apiKey || '',
+      },
+    };
+    setDraftConfig(nextConfig);
+    saveApiConfig(nextConfig);
+    onSaveApiConfig(nextConfig);
 
     setConnectionResult(null);
     setModelFetchResult(null);
@@ -625,11 +604,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       <div className="h-12 px-3 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between z-20 shrink-0">
         <button
           onClick={() => {
-            // Auto persist configuration before leaving if key or baseUrl exists
-            const textConfig = draftConfig.textApiConfig;
-            if (textConfig?.apiKey || textConfig?.baseUrl) {
-              handleGlobalSave();
-            }
+            handleGlobalSave();
             onBackToLauncher();
           }}
           className="flex items-center gap-1 text-xs text-zinc-300 hover:text-white font-medium px-2.5 py-1 rounded-xl bg-zinc-800 transition active:scale-95"

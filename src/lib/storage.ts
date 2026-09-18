@@ -497,10 +497,10 @@ export function loadSingleApiConfig(type: 'text' | 'image' | 'voice'): SingleApi
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object') {
         return {
-          provider: parsed.provider || defaultVal.provider,
-          baseUrl: typeof parsed.baseUrl === 'string' ? parsed.baseUrl : '',
-          apiKey: typeof parsed.apiKey === 'string' ? parsed.apiKey : '',
-          model: parsed.model || defaultVal.model,
+          provider: typeof parsed.provider === 'string' && parsed.provider ? parsed.provider : defaultVal.provider,
+          baseUrl: typeof parsed.baseUrl === 'string' ? parsed.baseUrl : defaultVal.baseUrl,
+          apiKey: typeof parsed.apiKey === 'string' ? parsed.apiKey : defaultVal.apiKey,
+          model: typeof parsed.model === 'string' && parsed.model ? parsed.model : defaultVal.model,
         };
       }
     }

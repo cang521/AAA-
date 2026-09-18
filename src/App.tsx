@@ -172,6 +172,7 @@ export function App() {
 
   const updateApiConfig = (newConfig: ApiConfig) => {
     setApiConfigState(newConfig);
+    saveApiConfig(newConfig);
   };
 
   const updateAiControls = (newControls: AiControls) => {
