@@ -64,6 +64,10 @@ import {
   saveApiSettings,
   getApiConfigForEngine,
 } from '../../lib/apiConfigStore';
+import {
+  addDiagnosticLog,
+  getNextSettingsAppRenderIndex,
+} from '../../lib/inputTracker';
 
 interface SettingsAppProps {
   onBackToLauncher: () => void;
@@ -89,6 +93,27 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   // 唯一 API 配置 State：从 apiConfigStore 初始化
   const [settings, setSettings] = useState<ApiSettings>(() => loadApiSettings());
   const [savedVerification, setSavedVerification] = useState<ApiSettings | null>(null);
+
+  // 追踪 SettingsApp Render 序号与真实 State
+  const settingsAppRenderCount = React.useRef(0);
+  settingsAppRenderCount.current += 1;
+
+  useEffect(() => {
+    const renderIdx = settingsAppRenderCount.current;
+    const baseLen = settings.text?.baseUrl?.length || 0;
+    const keyLen = settings.text?.apiKey?.length || 0;
+    const keyLast4 = (settings.text?.apiKey || '').slice(-4);
+
+    addDiagnosticLog({
+      tag: `[SETTINGSAPP_RENDER] #${renderIdx}`,
+      baseUrlLen: baseLen,
+      baseUrlVal: settings.text?.baseUrl || '',
+      keyLen: keyLen,
+      keyLast4: keyLast4,
+      renderIndex: renderIdx,
+      details: `SettingsApp state check: baseUrl len=${baseLen}, apiKey len=${keyLen} (last4=${keyLast4})`,
+    });
+  });
 
   const [controls, setControls] = useState<AiControls>(aiControls);
 
@@ -190,24 +215,59 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   }, []);
 
   const handleClearTextKey = () => {
-    setSettings((prev) => ({
-      ...prev,
-      text: { ...prev.text, apiKey: '' },
-    }));
+    setSettings((prev) => {
+      const prevBaseLen = prev.text?.baseUrl?.length || 0;
+      const prevKeyLen = prev.text?.apiKey?.length || 0;
+      const next = {
+        ...prev,
+        text: { ...prev.text, apiKey: '' },
+      };
+      addDiagnosticLog({
+        tag: '[SETTINGS_WRITE:SETTINGSAPP_CLEAR_TEXT_KEY]',
+        baseUrlLen: prevBaseLen,
+        baseUrlVal: prev.text?.baseUrl || '',
+        keyLen: 0,
+        keyLast4: '',
+        details: `CLEARED! apiKey len: ${prevKeyLen} -> 0`,
+      });
+      return next;
+    });
   };
 
   const handleClearImageKey = () => {
-    setSettings((prev) => ({
-      ...prev,
-      image: { ...prev.image, apiKey: '' },
-    }));
+    setSettings((prev) => {
+      const next = {
+        ...prev,
+        image: { ...prev.image, apiKey: '' },
+      };
+      addDiagnosticLog({
+        tag: '[SETTINGS_WRITE:SETTINGSAPP_CLEAR_IMAGE_KEY]',
+        baseUrlLen: prev.text?.baseUrl?.length || 0,
+        baseUrlVal: prev.text?.baseUrl || '',
+        keyLen: prev.text?.apiKey?.length || 0,
+        keyLast4: (prev.text?.apiKey || '').slice(-4),
+        details: 'image.apiKey cleared',
+      });
+      return next;
+    });
   };
 
   const handleClearVoiceKey = () => {
-    setSettings((prev) => ({
-      ...prev,
-      voice: { ...prev.voice, apiKey: '' },
-    }));
+    setSettings((prev) => {
+      const next = {
+        ...prev,
+        voice: { ...prev.voice, apiKey: '' },
+      };
+      addDiagnosticLog({
+        tag: '[SETTINGS_WRITE:SETTINGSAPP_CLEAR_VOICE_KEY]',
+        baseUrlLen: prev.text?.baseUrl?.length || 0,
+        baseUrlVal: prev.text?.baseUrl || '',
+        keyLen: prev.text?.apiKey?.length || 0,
+        keyLast4: (prev.text?.apiKey || '').slice(-4),
+        details: 'voice.apiKey cleared',
+      });
+      return next;
+    });
   };
 
   const handleGlobalSave = () => {
@@ -460,16 +520,31 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
   // Preset Selection
   const applyTextPreset = (preset: ProviderPreset) => {
-    setSettings((prev) => ({
-      ...prev,
-      text: {
-        ...prev.text,
-        provider: preset.id,
-        baseUrl: preset.defaultBaseUrl || prev.text.baseUrl || '',
-        model: preset.defaultModel || prev.text.model || '',
-        apiKey: prev.text.apiKey || '', // 保留当前 apiKey，禁止改为空
-      },
-    }));
+    setSettings((prev) => {
+      const prevBaseLen = prev.text?.baseUrl?.length || 0;
+      const prevKeyLen = prev.text?.apiKey?.length || 0;
+      const next = {
+        ...prev,
+        text: {
+          ...prev.text,
+          provider: preset.id,
+          baseUrl: preset.defaultBaseUrl || prev.text.baseUrl || '',
+          model: preset.defaultModel || prev.text.model || '',
+          apiKey: prev.text.apiKey || '', // 保留当前 apiKey，禁止改为空
+        },
+      };
+      const nextBaseLen = next.text.baseUrl?.length || 0;
+      const nextKeyLen = next.text.apiKey?.length || 0;
+      addDiagnosticLog({
+        tag: '[SETTINGS_WRITE:SETTINGSAPP_APPLY_PRESET]',
+        baseUrlLen: nextBaseLen,
+        baseUrlVal: next.text.baseUrl || '',
+        keyLen: nextKeyLen,
+        keyLast4: (next.text.apiKey || '').slice(-4),
+        details: `applyPreset ${preset.id}: baseLen ${prevBaseLen}->${nextBaseLen}, keyLen ${prevKeyLen}->${nextKeyLen}`,
+      });
+      return next;
+    });
 
     setConnectionResult(null);
     setModelFetchResult(null);
