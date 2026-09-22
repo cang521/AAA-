@@ -3,6 +3,7 @@ export interface ApiConnectionConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
+  apiProtocol?: string;
 }
 
 export interface ApiSettings {
@@ -60,6 +61,7 @@ export function loadApiSettings(): ApiSettings {
         baseUrl: typeof section.baseUrl === 'string' ? section.baseUrl : defaultConn.baseUrl,
         apiKey: typeof section.apiKey === 'string' ? section.apiKey : defaultConn.apiKey,
         model: typeof section.model === 'string' ? section.model : defaultConn.model,
+        apiProtocol: typeof section.apiProtocol === 'string' ? section.apiProtocol : undefined,
       };
     };
 
@@ -99,5 +101,20 @@ export function getApiConfigForEngine() {
     textApiConfig: s.text,
     imageApiConfig: s.image,
     voiceApiConfig: s.voice,
+    textApiKey: s.text.apiKey,
+    textBaseUrl: s.text.baseUrl,
+    textModel: s.text.model,
+    textProvider: s.text.provider,
+    textApiProtocol: s.text.apiProtocol,
+    imageApiKey: s.image.apiKey,
+    imageBaseUrl: s.image.baseUrl,
+    imageModel: s.image.model,
+    imageProvider: s.image.provider,
+    imageApiProtocol: s.image.apiProtocol,
+    voiceApiKey: s.voice.apiKey,
+    voiceBaseUrl: s.voice.baseUrl,
+    voiceModel: s.voice.model,
+    voiceProvider: s.voice.provider,
+    voiceApiProtocol: s.voice.apiProtocol,
   };
 }

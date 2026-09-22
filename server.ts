@@ -30,6 +30,7 @@ interface AiCallParams {
   apiKey?: string;
   baseUrl?: string;
   providerType?: string;
+  apiProtocol?: string;
   responseMimeType?: string;
   temperature?: number;
   timeoutMs?: number;
@@ -51,6 +52,7 @@ async function callAiService({
   apiKey,
   baseUrl,
   providerType,
+  apiProtocol,
   responseMimeType,
   temperature = 0.7,
   timeoutMs = 35000,
@@ -63,29 +65,40 @@ async function callAiService({
   const targetModel = model?.trim() || 'gemini-3.6-flash';
 
   // Determine whether this request is OpenAI-compatible / Non-Google
-  const isOpenAiCompatible =
-    providerType === 'openai_compatible' ||
-    providerType === 'deepseek' ||
-    providerType === 'openrouter' ||
-    providerType === 'groq' ||
-    providerType === 'siliconflow' ||
-    providerType === 'ollama' ||
-    providerType === 'custom' ||
-    (cleanBaseUrl &&
-      (cleanBaseUrl.includes('/v1') ||
-        cleanBaseUrl.includes('openai') ||
-        cleanBaseUrl.includes('deepseek') ||
-        cleanBaseUrl.includes('openrouter') ||
-        cleanBaseUrl.includes('groq') ||
-        cleanBaseUrl.includes('siliconflow') ||
-        cleanBaseUrl.includes('oneapi') ||
-        cleanBaseUrl.includes('newapi') ||
-        cleanBaseUrl.includes(':11434') ||
-        targetModel.startsWith('gpt-') ||
-        targetModel.startsWith('claude-') ||
-        targetModel.startsWith('deepseek-') ||
-        targetModel.startsWith('qwen') ||
-        targetModel.startsWith('llama')));
+  // CRITICAL RULE: If apiProtocol is explicitly specified as 'openai_compatible', always route to OpenAI-compatible
+  let isOpenAiCompatible = false;
+  let activeProtocol = apiProtocol;
+
+  if (activeProtocol === 'openai_compatible') {
+    isOpenAiCompatible = true;
+  } else if (activeProtocol === 'gemini_native') {
+    isOpenAiCompatible = false;
+  } else {
+    // Legacy / fallback heuristic if apiProtocol is not explicitly provided
+    isOpenAiCompatible =
+      providerType === 'openai_compatible' ||
+      providerType === 'deepseek' ||
+      providerType === 'openrouter' ||
+      providerType === 'groq' ||
+      providerType === 'siliconflow' ||
+      providerType === 'ollama' ||
+      providerType === 'custom' ||
+      (cleanBaseUrl &&
+        (cleanBaseUrl.includes('/v1') ||
+          cleanBaseUrl.includes('openai') ||
+          cleanBaseUrl.includes('deepseek') ||
+          cleanBaseUrl.includes('openrouter') ||
+          cleanBaseUrl.includes('groq') ||
+          cleanBaseUrl.includes('siliconflow') ||
+          cleanBaseUrl.includes('oneapi') ||
+          cleanBaseUrl.includes('newapi') ||
+          cleanBaseUrl.includes(':11434') ||
+          targetModel.startsWith('gpt-') ||
+          targetModel.startsWith('claude-') ||
+          targetModel.startsWith('deepseek-') ||
+          targetModel.startsWith('qwen') ||
+          targetModel.startsWith('llama')));
+  }
 
   if (isOpenAiCompatible) {
     if (!cleanBaseUrl && !activeKey) {
@@ -577,7 +590,7 @@ app.post('/api/provider/fetch-models', async (req, res) => {
   const cleanKey = (apiKey && apiKey.trim()) || '';
   const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, '') : '';
 
-  console.log('[API Key Log - Server fetch-models Received]', {
+  console.log('[API Key Log - Server fetch-models Auto-Probe Received]', {
     providerType,
     baseUrl: cleanBaseUrl,
     serviceType,
@@ -596,234 +609,400 @@ app.post('/api/provider/fetch-models', async (req, res) => {
     });
   }
 
-  // 1. Google Gemini Models Fetching
-  if (providerType === 'google_gemini') {
-    const isV1Path = cleanBaseUrl.includes('/v1') && !cleanBaseUrl.includes('v1beta');
-    const fetchUrl = cleanBaseUrl
-      ? (isV1Path
-          ? (cleanBaseUrl.endsWith('/models') ? cleanBaseUrl : `${cleanBaseUrl}/models`)
-          : (cleanBaseUrl.endsWith('/v1beta') ? `${cleanBaseUrl}/models?key=${cleanKey}` : `${cleanBaseUrl}/v1beta/models?key=${cleanKey}`))
-      : `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanKey}`;
+  const maskedKey = cleanKey ? (cleanKey.length > 4 ? `***${cleanKey.slice(-4)}` : '***') : '';
+  const attemptsTrace: Array<{
+    attemptIndex: number;
+    adapterName: string;
+    protocolKey: string;
+    finalUrl: string;
+    method: string;
+    authMethod: string;
+    timeoutMs: number;
+    startTime: string;
+    endTime: string;
+    latencyMs: number;
+    httpStatus?: number;
+    success: boolean;
+    modelsCount: number;
+    error?: string;
+  }> = [];
+
+  const overallStartTime = Date.now();
+
+  // =========================================================================
+  // Candidate 1: OpenAI-Compatible Adapter (/v1/models)
+  // =========================================================================
+  {
+    let urlCandidate = '';
+    if (!cleanBaseUrl) {
+      urlCandidate = 'https://api.openai.com/v1/models';
+    } else if (cleanBaseUrl.endsWith('/v1')) {
+      // Normalization: Prevent /v1/v1/models!
+      urlCandidate = `${cleanBaseUrl}/models`;
+    } else {
+      urlCandidate = `${cleanBaseUrl}/v1/models`;
+    }
+
+    const maskedUrl = urlCandidate.replace(cleanKey, maskedKey);
+    const startIso = new Date().toISOString();
+    const tStart = Date.now();
 
     try {
-      const resp = await fetch(fetchUrl, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'aistudio-build-models-fetch',
-          'x-goog-api-key': cleanKey,
-          'Authorization': `Bearer ${cleanKey}`,
-          ...customHeaders,
-        },
-        signal: AbortSignal.timeout(12000),
-      });
-
-      if (!resp.ok) {
-        // If 404 on custom reverse proxy, try probing /v1/models (OpenAI-compatible proxy format)
-        if (cleanBaseUrl && (resp.status === 404 || resp.status === 405) && !isV1Path) {
-          const altUrl = `${cleanBaseUrl}/v1/models`;
-          try {
-            const altResp = await fetch(altUrl, {
-              method: 'GET',
-              headers: {
-                'User-Agent': 'aistudio-build-models-fetch',
-                'Authorization': `Bearer ${cleanKey}`,
-                ...customHeaders,
-              },
-              signal: AbortSignal.timeout(8000),
-            });
-            if (altResp.ok) {
-              const altData = await altResp.json();
-              const altList = Array.isArray(altData.data) ? altData.data : (Array.isArray(altData.models) ? altData.models : (Array.isArray(altData) ? altData : []));
-              const formatted = altList.map((m: any) => ({
-                id: typeof m === 'string' ? m : m.id || m.name,
-                name: typeof m === 'object' && m.name ? m.name : (typeof m === 'string' ? m : m.id),
-                type: 'text',
-                owned_by: 'Proxy',
-              }));
-              return res.json({
-                success: true,
-                supported: true,
-                models: formatted,
-                sourceEndpoint: altUrl,
-                message: `成功拉取到 ${formatted.length} 个模型 (来自反代 /v1/models)`,
-              });
-            }
-          } catch {
-            // fallback to original error
-          }
-        }
-
-        const errText = await resp.text();
-        return res.status(resp.status).json({
-          success: false,
-          supported: true,
-          models: [],
-          message: cleanBaseUrl ? `从自定义反代拉取模型列表失败 (${resp.status})` : `拉取 Gemini 模型列表失败 (${resp.status})`,
-          error: errText,
-        });
+      const headers: Record<string, string> = {
+        'User-Agent': 'aistudio-build-models-fetch',
+        'Content-Type': 'application/json',
+        ...customHeaders,
+      };
+      if (cleanKey) {
+        headers['Authorization'] = `Bearer ${cleanKey}`;
       }
 
-      const data = await resp.json();
-      const rawList = Array.isArray(data.models) ? data.models : (Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []));
-      const formattedModels = rawList.map((m: any) => {
-        const id = (typeof m === 'string' ? m : m.id || m.name || '').replace('models/', '');
-        const isImage = id.includes('imagen') || id.includes('image');
-        const isVoice = id.includes('audio') || id.includes('tts') || id.includes('speech');
-        return {
-          id,
-          name: typeof m === 'object' && (m.displayName || m.name) ? (m.displayName || m.name) : id,
-          description: typeof m === 'object' ? (m.description || '') : '',
-          type: isImage ? 'image' : isVoice ? 'voice' : 'text',
-          contextWindow: typeof m === 'object' ? m.inputTokenLimit : undefined,
-          owned_by: typeof m === 'object' && m.owned_by ? m.owned_by : (cleanBaseUrl ? 'Gemini-Proxy' : 'Google'),
-        };
+      const resp = await fetch(urlCandidate, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(10000),
       });
 
-      return res.json({
-        success: true,
-        supported: true,
-        models: formattedModels,
-        sourceEndpoint: fetchUrl.replace(cleanKey, '***'),
-        message: `成功拉取到 ${formattedModels.length} 个 ${cleanBaseUrl ? '反代' : 'Gemini'} 真实模型`,
-      });
-    } catch (err: any) {
-      return res.status(500).json({
-        success: false,
-        supported: false,
-        models: [],
-        message: cleanBaseUrl ? '连接自定义反代拉取模型列表失败' : '拉取 Gemini 模型列表失败',
-        error: err.message,
-      });
-    }
-  }
+      const tEnd = Date.now();
+      const endIso = new Date().toISOString();
 
-  // 2. Ollama Models Fetching
-  if (providerType === 'ollama' || cleanBaseUrl.includes(':11434')) {
-    const tagsUrl = `${cleanBaseUrl}/api/tags`;
-    try {
-      const resp = await fetch(tagsUrl, { signal: AbortSignal.timeout(8000) });
       if (resp.ok) {
         const data = await resp.json();
-        const rawList = Array.isArray(data.models) ? data.models : [];
-        const formatted = rawList.map((m: any) => ({
-          id: m.name,
-          name: m.name,
-          description: `Size: ${Math.round((m.size || 0) / 1024 / 1024)}MB, Format: ${m.details?.format || 'gguf'}`,
-          type: 'text',
-          owned_by: 'Ollama-Local',
-        }));
+        const rawList = Array.isArray(data.data) ? data.data : (Array.isArray(data.models) ? data.models : (Array.isArray(data) ? data : []));
 
-        return res.json({
-          success: true,
-          supported: true,
-          models: formatted,
-          sourceEndpoint: tagsUrl,
-          message: `成功拉取到 ${formatted.length} 个 Ollama 本地模型`,
-        });
-      }
-    } catch {
-      // fallback to openai compatible /models
-    }
-  }
+        if (rawList && rawList.length > 0) {
+          const formatted = rawList.map((m: any) => {
+            const id = typeof m === 'string' ? m : m.id || m.name;
+            const lower = String(id).toLowerCase();
+            let type: 'text' | 'image' | 'voice' = 'text';
+            if (lower.includes('dall-e') || lower.includes('image') || lower.includes('flux') || lower.includes('midjourney') || lower.includes('imagen')) {
+              type = 'image';
+            } else if (lower.includes('tts') || lower.includes('whisper') || lower.includes('speech') || lower.includes('audio')) {
+              type = 'voice';
+            }
+            return {
+              id: String(id),
+              name: typeof m === 'object' && m.name ? m.name : String(id),
+              type,
+              owned_by: typeof m === 'object' ? m.owned_by || m.permission?.[0]?.organization || 'OpenAI-Proxy' : 'OpenAI-Proxy',
+            };
+          });
 
-  // 3. OpenAI-Compatible Models Fetching (GET /models or /v1/models)
-  let modelsEndpoint = cleanBaseUrl;
-  if (!modelsEndpoint) modelsEndpoint = 'https://api.openai.com/v1';
-  if (!modelsEndpoint.endsWith('/models')) {
-    modelsEndpoint = modelsEndpoint.endsWith('/v1') ? `${modelsEndpoint}/models` : `${modelsEndpoint}/v1/models`;
-  }
+          attemptsTrace.push({
+            attemptIndex: 1,
+            adapterName: 'OpenAI-Compatible Adapter (/v1/models)',
+            protocolKey: 'openai_compatible',
+            finalUrl: maskedUrl,
+            method: 'GET',
+            authMethod: 'Authorization: Bearer ***',
+            timeoutMs: 10000,
+            startTime: startIso,
+            endTime: endIso,
+            latencyMs: tEnd - tStart,
+            httpStatus: resp.status,
+            success: true,
+            modelsCount: formatted.length,
+          });
 
-  try {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...customHeaders,
-    };
-    if (cleanKey) {
-      headers['Authorization'] = `Bearer ${cleanKey}`;
-    }
-
-    const resp = await fetch(modelsEndpoint, {
-      method: 'GET',
-      headers,
-      signal: AbortSignal.timeout(15000),
-    });
-
-    if (!resp.ok) {
-      if (resp.status === 404 || resp.status === 405) {
-        return res.json({
-          success: false,
-          supported: false,
-          models: [],
-          statusCode: resp.status,
-          message: '该 Provider 未提供 /v1/models 接口，不支持自动获取模型列表。请在下方手动输入模型名称。',
-        });
+          return res.json({
+            success: true,
+            supported: true,
+            apiProtocol: 'openai_compatible',
+            models: formatted,
+            sourceEndpoint: maskedUrl,
+            message: `自动探测成功！匹配 OpenAI 兼容协议，成功获取 ${formatted.length} 个真实模型`,
+            attemptsTrace,
+            totalTimeMs: Date.now() - overallStartTime,
+          });
+        }
       }
 
-      const errText = await resp.text();
-      return res.status(resp.status).json({
+      const errText = await resp.text().catch(() => '');
+      attemptsTrace.push({
+        attemptIndex: 1,
+        adapterName: 'OpenAI-Compatible Adapter (/v1/models)',
+        protocolKey: 'openai_compatible',
+        finalUrl: maskedUrl,
+        method: 'GET',
+        authMethod: 'Authorization: Bearer ***',
+        timeoutMs: 10000,
+        startTime: startIso,
+        endTime: endIso,
+        latencyMs: tEnd - tStart,
+        httpStatus: resp.status,
         success: false,
-        supported: true,
-        models: [],
-        statusCode: resp.status,
-        message: `从 Provider 获取模型列表失败 (${resp.status})`,
-        error: errText,
+        modelsCount: 0,
+        error: `HTTP ${resp.status}: ${errText.slice(0, 100) || '未返回有效模型列表'}`,
+      });
+    } catch (err: any) {
+      const tEnd = Date.now();
+      const endIso = new Date().toISOString();
+      attemptsTrace.push({
+        attemptIndex: 1,
+        adapterName: 'OpenAI-Compatible Adapter (/v1/models)',
+        protocolKey: 'openai_compatible',
+        finalUrl: maskedUrl,
+        method: 'GET',
+        authMethod: 'Authorization: Bearer ***',
+        timeoutMs: 10000,
+        startTime: startIso,
+        endTime: endIso,
+        latencyMs: tEnd - tStart,
+        success: false,
+        modelsCount: 0,
+        error: err.name === 'AbortError' ? '请求超时 (10秒)' : (err.message || '网络连接异常'),
       });
     }
+  }
 
-    const data = await resp.json();
-    let rawList: any[] = [];
-    if (Array.isArray(data.data)) {
-      rawList = data.data;
-    } else if (Array.isArray(data)) {
-      rawList = data;
-    } else if (Array.isArray(data.models)) {
-      rawList = data.models;
+  // =========================================================================
+  // Candidate 2: Gemini Native Adapter (/v1beta/models)
+  // =========================================================================
+  {
+    let urlCandidate = '';
+    if (!cleanBaseUrl) {
+      urlCandidate = `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanKey}`;
+    } else if (cleanBaseUrl.includes('v1beta')) {
+      urlCandidate = cleanBaseUrl.endsWith('/models') ? `${cleanBaseUrl}?key=${cleanKey}` : `${cleanBaseUrl}/models?key=${cleanKey}`;
+    } else if (cleanBaseUrl.endsWith('/v1')) {
+      urlCandidate = `${cleanBaseUrl}/models`;
+    } else {
+      urlCandidate = `${cleanBaseUrl}/v1beta/models?key=${cleanKey}`;
     }
 
-    const formattedModels = rawList.map((m: any) => {
-      const id = typeof m === 'string' ? m : m.id || m.name;
-      const lower = id.toLowerCase();
-      let type: 'text' | 'image' | 'voice' | 'embedding' = 'text';
-      if (lower.includes('dall-e') || lower.includes('image') || lower.includes('flux') || lower.includes('midjourney') || lower.includes('stable-diffusion')) {
-        type = 'image';
-      } else if (lower.includes('tts') || lower.includes('whisper') || lower.includes('speech') || lower.includes('audio')) {
-        type = 'voice';
-      } else if (lower.includes('embedding')) {
-        type = 'embedding';
+    const maskedUrl = urlCandidate.replace(cleanKey, maskedKey);
+    const startIso = new Date().toISOString();
+    const tStart = Date.now();
+
+    try {
+      const headers: Record<string, string> = {
+        'User-Agent': 'aistudio-build-models-fetch',
+        'x-goog-api-key': cleanKey,
+        'Authorization': `Bearer ${cleanKey}`,
+        ...customHeaders,
+      };
+
+      const resp = await fetch(urlCandidate, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(10000),
+      });
+
+      const tEnd = Date.now();
+      const endIso = new Date().toISOString();
+
+      if (resp.ok) {
+        const data = await resp.json();
+        const rawList = Array.isArray(data.models) ? data.models : (Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []));
+
+        if (rawList && rawList.length > 0) {
+          const formatted = rawList.map((m: any) => {
+            const id = (typeof m === 'string' ? m : m.id || m.name || '').replace(/^models\//, '');
+            const isImage = id.includes('imagen') || id.includes('image');
+            const isVoice = id.includes('audio') || id.includes('tts') || id.includes('speech');
+            return {
+              id,
+              name: typeof m === 'object' && (m.displayName || m.name) ? (m.displayName || m.name) : id,
+              description: typeof m === 'object' ? (m.description || '') : '',
+              type: isImage ? 'image' : isVoice ? 'voice' : 'text',
+              contextWindow: typeof m === 'object' ? m.inputTokenLimit : undefined,
+              owned_by: typeof m === 'object' && m.owned_by ? m.owned_by : (cleanBaseUrl ? 'Gemini-Proxy' : 'Google'),
+            };
+          });
+
+          attemptsTrace.push({
+            attemptIndex: 2,
+            adapterName: 'Gemini Native REST Adapter (/v1beta/models)',
+            protocolKey: 'gemini_native',
+            finalUrl: maskedUrl,
+            method: 'GET',
+            authMethod: 'QueryParam (?key=) & Headers',
+            timeoutMs: 10000,
+            startTime: startIso,
+            endTime: endIso,
+            latencyMs: tEnd - tStart,
+            httpStatus: resp.status,
+            success: true,
+            modelsCount: formatted.length,
+          });
+
+          return res.json({
+            success: true,
+            supported: true,
+            apiProtocol: 'gemini_native',
+            models: formatted,
+            sourceEndpoint: maskedUrl,
+            message: `自动探测成功！匹配 Gemini Native 原生协议，成功获取 ${formatted.length} 个真实模型`,
+            attemptsTrace,
+            totalTimeMs: Date.now() - overallStartTime,
+          });
+        }
       }
 
-      return {
-        id,
-        name: typeof m === 'object' && m.name ? m.name : id,
-        owned_by: typeof m === 'object' ? m.owned_by || m.permission?.[0]?.organization || '' : '',
-        created: typeof m === 'object' ? m.created : undefined,
-        type,
-      };
-    });
-
-    return res.json({
-      success: true,
-      supported: true,
-      models: formattedModels,
-      sourceEndpoint: modelsEndpoint,
-      message: `成功拉取到 ${formattedModels.length} 个真实模型`,
-    });
-  } catch (err: any) {
-    return res.status(500).json({
-      success: false,
-      supported: false,
-      models: [],
-      message: '网络异常，无法获取模型列表',
-      error: err.message,
-    });
+      const errText = await resp.text().catch(() => '');
+      attemptsTrace.push({
+        attemptIndex: 2,
+        adapterName: 'Gemini Native REST Adapter (/v1beta/models)',
+        protocolKey: 'gemini_native',
+        finalUrl: maskedUrl,
+        method: 'GET',
+        authMethod: 'QueryParam (?key=) & Headers',
+        timeoutMs: 10000,
+        startTime: startIso,
+        endTime: endIso,
+        latencyMs: tEnd - tStart,
+        httpStatus: resp.status,
+        success: false,
+        modelsCount: 0,
+        error: `HTTP ${resp.status}: ${errText.slice(0, 100) || '未返回有效模型列表'}`,
+      });
+    } catch (err: any) {
+      const tEnd = Date.now();
+      const endIso = new Date().toISOString();
+      attemptsTrace.push({
+        attemptIndex: 2,
+        adapterName: 'Gemini Native REST Adapter (/v1beta/models)',
+        protocolKey: 'gemini_native',
+        finalUrl: maskedUrl,
+        method: 'GET',
+        authMethod: 'QueryParam (?key=) & Headers',
+        timeoutMs: 10000,
+        startTime: startIso,
+        endTime: endIso,
+        latencyMs: tEnd - tStart,
+        success: false,
+        modelsCount: 0,
+        error: err.name === 'AbortError' ? '请求超时 (10秒)' : (err.message || '网络连接异常'),
+      });
+    }
   }
+
+  // =========================================================================
+  // Candidate 3: Direct Base Path Adapter (/models)
+  // =========================================================================
+  if (cleanBaseUrl && !cleanBaseUrl.endsWith('/v1') && !cleanBaseUrl.includes('v1beta')) {
+    const urlCandidate = `${cleanBaseUrl}/models`;
+    const maskedUrl = urlCandidate.replace(cleanKey, maskedKey);
+    const startIso = new Date().toISOString();
+    const tStart = Date.now();
+
+    try {
+      const headers: Record<string, string> = {
+        'User-Agent': 'aistudio-build-models-fetch',
+        'Content-Type': 'application/json',
+        ...customHeaders,
+      };
+      if (cleanKey) {
+        headers['Authorization'] = `Bearer ${cleanKey}`;
+      }
+
+      const resp = await fetch(urlCandidate, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(8000),
+      });
+
+      const tEnd = Date.now();
+      const endIso = new Date().toISOString();
+
+      if (resp.ok) {
+        const data = await resp.json();
+        const rawList = Array.isArray(data.data) ? data.data : (Array.isArray(data.models) ? data.models : (Array.isArray(data) ? data : []));
+
+        if (rawList && rawList.length > 0) {
+          const formatted = rawList.map((m: any) => {
+            const id = typeof m === 'string' ? m : m.id || m.name;
+            return {
+              id: String(id),
+              name: typeof m === 'object' && m.name ? m.name : String(id),
+              type: 'text',
+              owned_by: 'Proxy-Direct',
+            };
+          });
+
+          attemptsTrace.push({
+            attemptIndex: 3,
+            adapterName: 'Direct Endpoint Adapter (/models)',
+            protocolKey: 'openai_compatible',
+            finalUrl: maskedUrl,
+            method: 'GET',
+            authMethod: 'Authorization: Bearer ***',
+            timeoutMs: 8000,
+            startTime: startIso,
+            endTime: endIso,
+            latencyMs: tEnd - tStart,
+            httpStatus: resp.status,
+            success: true,
+            modelsCount: formatted.length,
+          });
+
+          return res.json({
+            success: true,
+            supported: true,
+            apiProtocol: 'openai_compatible',
+            models: formatted,
+            sourceEndpoint: maskedUrl,
+            message: `自动探测成功！匹配直连路径 /models，获取到 ${formatted.length} 个模型`,
+            attemptsTrace,
+            totalTimeMs: Date.now() - overallStartTime,
+          });
+        }
+      }
+
+      const errText = await resp.text().catch(() => '');
+      attemptsTrace.push({
+        attemptIndex: 3,
+        adapterName: 'Direct Endpoint Adapter (/models)',
+        protocolKey: 'openai_compatible',
+        finalUrl: maskedUrl,
+        method: 'GET',
+        authMethod: 'Authorization: Bearer ***',
+        timeoutMs: 8000,
+        startTime: startIso,
+        endTime: endIso,
+        latencyMs: tEnd - tStart,
+        httpStatus: resp.status,
+        success: false,
+        modelsCount: 0,
+        error: `HTTP ${resp.status}: ${errText.slice(0, 100) || '未返回有效模型列表'}`,
+      });
+    } catch (err: any) {
+      const tEnd = Date.now();
+      const endIso = new Date().toISOString();
+      attemptsTrace.push({
+        attemptIndex: 3,
+        adapterName: 'Direct Endpoint Adapter (/models)',
+        protocolKey: 'openai_compatible',
+        finalUrl: maskedUrl,
+        method: 'GET',
+        authMethod: 'Authorization: Bearer ***',
+        timeoutMs: 8000,
+        startTime: startIso,
+        endTime: endIso,
+        latencyMs: tEnd - tStart,
+        success: false,
+        modelsCount: 0,
+        error: err.name === 'AbortError' ? '请求超时 (8秒)' : (err.message || '网络连接异常'),
+      });
+    }
+  }
+
+  // All Auto-Probe attempts failed
+  return res.status(500).json({
+    success: false,
+    supported: false,
+    models: [],
+    message: '自动接口协议探测失败：当前 Base URL 与 API Key 均无法通过 OpenAI 兼容或 Gemini 原生接口获取模型列表。请检查 Base URL 与 Key 是否正确，或尝试手动输入模型名称。',
+    attemptsTrace,
+    totalTimeMs: Date.now() - overallStartTime,
+  });
 });
 
 // =========================================================================
 // 0.3 核心 Provider 系统端点：测试指定模型 (Test Model Execution)
 // =========================================================================
 app.post('/api/provider/test-model', async (req, res) => {
-  const { providerType, baseUrl, apiKey, model, serviceType = 'text', testPrompt, customHeaders } = req.body;
+  const { providerType, baseUrl, apiKey, model, apiProtocol, serviceType = 'text', testPrompt, customHeaders } = req.body;
   const startTime = Date.now();
   const prompt = testPrompt || '请仅回复一句话：模型链路测试正常，已准备就绪！';
 
@@ -834,6 +1013,7 @@ app.post('/api/provider/test-model', async (req, res) => {
       apiKey,
       baseUrl,
       providerType,
+      apiProtocol,
       temperature: 0.3,
       timeoutMs: 25000,
       customHeaders,

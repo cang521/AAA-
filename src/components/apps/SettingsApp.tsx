@@ -149,6 +149,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     targetUrl?: string;
     backendHealthOk?: boolean;
     failureStage?: string;
+    upstreamDiagnostics?: any;
+    attemptsTrace?: any;
   } | null>(null);
 
   // Single Model Test States
@@ -435,13 +437,40 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         responseMessage: data.message || (data.success ? `成功获取 ${data.models?.length || 0} 个模型` : ''),
         responseError: data.error || '',
         failureStage: stage,
+        upstreamDiagnostics: (data as any).upstreamDiagnostics || null,
+        attemptsTrace: (data as any).attemptsTrace || null,
       });
 
       setModelFetchResult(data);
 
       if (data.success && data.models && data.models.length > 0) {
         setFetchedModels(data.models);
-        setSaveSuccessMsg(`🎉 成功从 API 服务端获取到 ${data.models.length} 个真实模型！`);
+
+        // 自动将后端自动探测得出的 apiProtocol 回写并持久化写回 ai_phone_api_settings_v1
+        const detectedProtocol = (data as any).apiProtocol;
+        if (detectedProtocol) {
+          setSettings((prev) => {
+            const nextSettings = {
+              ...prev,
+              [activeCategory]: {
+                ...prev[activeCategory],
+                apiProtocol: detectedProtocol,
+              },
+            };
+            saveApiSettings(nextSettings);
+            addDiagnosticLog({
+              tag: '[SETTINGS_WRITE:AUTO_PROTOCOL_PERSISTED]',
+              baseUrlLen: nextSettings.text.baseUrl?.length || 0,
+              baseUrlVal: nextSettings.text.baseUrl || '',
+              keyLen: nextSettings.text.apiKey?.length || 0,
+              keyLast4: (nextSettings.text.apiKey || '').slice(-4),
+              details: `Auto-detected protocol [${detectedProtocol}] persisted for ${activeCategory}`,
+            });
+            return nextSettings;
+          });
+        }
+
+        setSaveSuccessMsg(`🎉 探测成功！匹配 [${detectedProtocol || '通用协议'}]，获取到 ${data.models.length} 个真实模型！`);
         setTimeout(() => setSaveSuccessMsg(''), 4000);
       }
     } catch (e: any) {
@@ -476,6 +505,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     const baseUrl = activeConfig.baseUrl || '';
     const apiKey = activeConfig.apiKey || '';
     const model = activeConfig.model || '';
+    const apiProtocol = activeConfig.apiProtocol || '';
 
     try {
       const res = await apiFetch('/api/provider/test-model', {
@@ -486,6 +516,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           baseUrl,
           apiKey,
           model,
+          apiProtocol,
           serviceType: activeCategory,
         }),
       });

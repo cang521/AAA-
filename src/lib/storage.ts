@@ -506,18 +506,21 @@ export function saveApiConfig(c: ApiConfig): void {
       baseUrl: c.textApiConfig?.baseUrl ?? current.text.baseUrl,
       apiKey: c.textApiConfig?.apiKey ?? current.text.apiKey,
       model: c.textApiConfig?.model || current.text.model,
+      apiProtocol: c.textApiConfig?.apiProtocol ?? current.text.apiProtocol,
     },
     image: {
       provider: c.imageApiConfig?.provider || current.image.provider,
       baseUrl: c.imageApiConfig?.baseUrl ?? current.image.baseUrl,
       apiKey: c.imageApiConfig?.apiKey ?? current.image.apiKey,
       model: c.imageApiConfig?.model || current.image.model,
+      apiProtocol: c.imageApiConfig?.apiProtocol ?? current.image.apiProtocol,
     },
     voice: {
       provider: c.voiceApiConfig?.provider || current.voice.provider,
       baseUrl: c.voiceApiConfig?.baseUrl ?? current.voice.baseUrl,
       apiKey: c.voiceApiConfig?.apiKey ?? current.voice.apiKey,
       model: c.voiceApiConfig?.model || current.voice.model,
+      apiProtocol: c.voiceApiConfig?.apiProtocol ?? current.voice.apiProtocol,
     },
   });
 }

@@ -138,6 +138,31 @@ export interface ApiSettingsPanelProps {
     targetUrl?: string;
     backendHealthOk?: boolean;
     failureStage?: string;
+    upstreamDiagnostics?: {
+      upstreamProtocol?: string;
+      finalUpstreamUrl?: string;
+      httpMethod?: string;
+      authMethod?: string;
+      timeoutMs?: number;
+      upstreamStartTime?: string;
+      upstreamEndTime?: string;
+    } | null;
+    attemptsTrace?: Array<{
+      attemptIndex: number;
+      adapterName: string;
+      protocolKey: string;
+      finalUrl: string;
+      method: string;
+      authMethod: string;
+      timeoutMs: number;
+      startTime: string;
+      endTime: string;
+      latencyMs: number;
+      httpStatus?: number;
+      success: boolean;
+      modelsCount: number;
+      error?: string;
+    }> | null;
   } | null;
   savedVerification?: ApiSettings | null;
 }
@@ -1309,6 +1334,56 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
           <div>• 是否 Native 平台: <span className="text-amber-300 font-bold">{Capacitor.isNativePlatform() ? '是 (Native APK)' : '否 (Web/Preview)'}</span></div>
           <div>• Capacitor 平台: <span className="text-sky-300">{Capacitor.getPlatform()}</span></div>
           <div>• 127.0.0.1:3000 健康状态: <span className={liveHealth.includes('健康') ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{liveHealth}</span></div>
+        </div>
+
+        {/* 6. 上游请求协议与多 Adapter 探测诊断 */}
+        <div className="space-y-2 bg-zinc-950/90 p-2.5 rounded-xl border border-sky-500/30">
+          <div className="text-sky-300 font-bold text-[11px] font-sans flex items-center justify-between">
+            <span>6. 上游请求协议与多 Adapter 自动探测诊断：</span>
+          </div>
+
+          {fetchDebugInfo?.attemptsTrace && fetchDebugInfo.attemptsTrace.length > 0 ? (
+            <div className="space-y-1.5 mt-1">
+              <div className="text-[10px] text-zinc-400 font-semibold">探测历程 (共 {fetchDebugInfo.attemptsTrace.length} 次尝试)：</div>
+              {fetchDebugInfo.attemptsTrace.map((att) => (
+                <div
+                  key={att.attemptIndex}
+                  className={`p-2 rounded-lg text-[10px] font-mono border ${
+                    att.success
+                      ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+                      : 'bg-zinc-900 border-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-bold">
+                    <span>
+                      Attempt #{att.attemptIndex}: {att.adapterName}
+                    </span>
+                    <span className={att.success ? 'text-emerald-400' : 'text-rose-400'}>
+                      {att.success ? `SUCCESS (获取 ${att.modelsCount} 个模型)` : `FAILED (${att.httpStatus || 'Timeout'})`}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-sky-300/80 break-all">• URL: {att.finalUrl}</div>
+                  <div className="mt-0.5 text-zinc-400 flex flex-wrap gap-x-3">
+                    <span>Auth: {att.authMethod}</span>
+                    <span>耗时: {att.latencyMs}ms</span>
+                    <span>超时限制: {att.timeoutMs}ms</span>
+                  </div>
+                  {att.error && <div className="mt-0.5 text-rose-300">• 错误信息: {att.error}</div>}
+                </div>
+              ))}
+            </div>
+          ) : fetchDebugInfo?.upstreamDiagnostics ? (
+            <div className="space-y-0.5 text-[10px]">
+              <div>• Upstream Protocol: <span className="text-amber-300 font-bold">{fetchDebugInfo.upstreamDiagnostics.upstreamProtocol}</span></div>
+              <div>• Final Upstream URL: <span className="text-sky-300 break-all">{fetchDebugInfo.upstreamDiagnostics.finalUpstreamUrl}</span></div>
+              <div>• HTTP Method: <span className="text-emerald-300 font-bold">{fetchDebugInfo.upstreamDiagnostics.httpMethod}</span></div>
+              <div>• Auth Method: <span className="text-purple-300">{fetchDebugInfo.upstreamDiagnostics.authMethod}</span></div>
+            </div>
+          ) : (
+            <div className="text-zinc-500 italic text-[10px]">
+              点击「拉取模型」后，系统将自动发起多协议链路顺序探测并展示结果
+            </div>
+          )}
         </div>
       </div>
     </div>

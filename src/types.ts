@@ -326,6 +326,7 @@ export interface SingleApiConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
+  apiProtocol?: string;
 }
 
 export interface ApiConfig {
