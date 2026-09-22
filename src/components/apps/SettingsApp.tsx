@@ -98,23 +98,6 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   const settingsAppRenderCount = React.useRef(0);
   settingsAppRenderCount.current += 1;
 
-  useEffect(() => {
-    const renderIdx = settingsAppRenderCount.current;
-    const baseLen = settings.text?.baseUrl?.length || 0;
-    const keyLen = settings.text?.apiKey?.length || 0;
-    const keyLast4 = (settings.text?.apiKey || '').slice(-4);
-
-    addDiagnosticLog({
-      tag: `[SETTINGSAPP_RENDER] #${renderIdx}`,
-      baseUrlLen: baseLen,
-      baseUrlVal: settings.text?.baseUrl || '',
-      keyLen: keyLen,
-      keyLast4: keyLast4,
-      renderIndex: renderIdx,
-      details: `SettingsApp state check: baseUrl len=${baseLen}, apiKey len=${keyLen} (last4=${keyLast4})`,
-    });
-  });
-
   const [controls, setControls] = useState<AiControls>(aiControls);
 
   // Active Provider Category Tab

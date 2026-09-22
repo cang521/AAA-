@@ -251,23 +251,6 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
     });
   }, []);
 
-  useEffect(() => {
-    const renderIdx = panelRenderCount.current;
-    const baseLen = settings.text?.baseUrl?.length || 0;
-    const keyLen = settings.text?.apiKey?.length || 0;
-    const keyLast4 = (settings.text?.apiKey || '').slice(-4);
-
-    addDiagnosticLog({
-      tag: `[STATE_RENDER] #${renderIdx}`,
-      baseUrlLen: baseLen,
-      baseUrlVal: settings.text?.baseUrl || '',
-      keyLen: keyLen,
-      keyLast4: keyLast4,
-      renderIndex: renderIdx,
-      details: `Provider=${settings.text?.provider || 'custom'}, Model=${settings.text?.model || ''}`,
-    });
-  });
-
   const currentCategoryConfig = settings[activeCategory];
   const currentTextKey = settings.text.apiKey || '';
   const currentTextBaseUrl = settings.text.baseUrl || '';
@@ -505,7 +488,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   return next;
                 });
               }}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
             />
           </div>
 
@@ -584,7 +567,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                     return next;
                   });
                 }}
-                className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
+                className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
               />
               <button
                 type="button"
@@ -657,7 +640,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   return next;
                 });
               }}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
             />
           </div>
 
@@ -809,7 +792,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   return next;
                 });
               }}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
             />
           </div>
 
@@ -856,7 +839,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                     return next;
                   });
                 }}
-                className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
+                className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
               />
               <button
                 type="button"
@@ -894,7 +877,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   return next;
                 });
               }}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition select-text"
             />
           </div>
 
@@ -968,7 +951,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   return next;
                 });
               }}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
             />
           </div>
 
@@ -1015,7 +998,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                     return next;
                   });
                 }}
-                className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition"
+                className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
               />
               <button
                 type="button"
@@ -1053,7 +1036,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   return next;
                 });
               }}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition select-text"
             />
           </div>
 

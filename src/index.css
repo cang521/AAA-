@@ -71,3 +71,12 @@ html, body, #root {
 .bottom-safe {
   bottom: var(--safe-area-bottom);
 }
+
+/* 确保可编辑表单元素不受父级 select-none 影响，恢复 Android 原生长按/复制/粘贴/选择与 Callout 菜单 */
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  -webkit-touch-callout: default !important;
+}
