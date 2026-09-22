@@ -11,6 +11,7 @@ import {
 import {
   ApiSettings,
   loadApiSettings,
+  saveApiSettings,
 } from '../../lib/apiConfigStore';
 import {
   addDiagnosticLog,
@@ -280,46 +281,40 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   const handleSelectPreset = (id: string) => {
     setSelectedPresetId(id);
     if (id === 'custom') {
-      setSettings((prev) => {
-        const next = {
-          ...prev,
-          text: { ...prev.text, provider: 'custom' },
-        };
-        addDiagnosticLog({
-          tag: '[SETTINGS_WRITE:PANEL_SELECT_PRESET_CUSTOM]',
-          baseUrlLen: next.text.baseUrl?.length || 0,
-          baseUrlVal: next.text.baseUrl || '',
-          keyLen: next.text.apiKey?.length || 0,
-          keyLast4: (next.text.apiKey || '').slice(-4),
-          details: 'select preset custom',
-        });
-        return next;
+      addDiagnosticLog({
+        tag: '[SETTINGS_WRITE:PANEL_SELECT_PRESET_CUSTOM]',
+        baseUrlLen: currentTextBaseUrl.length,
+        baseUrlVal: currentTextBaseUrl,
+        keyLen: currentTextKey.length,
+        keyLast4: currentTextKey.slice(-4),
+        details: 'select preset custom',
       });
+      setSettings((prev) => ({
+        ...prev,
+        text: { ...prev.text, provider: 'custom' },
+      }));
       return;
     }
     const found = customPresets.find((p) => p.id === id);
     if (found) {
-      setSettings((prev) => {
-        const next = {
-          ...prev,
-          text: {
-            ...prev.text,
-            provider: 'custom',
-            baseUrl: found.baseUrl,
-            apiKey: found.apiKey || prev.text.apiKey || '',
-            model: found.model,
-          },
-        };
-        addDiagnosticLog({
-          tag: '[SETTINGS_WRITE:PANEL_SELECT_PRESET_FOUND]',
-          baseUrlLen: next.text.baseUrl?.length || 0,
-          baseUrlVal: next.text.baseUrl || '',
-          keyLen: next.text.apiKey?.length || 0,
-          keyLast4: (next.text.apiKey || '').slice(-4),
-          details: `select custom preset: ${found.name}`,
-        });
-        return next;
+      addDiagnosticLog({
+        tag: '[SETTINGS_WRITE:PANEL_SELECT_PRESET_FOUND]',
+        baseUrlLen: found.baseUrl?.length || 0,
+        baseUrlVal: found.baseUrl || '',
+        keyLen: (found.apiKey || currentTextKey).length,
+        keyLast4: (found.apiKey || currentTextKey).slice(-4),
+        details: `select custom preset: ${found.name}`,
       });
+      setSettings((prev) => ({
+        ...prev,
+        text: {
+          ...prev.text,
+          provider: 'custom',
+          baseUrl: found.baseUrl,
+          apiKey: found.apiKey || prev.text.apiKey || '',
+          model: found.model,
+        },
+      }));
       showNotice(`已切换到预设：${found.name}`);
     }
   };
@@ -355,28 +350,34 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
 
   // 清空 / 删除当前的自定义配置内容
   const handleClearCurrentConfig = () => {
-    setSettings((prev) => {
-      const prevBaseLen = prev.text?.baseUrl?.length || 0;
-      const prevKeyLen = prev.text?.apiKey?.length || 0;
-      const next = {
-        ...prev,
-        text: {
-          provider: 'custom',
-          baseUrl: '',
-          apiKey: '',
-          model: '',
-        },
-      };
+    if (currentTextBaseUrl.length > 0 || currentTextKey.length > 0) {
       addDiagnosticLog({
-        tag: '[SETTINGS_WRITE:PANEL_CLEAR_CURRENT_CONFIG]',
+        tag: '[CLEAR_DETECTED]',
         baseUrlLen: 0,
         baseUrlVal: '',
         keyLen: 0,
         keyLast4: '',
-        details: `CLEARED! baseLen: ${prevBaseLen} -> 0, keyLen: ${prevKeyLen} -> 0`,
+        details: `source: handleClearCurrentConfig button, previousBaseUrlLength: ${currentTextBaseUrl.length}, previousKeyLength: ${currentTextKey.length}`,
       });
-      return next;
+    }
+    addDiagnosticLog({
+      tag: '[SETTINGS_WRITE:PANEL_CLEAR_CURRENT_CONFIG]',
+      baseUrlLen: 0,
+      baseUrlVal: '',
+      keyLen: 0,
+      keyLast4: '',
+      details: 'CLEARED current config',
     });
+
+    setSettings((prev) => ({
+      ...prev,
+      text: {
+        provider: 'custom',
+        baseUrl: '',
+        apiKey: '',
+        model: '',
+      },
+    }));
     setSelectedPresetId('custom');
     showNotice('已清空当前自定义配置');
   };
@@ -453,40 +454,30 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   details: `onChange triggered at ${now}, rawValue="${val}" (len=${val.length})`,
                 });
 
-                setSettings((prev) => {
-                  const prevBaseLen = prev.text?.baseUrl?.length || 0;
-                  const prevKeyLen = prev.text?.apiKey?.length || 0;
-                  const prevKeyLast4 = (prev.text?.apiKey || '').slice(-4);
-
+                if (currentTextBaseUrl.length > 0 && val.length === 0) {
                   addDiagnosticLog({
-                    tag: '[BASE_STATE_BEFORE]',
-                    baseUrlLen: prevBaseLen,
-                    baseUrlVal: prev.text?.baseUrl || '',
-                    keyLen: prevKeyLen,
-                    keyLast4: prevKeyLast4,
-                    details: `prev.text.baseUrl="${prev.text?.baseUrl || ''}" (len=${prevBaseLen})`,
+                    tag: '[CLEAR_DETECTED]',
+                    baseUrlLen: 0,
+                    baseUrlVal: '',
+                    keyLen: currentTextKey.length,
+                    keyLast4: currentTextKey.slice(-4),
+                    details: `source: Base URL input cleared, previousBaseUrlLength: ${currentTextBaseUrl.length}, nextBaseUrlLength: 0`,
                   });
+                }
 
-                  const next = {
-                    ...prev,
-                    text: { ...prev.text, baseUrl: val },
-                  };
-
-                  const nextBaseLen = next.text?.baseUrl?.length || 0;
-                  const nextKeyLen = next.text?.apiKey?.length || 0;
-                  const nextKeyLast4 = (next.text?.apiKey || '').slice(-4);
-
-                  addDiagnosticLog({
-                    tag: '[SETTINGS_WRITE:BASE_INPUT]',
-                    baseUrlLen: nextBaseLen,
-                    baseUrlVal: next.text?.baseUrl || '',
-                    keyLen: nextKeyLen,
-                    keyLast4: nextKeyLast4,
-                    details: `[BASE_STATE_NEXT] baseLen: ${prevBaseLen} -> ${nextBaseLen}`,
-                  });
-
-                  return next;
+                addDiagnosticLog({
+                  tag: '[SETTINGS_WRITE:BASE_INPUT]',
+                  baseUrlLen: val.length,
+                  baseUrlVal: val,
+                  keyLen: currentTextKey.length,
+                  keyLast4: currentTextKey.slice(-4),
+                  details: `[BASE_STATE_NEXT] baseLen: ${currentTextBaseUrl.length} -> ${val.length}`,
                 });
+
+                setSettings((prev) => ({
+                  ...prev,
+                  text: { ...prev.text, baseUrl: val },
+                }));
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
             />
@@ -532,40 +523,30 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                     details: `onChange triggered at ${now}, keyLen=${val.length}, last4=${last4}`,
                   });
 
-                  setSettings((prev) => {
-                    const prevBaseLen = prev.text?.baseUrl?.length || 0;
-                    const prevKeyLen = prev.text?.apiKey?.length || 0;
-                    const prevKeyLast4 = (prev.text?.apiKey || '').slice(-4);
-
+                  if (currentTextKey.length > 0 && val.length === 0) {
                     addDiagnosticLog({
-                      tag: '[KEY_STATE_BEFORE]',
-                      baseUrlLen: prevBaseLen,
-                      baseUrlVal: prev.text?.baseUrl || '',
-                      keyLen: prevKeyLen,
-                      keyLast4: prevKeyLast4,
-                      details: `prev.text.apiKey len=${prevKeyLen}, last4=${prevKeyLast4}`,
+                      tag: '[CLEAR_DETECTED]',
+                      baseUrlLen: currentTextBaseUrl.length,
+                      baseUrlVal: currentTextBaseUrl,
+                      keyLen: 0,
+                      keyLast4: '',
+                      details: `source: API Key input cleared, previousKeyLength: ${currentTextKey.length}, nextKeyLength: 0`,
                     });
+                  }
 
-                    const next = {
-                      ...prev,
-                      text: { ...prev.text, apiKey: val },
-                    };
-
-                    const nextBaseLen = next.text?.baseUrl?.length || 0;
-                    const nextKeyLen = next.text?.apiKey?.length || 0;
-                    const nextKeyLast4 = (next.text?.apiKey || '').slice(-4);
-
-                    addDiagnosticLog({
-                      tag: '[SETTINGS_WRITE:KEY_INPUT]',
-                      baseUrlLen: nextBaseLen,
-                      baseUrlVal: next.text?.baseUrl || '',
-                      keyLen: nextKeyLen,
-                      keyLast4: nextKeyLast4,
-                      details: `[KEY_STATE_NEXT] keyLen: ${prevKeyLen} -> ${nextKeyLen}, last4=${nextKeyLast4}`,
-                    });
-
-                    return next;
+                  addDiagnosticLog({
+                    tag: '[SETTINGS_WRITE:KEY_INPUT]',
+                    baseUrlLen: currentTextBaseUrl.length,
+                    baseUrlVal: currentTextBaseUrl,
+                    keyLen: val.length,
+                    keyLast4: last4,
+                    details: `[KEY_STATE_NEXT] keyLen: ${currentTextKey.length} -> ${val.length}, last4=${last4}`,
                   });
+
+                  setSettings((prev) => ({
+                    ...prev,
+                    text: { ...prev.text, apiKey: val },
+                  }));
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
               />
@@ -596,6 +577,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                         ...prev,
                         text: { ...prev.text, model: val },
                       };
+                      saveApiSettings(next);
                       addDiagnosticLog({
                         tag: '[SETTINGS_WRITE:PANEL_TEXT_MODEL_SELECT]',
                         baseUrlLen: next.text.baseUrl?.length || 0,
@@ -624,21 +606,18 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={settings.text.model || ''}
               onChange={(e) => {
                 const val = e.target.value;
-                setSettings((prev) => {
-                  const next = {
-                    ...prev,
-                    text: { ...prev.text, model: val },
-                  };
-                  addDiagnosticLog({
-                    tag: '[SETTINGS_WRITE:PANEL_TEXT_MODEL_INPUT]',
-                    baseUrlLen: next.text.baseUrl?.length || 0,
-                    baseUrlVal: next.text.baseUrl || '',
-                    keyLen: next.text.apiKey?.length || 0,
-                    keyLast4: (next.text.apiKey || '').slice(-4),
-                    details: `model input val="${val}"`,
-                  });
-                  return next;
+                addDiagnosticLog({
+                  tag: '[SETTINGS_WRITE:PANEL_TEXT_MODEL_INPUT]',
+                  baseUrlLen: currentTextBaseUrl.length,
+                  baseUrlVal: currentTextBaseUrl,
+                  keyLen: currentTextKey.length,
+                  keyLast4: currentTextKey.slice(-4),
+                  details: `model input val="${val}"`,
                 });
+                setSettings((prev) => ({
+                  ...prev,
+                  text: { ...prev.text, model: val },
+                }));
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
             />
@@ -776,21 +755,18 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={settings.image.baseUrl || ''}
               onChange={(e) => {
                 const val = e.target.value;
-                setSettings((prev) => {
-                  const next = {
-                    ...prev,
-                    image: { ...prev.image, baseUrl: val },
-                  };
-                  addDiagnosticLog({
-                    tag: '[SETTINGS_WRITE:PANEL_IMAGE_BASE_URL_INPUT]',
-                    baseUrlLen: prev.text.baseUrl?.length || 0,
-                    baseUrlVal: prev.text.baseUrl || '',
-                    keyLen: prev.text.apiKey?.length || 0,
-                    keyLast4: (prev.text.apiKey || '').slice(-4),
-                    details: `image.baseUrl changed to "${val}"`,
-                  });
-                  return next;
+                addDiagnosticLog({
+                  tag: '[SETTINGS_WRITE:PANEL_IMAGE_BASE_URL_INPUT]',
+                  baseUrlLen: currentTextBaseUrl.length,
+                  baseUrlVal: currentTextBaseUrl,
+                  keyLen: currentTextKey.length,
+                  keyLast4: currentTextKey.slice(-4),
+                  details: `image.baseUrl changed to "${val}"`,
                 });
+                setSettings((prev) => ({
+                  ...prev,
+                  image: { ...prev.image, baseUrl: val },
+                }));
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
             />
@@ -823,21 +799,18 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 value={currentImageKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  setSettings((prev) => {
-                    const next = {
-                      ...prev,
-                      image: { ...prev.image, apiKey: val },
-                    };
-                    addDiagnosticLog({
-                      tag: '[SETTINGS_WRITE:PANEL_IMAGE_KEY_INPUT]',
-                      baseUrlLen: prev.text.baseUrl?.length || 0,
-                      baseUrlVal: prev.text.baseUrl || '',
-                      keyLen: prev.text.apiKey?.length || 0,
-                      keyLast4: (prev.text.apiKey || '').slice(-4),
-                      details: `image.apiKey changed (len=${val.length})`,
-                    });
-                    return next;
+                  addDiagnosticLog({
+                    tag: '[SETTINGS_WRITE:PANEL_IMAGE_KEY_INPUT]',
+                    baseUrlLen: currentTextBaseUrl.length,
+                    baseUrlVal: currentTextBaseUrl,
+                    keyLen: currentTextKey.length,
+                    keyLast4: currentTextKey.slice(-4),
+                    details: `image.apiKey changed (len=${val.length})`,
                   });
+                  setSettings((prev) => ({
+                    ...prev,
+                    image: { ...prev.image, apiKey: val },
+                  }));
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
               />
@@ -861,21 +834,18 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={settings.image.model || ''}
               onChange={(e) => {
                 const val = e.target.value;
-                setSettings((prev) => {
-                  const next = {
-                    ...prev,
-                    image: { ...prev.image, model: val },
-                  };
-                  addDiagnosticLog({
-                    tag: '[SETTINGS_WRITE:PANEL_IMAGE_MODEL_INPUT]',
-                    baseUrlLen: prev.text.baseUrl?.length || 0,
-                    baseUrlVal: prev.text.baseUrl || '',
-                    keyLen: prev.text.apiKey?.length || 0,
-                    keyLast4: (prev.text.apiKey || '').slice(-4),
-                    details: `image.model changed to "${val}"`,
-                  });
-                  return next;
+                addDiagnosticLog({
+                  tag: '[SETTINGS_WRITE:PANEL_IMAGE_MODEL_INPUT]',
+                  baseUrlLen: currentTextBaseUrl.length,
+                  baseUrlVal: currentTextBaseUrl,
+                  keyLen: currentTextKey.length,
+                  keyLast4: currentTextKey.slice(-4),
+                  details: `image.model changed to "${val}"`,
                 });
+                setSettings((prev) => ({
+                  ...prev,
+                  image: { ...prev.image, model: val },
+                }));
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition select-text"
             />
@@ -935,21 +905,18 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={settings.voice.baseUrl || ''}
               onChange={(e) => {
                 const val = e.target.value;
-                setSettings((prev) => {
-                  const next = {
-                    ...prev,
-                    voice: { ...prev.voice, baseUrl: val },
-                  };
-                  addDiagnosticLog({
-                    tag: '[SETTINGS_WRITE:PANEL_VOICE_BASE_URL_INPUT]',
-                    baseUrlLen: prev.text.baseUrl?.length || 0,
-                    baseUrlVal: prev.text.baseUrl || '',
-                    keyLen: prev.text.apiKey?.length || 0,
-                    keyLast4: (prev.text.apiKey || '').slice(-4),
-                    details: `voice.baseUrl changed to "${val}"`,
-                  });
-                  return next;
+                addDiagnosticLog({
+                  tag: '[SETTINGS_WRITE:PANEL_VOICE_BASE_URL_INPUT]',
+                  baseUrlLen: currentTextBaseUrl.length,
+                  baseUrlVal: currentTextBaseUrl,
+                  keyLen: currentTextKey.length,
+                  keyLast4: currentTextKey.slice(-4),
+                  details: `voice.baseUrl changed to "${val}"`,
                 });
+                setSettings((prev) => ({
+                  ...prev,
+                  voice: { ...prev.voice, baseUrl: val },
+                }));
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
             />
@@ -982,21 +949,18 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 value={currentVoiceKey}
                 onChange={(e) => {
                   const val = e.target.value;
-                  setSettings((prev) => {
-                    const next = {
-                      ...prev,
-                      voice: { ...prev.voice, apiKey: val },
-                    };
-                    addDiagnosticLog({
-                      tag: '[SETTINGS_WRITE:PANEL_VOICE_KEY_INPUT]',
-                      baseUrlLen: prev.text.baseUrl?.length || 0,
-                      baseUrlVal: prev.text.baseUrl || '',
-                      keyLen: prev.text.apiKey?.length || 0,
-                      keyLast4: (prev.text.apiKey || '').slice(-4),
-                      details: `voice.apiKey changed (len=${val.length})`,
-                    });
-                    return next;
+                  addDiagnosticLog({
+                    tag: '[SETTINGS_WRITE:PANEL_VOICE_KEY_INPUT]',
+                    baseUrlLen: currentTextBaseUrl.length,
+                    baseUrlVal: currentTextBaseUrl,
+                    keyLen: currentTextKey.length,
+                    keyLast4: currentTextKey.slice(-4),
+                    details: `voice.apiKey changed (len=${val.length})`,
                   });
+                  setSettings((prev) => ({
+                    ...prev,
+                    voice: { ...prev.voice, apiKey: val },
+                  }));
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
               />
@@ -1020,21 +984,18 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               value={settings.voice.model || ''}
               onChange={(e) => {
                 const val = e.target.value;
-                setSettings((prev) => {
-                  const next = {
-                    ...prev,
-                    voice: { ...prev.voice, model: val },
-                  };
-                  addDiagnosticLog({
-                    tag: '[SETTINGS_WRITE:PANEL_VOICE_MODEL_INPUT]',
-                    baseUrlLen: prev.text.baseUrl?.length || 0,
-                    baseUrlVal: prev.text.baseUrl || '',
-                    keyLen: prev.text.apiKey?.length || 0,
-                    keyLast4: (prev.text.apiKey || '').slice(-4),
-                    details: `voice.model changed to "${val}"`,
-                  });
-                  return next;
+                addDiagnosticLog({
+                  tag: '[SETTINGS_WRITE:PANEL_VOICE_MODEL_INPUT]',
+                  baseUrlLen: currentTextBaseUrl.length,
+                  baseUrlVal: currentTextBaseUrl,
+                  keyLen: currentTextKey.length,
+                  keyLast4: currentTextKey.slice(-4),
+                  details: `voice.model changed to "${val}"`,
                 });
+                setSettings((prev) => ({
+                  ...prev,
+                  voice: { ...prev.voice, model: val },
+                }));
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition select-text"
             />
