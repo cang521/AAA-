@@ -258,16 +258,6 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   const currentImageKey = settings.image.apiKey || '';
   const currentVoiceKey = settings.voice.apiKey || '';
 
-  // 只读诊断：记录 DOM / State 比对
-  addDiagnosticLog({
-    tag: '[INPUT_STATE_COMPARE]',
-    baseUrlLen: currentTextBaseUrl.length,
-    baseUrlVal: currentTextBaseUrl,
-    keyLen: currentTextKey.length,
-    keyLast4: currentTextKey.slice(-4),
-    details: `INPUT_STATE_COMPARE: text.baseUrl len=${currentTextBaseUrl.length}, text.apiKey len=${currentTextKey.length}`,
-  });
-
   // 自定义配置列表状态
   const [customPresets, setCustomPresets] = useState<CustomPresetItem[]>(loadSavedPresets);
   const [showPresetManager, setShowPresetManager] = useState<boolean>(false);
@@ -614,22 +604,18 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 onChange={(e) => {
                   const val = e.target.value;
                   if (val) {
-                    setSettings((prev) => {
-                      const next = {
-                        ...prev,
-                        text: { ...prev.text, model: val },
-                      };
-                      saveApiSettings(next);
-                      addDiagnosticLog({
-                        tag: '[SETTINGS_WRITE:PANEL_TEXT_MODEL_SELECT]',
-                        baseUrlLen: next.text.baseUrl?.length || 0,
-                        baseUrlVal: next.text.baseUrl || '',
-                        keyLen: next.text.apiKey?.length || 0,
-                        keyLast4: (next.text.apiKey || '').slice(-4),
-                        details: `model select val="${val}"`,
-                      });
-                      return next;
+                    addDiagnosticLog({
+                      tag: '[SETTINGS_WRITE:PANEL_TEXT_MODEL_SELECT]',
+                      baseUrlLen: currentTextBaseUrl.length,
+                      baseUrlVal: currentTextBaseUrl,
+                      keyLen: currentTextKey.length,
+                      keyLast4: currentTextKey.slice(-4),
+                      details: `model select val="${val}"`,
                     });
+                    setSettings((prev) => ({
+                      ...prev,
+                      text: { ...prev.text, model: val },
+                    }));
                   }
                 }}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs font-mono focus:outline-none focus:border-zinc-500 mb-1.5"
