@@ -273,12 +273,38 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   };
 
   const handleGlobalSave = () => {
+    onSaveAiControls(controls);
+
+    const currentText = settings.text;
+    const hasBaseUrl = Boolean(currentText && currentText.baseUrl && currentText.baseUrl.trim().length > 0);
+    const hasApiKey = Boolean(currentText && currentText.apiKey && currentText.apiKey.trim().length > 0);
+
+    if (!hasApiKey && !hasBaseUrl) {
+      addDiagnosticLog({
+        tag: '[SAVE_REJECTED]',
+        baseUrlLen: 0,
+        baseUrlVal: '',
+        keyLen: 0,
+        keyLast4: '',
+        details: 'Save rejected: text.baseUrl and text.apiKey are both empty',
+      });
+      setSaveSuccessMsg('⚠️ 未检测到已配置的 Base URL 或 API Key，请先输入后再点击保存。');
+      setTimeout(() => setSaveSuccessMsg(''), 4000);
+      return;
+    }
+
     saveApiSettings(settings);
     const verify = loadApiSettings();
     setSavedVerification(verify);
-    onSaveAiControls(controls);
 
-    setSaveSuccessMsg('🎉 全局 API Provider 配置与系统设置已保存生效！');
+    const isBaseMatch = (verify.text?.baseUrl || '') === (settings.text?.baseUrl || '');
+    const isKeyMatch = (verify.text?.apiKey || '') === (settings.text?.apiKey || '');
+
+    if (isBaseMatch && isKeyMatch) {
+      setSaveSuccessMsg('🎉 全局 API Provider 配置与系统设置已保存生效！');
+    } else {
+      setSaveSuccessMsg('⚠️ 保存校验异常：写入存储与内存 State 不完全匹配。');
+    }
     setTimeout(() => setSaveSuccessMsg(''), 3500);
   };
 

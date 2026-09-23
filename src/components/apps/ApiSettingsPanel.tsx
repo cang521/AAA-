@@ -258,6 +258,16 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   const currentImageKey = settings.image.apiKey || '';
   const currentVoiceKey = settings.voice.apiKey || '';
 
+  // 只读诊断：记录 DOM / State 比对
+  addDiagnosticLog({
+    tag: '[INPUT_STATE_COMPARE]',
+    baseUrlLen: currentTextBaseUrl.length,
+    baseUrlVal: currentTextBaseUrl,
+    keyLen: currentTextKey.length,
+    keyLast4: currentTextKey.slice(-4),
+    details: `INPUT_STATE_COMPARE: text.baseUrl len=${currentTextBaseUrl.length}, text.apiKey len=${currentTextKey.length}`,
+  });
+
   // 自定义配置列表状态
   const [customPresets, setCustomPresets] = useState<CustomPresetItem[]>(loadSavedPresets);
   const [showPresetManager, setShowPresetManager] = useState<boolean>(false);
@@ -441,6 +451,13 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               type="text"
               placeholder="https://api.openai.com/v1 或留空使用默认"
               value={currentTextBaseUrl}
+              onInput={(e) => {
+                const val = (e.currentTarget as HTMLInputElement).value;
+                setSettings((prev) => ({
+                  ...prev,
+                  text: { ...prev.text, baseUrl: val },
+                }));
+              }}
               onChange={(e) => {
                 const val = e.target.value;
                 const now = new Date().toLocaleTimeString();
@@ -479,6 +496,15 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   text: { ...prev.text, baseUrl: val },
                 }));
               }}
+              onBlur={(e) => {
+                const val = e.target.value;
+                if (val !== currentTextBaseUrl) {
+                  setSettings((prev) => ({
+                    ...prev,
+                    text: { ...prev.text, baseUrl: val },
+                  }));
+                }
+              }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
             />
           </div>
@@ -509,6 +535,13 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 type={showTextKey ? 'text' : 'password'}
                 placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
                 value={currentTextKey}
+                onInput={(e) => {
+                  const val = (e.currentTarget as HTMLInputElement).value;
+                  setSettings((prev) => ({
+                    ...prev,
+                    text: { ...prev.text, apiKey: val },
+                  }));
+                }}
                 onChange={(e) => {
                   const val = e.target.value;
                   const now = new Date().toLocaleTimeString();
@@ -547,6 +580,15 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                     ...prev,
                     text: { ...prev.text, apiKey: val },
                   }));
+                }}
+                onBlur={(e) => {
+                  const val = e.target.value;
+                  if (val !== currentTextKey) {
+                    setSettings((prev) => ({
+                      ...prev,
+                      text: { ...prev.text, apiKey: val },
+                    }));
+                  }
                 }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
               />
