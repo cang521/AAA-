@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 /**
  * dataMigration.ts
  *
@@ -40,8 +42,8 @@ import { AI_PERMISSION_ITEMS, DEFAULT_SCENE_RULES } from './agent/PermissionMana
 
 // 当前应用架构与数据版本
 export const CURRENT_APP_DATA_VERSION = 2;
-export const CURRENT_APP_VERSION_CODE = 2;
-export const CURRENT_APP_VERSION_NAME = '1.1.0';
+export const CURRENT_APP_VERSION_CODE = Number(import.meta.env.VITE_APP_VERSION_CODE || 2);
+export const CURRENT_APP_VERSION_NAME = String(import.meta.env.VITE_APP_VERSION_NAME || '1.1.0');
 
 export const MIGRATION_STORAGE_KEYS = {
   APP_DATA_VERSION: 'phone_app_data_version',
@@ -175,7 +177,7 @@ async function inspectIndexedDbHealth(): Promise<{
 
   // 1. 检查聊天数据库
   try {
-    const chatDbReq = window.indexedDB.open('phone_chat_db');
+    const chatDbReq = window.indexedDB.open('PhoneSimChatDB_v2');
     await new Promise<void>((resolve) => {
       chatDbReq.onsuccess = () => {
         const db = chatDbReq.result;
@@ -211,7 +213,7 @@ async function inspectIndexedDbHealth(): Promise<{
 
   // 2. 检查记忆数据库
   try {
-    const memDbReq = window.indexedDB.open('phone_ai_memory_vault_db');
+    const memDbReq = window.indexedDB.open('PhoneSimAiMemoryDB_v1');
     await new Promise<void>((resolve) => {
       memDbReq.onsuccess = () => {
         const db = memDbReq.result;

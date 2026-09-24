@@ -26,6 +26,49 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      - name: Verify Signing Secrets & Setup Build Environment
+        shell: bash
+        run: |
+          set -e
+
+          KEYSTORE_BASE64="${{ secrets.ANDROID_KEYSTORE_BASE64 }}"
+          KEYSTORE_PASSWORD="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+          KEY_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
+          KEY_PASSWORD="${{ secrets.ANDROID_KEY_PASSWORD }}"
+
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "ERROR: One or more required keystore secrets are missing!"
+            echo "Missing check:"
+            [ -z "$KEYSTORE_BASE64" ] && echo " - ANDROID_KEYSTORE_BASE64 is empty"
+            [ -z "$KEYSTORE_PASSWORD" ] && echo " - ANDROID_KEYSTORE_PASSWORD is empty"
+            [ -z "$KEY_ALIAS" ] && echo " - ANDROID_KEY_ALIAS is empty"
+            [ -z "$KEY_PASSWORD" ] && echo " - ANDROID_KEY_PASSWORD is empty"
+            echo "Building without fixed signing is strictly disallowed. Aborting build."
+            exit 1
+          fi
+
+          KEYSTORE_PATH="$RUNNER_TEMP/xiaoshouji-signing.jks"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+
+          if [ ! -s "$KEYSTORE_PATH" ]; then
+            echo "ERROR: Failed to decode ANDROID_KEYSTORE_BASE64 or output keystore is empty!"
+            exit 1
+          fi
+
+          BUILD_CODE=$(( ${{ github.run_number }} + 1 ))
+          BUILD_NAME="1.1.${BUILD_CODE}"
+
+          echo "BUILD_CODE=${BUILD_CODE}" >> $GITHUB_ENV
+          echo "BUILD_NAME=${BUILD_NAME}" >> $GITHUB_ENV
+          echo "VITE_APP_VERSION_CODE=${BUILD_CODE}" >> $GITHUB_ENV
+          echo "VITE_APP_VERSION_NAME=${BUILD_NAME}" >> $GITHUB_ENV
+          echo "ANDROID_KEYSTORE_PATH=${KEYSTORE_PATH}" >> $GITHUB_ENV
+          echo "ANDROID_KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD}" >> $GITHUB_ENV
+          echo "ANDROID_KEY_ALIAS=${KEY_ALIAS}" >> $GITHUB_ENV
+          echo "ANDROID_KEY_PASSWORD=${KEY_PASSWORD}" >> $GITHUB_ENV
+
+          echo "Successfully configured fixed signing keystore and build version ${BUILD_NAME} (${BUILD_CODE})."
+
       - name: Install dependencies
         run: npm install
 
@@ -226,7 +269,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          gradle assembleDebug --stacktrace --console=plain 2>&1 | tee ../build.log
+          gradle assembleDebug -PversionCode=${BUILD_CODE} -PversionName="${BUILD_NAME}" --stacktrace --console=plain 2>&1 | tee ../build.log
           STATUS=${PIPESTATUS[0]}
 
           echo ""

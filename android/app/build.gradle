@@ -18,11 +18,18 @@ android {
     }
     signingConfigs {
         debug {
-            if (file("debug.keystore").exists()) {
-                storeFile file("debug.keystore")
-                storePassword "android"
-                keyAlias "androiddebugkey"
-                keyPassword "android"
+            def ksPath = System.getenv("ANDROID_KEYSTORE_PATH")
+            def ksPassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            def aliasName = System.getenv("ANDROID_KEY_ALIAS")
+            def aliasPassword = System.getenv("ANDROID_KEY_PASSWORD")
+
+            if (ksPath && file(ksPath).exists() && ksPassword && aliasName && aliasPassword) {
+                storeFile file(ksPath)
+                storePassword ksPassword
+                keyAlias aliasName
+                keyPassword aliasPassword
+            } else {
+                throw new GradleException("Required fixed signing environment variables (ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD) are missing or keystore file is not found. Building without valid fixed signing is strictly prohibited.")
             }
         }
     }
