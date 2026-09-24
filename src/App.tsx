@@ -59,10 +59,8 @@ import { WorldBookApp } from './components/apps/WorldBookApp';
 import { GameCenterApp } from './components/apps/GameCenterApp';
 import { WeatherApp } from './components/apps/WeatherApp';
 import { initAllAiMemoryVaults } from './lib/aiMemoryVaultDb';
-import { Terminal } from 'lucide-react';
 import { InPhoneAskDialog } from './components/agent/InPhoneAskDialog';
 import { InPhoneNotificationBanner } from './components/agent/InPhoneNotificationBanner';
-import { AgentSimulatorModal } from './components/agent/AgentSimulatorModal';
 import { agentOrchestrator } from './lib/agent/AgentOrchestrator';
 import { AgentAskPrompt, InPhoneNotification } from './lib/agent/types';
 import { getApiConfigForEngine } from './lib/apiConfigStore';
@@ -94,7 +92,6 @@ export function App() {
   // Phase 2: Agent Orchestration states
   const [activeAskPrompt, setActiveAskPrompt] = useState<AgentAskPrompt | null>(null);
   const [activeNotification, setActiveNotification] = useState<InPhoneNotification | null>(null);
-  const [isSimulatorOpen, setIsSimulatorOpen] = useState<boolean>(false);
 
   // Subscribe to Agent Orchestrator for ASK prompts and in-phone notifications
   useEffect(() => {
@@ -523,26 +520,6 @@ export function App() {
           <InPhoneAskDialog prompt={activeAskPrompt} />
         )}
       </PhoneContainer>
-
-      {/* Desktop Floating Simulator Button (Phase 2) */}
-      <button
-        onClick={() => setIsSimulatorOpen(true)}
-        className="fixed bottom-5 right-5 z-40 px-4 py-2.5 rounded-2xl bg-indigo-600/90 hover:bg-indigo-500 text-white font-semibold text-xs shadow-2xl border border-indigo-400/40 backdrop-blur-md flex items-center gap-2 transition hover:scale-105 active:scale-95 cursor-pointer"
-        title="打开 AI 代理决策模拟台 (Phase 2)"
-      >
-        <Terminal className="w-4 h-4 text-indigo-200" />
-        <span>AI代理模拟台 (Phase 2)</span>
-      </button>
-
-      {/* Agent Simulator Modal */}
-      <AgentSimulatorModal
-        isOpen={isSimulatorOpen}
-        onClose={() => setIsSimulatorOpen(false)}
-        onNavigateToWechat={() => {
-          setIsLocked(false);
-          setActiveAppId('wechat');
-        }}
-      />
     </div>
   );
 }
