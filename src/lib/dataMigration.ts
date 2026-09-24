@@ -175,75 +175,93 @@ async function inspectIndexedDbHealth(): Promise<{
     return { chatDbValid: false, chatMessageCount: 0, memoryVaultCount: 0 };
   }
 
-  // 1. 检查聊天数据库
-  try {
-    const chatDbReq = window.indexedDB.open('PhoneSimChatDB_v2');
-    await new Promise<void>((resolve) => {
-      chatDbReq.onsuccess = () => {
-        const db = chatDbReq.result;
-        if (db.objectStoreNames.contains('messages')) {
-          chatDbValid = true;
-          try {
-            const tx = db.transaction(['messages'], 'readonly');
-            const store = tx.objectStore('messages');
-            const countReq = store.count();
-            countReq.onsuccess = () => {
-              chatMessageCount = countReq.result || 0;
-              db.close();
-              resolve();
-            };
-            countReq.onerror = () => {
-              db.close();
-              resolve();
-            };
-          } catch {
-            db.close();
-            resolve();
-          }
-        } else {
-          db.close();
-          resolve();
-        }
-      };
-      chatDbReq.onerror = () => resolve();
-    });
-  } catch (e) {
-    console.warn('[SafeMigration] Inspect chatDb warning:', e);
+  // 不支持 indexedDB.databases() 时直接跳过检查，绝对避免 indexedDB.open() 创建空数据库
+  if (typeof window.indexedDB.databases !== 'function') {
+    return { chatDbValid: false, chatMessageCount: 0, memoryVaultCount: 0 };
   }
 
-  // 2. 检查记忆数据库
+  let existingNames: Set<string>;
   try {
-    const memDbReq = window.indexedDB.open('PhoneSimAiMemoryDB_v1');
-    await new Promise<void>((resolve) => {
-      memDbReq.onsuccess = () => {
-        const db = memDbReq.result;
-        if (db.objectStoreNames.contains('vaults')) {
-          try {
-            const tx = db.transaction(['vaults'], 'readonly');
-            const store = tx.objectStore('vaults');
-            const countReq = store.count();
-            countReq.onsuccess = () => {
-              memoryVaultCount = countReq.result || 0;
+    const existingDbs = await window.indexedDB.databases();
+    existingNames = new Set(existingDbs.map((db) => db.name).filter((n): n is string => Boolean(n)));
+  } catch (e) {
+    console.warn('[SafeMigration] indexedDB.databases() error:', e);
+    return { chatDbValid: false, chatMessageCount: 0, memoryVaultCount: 0 };
+  }
+
+  // 1. 检查聊天数据库（只有在数据库确实存在时才 open）
+  if (existingNames.has('PhoneSimChatDB_v2')) {
+    try {
+      const chatDbReq = window.indexedDB.open('PhoneSimChatDB_v2');
+      await new Promise<void>((resolve) => {
+        chatDbReq.onsuccess = () => {
+          const db = chatDbReq.result;
+          if (db.objectStoreNames.contains('messages')) {
+            chatDbValid = true;
+            try {
+              const tx = db.transaction(['messages'], 'readonly');
+              const store = tx.objectStore('messages');
+              const countReq = store.count();
+              countReq.onsuccess = () => {
+                chatMessageCount = countReq.result || 0;
+                db.close();
+                resolve();
+              };
+              countReq.onerror = () => {
+                db.close();
+                resolve();
+              };
+            } catch {
               db.close();
               resolve();
-            };
-            countReq.onerror = () => {
-              db.close();
-              resolve();
-            };
-          } catch {
+            }
+          } else {
             db.close();
             resolve();
           }
-        } else {
-          db.close();
-          resolve();
-        }
-      };
-      memDbReq.onerror = () => resolve();
-    });
-  } catch (e) {
-    console.warn('[SafeMigration] Inspect memoryDb warning:', e);
+        };
+        chatDbReq.onerror = () => resolve();
+      });
+    } catch (e) {
+      console.warn('[SafeMigration] Inspect chatDb warning:', e);
+    }
+  }
+
+  // 2. 检查记忆数据库（只有在数据库确实存在时才 open）
+  if (existingNames.has('PhoneSimAiMemoryDB_v1')) {
+    try {
+      const memDbReq = window.indexedDB.open('PhoneSimAiMemoryDB_v1');
+      await new Promise<void>((resolve) => {
+        memDbReq.onsuccess = () => {
+          const db = memDbReq.result;
+          if (db.objectStoreNames.contains('vaults')) {
+            try {
+              const tx = db.transaction(['vaults'], 'readonly');
+              const store = tx.objectStore('vaults');
+              const countReq = store.count();
+              countReq.onsuccess = () => {
+                memoryVaultCount = countReq.result || 0;
+                db.close();
+                resolve();
+              };
+              countReq.onerror = () => {
+                db.close();
+                resolve();
+              };
+            } catch {
+              db.close();
+              resolve();
+            }
+          } else {
+            db.close();
+            resolve();
+          }
+        };
+        memDbReq.onerror = () => resolve();
+      });
+    } catch (e) {
+      console.warn('[SafeMigration] Inspect memoryDb warning:', e);
+    }
   }
 
   return { chatDbValid, chatMessageCount, memoryVaultCount };
