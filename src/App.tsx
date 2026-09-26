@@ -18,6 +18,8 @@ import {
   saveIcons,
   loadWidgets,
   saveWidgets,
+  loadLauncherPagesCount,
+  saveLauncherPagesCount,
   loadCharacters,
   saveCharacters,
   loadMessages,
@@ -64,6 +66,7 @@ import { InPhoneNotificationBanner } from './components/agent/InPhoneNotificatio
 import { agentOrchestrator } from './lib/agent/AgentOrchestrator';
 import { AgentAskPrompt, InPhoneNotification } from './lib/agent/types';
 import { getApiConfigForEngine } from './lib/apiConfigStore';
+import { autoPaginateLayout } from './lib/layoutPaginator';
 
 export function App() {
   // Lock state
@@ -71,6 +74,7 @@ export function App() {
 
   // Settings & Beautification state
   const [settings, setSettingsState] = useState(loadSettings());
+  const [pagesCount, setPagesCountState] = useState<number>(loadLauncherPagesCount());
   const [icons, setIconsState] = useState<AppIconConfig[]>(loadIcons());
   const [widgets, setWidgetsState] = useState<WidgetConfig[]>(loadWidgets());
 
@@ -125,7 +129,26 @@ export function App() {
     }
   }, [characters]);
 
+  // Auto-paginate desktop layout on startup to prevent vertical scrolling overflow
+  useEffect(() => {
+    const paginated = autoPaginateLayout(widgets, icons, pagesCount);
+    if (paginated.hasChanged) {
+      setWidgetsState(paginated.widgets);
+      saveWidgets(paginated.widgets);
+      setIconsState(paginated.icons);
+      saveIcons(paginated.icons);
+      setPagesCountState(paginated.pagesCount);
+      saveLauncherPagesCount(paginated.pagesCount);
+    }
+  }, []);
+
   // State Updaters with localStorage Persistence
+  const updatePagesCount = (newCount: number) => {
+    const valid = Math.max(1, newCount);
+    setPagesCountState(valid);
+    saveLauncherPagesCount(valid);
+  };
+
   const updateIcons = (newIcons: AppIconConfig[]) => {
     setIconsState(newIcons);
     saveIcons(newIcons);
@@ -228,6 +251,7 @@ export function App() {
 
   const refreshAllData = () => {
     setSettingsState(loadSettings());
+    setPagesCountState(loadLauncherPagesCount());
     setIconsState(loadIcons());
     setWidgetsState(loadWidgets());
     setCharactersState(loadCharacters());
@@ -489,6 +513,8 @@ export function App() {
           <LauncherHome
             icons={icons}
             widgets={widgets}
+            pagesCount={pagesCount}
+            onUpdatePagesCount={updatePagesCount}
             wallpaperUrl={settings.desktopWallpaper}
             wallpaper={settings.desktopWallpaper}
             menstrualData={menstrualData}

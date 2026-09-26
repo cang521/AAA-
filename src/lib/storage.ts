@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import {
+  AppId,
   AiCharacter,
   ChatMessage,
   MomentPost,
@@ -372,31 +373,64 @@ export function saveToStorage<T>(key: string, value: T): void {
 }
 
 // Named Export Loader & Saver Functions for App.tsx
-export const loadIcons = () => {
-  const loaded = loadFromStorage<AppIconConfig[]>(STORAGE_KEYS.LAUNCHER_ICONS, INITIAL_ICONS);
-  // Ensure newly added built-in icons exist
-  const existingAppIds = new Set(loaded.map((i) => i.appId));
-  const missingIcons = INITIAL_ICONS.filter((i) => !existingAppIds.has(i.appId));
-  if (missingIcons.length > 0) {
-    const merged = [...loaded, ...missingIcons];
-    saveToStorage(STORAGE_KEYS.LAUNCHER_ICONS, merged);
-    return merged;
-  }
+export const loadLauncherPagesCount = (): number => {
+  const loaded = loadFromStorage<number>(STORAGE_KEYS.LAUNCHER_PAGES, 2);
+  if (typeof loaded !== 'number' || loaded < 1) return 2;
   return loaded;
+};
+
+export const saveLauncherPagesCount = (count: number): void => {
+  saveToStorage(STORAGE_KEYS.LAUNCHER_PAGES, count);
+};
+
+export const BUILTIN_APPS_REGISTRY: { appId: AppId; name: string; builtInIcon: string }[] = [
+  { appId: 'wechat', name: '聊天', builtInIcon: 'MessageCircle' },
+  { appId: 'weather', name: '实时天气', builtInIcon: 'CloudSun' },
+  { appId: 'worldbook', name: '世界书', builtInIcon: 'BookOpen' },
+  { appId: 'gamecenter', name: '游戏中心', builtInIcon: 'Gamepad2' },
+  { appId: 'menstrual', name: '经期健康', builtInIcon: 'HeartPulse' },
+  { appId: 'memo', name: '备忘录', builtInIcon: 'FileText' },
+  { appId: 'apimonitor', name: 'API 监控', builtInIcon: 'Activity' },
+  { appId: 'beautification', name: '界面美化', builtInIcon: 'Palette' },
+  { appId: 'settings', name: '系统设置', builtInIcon: 'Settings' },
+  { appId: 'connectivity', name: '外部设备', builtInIcon: 'Link' },
+  { appId: 'permissions', name: 'AI 权限', builtInIcon: 'Shield' },
+  { appId: 'ai_activity_logs', name: 'AI 活动记录', builtInIcon: 'FileCheck' },
+];
+
+export const loadIcons = (): AppIconConfig[] => {
+  const raw = localStorage.getItem(STORAGE_KEYS.LAUNCHER_ICONS);
+  if (!raw) {
+    saveToStorage(STORAGE_KEYS.LAUNCHER_ICONS, INITIAL_ICONS);
+    return INITIAL_ICONS;
+  }
+  try {
+    const loaded = JSON.parse(raw);
+    if (Array.isArray(loaded)) {
+      return loaded;
+    }
+    return INITIAL_ICONS;
+  } catch (e) {
+    return INITIAL_ICONS;
+  }
 };
 export const saveIcons = (icons: AppIconConfig[]) => saveToStorage(STORAGE_KEYS.LAUNCHER_ICONS, icons);
 
-export const loadWidgets = () => {
-  const loaded = loadFromStorage<WidgetConfig[]>(STORAGE_KEYS.LAUNCHER_WIDGETS, INITIAL_WIDGETS);
-  if (!Array.isArray(loaded) || loaded.length === 0) return INITIAL_WIDGETS;
-  const existingTypes = new Set(loaded.map((w) => w.type));
-  const missingWidgets = INITIAL_WIDGETS.filter((w) => !existingTypes.has(w.type));
-  if (missingWidgets.length > 0) {
-    const merged = [...loaded, ...missingWidgets];
-    saveToStorage(STORAGE_KEYS.LAUNCHER_WIDGETS, merged);
-    return merged;
+export const loadWidgets = (): WidgetConfig[] => {
+  const raw = localStorage.getItem(STORAGE_KEYS.LAUNCHER_WIDGETS);
+  if (raw === null) {
+    saveToStorage(STORAGE_KEYS.LAUNCHER_WIDGETS, INITIAL_WIDGETS);
+    return INITIAL_WIDGETS;
   }
-  return loaded;
+  try {
+    const loaded = JSON.parse(raw);
+    if (Array.isArray(loaded)) {
+      return loaded;
+    }
+    return INITIAL_WIDGETS;
+  } catch (e) {
+    return INITIAL_WIDGETS;
+  }
 };
 export const saveWidgets = (widgets: WidgetConfig[]) => saveToStorage(STORAGE_KEYS.LAUNCHER_WIDGETS, widgets);
 
@@ -972,6 +1006,7 @@ export function resetStorageToFactoryDefaults(): void {
   saveToStorage(STORAGE_KEYS.MEMOS, INITIAL_MEMOS);
   saveToStorage(STORAGE_KEYS.MOMENTS, INITIAL_MOMENTS);
   saveToStorage(STORAGE_KEYS.WORLD_BOOKS, INITIAL_WORLD_BOOKS);
+  saveToStorage(STORAGE_KEYS.LAUNCHER_PAGES, 2);
   saveToStorage(STORAGE_KEYS.LAUNCHER_ICONS, INITIAL_ICONS);
   saveToStorage(STORAGE_KEYS.LAUNCHER_WIDGETS, INITIAL_WIDGETS);
   saveToStorage(STORAGE_KEYS.API_LOGS, INITIAL_API_LOGS);

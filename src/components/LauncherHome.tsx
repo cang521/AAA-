@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   AppIconConfig,
   WidgetConfig,
@@ -9,6 +9,8 @@ import {
 } from '../types';
 import { computeCycleStats } from '../lib/menstrual';
 import { weatherService } from '../lib/weatherService';
+import { BUILTIN_APPS_REGISTRY } from '../lib/storage';
+import { autoPaginateLayout } from '../lib/layoutPaginator';
 import {
   MessageCircle,
   HeartPulse,
@@ -29,20 +31,17 @@ import {
   Image as ImageIcon,
   Tag,
   PlusCircle,
-  ChevronLeft,
-  ChevronRight,
-  MoreVertical,
   Search,
   BookOpen,
   Gamepad2,
   CloudSun,
   CloudRain,
-  Sun,
-  Cloud,
   Droplets,
-  Wind,
   AlertTriangle,
-  RefreshCw,
+  MoreVertical,
+  Grid,
+  CheckCircle,
+  RotateCcw,
 } from 'lucide-react';
 import { ImagePickerModal } from './ImagePickerModal';
 
@@ -67,7 +66,7 @@ interface LauncherHomeProps {
 export const LauncherHome: React.FC<LauncherHomeProps> = ({
   icons = [],
   widgets = [],
-  pagesCount = 1,
+  pagesCount = 2,
   wallpaperUrl,
   wallpaper,
   menstrualData,
@@ -81,30 +80,35 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   onSaveMemo,
   onDeleteMemo,
 }) => {
-  const actualWallpaper = wallpaperUrl || wallpaper || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1000&q=80';
+  const actualWallpaper =
+    wallpaperUrl ||
+    wallpaper ||
+    'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1000&q=80';
+
   const handleOpenApp = (appId: AppId) => {
     if (onOpenApp) onOpenApp(appId);
     else if (onLaunchApp) onLaunchApp(appId);
   };
-  const handleAddMemo = (title: string, content: string) => {
-    if (onAddMemo) onAddMemo(title, content);
-    else if (onSaveMemo) onSaveMemo(title, content);
-  };
 
   const [currentPage, setCurrentPage] = useState(0);
   const [isEditMode, setIsEditMode] = useState(false);
+
+  // Modals & Popup states
   const [activeIconMenu, setActiveIconMenu] = useState<AppIconConfig | null>(null);
   const [imagePickerTargetIcon, setImagePickerTargetIcon] = useState<AppIconConfig | null>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState('');
   const [showAddWidgetModal, setShowAddWidgetModal] = useState(false);
-  const [newMemoText, setNewMemoText] = useState('');
+  const [showAppLibraryModal, setShowAppLibraryModal] = useState(false);
 
   // Sticker widget editing states
   const [editingStickerWidget, setEditingStickerWidget] = useState<WidgetConfig | null>(null);
   const [stickerTitleInput, setStickerTitleInput] = useState('');
   const [stickerDateInput, setStickerDateInput] = useState('');
   const [stickerIsCountdownInput, setStickerIsCountdownInput] = useState(true);
+
+  // Time widget region selection states
+  const [editingClockWidget, setEditingClockWidget] = useState<WidgetConfig | null>(null);
 
   // Weather state & live subscription
   const [weather, setWeather] = useState<WeatherData | null>(null);
@@ -122,10 +126,260 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     };
   }, []);
 
-  // Time widget region selection states
-  const [editingClockWidget, setEditingClockWidget] = useState<WidgetConfig | null>(null);
+  // Ensure currentPage is valid when pagesCount changes
+  useEffect(() => {
+    if (currentPage >= pagesCount) {
+      setCurrentPage(Math.max(0, pagesCount - 1));
+    }
+  }, [pagesCount, currentPage]);
 
-  // Helper: Sticker Days Calculation
+  // Ensure items stay correctly paginated if props change
+  useEffect(() => {
+    const paginated = autoPaginateLayout(widgets, icons, pagesCount);
+    if (paginated.hasChanged) {
+      onUpdateWidgets(paginated.widgets);
+      onUpdateIcons(paginated.icons);
+      if (onUpdatePagesCount && paginated.pagesCount !== pagesCount) {
+        onUpdatePagesCount(paginated.pagesCount);
+      }
+    }
+  }, [widgets, icons, pagesCount]);
+
+  // Touch Swipe Page Navigation Setup
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+  const isSwiping = useRef<boolean>(false);
+
+  const handleTouchStart = (e: React.TouchEvent | React.MouseEvent) => {
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+    touchStartX.current = clientX;
+    touchStartY.current = clientY;
+    isSwiping.current = true;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent | React.MouseEvent) => {
+    if (!isSwiping.current || touchStartX.current === null || touchStartY.current === null) return;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent | React.MouseEvent) => {
+    if (!isSwiping.current || touchStartX.current === null || touchStartY.current === null) {
+      isSwiping.current = false;
+      return;
+    }
+    const clientX =
+      'changedTouches' in e
+        ? e.changedTouches[0].clientX
+        : 'clientX' in e
+        ? (e as React.MouseEvent).clientX
+        : touchStartX.current;
+    const clientY =
+      'changedTouches' in e
+        ? e.changedTouches[0].clientY
+        : 'clientY' in e
+        ? (e as React.MouseEvent).clientY
+        : touchStartY.current;
+
+    const deltaX = clientX - touchStartX.current;
+    const deltaY = clientY - touchStartY.current;
+
+    // Trigger horizontal swipe if deltaX > 40px and horizontal movement is greater than vertical movement
+    if (Math.abs(deltaX) > 40 && Math.abs(deltaX) > Math.abs(deltaY)) {
+      if (deltaX < 0 && currentPage < pagesCount - 1) {
+        setCurrentPage((prev) => Math.min(pagesCount - 1, prev + 1));
+      } else if (deltaX > 0 && currentPage > 0) {
+        setCurrentPage((prev) => Math.max(0, prev - 1));
+      }
+    }
+
+    touchStartX.current = null;
+    touchStartY.current = null;
+    isSwiping.current = false;
+  };
+
+  // Blank Long Press for Desktop Edit Mode
+  let pressTimer: any = null;
+  const handleStartBlankPress = () => {
+    pressTimer = setTimeout(() => {
+      setIsEditMode(true);
+    }, 600);
+  };
+  const handleEndBlankPress = () => {
+    if (pressTimer) clearTimeout(pressTimer);
+  };
+
+  // Icon Long Press for Context Menu
+  const handleIconLongPress = (e: React.MouseEvent | React.TouchEvent, icon: AppIconConfig) => {
+    e.stopPropagation();
+    setActiveIconMenu(icon);
+    setEditedName(icon.name);
+  };
+
+  const handleIconClick = (icon: AppIconConfig) => {
+    if (isEditMode) {
+      setActiveIconMenu(icon);
+      setEditedName(icon.name);
+      return;
+    }
+    handleOpenApp(icon.appId);
+  };
+
+  // Icon Drag & Drop State
+  const [draggingIcon, setDraggingIcon] = useState<AppIconConfig | null>(null);
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
+  const [dragTargetPosIndex, setDragTargetPosIndex] = useState<number | null>(null);
+  const dragOverPageRef = useRef<number>(currentPage);
+
+  const handleStartDragIcon = (e: React.PointerEvent | React.TouchEvent, icon: AppIconConfig) => {
+    e.stopPropagation();
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.PointerEvent).clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.PointerEvent).clientY;
+    setDraggingIcon(icon);
+    setDragPos({ x: clientX, y: clientY });
+    dragOverPageRef.current = icon.pageIndex;
+  };
+
+  const handleDragMove = (e: PointerEvent | TouchEvent) => {
+    if (!draggingIcon) return;
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
+    setDragPos({ x: clientX, y: clientY });
+
+    // Edge swipe detection while dragging
+    const winWidth = window.innerWidth;
+    if (clientX < 45 && currentPage > 0) {
+      setCurrentPage((prev) => Math.max(0, prev - 1));
+      dragOverPageRef.current = Math.max(0, currentPage - 1);
+    } else if (clientX > winWidth - 45 && currentPage < pagesCount - 1) {
+      setCurrentPage((prev) => Math.min(pagesCount - 1, prev + 1));
+      dragOverPageRef.current = Math.min(pagesCount - 1, currentPage + 1);
+    }
+  };
+
+  const handleDragEnd = () => {
+    if (!draggingIcon) return;
+
+    const targetPage = dragOverPageRef.current;
+    const targetIcons = icons
+      .filter((i) => i.pageIndex === targetPage && i.id !== draggingIcon.id)
+      .sort((a, b) => a.positionIndex - b.positionIndex);
+
+    // Calculate insertion index
+    const targetIdx = dragTargetPosIndex !== null ? dragTargetPosIndex : targetIcons.length;
+
+    // Insert dragged icon
+    targetIcons.splice(targetIdx, 0, {
+      ...draggingIcon,
+      pageIndex: targetPage,
+    });
+
+    // Re-index target page icons
+    const reindexedTargetPage = targetIcons.map((item, idx) => ({
+      ...item,
+      positionIndex: idx,
+    }));
+
+    // Re-index source page icons if different
+    let reindexedSourcePage: AppIconConfig[] = [];
+    if (draggingIcon.pageIndex !== targetPage) {
+      const sourceIcons = icons
+        .filter((i) => i.pageIndex === draggingIcon.pageIndex && i.id !== draggingIcon.id)
+        .sort((a, b) => a.positionIndex - b.positionIndex)
+        .map((item, idx) => ({
+          ...item,
+          positionIndex: idx,
+        }));
+      reindexedSourcePage = sourceIcons;
+    }
+
+    const otherPageIcons = icons.filter(
+      (i) => i.pageIndex !== targetPage && i.pageIndex !== draggingIcon.pageIndex
+    );
+
+    const newAllIcons = [...otherPageIcons, ...reindexedTargetPage, ...reindexedSourcePage];
+    onUpdateIcons(newAllIcons);
+
+    setDraggingIcon(null);
+    setDragPos(null);
+    setDragTargetPosIndex(null);
+  };
+
+  useEffect(() => {
+    if (!draggingIcon) return;
+    const onMove = (e: any) => handleDragMove(e);
+    const onUp = () => handleDragEnd();
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('touchmove', onMove);
+    window.addEventListener('touchend', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
+    };
+  }, [draggingIcon, currentPage, pagesCount]);
+
+  // Actions
+  const handleDeleteIcon = (iconId: string) => {
+    onUpdateIcons(icons.filter((i) => i.id !== iconId));
+    setActiveIconMenu(null);
+  };
+
+  const handleSaveIconName = () => {
+    if (activeIconMenu && editedName.trim()) {
+      onUpdateIcons(
+        icons.map((i) => (i.id === activeIconMenu.id ? { ...i, name: editedName.trim() } : i))
+      );
+      setIsEditingName(false);
+      setActiveIconMenu(null);
+    }
+  };
+
+  const handleMoveIconNextPage = (icon: AppIconConfig) => {
+    const nextPage = (icon.pageIndex + 1) % pagesCount;
+    const targetPageIcons = icons.filter((i) => i.pageIndex === nextPage);
+    onUpdateIcons(
+      icons.map((i) =>
+        i.id === icon.id ? { ...i, pageIndex: nextPage, positionIndex: targetPageIcons.length } : i
+      )
+    );
+    setActiveIconMenu(null);
+  };
+
+  const handleRestoreAppToDesktop = (app: { appId: AppId; name: string; builtInIcon: string }) => {
+    const currentPageIcons = icons.filter((i) => i.pageIndex === currentPage);
+    const newIcon: AppIconConfig = {
+      id: `icon_${app.appId}_${Date.now()}`,
+      name: app.name,
+      appId: app.appId,
+      pageIndex: currentPage,
+      positionIndex: currentPageIcons.length,
+      builtInIcon: app.builtInIcon,
+    };
+    onUpdateIcons([...icons, newIcon]);
+  };
+
+  // Add Widget
+  const handleAddWidget = (type: WidgetConfig['type']) => {
+    const newW: WidgetConfig = {
+      id: 'w_' + Date.now(),
+      type,
+      pageIndex: currentPage,
+      stickerTitle: type === 'sticker' ? '倒计时贴纸' : undefined,
+      stickerTargetDate: type === 'sticker' ? '2026-12-31' : undefined,
+    };
+    onUpdateWidgets([...widgets, newW]);
+    setShowAddWidgetModal(false);
+  };
+
+  const handleDeleteWidget = (wId: string) => {
+    onUpdateWidgets(widgets.filter((w) => w.id !== wId));
+  };
+
+  // Helper Calculations
+  const cycleStats = computeCycleStats(menstrualData);
+
   const calculateStickerDays = (targetDateStr?: string, isCountdown: boolean = true) => {
     if (!targetDateStr) return 0;
     const target = new Date(targetDateStr).getTime();
@@ -135,7 +389,6 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     return isNaN(days) ? 0 : Math.max(0, days);
   };
 
-  // Helper: City Time Calculation
   const getCityTime = (offsetHours: number = 8) => {
     const now = new Date();
     const utc = now.getTime() + now.getTimezoneOffset() * 60000;
@@ -146,7 +399,6 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     };
   };
 
-  // Built-in App Icon map
   const getBuiltInIconComponent = (iconName?: string) => {
     switch (iconName) {
       case 'MessageCircle':
@@ -209,133 +461,77 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     }
   };
 
-  // Menstrual widget calculations
-  const cycleStats = computeCycleStats(menstrualData);
-
-  // Long press empty space handler
-  let pressTimer: any = null;
-  const handleTouchStartBlank = () => {
-    pressTimer = setTimeout(() => {
-      setIsEditMode(true);
-    }, 600);
-  };
-  const handleTouchEndBlank = () => {
-    if (pressTimer) clearTimeout(pressTimer);
-  };
-
-  // Icon Long press
-  const handleIconLongPress = (e: React.MouseEvent | React.TouchEvent, icon: AppIconConfig) => {
-    e.stopPropagation();
-    setActiveIconMenu(icon);
-    setEditedName(icon.name);
-  };
-
-  // Handle icon click
-  const handleIconClick = (icon: AppIconConfig) => {
-    if (isEditMode) return;
-    onOpenApp(icon.appId);
-  };
-
-  // Icon edit actions
-  const handleDeleteIcon = (iconId: string) => {
-    onUpdateIcons(icons.filter((i) => i.id !== iconId));
-    setActiveIconMenu(null);
-  };
-
-  const handleSaveIconName = () => {
-    if (activeIconMenu && editedName.trim()) {
-      onUpdateIcons(
-        icons.map((i) => (i.id === activeIconMenu.id ? { ...i, name: editedName.trim() } : i))
-      );
-      setIsEditingName(false);
-      setActiveIconMenu(null);
-    }
-  };
-
-  const handleMoveIconPosition = (icon: AppIconConfig) => {
-    const nextPage = (icon.pageIndex + 1) % pagesCount;
-    onUpdateIcons(
-      icons.map((i) => (i.id === icon.id ? { ...i, pageIndex: nextPage } : i))
-    );
-    setActiveIconMenu(null);
-  };
-
-  // Add Widget
-  const handleAddWidget = (type: WidgetConfig['type']) => {
-    const newW: WidgetConfig = {
-      id: 'w_' + Date.now(),
-      type,
-      pageIndex: currentPage,
-      stickerTitle: type === 'sticker' ? '恋爱倒计时' : undefined,
-      stickerTargetDate: type === 'sticker' ? '2026-12-31' : undefined,
-    };
-    onUpdateWidgets([...widgets, newW]);
-    setShowAddWidgetModal(false);
-  };
-
-  const handleDeleteWidget = (wId: string) => {
-    onUpdateWidgets(widgets.filter((w) => w.id !== wId));
-  };
-
-  const currentPageIcons = icons.filter((i) => i.pageIndex === currentPage);
-  const currentPageWidgets = widgets.filter((w) => w.pageIndex === currentPage);
-
   return (
     <div
-      onMouseDown={handleTouchStartBlank}
-      onMouseUp={handleTouchEndBlank}
-      onTouchStart={handleTouchStartBlank}
-      onTouchEnd={handleTouchEndBlank}
+      onMouseDown={handleStartBlankPress}
+      onMouseUp={handleEndBlankPress}
+      onTouchStart={(e) => {
+        handleStartBlankPress();
+        handleTouchStart(e);
+      }}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={(e) => {
+        handleEndBlankPress();
+        handleTouchEnd(e);
+      }}
       className="relative w-full h-full flex flex-col justify-between overflow-hidden select-none"
     >
       {/* Wallpaper Background */}
       <img
         src={actualWallpaper}
         alt="Desktop Wallpaper"
-        className="absolute inset-0 w-full h-full object-cover filter brightness-[0.88]"
+        className="absolute inset-0 w-full h-full object-cover filter brightness-[0.88] pointer-events-none"
       />
-      <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-transparent to-black/60" />
+      <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-transparent to-black/60 pointer-events-none" />
 
-      {/* Edit Mode Top Indicator */}
-      {isEditMode && (
+      {/* Edit Mode Header Bar */}
+      {isEditMode ? (
         <div
-          className="relative z-30 px-4 flex items-center justify-between bg-black/60 backdrop-blur-md py-2 text-white pl-safe pr-safe"
-          style={{
-            paddingTop: 'calc(var(--safe-area-top, 0px) + 0.5rem)',
-          }}
+          className="relative z-30 px-3 flex items-center justify-between bg-black/75 backdrop-blur-md py-2 text-white border-b border-white/10"
+          style={{ paddingTop: 'calc(var(--safe-area-top, 0px) + 0.5rem)' }}
         >
-          <span className="text-xs font-medium text-emerald-400">✏️ 桌面编辑模式</span>
           <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
+              ✏️ 编辑模式
+            </span>
             <button
-              onClick={() => onUpdatePagesCount && onUpdatePagesCount(Math.max(1, pagesCount - 1))}
-              className="px-2 py-0.5 text-[11px] rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+              onClick={() => setShowAppLibraryModal(true)}
+              className="px-2.5 py-1 text-[11px] rounded-lg bg-emerald-500/30 border border-emerald-400/40 text-emerald-300 font-medium hover:bg-emerald-500/40 transition flex items-center gap-1"
+            >
+              <Grid className="w-3.5 h-3.5" />
+              <span>系统应用库</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() =>
+                onUpdatePagesCount && onUpdatePagesCount(Math.max(1, pagesCount - 1))
+              }
+              className="px-2 py-0.5 text-[11px] rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700"
             >
               - 删页
             </button>
-            <span className="text-xs text-zinc-400">页数: {pagesCount}</span>
+            <span className="text-xs text-zinc-300 font-medium">{pagesCount}页</span>
             <button
               onClick={() => onUpdatePagesCount && onUpdatePagesCount(pagesCount + 1)}
-              className="px-2 py-0.5 text-[11px] rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+              className="px-2 py-0.5 text-[11px] rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700"
             >
               + 加页
             </button>
             <button
               onClick={() => setIsEditMode(false)}
-              className="px-3 py-1 text-xs rounded-xl bg-emerald-500 text-white font-medium ml-2 shadow-sm"
+              className="px-3 py-1 text-xs rounded-xl bg-emerald-500 text-white font-medium shadow-sm ml-1 hover:bg-emerald-600"
             >
               完成
             </button>
           </div>
         </div>
-      )}
-
-      {/* Top Search Bar Widget */}
-      {!isEditMode && (
+      ) : (
+        /* Top Search Bar */
         <div
-          className="relative z-10 px-4 pl-safe pr-safe"
-          style={{
-            paddingTop: 'calc(var(--safe-area-top, 0px) + 0.75rem)',
-          }}
+          className="relative z-20 px-4"
+          style={{ paddingTop: 'calc(var(--safe-area-top, 0px) + 0.75rem)' }}
         >
           <div className="w-full h-10 rounded-2xl bg-white/20 backdrop-blur-md border border-white/20 flex items-center px-3 gap-2 text-white/80 shadow-sm">
             <Search className="w-4 h-4 text-white/70" />
@@ -350,306 +546,480 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
         </div>
       )}
 
-      {/* Main Content Area (Widgets + App Icons) */}
-      <div className="relative z-10 flex-1 px-4 pt-3 pb-2 overflow-y-auto overflow-x-hidden">
-        {/* Desktop Widgets Area */}
-        <div className="space-y-3 mb-4">
-          {currentPageWidgets.map((widget) => (
-            <div key={widget.id} className="relative group">
-              {isEditMode && (
-                <button
-                  onClick={() => handleDeleteWidget(widget.id)}
-                  className="absolute -top-2 -right-2 z-20 w-6 h-6 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-md"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              )}
+      {/* Main Horizontal Paging Container */}
+      <div className="relative z-10 flex-1 w-full h-full overflow-hidden my-2">
+        <div
+          className="w-full h-full flex transition-transform duration-300 ease-out"
+          style={{
+            transform: `translateX(-${currentPage * 100}%)`,
+          }}
+        >
+          {[...Array(pagesCount)].map((_, pageIdx) => {
+            const pageWidgets = widgets.filter((w) => w.pageIndex === pageIdx);
+            const pageIcons = icons
+              .filter((i) => i.pageIndex === pageIdx)
+              .sort((a, b) => a.positionIndex - b.positionIndex);
 
-              {/* 0. Weather Widget */}
-              {widget.type === 'weather' && (
-                <div
-                  onClick={() => handleOpenApp('weather')}
-                  className="w-full rounded-3xl bg-gradient-to-r from-sky-600/85 via-blue-600/85 to-indigo-600/85 backdrop-blur-md p-4 text-white shadow-lg border border-white/25 cursor-pointer active:scale-[0.98] transition hover:brightness-105"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-1.5">
-                      <CloudSun className="w-4 h-4 text-sky-200" />
-                      <span className="font-semibold text-sm">{weather?.city || '实时天气'}</span>
-                      {weather?.isAutoLocation && weather?.city && (
-                        <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-white/20 text-sky-100">GPS</span>
+            return (
+              <div
+                key={pageIdx}
+                className="w-full h-full shrink-0 flex flex-col px-4 pt-1 pb-1 overflow-hidden relative min-h-0 justify-start"
+              >
+                {/* Desktop Widgets for pageIdx */}
+                <div className="space-y-3 mb-3 shrink-0">
+                  {pageWidgets.map((widget) => (
+                    <div key={widget.id} className="relative group">
+                      {isEditMode && (
+                        <button
+                          onClick={() => handleDeleteWidget(widget.id)}
+                          className="absolute -top-2 -right-2 z-30 w-6 h-6 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-md hover:bg-rose-600"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       )}
-                    </div>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/20 text-white font-medium flex items-center gap-1">
-                      <span>AI 天气感知</span>
-                    </span>
-                  </div>
 
-                  <div className="flex items-center justify-between pt-1">
-                    <div className="flex items-baseline gap-1.5">
-                      <span className="text-3xl font-light tracking-tight">{weather?.temp ?? 28}°</span>
-                      <span className="text-sm font-medium text-sky-100">{weather?.condition || '多云'}</span>
-                      <span className="text-xs text-sky-200 ml-1">体感 {weather?.feelsLike ?? 30}°</span>
-                    </div>
+                      {/* Weather Widget */}
+                      {widget.type === 'weather' && (
+                        <div
+                          onClick={() => handleOpenApp('weather')}
+                          className="w-full rounded-3xl bg-gradient-to-r from-sky-600/85 via-blue-600/85 to-indigo-600/85 backdrop-blur-md p-4 text-white shadow-lg border border-white/25 cursor-pointer active:scale-[0.98] transition hover:brightness-105"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-1.5">
+                              <CloudSun className="w-4 h-4 text-sky-200" />
+                              <span className="font-semibold text-sm">
+                                {weather?.city || '实时天气'}
+                              </span>
+                              {weather?.isAutoLocation && weather?.city && (
+                                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-white/20 text-sky-100">
+                                  GPS
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/20 text-white font-medium flex items-center gap-1">
+                              <span>AI 天气感知</span>
+                            </span>
+                          </div>
 
-                    <div className="text-right">
-                      <div className="text-[11px] font-medium text-sky-100">
-                        最高 {weather?.tempMax ?? 33}° · 最低 {weather?.tempMin ?? 24}°
-                      </div>
-                      <div className="text-[10px] text-sky-200 flex items-center justify-end gap-1 mt-0.5">
-                        <Droplets className="w-3 h-3 text-sky-300" />
-                        <span>降雨率 {weather?.precipProbability ?? 20}%</span>
-                        <span className="text-sky-300">·</span>
-                        <span>{weather?.windDirection || '东南风 3级'}</span>
-                      </div>
-                    </div>
-                  </div>
+                          <div className="flex items-center justify-between pt-1">
+                            <div className="flex items-baseline gap-1.5">
+                              <span className="text-3xl font-light tracking-tight">
+                                {weather?.temp ?? 28}°
+                              </span>
+                              <span className="text-sm font-medium text-sky-100">
+                                {weather?.condition || '多云'}
+                              </span>
+                              <span className="text-xs text-sky-200 ml-1">
+                                体感 {weather?.feelsLike ?? 30}°
+                              </span>
+                            </div>
 
-                  {/* Warning or Rain prediction banner on widget */}
-                  {weather?.alerts && weather.alerts.length > 0 ? (
-                    <div className="mt-2.5 pt-2 border-t border-white/15 flex items-center gap-1.5 text-[11px] text-amber-200 font-medium truncate">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-                      <span className="truncate">{weather.alerts[0].title}: {weather.alerts[0].description}</span>
+                            <div className="text-right">
+                              <div className="text-[11px] font-medium text-sky-100">
+                                最高 {weather?.tempMax ?? 33}° · 最低 {weather?.tempMin ?? 24}°
+                              </div>
+                              <div className="text-[10px] text-sky-200 flex items-center justify-end gap-1 mt-0.5">
+                                <Droplets className="w-3 h-3 text-sky-300" />
+                                <span>降雨率 {weather?.precipProbability ?? 20}%</span>
+                                <span className="text-sky-300">·</span>
+                                <span>{weather?.windDirection || '东南风 3级'}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {weather?.alerts && weather.alerts.length > 0 ? (
+                            <div className="mt-2.5 pt-2 border-t border-white/15 flex items-center gap-1.5 text-[11px] text-amber-200 font-medium truncate">
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                              <span className="truncate">
+                                {weather.alerts[0].title}: {weather.alerts[0].description}
+                              </span>
+                            </div>
+                          ) : weather?.rainForecastSummary ? (
+                            <div className="mt-2.5 pt-2 border-t border-white/15 flex items-center gap-1.5 text-[11px] text-sky-100 font-normal truncate">
+                              <CloudRain className="w-3.5 h-3.5 text-sky-300 shrink-0" />
+                              <span className="truncate">{weather.rainForecastSummary}</span>
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
+
+                      {/* Menstrual Widget */}
+                      {widget.type === 'menstrual' && (
+                        <div
+                          onClick={() => handleOpenApp('menstrual')}
+                          className="w-full rounded-3xl bg-gradient-to-r from-rose-500/90 to-pink-500/90 backdrop-blur-md p-4 text-white shadow-lg border border-white/20 cursor-pointer active:scale-[0.98] transition"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <HeartPulse className="w-5 h-5 text-rose-100 animate-pulse" />
+                              <span className="font-semibold text-sm">女性健康经期预测</span>
+                            </div>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/20 text-white font-medium">
+                              AI 共享数据
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-2 text-center pt-1">
+                            <div className="bg-white/15 rounded-2xl p-2 backdrop-blur-xs">
+                              <span className="block text-[10px] text-rose-100">距离下期</span>
+                              <span className="text-lg font-bold">
+                                {cycleStats.daysUntilNextPeriod}{' '}
+                                <span className="text-[10px] font-normal">天</span>
+                              </span>
+                            </div>
+                            <div className="bg-white/15 rounded-2xl p-2 backdrop-blur-xs">
+                              <span className="block text-[10px] text-rose-100">当前周期</span>
+                              <span className="text-lg font-bold">
+                                {cycleStats.currentPeriodDay
+                                  ? `第 ${cycleStats.currentPeriodDay} 天`
+                                  : '非经期'}
+                              </span>
+                            </div>
+                            <div className="bg-white/15 rounded-2xl p-2 backdrop-blur-xs">
+                              <span className="block text-[10px] text-rose-100">距离排卵</span>
+                              <span className="text-lg font-bold">
+                                {cycleStats.daysUntilOvulation}{' '}
+                                <span className="text-[10px] font-normal">天</span>
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Time Widget */}
+                      {widget.type === 'time' && (() => {
+                        const cityTime = getCityTime(widget.timeOffset ?? 8);
+                        const cityName = widget.timeCity || '北京时间 (GMT+8)';
+                        return (
+                          <div
+                            onClick={() => setEditingClockWidget(widget)}
+                            className="w-full rounded-3xl bg-black/35 backdrop-blur-md p-4 text-white border border-white/15 shadow-md flex items-center justify-between cursor-pointer hover:bg-black/45 transition active:scale-[0.98]"
+                          >
+                            <div className="flex items-center gap-3">
+                              <Clock className="w-8 h-8 text-amber-400" />
+                              <div>
+                                <div className="text-2xl font-bold tracking-tight">
+                                  {cityTime.timeStr}
+                                </div>
+                                <div className="text-[11px] text-zinc-300">
+                                  {cityTime.dateStr}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[10px] px-2.5 py-1 rounded-full bg-amber-400/20 text-amber-300 font-medium border border-amber-400/30">
+                                {cityName} 🌐
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Calendar Widget */}
+                      {widget.type === 'calendar' && (
+                        <div
+                          onClick={() => handleOpenApp('menstrual')}
+                          className="w-full rounded-3xl bg-white/20 backdrop-blur-md p-3 text-white border border-white/20 shadow-md cursor-pointer"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-1.5 text-xs font-semibold">
+                              <CalendarIcon className="w-4 h-4 text-emerald-300" />
+                              <span>
+                                {new Date().getFullYear()}年 {new Date().getMonth() + 1}月
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-white/70">查看完整日历</span>
+                          </div>
+                          <div className="grid grid-cols-7 text-center text-[10px] gap-1 font-medium text-white/80">
+                            {['日', '一', '二', '三', '四', '五', '六'].map((d) => (
+                              <span key={d}>{d}</span>
+                            ))}
+                            {[...Array(28)].map((_, i) => (
+                              <span
+                                key={i}
+                                className={`py-1 rounded-lg ${
+                                  i + 1 === new Date().getDate()
+                                    ? 'bg-emerald-500 font-bold text-white'
+                                    : 'hover:bg-white/10'
+                                }`}
+                              >
+                                {i + 1}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Memo Widget */}
+                      {widget.type === 'memo' && (
+                        <div
+                          onClick={() => handleOpenApp('memo')}
+                          className="w-full rounded-3xl bg-amber-500/85 backdrop-blur-md p-3.5 text-zinc-900 border border-white/30 shadow-md cursor-pointer active:scale-[0.98] transition"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-1.5 font-bold text-xs">
+                              <FileText className="w-4 h-4" />
+                              <span>桌面备忘录</span>
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenApp('memo');
+                              }}
+                              className="text-[10px] font-semibold bg-zinc-900/20 px-2 py-0.5 rounded-full hover:bg-zinc-900/30"
+                            >
+                              所有便签
+                            </button>
+                          </div>
+                          <div className="space-y-1.5 max-h-24 overflow-y-auto pr-1">
+                            {memos.slice(0, 2).map((m) => (
+                              <div
+                                key={m.id}
+                                className="text-xs bg-white/40 p-2 rounded-xl border border-white/20"
+                              >
+                                <div className="font-semibold truncate">{m.title}</div>
+                                <div className="text-[11px] opacity-80 truncate">{m.content}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Sticker Widget */}
+                      {widget.type === 'sticker' && (() => {
+                        const days = calculateStickerDays(
+                          widget.stickerTargetDate || '2026-12-31',
+                          widget.stickerIsCountdown ?? true
+                        );
+                        return (
+                          <div
+                            onClick={() => {
+                              setEditingStickerWidget(widget);
+                              setStickerTitleInput(widget.stickerTitle || '倒计时贴纸');
+                              setStickerDateInput(widget.stickerTargetDate || '2026-12-31');
+                              setStickerIsCountdownInput(widget.stickerIsCountdown ?? true);
+                            }}
+                            className="w-full rounded-3xl bg-black/35 backdrop-blur-md p-3.5 text-white border border-white/15 shadow-md flex items-center justify-between cursor-pointer hover:bg-black/45 transition active:scale-[0.98]"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <Tag className="w-6 h-6 text-purple-400" />
+                              <div>
+                                <div className="text-xs font-semibold">
+                                  {widget.stickerTitle || '倒计时贴纸'}
+                                </div>
+                                <div className="text-[10px] text-zinc-300">
+                                  {widget.stickerIsCountdown ?? true ? '目标日期' : '起始日期'}:{' '}
+                                  {widget.stickerTargetDate || '2026-12-31'}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="bg-purple-500/20 text-purple-300 border border-purple-500/30 px-3 py-1.5 rounded-2xl font-bold text-lg flex items-baseline gap-1">
+                              {days} <span className="text-[10px] font-normal text-purple-200">天</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
-                  ) : weather?.rainForecastSummary ? (
-                    <div className="mt-2.5 pt-2 border-t border-white/15 flex items-center gap-1.5 text-[11px] text-sky-100 font-normal truncate">
-                      <CloudRain className="w-3.5 h-3.5 text-sky-300 shrink-0" />
-                      <span className="truncate">{weather.rainForecastSummary}</span>
-                    </div>
-                  ) : null}
+                  ))}
+
+                  {/* Add Widget Button in Edit Mode */}
+                  {isEditMode && pageIdx === currentPage && (
+                    <button
+                      onClick={() => setShowAddWidgetModal(true)}
+                      className="w-full py-2.5 rounded-2xl border-2 border-dashed border-white/40 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold flex items-center justify-center gap-2 backdrop-blur-xs transition"
+                    >
+                      <PlusCircle className="w-4 h-4 text-emerald-400" />
+                      <span>添加桌面小组件</span>
+                    </button>
+                  )}
                 </div>
-              )}
 
-              {/* 1. Menstrual Predictor Widget */}
-              {widget.type === 'menstrual' && (
-                <div
-                  onClick={() => handleOpenApp('menstrual')}
-                  className="w-full rounded-3xl bg-gradient-to-r from-rose-500/90 to-pink-500/90 backdrop-blur-md p-4 text-white shadow-lg border border-white/20 cursor-pointer active:scale-[0.98] transition"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <HeartPulse className="w-5 h-5 text-rose-100 animate-pulse" />
-                      <span className="font-semibold text-sm">女性健康经期预测</span>
-                    </div>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/20 text-white font-medium">
-                      AI 共享数据
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2 text-center pt-1">
-                    <div className="bg-white/15 rounded-2xl p-2 backdrop-blur-xs">
-                      <span className="block text-[10px] text-rose-100">距离下期</span>
-                      <span className="text-lg font-bold">
-                        {cycleStats.daysUntilNextPeriod}{' '}
-                        <span className="text-[10px] font-normal">天</span>
-                      </span>
-                    </div>
-                    <div className="bg-white/15 rounded-2xl p-2 backdrop-blur-xs">
-                      <span className="block text-[10px] text-rose-100">当前周期</span>
-                      <span className="text-lg font-bold">
-                        {cycleStats.currentPeriodDay ? `第 ${cycleStats.currentPeriodDay} 天` : '非经期'}
-                      </span>
-                    </div>
-                    <div className="bg-white/15 rounded-2xl p-2 backdrop-blur-xs">
-                      <span className="block text-[10px] text-rose-100">距离排卵</span>
-                      <span className="text-lg font-bold">
-                        {cycleStats.daysUntilOvulation}{' '}
-                        <span className="text-[10px] font-normal">天</span>
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* 2. Time Widget */}
-              {widget.type === 'time' && (() => {
-                const cityTime = getCityTime(widget.timeOffset ?? 8);
-                const cityName = widget.timeCity || '北京时间 (GMT+8)';
-                return (
-                  <div
-                    onClick={() => setEditingClockWidget(widget)}
-                    className="w-full rounded-3xl bg-black/35 backdrop-blur-md p-4 text-white border border-white/15 shadow-md flex items-center justify-between cursor-pointer hover:bg-black/45 transition active:scale-[0.98]"
-                    title="点击选择时区地区"
-                  >
-                    <div className="flex items-center gap-3">
-                      <Clock className="w-8 h-8 text-amber-400" />
-                      <div>
-                        <div className="text-2xl font-bold tracking-tight">{cityTime.timeStr}</div>
-                        <div className="text-[11px] text-zinc-300">{cityTime.dateStr}</div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-[10px] px-2.5 py-1 rounded-full bg-amber-400/20 text-amber-300 font-medium border border-amber-400/30">
-                        {cityName} 🌐
-                      </span>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* 3. Calendar Widget */}
-              {widget.type === 'calendar' && (
-                <div
-                  onClick={() => handleOpenApp('menstrual')}
-                  className="w-full rounded-3xl bg-white/20 backdrop-blur-md p-3 text-white border border-white/20 shadow-md cursor-pointer"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-1.5 text-xs font-semibold">
-                      <CalendarIcon className="w-4 h-4 text-emerald-300" />
-                      <span>{new Date().getFullYear()}年 {new Date().getMonth() + 1}月</span>
-                    </div>
-                    <span className="text-[10px] text-white/70">查看完整日历</span>
-                  </div>
-                  <div className="grid grid-cols-7 text-center text-[10px] gap-1 font-medium text-white/80">
-                    {['日', '一', '二', '三', '四', '五', '六'].map((d) => (
-                      <span key={d}>{d}</span>
-                    ))}
-                    {[...Array(28)].map((_, i) => (
-                      <span
-                        key={i}
-                        className={`py-1 rounded-lg ${
-                          i + 1 === new Date().getDate() ? 'bg-emerald-500 font-bold text-white' : 'hover:bg-white/10'
+                {/* App Icons Grid */}
+                <div className="grid grid-cols-4 gap-y-4 gap-x-2 pt-1 content-start">
+                  {pageIcons.map((icon, iconIdx) => {
+                    const isBeingDragged = draggingIcon?.id === icon.id;
+                    return (
+                      <div
+                        key={icon.id}
+                        onClick={() => handleIconClick(icon)}
+                        onContextMenu={(e) => handleIconLongPress(e, icon)}
+                        onPointerDown={(e) => {
+                          if (isEditMode) {
+                            handleStartDragIcon(e, icon);
+                          }
+                        }}
+                        onMouseEnter={() => setDragTargetPosIndex(iconIdx)}
+                        className={`group flex flex-col items-center cursor-pointer transition relative touch-none ${
+                          isBeingDragged ? 'opacity-30 scale-90' : 'active:scale-95'
                         }`}
                       >
-                        {i + 1}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+                        {/* Custom Image or Built-in Icon */}
+                        <div
+                          className={`relative w-14 h-14 rounded-2xl flex items-center justify-center shadow-md border border-white/20 overflow-hidden ${
+                            icon.customImage ? 'bg-zinc-800' : getBuiltInIconBg(icon.appId)
+                          }`}
+                        >
+                          {icon.customImage ? (
+                            <img
+                              src={icon.customImage}
+                              alt={icon.name}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            getBuiltInIconComponent(icon.builtInIcon)
+                          )}
 
-              {/* 4. Memo Widget */}
-              {widget.type === 'memo' && (
-                <div
-                  onClick={() => handleOpenApp('memo')}
-                  className="w-full rounded-3xl bg-amber-500/85 backdrop-blur-md p-3.5 text-zinc-900 border border-white/30 shadow-md cursor-pointer active:scale-[0.98] transition"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-1.5 font-bold text-xs">
-                      <FileText className="w-4 h-4" />
-                      <span>桌面备忘录</span>
-                    </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenApp('memo');
-                      }}
-                      className="text-[10px] font-semibold bg-zinc-900/20 px-2 py-0.5 rounded-full hover:bg-zinc-900/30"
-                    >
-                      所有便签
-                    </button>
-                  </div>
-                  <div className="space-y-1.5 max-h-24 overflow-y-auto pr-1">
-                    {memos.slice(0, 2).map((m) => (
-                      <div key={m.id} className="text-xs bg-white/40 p-2 rounded-xl border border-white/20">
-                        <div className="font-semibold truncate">{m.title}</div>
-                        <div className="text-[11px] opacity-80 truncate">{m.content}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* 5. Date Sticker Widget */}
-              {widget.type === 'sticker' && (() => {
-                const days = calculateStickerDays(widget.stickerTargetDate || '2026-12-31', widget.stickerIsCountdown ?? true);
-                return (
-                  <div
-                    onClick={() => {
-                      setEditingStickerWidget(widget);
-                      setStickerTitleInput(widget.stickerTitle || '倒计时贴纸');
-                      setStickerDateInput(widget.stickerTargetDate || '2026-12-31');
-                      setStickerIsCountdownInput(widget.stickerIsCountdown ?? true);
-                    }}
-                    className="w-full rounded-3xl bg-black/35 backdrop-blur-md p-3.5 text-white border border-white/15 shadow-md flex items-center justify-between cursor-pointer hover:bg-black/45 transition active:scale-[0.98]"
-                    title="点击设置目标/开始日期"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <Tag className="w-6 h-6 text-purple-400" />
-                      <div>
-                        <div className="text-xs font-semibold">{widget.stickerTitle || '倒计时贴纸'}</div>
-                        <div className="text-[10px] text-zinc-300">
-                          {widget.stickerIsCountdown ?? true ? '目标日期' : '起始日期'}: {widget.stickerTargetDate || '2026-12-31'}
+                          {/* Edit Mode Delete Badge */}
+                          {isEditMode && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteIcon(icon.id);
+                              }}
+                              className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-md hover:bg-rose-600 z-20"
+                              title="删除图标"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
                         </div>
+
+                        {/* App Label */}
+                        <span className="mt-1.5 text-[11px] font-medium text-white tracking-tight drop-shadow-md truncate max-w-[68px] text-center">
+                          {icon.name}
+                        </span>
                       </div>
-                    </div>
-                    <div className="bg-purple-500/20 text-purple-300 border border-purple-500/30 px-3 py-1.5 rounded-2xl font-bold text-lg flex items-baseline gap-1">
-                      {days} <span className="text-[10px] font-normal text-purple-200">天</span>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          ))}
+                    );
+                  })}
 
-          {/* Add Widget Button in Edit Mode */}
-          {isEditMode && (
-            <button
-              onClick={() => setShowAddWidgetModal(true)}
-              className="w-full py-3 rounded-2xl border-2 border-dashed border-white/40 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold flex items-center justify-center gap-2 backdrop-blur-xs transition"
-            >
-              <PlusCircle className="w-4 h-4 text-emerald-400" />
-              <span>添加桌面小组件</span>
-            </button>
-          )}
-        </div>
-
-        {/* App Icons Grid */}
-        <div className="grid grid-cols-4 gap-y-5 gap-x-2 pt-2">
-          {currentPageIcons.map((icon) => (
-            <div
-              key={icon.id}
-              onClick={() => handleIconClick(icon)}
-              onContextMenu={(e) => handleIconLongPress(e, icon)}
-              className="group flex flex-col items-center cursor-pointer active:scale-90 transition relative"
-            >
-              {/* Custom Image or Built-in Icon */}
-              <div
-                className={`relative w-14 h-14 rounded-2xl flex items-center justify-center shadow-md border border-white/20 overflow-hidden ${
-                  icon.customImage ? 'bg-zinc-800' : getBuiltInIconBg(icon.appId)
-                }`}
-              >
-                {icon.customImage ? (
-                  <img src={icon.customImage} alt={icon.name} className="w-full h-full object-cover" />
-                ) : (
-                  getBuiltInIconComponent(icon.builtInIcon)
-                )}
-
-                {/* Edit Mode badge */}
-                {isEditMode && (
-                  <div className="absolute top-0 right-0 p-0.5 bg-black/60 rounded-bl-lg">
-                    <MoreVertical className="w-3.5 h-3.5 text-white" />
-                  </div>
-                )}
+                  {/* Empty Slot Placeholder in Edit Mode */}
+                  {isEditMode && (
+                    <button
+                      onClick={() => setShowAppLibraryModal(true)}
+                      className="flex flex-col items-center justify-center w-14 h-14 rounded-2xl border-2 border-dashed border-white/30 bg-white/10 text-white/70 hover:bg-white/20 transition hover:text-white"
+                      title="从系统应用库添加"
+                    >
+                      <Plus className="w-6 h-6 text-emerald-400" />
+                    </button>
+                  )}
+                </div>
               </div>
-
-              {/* App Label */}
-              <span className="mt-1.5 text-[11px] font-medium text-white tracking-tight drop-shadow-md truncate max-w-[68px]">
-                {icon.name}
-              </span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
-      {/* Page Indicators & Controls */}
+      {/* Floating Ghost Icon while Dragging */}
+      {draggingIcon && dragPos && (
+        <div
+          className="fixed z-50 pointer-events-none transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center opacity-90 scale-110 drop-shadow-2xl"
+          style={{ left: dragPos.x, top: dragPos.y }}
+        >
+          <div
+            className={`w-14 h-14 rounded-2xl flex items-center justify-center border-2 border-emerald-400 overflow-hidden ${
+              draggingIcon.customImage ? 'bg-zinc-800' : getBuiltInIconBg(draggingIcon.appId)
+            }`}
+          >
+            {draggingIcon.customImage ? (
+              <img src={draggingIcon.customImage} alt="" className="w-full h-full object-cover" />
+            ) : (
+              getBuiltInIconComponent(draggingIcon.builtInIcon)
+            )}
+          </div>
+          <span className="mt-1 text-[10px] font-bold text-white bg-black/60 px-1.5 py-0.5 rounded-full">
+            {draggingIcon.name}
+          </span>
+        </div>
+      )}
+
+      {/* Bottom Page Dots Indicator */}
       <div
-        className="relative z-10 flex flex-col items-center gap-2 pl-safe pr-safe"
-        style={{
-          paddingBottom: 'calc(var(--safe-area-bottom, 0px) + 1rem)',
-        }}
+        className="relative z-20 flex flex-col items-center gap-2 pl-safe pr-safe"
+        style={{ paddingBottom: 'calc(var(--safe-area-bottom, 0px) + 0.75rem)' }}
       >
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-black/25 backdrop-blur-xs border border-white/10">
           {[...Array(pagesCount)].map((_, idx) => (
             <button
               key={idx}
               onClick={() => setCurrentPage(idx)}
-              className={`h-1.5 rounded-full transition-all ${
-                currentPage === idx ? 'w-5 bg-white' : 'w-1.5 bg-white/40'
+              className={`h-2 rounded-full transition-all ${
+                currentPage === idx ? 'w-5 bg-emerald-400' : 'w-2 bg-white/40 hover:bg-white/70'
               }`}
             />
           ))}
         </div>
       </div>
+
+      {/* App Library Modal */}
+      {showAppLibraryModal && (
+        <div
+          onClick={() => setShowAppLibraryModal(false)}
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-3xl bg-zinc-900 border border-zinc-800 p-5 text-white shadow-2xl flex flex-col max-h-[85vh]"
+          >
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3 mb-3">
+              <div className="flex items-center gap-2">
+                <Grid className="w-5 h-5 text-emerald-400" />
+                <h3 className="font-bold text-sm">系统应用库</h3>
+              </div>
+              <button
+                onClick={() => setShowAppLibraryModal(false)}
+                className="text-xs text-zinc-400 hover:text-white px-2 py-1 rounded-lg bg-zinc-800"
+              >
+                关闭
+              </button>
+            </div>
+
+            <p className="text-[11px] text-zinc-400 mb-3">
+              可以在此处将已删除或未在桌面的系统应用重新放置到当前第 {currentPage + 1} 页桌面：
+            </p>
+
+            <div className="space-y-2 overflow-y-auto pr-1 flex-1">
+              {BUILTIN_APPS_REGISTRY.map((app) => {
+                const isOnDesktop = icons.some((i) => i.appId === app.appId);
+                return (
+                  <div
+                    key={app.appId}
+                    className="p-3 rounded-2xl bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden ${getBuiltInIconBg(
+                          app.appId
+                        )}`}
+                      >
+                        {getBuiltInIconComponent(app.builtInIcon)}
+                      </div>
+                      <div>
+                        <div className="font-semibold text-xs text-zinc-100">{app.name}</div>
+                        <div className="text-[10px] text-zinc-400">ID: {app.appId}</div>
+                      </div>
+                    </div>
+
+                    {isOnDesktop ? (
+                      <span className="text-[11px] text-zinc-400 flex items-center gap-1 bg-zinc-900/60 px-2.5 py-1 rounded-xl">
+                        <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                        已在桌面
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handleRestoreAppToDesktop(app)}
+                        className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 shadow-md flex items-center gap-1 transition"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        添加至桌面
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Icon Long-Press Context Menu Modal */}
       {activeIconMenu && (
@@ -668,18 +1038,21 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                 )}`}
               >
                 {activeIconMenu.customImage ? (
-                  <img src={activeIconMenu.customImage} alt="" className="w-full h-full object-cover" />
+                  <img
+                    src={activeIconMenu.customImage}
+                    alt=""
+                    className="w-full h-full object-cover"
+                  />
                 ) : (
                   getBuiltInIconComponent(activeIconMenu.builtInIcon)
                 )}
               </div>
               <div className="flex-1 min-w-0">
                 <h4 className="font-semibold text-sm truncate">{activeIconMenu.name}</h4>
-                <p className="text-[10px] text-zinc-400">应用布局设置</p>
+                <p className="text-[10px] text-zinc-400">应用布局与设置</p>
               </div>
             </div>
 
-            {/* Menu options */}
             <div className="space-y-1 text-xs">
               <button
                 onClick={() => {
@@ -689,7 +1062,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                 className="w-full p-2.5 rounded-xl hover:bg-zinc-800 flex items-center gap-2.5 text-zinc-200 transition"
               >
                 <ImageIcon className="w-4 h-4 text-emerald-400" />
-                <span>选取本地图片更换图标</span>
+                <span>更换图标图片</span>
               </button>
 
               <button
@@ -701,11 +1074,11 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
               </button>
 
               <button
-                onClick={() => handleMoveIconPosition(activeIconMenu)}
+                onClick={() => handleMoveIconNextPage(activeIconMenu)}
                 className="w-full p-2.5 rounded-xl hover:bg-zinc-800 flex items-center gap-2.5 text-zinc-200 transition"
               >
                 <Move className="w-4 h-4 text-blue-400" />
-                <span>更换桌面布局位置 (移动到下页)</span>
+                <span>跨页移动 (移至下页)</span>
               </button>
 
               <button
@@ -713,7 +1086,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                 className="w-full p-2.5 rounded-xl hover:bg-rose-900/30 flex items-center gap-2.5 text-rose-400 transition"
               >
                 <Trash2 className="w-4 h-4" />
-                <span>删除图标</span>
+                <span>从桌面移除图标</span>
               </button>
             </div>
           </div>
@@ -749,7 +1122,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
         </div>
       )}
 
-      {/* Local Image Picker for Icon */}
+      {/* Image Picker for Custom Icon */}
       {imagePickerTargetIcon && (
         <ImagePickerModal
           isOpen={Boolean(imagePickerTargetIcon)}
@@ -757,13 +1130,15 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
           title={`修改 [${imagePickerTargetIcon.name}] 图标`}
           onSelectImage={(imageUrl) => {
             onUpdateIcons(
-              icons.map((i) => (i.id === imagePickerTargetIcon.id ? { ...i, customImage: imageUrl } : i))
+              icons.map((i) =>
+                i.id === imagePickerTargetIcon.id ? { ...i, customImage: imageUrl } : i
+              )
             );
           }}
         />
       )}
 
-      {/* Add Widget Selection Modal */}
+      {/* Add Widget Modal */}
       {showAddWidgetModal && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="w-full max-w-xs rounded-3xl bg-zinc-900 border border-zinc-800 p-4 text-white shadow-2xl">
@@ -778,7 +1153,9 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
               >
                 <CloudSun className="w-5 h-5 mb-1 text-sky-400" />
                 <div className="font-semibold">实时天气小组件</div>
-                <div className="text-[10px] text-sky-200/80">显示气温、天气、降雨预测与灾害预警</div>
+                <div className="text-[10px] text-sky-200/80">
+                  显示气温、天气、降雨预测与灾害预警
+                </div>
               </button>
               <button
                 onClick={() => handleAddWidget('menstrual')}
@@ -863,7 +1240,9 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                   type="button"
                   onClick={() => setStickerIsCountdownInput(true)}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition ${
-                    stickerIsCountdownInput ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-zinc-400'
+                    stickerIsCountdownInput
+                      ? 'bg-purple-600 text-white'
+                      : 'bg-zinc-800 text-zinc-400'
                   }`}
                 >
                   目标倒计时
@@ -872,7 +1251,9 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                   type="button"
                   onClick={() => setStickerIsCountdownInput(false)}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition ${
-                    !stickerIsCountdownInput ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-zinc-400'
+                    !stickerIsCountdownInput
+                      ? 'bg-purple-600 text-white'
+                      : 'bg-zinc-800 text-zinc-400'
                   }`}
                 >
                   起始已累计
