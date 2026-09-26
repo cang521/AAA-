@@ -10,7 +10,7 @@ import {
 import { computeCycleStats } from '../lib/menstrual';
 import { weatherService } from '../lib/weatherService';
 import { BUILTIN_APPS_REGISTRY } from '../lib/storage';
-import { autoPaginateLayout } from '../lib/layoutPaginator';
+import { autoPaginateLayout, getWidgetSlotCost, PAGE_MAX_SLOTS } from '../lib/layoutPaginator';
 import {
   MessageCircle,
   HeartPulse,
@@ -149,6 +149,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
   const isSwiping = useRef<boolean>(false);
+  const swipeHandledRef = useRef<boolean>(false);
 
   const handleTouchStart = (e: React.TouchEvent | React.MouseEvent) => {
     const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
@@ -156,6 +157,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     touchStartX.current = clientX;
     touchStartY.current = clientY;
     isSwiping.current = true;
+    swipeHandledRef.current = false;
   };
 
   const handleTouchMove = (e: React.TouchEvent | React.MouseEvent) => {
@@ -163,7 +165,12 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   };
 
   const handleTouchEnd = (e: React.TouchEvent | React.MouseEvent) => {
-    if (!isSwiping.current || touchStartX.current === null || touchStartY.current === null) {
+    if (
+      !isSwiping.current ||
+      touchStartX.current === null ||
+      touchStartY.current === null ||
+      swipeHandledRef.current
+    ) {
       isSwiping.current = false;
       return;
     }
@@ -185,6 +192,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
 
     // Trigger horizontal swipe if deltaX > 40px and horizontal movement is greater than vertical movement
     if (Math.abs(deltaX) > 40 && Math.abs(deltaX) > Math.abs(deltaY)) {
+      swipeHandledRef.current = true;
       if (deltaX < 0 && currentPage < pagesCount - 1) {
         setCurrentPage((prev) => Math.min(pagesCount - 1, prev + 1));
       } else if (deltaX > 0 && currentPage > 0) {
@@ -229,6 +237,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const [dragTargetPosIndex, setDragTargetPosIndex] = useState<number | null>(null);
   const dragOverPageRef = useRef<number>(currentPage);
+  const edgeFlipLockedRef = useRef<boolean>(false);
 
   const handleStartDragIcon = (e: React.PointerEvent | React.TouchEvent, icon: AppIconConfig) => {
     e.stopPropagation();
@@ -237,6 +246,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     setDraggingIcon(icon);
     setDragPos({ x: clientX, y: clientY });
     dragOverPageRef.current = icon.pageIndex;
+    edgeFlipLockedRef.current = false;
   };
 
   const handleDragMove = (e: PointerEvent | TouchEvent) => {
@@ -245,18 +255,29 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     const clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
     setDragPos({ x: clientX, y: clientY });
 
-    // Edge swipe detection while dragging
+    // Edge swipe detection while dragging with strict edge flip lock
     const winWidth = window.innerWidth;
-    if (clientX < 45 && currentPage > 0) {
-      setCurrentPage((prev) => Math.max(0, prev - 1));
-      dragOverPageRef.current = Math.max(0, currentPage - 1);
-    } else if (clientX > winWidth - 45 && currentPage < pagesCount - 1) {
-      setCurrentPage((prev) => Math.min(pagesCount - 1, prev + 1));
-      dragOverPageRef.current = Math.min(pagesCount - 1, currentPage + 1);
+    const EDGE_THRESHOLD = 45;
+
+    if (clientX < EDGE_THRESHOLD) {
+      if (!edgeFlipLockedRef.current && currentPage > 0) {
+        edgeFlipLockedRef.current = true;
+        setCurrentPage((prev) => Math.max(0, prev - 1));
+        dragOverPageRef.current = Math.max(0, dragOverPageRef.current - 1);
+      }
+    } else if (clientX > winWidth - EDGE_THRESHOLD) {
+      if (!edgeFlipLockedRef.current && currentPage < pagesCount - 1) {
+        edgeFlipLockedRef.current = true;
+        setCurrentPage((prev) => Math.min(pagesCount - 1, prev + 1));
+        dragOverPageRef.current = Math.min(pagesCount - 1, dragOverPageRef.current + 1);
+      }
+    } else {
+      edgeFlipLockedRef.current = false;
     }
   };
 
   const handleDragEnd = () => {
+    edgeFlipLockedRef.current = false;
     if (!draggingIcon) return;
 
     const targetPage = dragOverPageRef.current;
@@ -348,16 +369,39 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   };
 
   const handleRestoreAppToDesktop = (app: { appId: AppId; name: string; builtInIcon: string }) => {
+    const currentPageWidgets = widgets.filter((w) => w.pageIndex === currentPage);
+    const widgetSlots = currentPageWidgets.reduce((sum, w) => sum + getWidgetSlotCost(w), 0);
+    const maxAppSlots = Math.max(0, PAGE_MAX_SLOTS - widgetSlots);
     const currentPageIcons = icons.filter((i) => i.pageIndex === currentPage);
+
+    let targetPage = currentPage;
+    let targetIcons = currentPageIcons;
+
+    if (currentPageIcons.length >= maxAppSlots) {
+      targetPage = currentPage + 1;
+      targetIcons = icons.filter((i) => i.pageIndex === targetPage);
+    }
+
     const newIcon: AppIconConfig = {
       id: `icon_${app.appId}_${Date.now()}`,
       name: app.name,
       appId: app.appId,
-      pageIndex: currentPage,
-      positionIndex: currentPageIcons.length,
+      pageIndex: targetPage,
+      positionIndex: targetIcons.length,
       builtInIcon: app.builtInIcon,
     };
-    onUpdateIcons([...icons, newIcon]);
+
+    const paginated = autoPaginateLayout(
+      widgets,
+      [...icons, newIcon],
+      Math.max(pagesCount, targetPage + 1)
+    );
+
+    onUpdateIcons(paginated.icons);
+    onUpdateWidgets(paginated.widgets);
+    if (onUpdatePagesCount && paginated.pagesCount !== pagesCount) {
+      onUpdatePagesCount(paginated.pagesCount);
+    }
   };
 
   // Add Widget
@@ -559,6 +603,12 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
             const pageIcons = icons
               .filter((i) => i.pageIndex === pageIdx)
               .sort((a, b) => a.positionIndex - b.positionIndex);
+
+            const widgetSlotsUsed = pageWidgets.reduce(
+              (sum, w) => sum + getWidgetSlotCost(w),
+              0
+            );
+            const maxAppSlotsOnPage = Math.max(0, PAGE_MAX_SLOTS - widgetSlotsUsed);
 
             return (
               <div
@@ -834,74 +884,91 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                   )}
                 </div>
 
-                {/* App Icons Grid */}
+                {/* App Icons Grid with Fixed Slot Count */}
                 <div className="grid grid-cols-4 gap-y-4 gap-x-2 pt-1 content-start">
-                  {pageIcons.map((icon, iconIdx) => {
-                    const isBeingDragged = draggingIcon?.id === icon.id;
-                    return (
-                      <div
-                        key={icon.id}
-                        onClick={() => handleIconClick(icon)}
-                        onContextMenu={(e) => handleIconLongPress(e, icon)}
-                        onPointerDown={(e) => {
-                          if (isEditMode) {
-                            handleStartDragIcon(e, icon);
-                          }
-                        }}
-                        onMouseEnter={() => setDragTargetPosIndex(iconIdx)}
-                        className={`group flex flex-col items-center cursor-pointer transition relative touch-none ${
-                          isBeingDragged ? 'opacity-30 scale-90' : 'active:scale-95'
-                        }`}
-                      >
-                        {/* Custom Image or Built-in Icon */}
+                  {[...Array(maxAppSlotsOnPage)].map((_, slotIdx) => {
+                    const icon = pageIcons[slotIdx];
+                    if (icon) {
+                      const isBeingDragged = draggingIcon?.id === icon.id;
+                      return (
                         <div
-                          className={`relative w-14 h-14 rounded-2xl flex items-center justify-center shadow-md border border-white/20 overflow-hidden ${
-                            icon.customImage ? 'bg-zinc-800' : getBuiltInIconBg(icon.appId)
+                          key={icon.id}
+                          onClick={() => handleIconClick(icon)}
+                          onContextMenu={(e) => handleIconLongPress(e, icon)}
+                          onPointerDown={(e) => {
+                            if (isEditMode) {
+                              handleStartDragIcon(e, icon);
+                            }
+                          }}
+                          onMouseEnter={() => setDragTargetPosIndex(slotIdx)}
+                          className={`group flex flex-col items-center cursor-pointer transition relative touch-none ${
+                            isBeingDragged ? 'opacity-30 scale-90' : 'active:scale-95'
                           }`}
                         >
-                          {icon.customImage ? (
-                            <img
-                              src={icon.customImage}
-                              alt={icon.name}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            getBuiltInIconComponent(icon.builtInIcon)
-                          )}
+                          {/* Custom Image or Built-in Icon */}
+                          <div
+                            className={`relative w-14 h-14 rounded-2xl flex items-center justify-center shadow-md border border-white/20 overflow-hidden ${
+                              icon.customImage ? 'bg-zinc-800' : getBuiltInIconBg(icon.appId)
+                            }`}
+                          >
+                            {icon.customImage ? (
+                              <img
+                                src={icon.customImage}
+                                alt={icon.name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              getBuiltInIconComponent(icon.builtInIcon)
+                            )}
 
-                          {/* Edit Mode Delete Badge */}
-                          {isEditMode && (
+                            {/* Edit Mode Delete Badge */}
+                            {isEditMode && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteIcon(icon.id);
+                                }}
+                                className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-md hover:bg-rose-600 z-20"
+                                title="删除图标"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* App Label */}
+                          <span className="mt-1.5 text-[11px] font-medium text-white tracking-tight drop-shadow-md truncate max-w-[68px] text-center">
+                            {icon.name}
+                          </span>
+                        </div>
+                      );
+                    } else {
+                      const isFirstEmptySlot = slotIdx === pageIcons.length;
+                      return (
+                        <div
+                          key={`empty_slot_${slotIdx}`}
+                          onMouseEnter={() => setDragTargetPosIndex(slotIdx)}
+                          className="flex flex-col items-center justify-center touch-none h-[76px]"
+                        >
+                          {isEditMode ? (
                             <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteIcon(icon.id);
-                              }}
-                              className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-md hover:bg-rose-600 z-20"
-                              title="删除图标"
+                              onClick={() => setShowAppLibraryModal(true)}
+                              className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl border-2 border-dashed transition ${
+                                isFirstEmptySlot
+                                  ? 'border-emerald-400/60 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                                  : 'border-white/20 bg-white/5 text-white/40 hover:bg-white/10'
+                              }`}
+                              title="从系统应用库添加应用"
                             >
-                              <Trash2 className="w-3 h-3" />
+                              <Plus className={`w-5 h-5 ${isFirstEmptySlot ? 'text-emerald-400' : 'text-white/40'}`} />
                             </button>
+                          ) : (
+                            <div className="w-14 h-14" />
                           )}
                         </div>
-
-                        {/* App Label */}
-                        <span className="mt-1.5 text-[11px] font-medium text-white tracking-tight drop-shadow-md truncate max-w-[68px] text-center">
-                          {icon.name}
-                        </span>
-                      </div>
-                    );
+                      );
+                    }
                   })}
-
-                  {/* Empty Slot Placeholder in Edit Mode */}
-                  {isEditMode && (
-                    <button
-                      onClick={() => setShowAppLibraryModal(true)}
-                      className="flex flex-col items-center justify-center w-14 h-14 rounded-2xl border-2 border-dashed border-white/30 bg-white/10 text-white/70 hover:bg-white/20 transition hover:text-white"
-                      title="从系统应用库添加"
-                    >
-                      <Plus className="w-6 h-6 text-emerald-400" />
-                    </button>
-                  )}
                 </div>
               </div>
             );

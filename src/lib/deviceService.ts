@@ -7,10 +7,15 @@ import {
   DeviceCategory,
   DeviceProtocol,
 } from '../types';
+import { DeviceIntent, convertIntentToDeviceAction } from './aiDeviceIntent';
+import { interactiveBleAdapter } from './deviceAdapters/InteractiveBleAdapter';
+import { svakomBleAdapter } from './deviceAdapters/SvakomBleAdapter';
+import { deviceOutputController } from './deviceAdapters/DeviceOutputController';
 
 const STORAGE_KEYS = {
   DEVICES: 'wechat_phone_devices_v4',
   DEVICE_LOGS: 'wechat_phone_device_operation_logs_v4',
+  DEV_SETTINGS: 'wechat_phone_device_dev_settings_v1',
 };
 
 // 预设高拟真模拟测试设备库 (严格划分为 4 大类，明确标记为 isSimulation: true)
@@ -344,8 +349,32 @@ class DeviceService {
   private logs: DeviceOperationLog[] = [];
   private listeners: Set<DeviceEventListener> = new Set();
 
+  private allowSimulation: boolean = false;
+
   constructor() {
     this.loadFromStorage();
+  }
+
+  public isAllowSimulation(): boolean {
+    return this.allowSimulation;
+  }
+
+  public setAllowSimulation(allow: boolean): void {
+    this.allowSimulation = allow;
+    try {
+      localStorage.setItem(STORAGE_KEYS.DEV_SETTINGS, JSON.stringify({ allowSimulation: allow }));
+    } catch (e) {}
+
+    if (!allow) {
+      // Purge all simulated devices when simulation mode is disabled
+      this.devices = this.devices.filter((d) => !d.isSimulation);
+      this.notify();
+    } else {
+      if (this.devices.length === 0) {
+        this.devices = [...INITIAL_SIMULATION_DEVICES];
+        this.notify();
+      }
+    }
   }
 
   // 检测当前运行环境 (Android/Chrome/Edge) 是否原生支持 Web Bluetooth
@@ -355,11 +384,19 @@ class DeviceService {
 
   private loadFromStorage() {
     try {
+      const devSettingsRaw = localStorage.getItem(STORAGE_KEYS.DEV_SETTINGS);
+      if (devSettingsRaw) {
+        const parsedDev = JSON.parse(devSettingsRaw);
+        this.allowSimulation = Boolean(parsedDev.allowSimulation);
+      } else {
+        this.allowSimulation = false;
+      }
+
       const raw = localStorage.getItem(STORAGE_KEYS.DEVICES);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          this.devices = parsed.map((d: SmartDevice) => {
+        if (Array.isArray(parsed)) {
+          let loaded = parsed.map((d: SmartDevice) => {
             let cat: DeviceCategory = d.category;
             if (['climate', 'light', 'cleaner', 'kitchen', 'curtain'].includes(d.category as string)) {
               cat = 'smart_home';
@@ -376,13 +413,18 @@ class DeviceService {
               capabilities: d.capabilities || d.supportedActions?.map((a) => a.name) || ['基础控制'],
             };
           });
+
+          // Default behavior: filter out all simulated mock devices unless explicitly enabled in Dev Settings
+          if (!this.allowSimulation) {
+            loaded = loaded.filter((d) => !d.isSimulation);
+          }
+
+          this.devices = loaded;
         } else {
-          this.devices = [...INITIAL_SIMULATION_DEVICES];
-          this.saveToStorage();
+          this.devices = this.allowSimulation ? [...INITIAL_SIMULATION_DEVICES] : [];
         }
       } else {
-        this.devices = [...INITIAL_SIMULATION_DEVICES];
-        this.saveToStorage();
+        this.devices = this.allowSimulation ? [...INITIAL_SIMULATION_DEVICES] : [];
       }
 
       const logsRaw = localStorage.getItem(STORAGE_KEYS.DEVICE_LOGS);
@@ -390,8 +432,8 @@ class DeviceService {
         this.logs = JSON.parse(logsRaw);
       }
     } catch (e) {
-      console.warn('Failed to load devices from storage, using initial:', e);
-      this.devices = [...INITIAL_SIMULATION_DEVICES];
+      console.warn('Failed to load devices from storage:', e);
+      this.devices = [];
     }
   }
 

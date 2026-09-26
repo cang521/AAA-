@@ -5,15 +5,15 @@ export const PAGE_MAX_SLOTS = 12; // 3 rows of 4 columns = 12 slots max per page
 export function getWidgetSlotCost(widget: WidgetConfig): number {
   switch (widget.type) {
     case 'calendar':
-      return 8; // 2 full rows of icons
+      return 8; // 2 full rows (8 slots)
     case 'weather':
     case 'menstrual':
     case 'memo':
-      return 6; // 1.5 rows of icons
+    case 'photo':
     case 'time':
     case 'sticker':
     default:
-      return 4; // 1 full row of icons
+      return 4; // 1 full row (4 slots)
   }
 }
 
@@ -83,10 +83,10 @@ export function autoPaginateLayout(
       currSlots += cost;
     });
 
-    // Process icons on input page p
+    // Process icons on input page p (1 icon = 1 slot)
     pIcons.forEach((icon) => {
-      // When starting a new row or icon, check if another row of 4 slots fits on currPage
-      if (currSlots + 4 > PAGE_MAX_SLOTS && currSlots > 0) {
+      const cost = 1;
+      if (currSlots + cost > PAGE_MAX_SLOTS && currSlots > 0) {
         currPage += 1;
         currSlots = 0;
       }
@@ -100,7 +100,7 @@ export function autoPaginateLayout(
         pageIndex: currPage,
       });
 
-      currSlots += 1;
+      currSlots += cost;
     });
   }
 
