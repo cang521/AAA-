@@ -98,6 +98,81 @@ export class ZipStreamReader {
   }
 
   /**
+   * Stream text chunks of an entry without allocating a single huge string in memory
+   * Used when entry.uncompressedSize > 5MB
+   */
+  public async streamEntryTextChunks(
+    entry: ZipEntry,
+    chunkCallback: (chunkText: string) => Promise<void> | void,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    if (entry.isDirectory) return;
+
+    const localHeaderSlice = await this.file
+      .slice(entry.localHeaderOffset, entry.localHeaderOffset + 30)
+      .arrayBuffer();
+    const localView = new DataView(localHeaderSlice);
+
+    if (localView.getUint32(0, true) !== 0x04034b50) {
+      throw new Error(`损坏的 ZIP 本地标头: ${entry.filename}`);
+    }
+
+    const filenameLen = localView.getUint16(26, true);
+    const extraLen = localView.getUint16(28, true);
+    const dataStart = entry.localHeaderOffset + 30 + filenameLen + extraLen;
+
+    const compressedBlob = this.file.slice(dataStart, dataStart + entry.compressedSize);
+
+    if (entry.compressionMethod === 0) {
+      // Uncompressed Store - stream in 2MB chunks
+      const CHUNK = 2 * 1024 * 1024;
+      let offset = 0;
+      while (offset < compressedBlob.size) {
+        if (abortSignal?.aborted) {
+          throw new Error('IMPORT_CANCELLED');
+        }
+        const slice = compressedBlob.slice(offset, offset + CHUNK);
+        const text = await slice.text();
+        await chunkCallback(text);
+        offset += CHUNK;
+      }
+    } else if (entry.compressionMethod === 8) {
+      // Deflate
+      if (typeof DecompressionStream !== 'undefined') {
+        let stream: ReadableStream<Uint8Array> | null = null;
+        try {
+          stream = compressedBlob.stream().pipeThrough(new DecompressionStream('deflate-raw'));
+        } catch (e) {
+          stream = compressedBlob.stream().pipeThrough(new DecompressionStream('deflate'));
+        }
+
+        const reader = stream.getReader();
+        const decoder = new TextDecoder('utf-8');
+
+        while (true) {
+          if (abortSignal?.aborted) {
+            reader.cancel().catch(() => {});
+            throw new Error('IMPORT_CANCELLED');
+          }
+
+          const { done, value } = await reader.read();
+          if (value && value.byteLength > 0) {
+            const chunkText = decoder.decode(value, { stream: !done });
+            await chunkCallback(chunkText);
+          }
+          if (done) break;
+        }
+      } else {
+        // Fallback for environments lacking DecompressionStream
+        const fullText = await this.readEntryText(entry);
+        await chunkCallback(fullText);
+      }
+    } else {
+      throw new Error(`暂不支持的 ZIP 压缩算法: ${entry.compressionMethod}`);
+    }
+  }
+
+  /**
    * Extract text of a single entry by slicing only its compressed bytes from the file
    */
   public async readEntryText(entry: ZipEntry): Promise<string> {

@@ -1,6 +1,7 @@
 import React from 'react';
 import { ChatMessage } from '../../types';
 import { Brain } from 'lucide-react';
+import { OfflineShareCard } from '../offline/OfflineShareCard';
 
 interface ChatMessageBubbleProps {
   msg: ChatMessage;
@@ -11,10 +12,32 @@ interface ChatMessageBubbleProps {
   isHighlighted?: boolean;
   onOpenCoT?: (msgId: string) => void;
   onContextMenu: (msg: ChatMessage) => void;
+  onOpenOfflineDetail?: (sessionId: string) => void;
 }
 
 export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
-  ({ msg, isUser, avatar, name, quoteText, isHighlighted, onOpenCoT, onContextMenu }) => {
+  ({ msg, isUser, avatar, name, quoteText, isHighlighted, onOpenCoT, onContextMenu, onOpenOfflineDetail }) => {
+    if (msg.type === 'offline_share_card' && msg.offlineCardData) {
+      return (
+        <div
+          id={`msg-bubble-${msg.id}`}
+          className={`flex gap-2.5 transition-all duration-300 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}
+        >
+          <img src={avatar} alt="" className="w-9 h-9 rounded-2xl object-cover border border-zinc-700 shrink-0" />
+          <OfflineShareCard
+            sessionId={msg.offlineCardData.sessionId}
+            sceneName={msg.offlineCardData.sceneName}
+            characterName={msg.offlineCardData.characterName}
+            characterAvatar={msg.offlineCardData.characterAvatar}
+            dateStr={msg.offlineCardData.dateStr}
+            summaryText={msg.offlineCardData.summaryText}
+            onOpenDetail={(sid) => {
+              if (onOpenOfflineDetail) onOpenOfflineDetail(sid);
+            }}
+          />
+        </div>
+      );
+    }
     return (
       <div
         id={`msg-bubble-${msg.id}`}

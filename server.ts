@@ -2500,6 +2500,161 @@ app.post('/api/gemini/worldbook-ai', async (req, res) => {
   }
 });
 
+// 6b. Offline Scene Mode Roleplay & State Engine Endpoint
+app.post('/api/gemini/offline-chat', async (req, res) => {
+  try {
+    const { character, userProfile, sceneSnapshot, recentMessages, recalledMemories, previousState, userInput, apiConfig } = req.body;
+    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+
+    const systemInstruction = `你现在进入“线下模式 (Offline Scene Mode)”。
+你正在与用户在真实的物理/剧情场景中面对面共度一段时光。
+
+【角色信息】:
+- 姓名: ${character?.name || 'AI'}
+- 人设: ${character?.persona || '温柔贴心'}
+- 性格: ${character?.personality || '随和'}
+- 关系: ${character?.relationship || '好友'}
+
+【用户资料】:
+- 用户姓名/昵称: ${userProfile?.name || '用户'}
+- 个人特征: ${userProfile?.bio || '普通用户'}
+
+【当前线下场景设定】:
+- 场景名称: ${sceneSnapshot?.name || '线下空间'}
+- 场景地点: ${sceneSnapshot?.location || '静谧空间'}
+- 氛围基调: ${sceneSnapshot?.atmosphere || '温馨、亲密'}
+- 详细环境背景: ${sceneSnapshot?.background || '两人待在一起'}
+
+【已有回忆与背景】:
+${recalledMemories || '无特定调阅记忆'}
+
+【上一轮你的角色状态】:
+- 心率: ${previousState?.heartRate || 75} bpm
+- 呼吸: ${previousState?.breathing || '平静'}
+- 脸红: ${previousState?.blush || 10}%
+- 情绪: ${(previousState?.emotion || ['平静']).join('、')}
+- 紧张: ${previousState?.tension || 10}%
+- 兴奋/冲动: ${previousState?.arousal || 15}%
+- 肢体表现: ${previousState?.physicalState || '身体放松'}
+- 行为举止: ${previousState?.behavior || '眼神自然'}
+
+【输出格式严格要求】:
+必须只输出一个合法的 JSON 对象，不要包含 markdown 代码块外的其他说明文字！
+结构格式如下：
+{
+  "reply": "你对用户说的话（只包含口头回复对白，不要包含动作括号）",
+  "action": "（你的肢体动作、眼神神态或微表情描写，必须使用中文全角括号）",
+  "state": {
+    "heartRate": 85,
+    "breathing": "稍快",
+    "blush": 25,
+    "emotion": ["害羞", "开心"],
+    "arousal": 20,
+    "tension": 15,
+    "physicalState": "身体微绷，微微靠近",
+    "behavior": "眼神闪烁后注视着你",
+    "energy": 82
+  }
+}
+
+注意：
+1. 动作描写必须使用中文全角括号：（...），不得使用 *动作*、[action]、旁白: 等格式！
+2. 状态数据 (state) 必须随着当前剧情对话和情绪起伏动态变化，心率、脸红、紧张程度必须平滑合理，不得突兀跳跃！`;
+
+    const chatHistoryText = (recentMessages || [])
+      .map((m: any) => `${m.sender === 'user' ? '用户' : character?.name || 'AI'}: ${m.text} ${m.action || ''}`)
+      .join('\n');
+
+    const prompt = `【当前对话历史】:\n${chatHistoryText}\n\n用户刚刚对你说: "${userInput}"\n\n请根据上下文和场景，生成你的对白、动作描写与更新后的角色状态 JSON：`;
+
+    const responseText = await callAiService({
+      prompt,
+      systemInstruction,
+      model: selectedModel,
+      apiKey: apiConfig?.textApiKey,
+      baseUrl: apiConfig?.textBaseUrl,
+      responseMimeType: 'application/json',
+    });
+
+    let cleanJson = (responseText || '').replace(/```json|```/g, '').trim();
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(cleanJson);
+    } catch {
+      parsed = { reply: responseText, action: '（凝望着你）', state: previousState };
+    }
+
+    res.json({ success: true, ...parsed });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Offline chat error' });
+  }
+});
+
+// 6c. Offline Session Ending Event Summary & Candidate Memory Generator Endpoint
+app.post('/api/gemini/offline-summary', async (req, res) => {
+  try {
+    const { character, userProfile, sceneSnapshot, sessionMessages, stateHistory, apiConfig } = req.body;
+    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+
+    const systemInstruction = `系统事件：[OFFLINE_SESSION_ENDED]
+本次与 ${character?.name} 的线下场景模式已经正式结束。
+
+请基于整个线下场景的全部对话过程、动作互动与状态变化，生成本次线下经历的结案总结与候选长期记忆。
+
+【场景信息】:
+- 角色: ${character?.name} (${character?.persona})
+- 场景名称: ${sceneSnapshot?.name}
+- 地点: ${sceneSnapshot?.location}
+
+【输出格式严格要求】:
+必须返回合法的 JSON 对象：
+{
+  "title": "一段富有诗意或创意的经历标题",
+  "summary": "100-200字精炼的本次经历事件过程摘要",
+  "importantEvents": ["重要转折点或关键事件1", "重要约定或互动2"],
+  "relationshipChanges": ["情感与关系的变化或升温描述"],
+  "candidateMemories": [
+    "提炼出2-4条适合写入AI长期记忆库的客观事实/约定/感情小结（例如：用户与Caelum在雨夜共享了热红茶，约定下周末一起去古书店...）"
+  ],
+  "aiReflection": "AI角色以第一人称口吻写给本次经历的一句简短内心独白/回忆"
+}`;
+
+    const transcript = (sessionMessages || [])
+      .map((m: any) => `${m.sender === 'user' ? '用户' : character?.name}: ${m.text} ${m.action || ''}`)
+      .join('\n');
+
+    const prompt = `【线下模式完整对话记录】:\n${transcript}\n\n请生成本次线下经历的总结与候选长期记忆 JSON：`;
+
+    const responseText = await callAiService({
+      prompt,
+      systemInstruction,
+      model: selectedModel,
+      apiKey: apiConfig?.textApiKey,
+      baseUrl: apiConfig?.textBaseUrl,
+      responseMimeType: 'application/json',
+    });
+
+    let cleanJson = (responseText || '').replace(/```json|```/g, '').trim();
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(cleanJson);
+    } catch {
+      parsed = {
+        title: `${sceneSnapshot?.name || '线下'} 经历总结`,
+        summary: `与 ${character?.name} 在【${sceneSnapshot?.name}】度过了一段充实的独处时光。`,
+        importantEvents: ['两人进行了真诚的互动与交流。'],
+        relationshipChanges: ['彼此的默契进一步加深。'],
+        candidateMemories: [`用户与 ${character?.name} 体验了『${sceneSnapshot?.name}』场景。`],
+        aiReflection: `和你待在一起的时间总是过得很快。`,
+      };
+    }
+
+    res.json({ success: true, summary: parsed });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Offline summary error' });
+  }
+});
+
 // 7. Gomoku AI Commentary / Speech Generator Endpoint
 app.post('/api/gemini/gomoku-commentary', async (req, res) => {
   try {

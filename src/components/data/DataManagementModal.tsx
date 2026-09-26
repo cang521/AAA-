@@ -96,6 +96,16 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
   const [unifiedTargetId, setUnifiedTargetId] = useState<string>('');
   const [unifiedNotice, setUnifiedNotice] = useState<string | null>(null);
   const [isExecutingImport, setIsExecutingImport] = useState(false);
+  const activeJournalRef = useRef<ImportJournal | null>(null);
+  const [importProgress, setImportProgress] = useState<{
+    status: string;
+    percentage: number;
+    processedMessagesCount: number;
+    processedFiles: number;
+    totalFiles: number;
+    currentStageMessage: string;
+    currentFileName?: string;
+  } | null>(null);
   const [importSuccessResult, setImportSuccessResult] = useState<{
     importedCharacterCount: number;
     importedMessageCount: number;
@@ -227,16 +237,6 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
     }
   };
 
-  const [importProgress, setImportProgress] = useState<{
-    status: string;
-    percentage: number;
-    processedMessagesCount: number;
-    processedFiles: number;
-    totalFiles: number;
-    currentStageMessage: string;
-    currentFileName?: string;
-  } | null>(null);
-
   const handleRunImport = async () => {
     if (!parsedResult) return;
     setIsExecutingImport(true);
@@ -256,12 +256,11 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
     };
 
     try {
-      // Auto Snapshot before import
-      const snapshot = await createDataSnapshot('导入前自动安全备份').catch(() => null);
-
       if (currentFile && (currentFile.size > 5 * 1024 * 1024 || parsedResult.fileType === 'zip' || parsedResult.fileType === 'jsonl')) {
-        // Large File Streaming Pipeline
+        // Large File Streaming Pipeline: DO NOT call createDataSnapshot() to avoid full memory load
         const journal = new ImportJournal(currentFile.name, currentFile.size);
+        activeJournalRef.current = journal;
+
         journal.subscribe((state) => {
           setImportProgress({
             status: state.status,
@@ -276,15 +275,21 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
 
         await LargeImportManager.executeStreamingImport(currentFile, execOptions, journal);
 
-        setImportSuccessResult({
-          importedCharacterCount: parsedResult.characters.length,
-          importedMessageCount: journal.getState().processedMessagesCount,
-          importedGroupCount: parsedResult.groups.length,
-          importedMemoryCount: parsedResult.memories.length,
-          snapshotId: snapshot?.id || 'snap_auto',
-        });
+        const journalState = journal.getState();
+        if (journalState.status === 'cancelled') {
+          setImportError('已取消导入，已成功自动回滚撤销本次新增数据');
+        } else {
+          setImportSuccessResult({
+            importedCharacterCount: parsedResult.characters.length,
+            importedMessageCount: journalState.processedMessagesCount,
+            importedGroupCount: parsedResult.groups.length,
+            importedMemoryCount: parsedResult.memories.length,
+            snapshotId: 'session_journal',
+          });
+        }
       } else {
-        // Normal Import Execution
+        // Small File Normal Import Execution (safe to create snapshot)
+        const snapshot = await createDataSnapshot('导入前自动安全备份').catch(() => null);
         const result = await executeImport(parsedResult, execOptions);
         setImportSuccessResult(result);
       }
@@ -292,9 +297,14 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
       setSnapshots(listDataSnapshots());
       onDataChanged();
     } catch (err: any) {
-      setImportError(err?.message || '导入写入失败');
+      if (err?.message === 'IMPORT_CANCELLED' || activeJournalRef.current?.isCancelled()) {
+        setImportError('已取消导入，已撤销本次导入新增数据');
+      } else {
+        setImportError(err?.message || '导入写入失败');
+      }
     } finally {
       setIsExecutingImport(false);
+      activeJournalRef.current = null;
     }
   };
 
@@ -1391,12 +1401,25 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                   {/* Live Progress Bar Card during Streaming Import */}
                   {isExecutingImport && importProgress && (
                     <div className="p-3.5 rounded-2xl bg-blue-950/40 border border-blue-500/40 space-y-2.5">
-                      <div className="flex items-center justify-between text-xs text-blue-300 font-bold">
+                      <div className="flex items-center justify-between text-xs text-blue-300 font-bold gap-2">
                         <span className="flex items-center gap-1.5 min-w-0 truncate">
                           <RefreshCw className="w-4 h-4 animate-spin text-blue-400 shrink-0" />
                           <span className="truncate">{importProgress.currentStageMessage || '正在分块流式写入数据库...'}</span>
                         </span>
-                        <span className="font-mono text-sm shrink-0">{importProgress.percentage}%</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="font-mono text-sm">{importProgress.percentage}%</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (activeJournalRef.current) {
+                                activeJournalRef.current.cancel();
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px] transition cursor-pointer shadow-sm active:scale-95"
+                          >
+                            取消导入
+                          </button>
+                        </div>
                       </div>
                       <div className="w-full h-2.5 bg-zinc-800 rounded-full overflow-hidden border border-zinc-700">
                         <div

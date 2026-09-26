@@ -1,8 +1,9 @@
 import { ChatMessage } from '../types';
 
 const DB_NAME = 'PhoneSimChatDB_v2';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_MESSAGES = 'messages';
+const STORE_JOURNALS = 'import_journals';
 
 interface CharacterMeta {
   characterId: string;
@@ -52,6 +53,10 @@ export function getDb(): Promise<IDBDatabase> {
         store.createIndex('by_character', 'characterId', { unique: false });
         store.createIndex('by_character_time', ['characterId', 'timestamp'], { unique: false });
         store.createIndex('by_time', 'timestamp', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORE_JOURNALS)) {
+        const journalStore = db.createObjectStore(STORE_JOURNALS, { keyPath: 'id', autoIncrement: true });
+        journalStore.createIndex('by_session', 'sessionId', { unique: false });
       }
     };
 
@@ -275,9 +280,12 @@ export async function saveChatMessage(msg: ChatMessage): Promise<void> {
 }
 
 /**
- * Bulk save messages (used for benchmarks, imports, syncs)
+ * Bulk save messages (supports streaming batch imports without full DB rescans per batch)
  */
-export async function saveChatMessagesBulk(msgs: ChatMessage[]): Promise<void> {
+export async function saveChatMessagesBulk(
+  msgs: ChatMessage[],
+  options?: { skipMetaReload?: boolean; skipNotify?: boolean }
+): Promise<void> {
   if (msgs.length === 0) return;
   const db = await getDb();
 
@@ -293,8 +301,110 @@ export async function saveChatMessagesBulk(msgs: ChatMessage[]): Promise<void> {
     tx.onerror = () => rej(tx.error);
   });
 
+  if (!options?.skipMetaReload) {
+    await reloadMetaCache(db);
+  }
+  if (!options?.skipNotify) {
+    notifyChange();
+  }
+}
+
+/**
+ * Manually refresh DB metadata and notify UI listeners (called ONCE at end of streaming import)
+ */
+export async function refreshDbMetaAndNotify(): Promise<void> {
+  const db = await getDb();
   await reloadMetaCache(db);
   notifyChange();
+}
+
+/**
+ * Record a batch of inserted message IDs to IndexedDB import_journals store (Zero JS Memory overhead)
+ */
+export async function recordImportSessionBatch(
+  sessionId: string,
+  insertedIds: string[]
+): Promise<void> {
+  if (!sessionId || insertedIds.length === 0) return;
+  const db = await getDb();
+  if (!db.objectStoreNames.contains(STORE_JOURNALS)) return;
+
+  const tx = db.transaction([STORE_JOURNALS], 'readwrite');
+  const store = tx.objectStore(STORE_JOURNALS);
+  store.add({
+    sessionId,
+    insertedIds,
+    timestamp: Date.now(),
+  });
+
+  await new Promise<void>((res, rej) => {
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+/**
+ * Rollback an import session by deleting all inserted message IDs from STORE_MESSAGES using IndexedDB journals
+ */
+export async function rollbackImportSession(sessionId: string): Promise<number> {
+  if (!sessionId) return 0;
+  const db = await getDb();
+  if (!db.objectStoreNames.contains(STORE_JOURNALS)) return 0;
+
+  // 1. Fetch all journal records for this sessionId
+  const journalTx = db.transaction([STORE_JOURNALS], 'readonly');
+  const journalStore = journalTx.objectStore(STORE_JOURNALS);
+  const index = journalStore.index('by_session');
+  const req = index.getAll(sessionId);
+
+  const records: any[] = await new Promise((res, rej) => {
+    req.onsuccess = () => res(req.result || []);
+    req.onerror = () => rej(req.error);
+  });
+
+  if (records.length === 0) return 0;
+
+  // 2. Collect all inserted IDs
+  const allIds: string[] = [];
+  for (const r of records) {
+    if (Array.isArray(r.insertedIds)) {
+      allIds.push(...r.insertedIds);
+    }
+  }
+
+  // 3. Delete messages from STORE_MESSAGES in batches
+  const BATCH = 1000;
+  for (let i = 0; i < allIds.length; i += BATCH) {
+    const chunk = allIds.slice(i, i + BATCH);
+    const msgTx = db.transaction([STORE_MESSAGES], 'readwrite');
+    const msgStore = msgTx.objectStore(STORE_MESSAGES);
+    for (const id of chunk) {
+      msgStore.delete(id);
+    }
+    await new Promise<void>((res, rej) => {
+      msgTx.oncomplete = () => res();
+      msgTx.onerror = () => rej(msgTx.error);
+    });
+  }
+
+  // 4. Delete journal records
+  const delJournalTx = db.transaction([STORE_JOURNALS], 'readwrite');
+  const delJournalStore = delJournalTx.objectStore(STORE_JOURNALS);
+  for (const r of records) {
+    if (r.id !== undefined) {
+      delJournalStore.delete(r.id);
+    }
+  }
+  await new Promise<void>((res, rej) => {
+    delJournalTx.oncomplete = () => res();
+    delJournalTx.onerror = () => rej(delJournalTx.error);
+  });
+
+  // 5. Refresh DB metadata & notify UI once
+  await reloadMetaCache(db);
+  notifyChange();
+
+  return allIds.length;
 }
 
 /**

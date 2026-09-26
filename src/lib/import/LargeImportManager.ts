@@ -7,7 +7,12 @@
 import { ChatMessage, AiCharacter, GroupChat, UserProfile, MenstrualData, ApiConfig, AiControls, AiPermissions, Memo, WorldBook } from '../../types';
 import { ZipStreamReader, ZipEntry } from './ZipStreamReader';
 import { ImportJournal, ImportProgressState, ProgressCallback } from './ImportJournal';
-import { saveChatMessagesBulk } from '../chatDb';
+import {
+  saveChatMessagesBulk,
+  recordImportSessionBatch,
+  rollbackImportSession,
+  refreshDbMetaAndNotify,
+} from '../chatDb';
 import {
   loadCharacters,
   saveCharacters,
@@ -286,20 +291,33 @@ export class LargeImportManager {
       journal.update({
         status: 'completed',
         percentage: 100,
-        currentStageMessage: `导入完成！成功落盘 ${journal.getState().processedMessagesCount} 条聊天记录。`,
+        currentStageMessage: `流式导入完成！成功落盘 ${journal.getState().processedMessagesCount} 条聊天记录。`,
       });
     } catch (e: any) {
-      console.error('Streaming import error', e);
-      journal.update({
-        status: 'failed',
-        errorMessage: e?.message || '导入中断，数据可能部分写入',
-      });
-      throw e;
+      if (e?.message === 'IMPORT_CANCELLED' || journal.isCancelled()) {
+        journal.update({
+          status: 'cancelled',
+          currentStageMessage: '正在撤销回滚本次导入新增的数据...',
+        });
+        const revertedCount = await rollbackImportSession(journal.getSessionId());
+        journal.update({
+          status: 'cancelled',
+          currentStageMessage: `已取消导入，成功撤销本次写入的 ${revertedCount} 条聊天记录。`,
+        });
+      } else {
+        console.error('Streaming import error:', e);
+        journal.update({
+          status: 'failed',
+          errorMessage: e?.message || '流式导入中断',
+        });
+        await rollbackImportSession(journal.getSessionId()).catch(() => {});
+        throw e;
+      }
     }
   }
 
   /**
-   * Stream ZIP files entry by entry
+   * Stream ZIP files entry by entry with streaming decompression for large entries
    */
   private static async streamImportZip(
     file: File,
@@ -320,43 +338,99 @@ export class LargeImportManager {
     });
 
     let currentBatch: ChatMessage[] = [];
+    const sessionId = journal.getSessionId();
 
     for (let i = 0; i < textEntries.length; i++) {
+      if (journal.isCancelled()) {
+        throw new Error('IMPORT_CANCELLED');
+      }
+
       const entry = textEntries[i];
       journal.update({
         currentFileName: entry.filename,
         processedFiles: i,
         percentage: Math.round(((i + 1) / textEntries.length) * 90),
-        currentStageMessage: `解压并解析 [${i + 1}/${textEntries.length}] ${entry.filename}...`,
+        currentStageMessage: `流式解压解析 [${i + 1}/${textEntries.length}] ${entry.filename}...`,
       });
 
-      // Read single entry text
-      const entryText = await zipReader.readEntryText(entry);
-      if (!entryText) continue;
+      if (entry.uncompressedSize > 5 * 1024 * 1024) {
+        // Streaming decompression for large entries (>5MB)
+        let entryBuffer = '';
+        await zipReader.streamEntryTextChunks(
+          entry,
+          async (chunkText) => {
+            if (journal.isCancelled()) throw new Error('IMPORT_CANCELLED');
+            entryBuffer += chunkText;
 
-      // Extract messages from entry text
-      const messages = this.parseMessagesFromText(entryText, targetCharacterId);
+            if (entry.filename.endsWith('.jsonl') || entry.filename.endsWith('.txt')) {
+              const lines = entryBuffer.split('\n');
+              entryBuffer = lines.pop() || '';
+              for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed) continue;
+                const msg = this.parseSingleMessageLine(trimmed, targetCharacterId);
+                if (msg) {
+                  currentBatch.push(msg);
+                  if (currentBatch.length >= BATCH_SIZE) {
+                    await saveChatMessagesBulk(currentBatch, { skipMetaReload: true, skipNotify: true });
+                    await recordImportSessionBatch(sessionId, currentBatch.map((m) => m.id));
+                    journal.addMessages(currentBatch.length);
+                    currentBatch = [];
+                    await new Promise((r) => setTimeout(r, 0));
+                  }
+                }
+              }
+            } else {
+              // Extract JSON objects incrementally
+              const parsedBatch = this.parseMessagesFromText(entryBuffer, targetCharacterId);
+              for (const msg of parsedBatch) {
+                currentBatch.push(msg);
+                if (currentBatch.length >= BATCH_SIZE) {
+                  await saveChatMessagesBulk(currentBatch, { skipMetaReload: true, skipNotify: true });
+                  await recordImportSessionBatch(sessionId, currentBatch.map((m) => m.id));
+                  journal.addMessages(currentBatch.length);
+                  currentBatch = [];
+                  await new Promise((r) => setTimeout(r, 0));
+                }
+              }
+              entryBuffer = '';
+            }
+          },
+          journal.getSignal()
+        );
 
-      for (const msg of messages) {
-        currentBatch.push(msg);
+        if (entryBuffer.trim()) {
+          const msg = this.parseSingleMessageLine(entryBuffer.trim(), targetCharacterId);
+          if (msg) currentBatch.push(msg);
+          entryBuffer = '';
+        }
+      } else {
+        // Small Entry (<5MB): Read entry text
+        const entryText = await zipReader.readEntryText(entry);
+        if (!entryText) continue;
 
-        if (currentBatch.length >= BATCH_SIZE) {
-          await saveChatMessagesBulk(currentBatch);
-          journal.addMessages(currentBatch.length);
-          currentBatch = [];
-
-          // Yield main thread to allow browser UI re-render and GC
-          await new Promise((r) => setTimeout(r, 0));
+        const messages = this.parseMessagesFromText(entryText, targetCharacterId);
+        for (const msg of messages) {
+          currentBatch.push(msg);
+          if (currentBatch.length >= BATCH_SIZE) {
+            await saveChatMessagesBulk(currentBatch, { skipMetaReload: true, skipNotify: true });
+            await recordImportSessionBatch(sessionId, currentBatch.map((m) => m.id));
+            journal.addMessages(currentBatch.length);
+            currentBatch = [];
+            await new Promise((r) => setTimeout(r, 0));
+          }
         }
       }
     }
 
-    // Flush remaining batch
     if (currentBatch.length > 0) {
-      await saveChatMessagesBulk(currentBatch);
+      await saveChatMessagesBulk(currentBatch, { skipMetaReload: true, skipNotify: true });
+      await recordImportSessionBatch(sessionId, currentBatch.map((m) => m.id));
       journal.addMessages(currentBatch.length);
       currentBatch = [];
     }
+
+    await refreshDbMetaAndNotify();
   }
 
   /**
@@ -372,8 +446,13 @@ export class LargeImportManager {
     let offset = 0;
     let leftoverLine = '';
     let currentBatch: ChatMessage[] = [];
+    const sessionId = journal.getSessionId();
 
     while (offset < file.size) {
+      if (journal.isCancelled()) {
+        throw new Error('IMPORT_CANCELLED');
+      }
+
       const end = Math.min(offset + CHUNK_SIZE, file.size);
       const chunkBlob = file.slice(offset, end);
       const chunkText = await chunkBlob.text();
@@ -396,7 +475,8 @@ export class LargeImportManager {
           currentBatch.push(msg);
 
           if (currentBatch.length >= BATCH_SIZE) {
-            await saveChatMessagesBulk(currentBatch);
+            await saveChatMessagesBulk(currentBatch, { skipMetaReload: true, skipNotify: true });
+            await recordImportSessionBatch(sessionId, currentBatch.map((m) => m.id));
             journal.addMessages(currentBatch.length);
             currentBatch = [];
             await new Promise((r) => setTimeout(r, 0));
@@ -419,81 +499,128 @@ export class LargeImportManager {
     }
 
     if (currentBatch.length > 0) {
-      await saveChatMessagesBulk(currentBatch);
+      await saveChatMessagesBulk(currentBatch, { skipMetaReload: true, skipNotify: true });
+      await recordImportSessionBatch(sessionId, currentBatch.map((m) => m.id));
       journal.addMessages(currentBatch.length);
       currentBatch = [];
     }
+
+    await refreshDbMetaAndNotify();
   }
 
   /**
-   * Stream JSON chunked using regex item scanner for large arrays
+   * Stream JSON chunked using 2MB Blob slices and streaming JSON state machine parser
+   * Zero full-file memory allocation
    */
   private static async streamImportJsonChunked(
-    file: File,
+    file: File | Blob,
     targetCharacterId: string,
     executionOptions: ImportExecutionOptions,
     journal: ImportJournal
   ): Promise<void> {
-    const text = await file.text();
+    const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB
+    let offset = 0;
+    let buffer = '';
     let currentBatch: ChatMessage[] = [];
 
-    let parsed: any = null;
-    try {
-      parsed = JSON.parse(text);
-    } catch (e) {
-      // Regex extraction fallback for huge/malformed JSON
-      const itemRegex = /\{[^{}]*?"(?:text|content|message)"[^{}]*?\}/g;
-      let match;
-      while ((match = itemRegex.exec(text)) !== null) {
-        try {
-          const item = JSON.parse(match[0]);
-          const msg = this.normalizeMessageObject(item, targetCharacterId);
-          if (msg) {
-            currentBatch.push(msg);
-            if (currentBatch.length >= BATCH_SIZE) {
-              await saveChatMessagesBulk(currentBatch);
-              journal.addMessages(currentBatch.length);
-              currentBatch = [];
-              await new Promise((r) => setTimeout(r, 0));
+    let inString = false;
+    let isEscaped = false;
+    let depth = 0;
+    let objectStart = -1;
+
+    const sessionId = journal.getSessionId();
+
+    while (offset < file.size) {
+      if (journal.isCancelled()) {
+        throw new Error('IMPORT_CANCELLED');
+      }
+
+      const end = Math.min(offset + CHUNK_SIZE, file.size);
+      const sliceBlob = file.slice(offset, end);
+      const chunkText = await sliceBlob.text();
+      buffer += chunkText;
+
+      let lastProcessedPos = 0;
+
+      for (let i = 0; i < buffer.length; i++) {
+        const char = buffer[i];
+
+        if (inString) {
+          if (isEscaped) {
+            isEscaped = false;
+          } else if (char === '\\') {
+            isEscaped = true;
+          } else if (char === '"') {
+            inString = false;
+          }
+          continue;
+        }
+
+        if (char === '"') {
+          inString = true;
+          isEscaped = false;
+          continue;
+        }
+
+        if (char === '{') {
+          if (depth === 0) {
+            objectStart = i;
+          }
+          depth++;
+        } else if (char === '}') {
+          if (depth > 0) {
+            depth--;
+            if (depth === 0 && objectStart !== -1) {
+              const jsonString = buffer.slice(objectStart, i + 1);
+              lastProcessedPos = i + 1;
+              objectStart = -1;
+
+              try {
+                const obj = JSON.parse(jsonString);
+                const msg = this.normalizeMessageObject(obj, targetCharacterId);
+                if (msg) {
+                  currentBatch.push(msg);
+                  if (currentBatch.length >= BATCH_SIZE) {
+                    await saveChatMessagesBulk(currentBatch, { skipMetaReload: true, skipNotify: true });
+                    await recordImportSessionBatch(sessionId, currentBatch.map((m) => m.id));
+                    journal.addMessages(currentBatch.length);
+                    currentBatch = [];
+                    await new Promise((r) => setTimeout(r, 0));
+                  }
+                }
+              } catch (e) {
+                // Skip unparseable JSON fragment
+              }
             }
           }
-        } catch (e) {
-          // Skip invalid sub-matches
         }
       }
-    }
 
-    if (parsed) {
-      const list = Array.isArray(parsed)
-        ? parsed
-        : Array.isArray(parsed.messages)
-        ? parsed.messages
-        : [];
-
-      for (let i = 0; i < list.length; i++) {
-        const item = list[i];
-        const msg = this.normalizeMessageObject(item, targetCharacterId);
-        if (msg) {
-          currentBatch.push(msg);
-          if (currentBatch.length >= BATCH_SIZE) {
-            await saveChatMessagesBulk(currentBatch);
-            journal.addMessages(currentBatch.length);
-            currentBatch = [];
-            journal.update({
-              percentage: Math.round(((i + 1) / list.length) * 95),
-              currentStageMessage: `批量落盘消息 [${i + 1}/${list.length}]...`,
-            });
-            await new Promise((r) => setTimeout(r, 0));
-          }
+      if (lastProcessedPos > 0) {
+        buffer = buffer.slice(lastProcessedPos);
+        if (objectStart !== -1) {
+          objectStart -= lastProcessedPos;
         }
       }
+
+      offset = end;
+      const pct = Math.round((offset / file.size) * 95);
+      journal.update({
+        processedBytes: offset,
+        percentage: pct,
+        currentStageMessage: `正在流式解析并分批落盘 JSON (${(offset / 1024 / 1024).toFixed(1)}MB / ${(file.size / 1024 / 1024).toFixed(1)}MB)...`,
+      });
     }
 
+    // Flush remaining batch
     if (currentBatch.length > 0) {
-      await saveChatMessagesBulk(currentBatch);
+      await saveChatMessagesBulk(currentBatch, { skipMetaReload: true, skipNotify: true });
+      await recordImportSessionBatch(sessionId, currentBatch.map((m) => m.id));
       journal.addMessages(currentBatch.length);
       currentBatch = [];
     }
+
+    await refreshDbMetaAndNotify();
   }
 
   private static parseMessagesFromText(text: string, targetCharacterId: string): ChatMessage[] {

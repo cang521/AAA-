@@ -99,6 +99,28 @@ export class ImportJournal {
     });
   }
 
+  private abortController: AbortController = new AbortController();
+
+  public getSignal(): AbortSignal {
+    return this.abortController.signal;
+  }
+
+  public cancel(): void {
+    this.abortController.abort();
+    this.update({
+      status: 'cancelled',
+      currentStageMessage: '已取消导入，正在自动回滚撤销本次新增数据...',
+    });
+  }
+
+  public isCancelled(): boolean {
+    return this.abortController.signal.aborted;
+  }
+
+  public getSessionId(): string {
+    return this.state.sessionId;
+  }
+
   public getState(): ImportProgressState {
     return { ...this.state };
   }

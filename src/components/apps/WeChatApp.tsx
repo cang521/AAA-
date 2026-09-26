@@ -96,6 +96,8 @@ import { ChatMessageBubble } from './ChatMessageBubble';
 import { ContactSwipeRow } from './ContactSwipeRow';
 import { AiMemoryVaultModal } from './memory/AiMemoryVaultModal';
 import { searchAiMemoryChunks, deleteAiMemoryVault } from '../../lib/aiMemoryVaultDb';
+import { OfflineModeHome } from '../offline/OfflineModeHome';
+import { OfflineHistoryDetailModal } from '../offline/OfflineHistoryDetailModal';
 
 interface WeChatAppProps {
   onBackToLauncher: () => void;

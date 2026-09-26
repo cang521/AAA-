@@ -617,6 +617,58 @@ export async function clearAllAiMemoryVaults(): Promise<void> {
 }
 
 /**
+ * Helper function for saving a raw text document to an AI character's memory vault
+ */
+export async function saveAiMemoryChunk(
+  characterId: string,
+  fileName: string,
+  text: string
+): Promise<void> {
+  const file = new File([text], fileName, { type: 'text/plain' });
+  await importFileToAiMemory(characterId, file);
+}
+
+/**
+ * Get all files/chunks summary for a character
+ */
+export async function getAiMemoryChunks(
+  characterId: string
+): Promise<Array<{ id: string; fileName: string; text?: string }>> {
+  const files = await listAiMemoryFiles(characterId);
+  return files.map((f) => ({
+    id: f.id,
+    fileName: f.fileName,
+    text: f.previewSnippet,
+  }));
+}
+
+/**
+ * Delete a memory file/chunk from a character's vault
+ */
+export async function deleteAiMemoryChunk(
+  fileId: string,
+  characterId?: string
+): Promise<void> {
+  const db = await getMemoryDb();
+  if (characterId) {
+    await deleteAiMemoryFile(characterId, fileId);
+    return;
+  }
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction([STORE_FILES], 'readonly');
+    const store = tx.objectStore(STORE_FILES);
+    const req = store.get(fileId);
+    req.onsuccess = async () => {
+      if (req.result && req.result.characterId) {
+        await deleteAiMemoryFile(req.result.characterId, fileId);
+      }
+      resolve();
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
  * Recalculate and update the vault file count and total size
  */
 async function recalculateVaultStats(db: IDBDatabase, characterId: string): Promise<void> {

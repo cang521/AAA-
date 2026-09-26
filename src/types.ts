@@ -95,6 +95,15 @@ export interface ChatMessage {
   thinkingProcess?: string;
   quoteMessageId?: string;
   isRefreshed?: boolean;
+  type?: 'text' | 'offline_share_card';
+  offlineCardData?: {
+    sessionId: string;
+    sceneName: string;
+    characterName: string;
+    characterAvatar?: string;
+    dateStr: string;
+    summaryText?: string;
+  };
 }
 
 export type GroupMemberType = 'human' | 'ai' | 'npc';
