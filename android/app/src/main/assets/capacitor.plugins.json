@@ -1,7 +1,7 @@
 [
 	{
-		"pkg": "@capawesome/capacitor-nodejs",
-		"classpath": "io.capawesome.capacitorjs.plugins.nodejs.NodejsPlugin"
+		"pkg": "@capacitor-community/bluetooth-le",
+		"classpath": "com.capacitorjs.community.plugins.bluetoothle.BluetoothLe"
 	},
 	{
 		"pkg": "@capacitor/app",
@@ -16,7 +16,15 @@
 		"classpath": "com.capacitorjs.plugins.network.NetworkPlugin"
 	},
 	{
+		"pkg": "@capacitor/preferences",
+		"classpath": "com.capacitorjs.plugins.preferences.PreferencesPlugin"
+	},
+	{
 		"pkg": "@capacitor/status-bar",
 		"classpath": "com.capacitorjs.plugins.statusbar.StatusBarPlugin"
+	},
+	{
+		"pkg": "@capawesome/capacitor-nodejs",
+		"classpath": "io.capawesome.capacitorjs.plugins.nodejs.NodejsPlugin"
 	}
 ]

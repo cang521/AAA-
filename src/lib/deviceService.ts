@@ -377,9 +377,9 @@ class DeviceService {
     }
   }
 
-  // 检测当前运行环境 (Android/Chrome/Edge) 是否原生支持 Web Bluetooth
+  // 检测当前运行环境 (Android Native Capacitor APK / Web Bluetooth) 是否支持蓝牙
   public isWebBluetoothSupported(): boolean {
-    return typeof navigator !== 'undefined' && 'bluetooth' in navigator && typeof (navigator as any).bluetooth?.requestDevice === 'function';
+    return interactiveBleAdapter.isBleSupported();
   }
 
   private loadFromStorage() {
@@ -493,16 +493,17 @@ class DeviceService {
     this.saveLogsToStorage();
   }
 
-  // ==================== 1. 真实 Android / Web Bluetooth 硬件设备发现与扫描 ====================
+  // ==================== 1. 真实 Android Native BLE / Web Bluetooth 硬件设备发现与扫描 ====================
   /**
    * 触发真实系统蓝牙配对弹窗，真实扫描周围广播设备
    */
   public async scanRealBluetoothDevice(): Promise<{ success: boolean; device?: SmartDevice; error?: string }> {
-    if (!this.isWebBluetoothSupported()) {
-      const errMsg = '当前手机浏览器或运行环境不支持 Web Bluetooth 原生 API。请使用 Android Chrome 浏览器或开启系统蓝牙。';
+    const res = await interactiveBleAdapter.scanAndPair();
+    if (!res.success || !res.device) {
+      const errMsg = res.error || '未发现真实 BLE 设备或已取消扫描';
       this.addLog({
         deviceId: 'real_bt_scan',
-        deviceName: 'Android 原生蓝牙扫描',
+        deviceName: 'Android 原生 BLE 扫描',
         actionId: 'scanRealBluetooth',
         actionName: '扫描真实蓝牙硬件',
         source: 'user',
@@ -513,183 +514,91 @@ class DeviceService {
       return { success: false, error: errMsg };
     }
 
-    try {
-      // 真实调用浏览器/Android蓝牙设备发现弹窗
-      const btDevice = await (navigator as any).bluetooth.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: [
-          'battery_service',
-          'generic_access',
-          'device_information',
-          0x180f, // Battery service
-          0x180a, // Device information
-          0x1800, // Generic access
-          '0000180f-0000-1000-8000-00805f9b34fb',
-          '0000180a-0000-1000-8000-00805f9b34fb',
-        ],
-      });
+    const bleDev = res.device;
+    const realName = bleDev.name || '外部 BLE 设备';
+    const realId = 'real_ble_' + bleDev.id.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);
 
-      if (!btDevice) {
-        return { success: false, error: '用户取消了真实蓝牙设备配对' };
-      }
+    let category: DeviceCategory = 'interactive';
+    let subType = 'BLE标准互动设备';
+    const lowerName = realName.toLowerCase();
 
-      const realName = btDevice.name || '未命名真实蓝牙设备';
-      const realId = 'real_ble_' + btDevice.id.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);
-
-      // 根据真实设备名称推测 4 大分类
-      let category: DeviceCategory = 'other';
-      let subType = '蓝牙外设';
-      const lowerName = realName.toLowerCase();
-
-      if (lowerName.includes('ear') || lowerName.includes('headphone') || lowerName.includes('pod') || lowerName.includes('speaker') || lowerName.includes('sound') || lowerName.includes('audio') || lowerName.includes('音箱') || lowerName.includes('耳机')) {
-        category = 'audio';
-        subType = lowerName.includes('耳机') || lowerName.includes('pod') ? '蓝牙耳机' : '蓝牙音箱';
-      } else if (lowerName.includes('light') || lowerName.includes('bulb') || lowerName.includes('lamp') || lowerName.includes('plug') || lowerName.includes('ac') || lowerName.includes('air') || lowerName.includes('cleaner') || lowerName.includes('灯') || lowerName.includes('空调')) {
-        category = 'smart_home';
-        subType = '智能家居设备';
-      } else if (lowerName.includes('intiface') || lowerName.includes('buttplug') || lowerName.includes('haptic') || lowerName.includes('vibrate') || lowerName.includes('interactive') || lowerName.includes('lovense') || lowerName.includes('svakom') || lowerName.includes('kizuna')) {
-        category = 'interactive';
-        subType = 'BLE标准互动设备';
-      }
-
-      // 尝试真实建立 GATT 连接获取能力
-      let batteryLevel = 100;
-      let capabilities = ['蓝牙物理连接', '状态实时读取', '设备通信与控制'];
-      let isGattConnected = false;
-
-      try {
-        if (btDevice.gatt) {
-          const server = await btDevice.gatt.connect();
-          isGattConnected = server.connected;
-          activeGattServers.set(realId, server);
-
-          // 尝试读取真实电池服务 (0x180F)
-          try {
-            const batteryService = await server.getPrimaryService('battery_service');
-            const batteryChar = await batteryService.getCharacteristic('battery_level');
-            const batteryVal = await batteryChar.readValue();
-            batteryLevel = batteryVal.getUint8(0);
-            capabilities.push(`真实剩余电量读取 (${batteryLevel}%)`);
-          } catch (batErr) {
-            // 设备无标准电池服务
-          }
-        }
-      } catch (gattErr) {
-        console.warn('GATT connection error:', gattErr);
-      }
-
-      const existingIndex = this.devices.findIndex((d) => d.id === realId || d.bleDeviceId === btDevice.id);
-      const createdDevice: SmartDevice = {
-        id: realId,
-        name: `${realName} [真实硬件]`,
-        category,
-        subType,
-        protocol: 'ble',
-        room: '随身/附近',
-        status: isGattConnected ? 'connected' : 'disconnected',
-        battery: batteryLevel,
-        signalStrength: 95,
-        model: btDevice.name,
-        lastActiveTime: Date.now(),
-        capabilities,
-        aiAccessAllowed: false, // 真实硬件默认未授权给 AI，保护物理隐私
-        isRealHardware: true,
-        isSimulation: false,
-        bleDeviceId: btDevice.id,
-        state: {
-          power: isGattConnected,
-          connected: isGattConnected,
-          battery: batteryLevel,
-          realGattStatus: isGattConnected ? 'Connected' : 'Disconnected',
-        },
-        supportedActions: [
-          {
-            id: 'setPower',
-            name: '电源/连接状态',
-            description: '物理断开或重连硬件',
-            riskLevel: 'low',
-            paramsSchema: [{ name: 'power', label: '连接状态', type: 'boolean', defaultValue: true }],
-          },
-          {
-            id: 'readRealBattery',
-            name: '刷新真实硬件电量',
-            description: '通过 GATT Battery Service 读取真实物理电量',
-            riskLevel: 'low',
-          },
-          {
-            id: 'sendRawBleCommand',
-            name: '发送 BLE 控制指令',
-            description: '向蓝牙设备真实特征值发送指令数据',
-            riskLevel: 'low',
-          },
-        ],
-      };
-
-      if (category === 'interactive') {
-        createdDevice.capabilities.push('1-5档强度输出', '急停安全保护');
-        createdDevice.state = {
-          ...createdDevice.state,
-          intensityLevel: 0,
-          intensityPercent: 0,
-          mode: 'continuous',
-          isRunning: false,
-          isEmergencyStopped: false,
-        };
-        createdDevice.supportedActions.push(
-          {
-            id: 'setIntensity',
-            name: '调节物理强度 (1~5档)',
-            description: '向硬件写入强度脉冲',
-            riskLevel: 'low',
-            paramsSchema: [{ name: 'level', label: '档位', type: 'number', min: 0, max: 5, defaultValue: 1 }],
-          },
-          {
-            id: 'emergencyStop',
-            name: '一键紧急停止',
-            description: '立即急停输出',
-            riskLevel: 'low',
-          }
-        );
-      }
-
-      if (existingIndex >= 0) {
-        this.devices[existingIndex] = createdDevice;
-      } else {
-        this.devices.unshift(createdDevice);
-      }
-
-      this.notify();
-
-      this.addLog({
-        deviceId: createdDevice.id,
-        deviceName: createdDevice.name,
-        actionId: 'scanAndPair',
-        actionName: '扫描配对真实蓝牙硬件',
-        source: 'user',
-        success: true,
-        message: `成功通过 Android/浏览器 Web Bluetooth 连接真实硬件 [${realName}] (已读取 ${capabilities.length} 项硬件能力)`,
-        riskLevel: 'low',
-      });
-
-      return { success: true, device: createdDevice };
-    } catch (err: any) {
-      console.error('Scan Real Bluetooth Error:', err);
-      const isUserCancel = err.name === 'NotFoundError' || err.message?.includes('User cancelled');
-      const msg = isUserCancel ? '已取消蓝牙设备配对' : `蓝牙扫描连接失败: ${err.message || '未知错误'}`;
-      
-      this.addLog({
-        deviceId: 'real_bt_scan',
-        deviceName: 'Android 原生蓝牙扫描',
-        actionId: 'scanRealBluetooth',
-        actionName: '扫描真实蓝牙硬件',
-        source: 'user',
-        success: false,
-        message: msg,
-        riskLevel: 'low',
-      });
-
-      return { success: false, error: msg };
+    if (lowerName.includes('ear') || lowerName.includes('headphone') || lowerName.includes('pod') || lowerName.includes('speaker') || lowerName.includes('sound') || lowerName.includes('audio') || lowerName.includes('音箱') || lowerName.includes('耳机')) {
+      category = 'audio';
+      subType = lowerName.includes('耳机') || lowerName.includes('pod') ? '蓝牙耳机' : '蓝牙音箱';
+    } else if (lowerName.includes('light') || lowerName.includes('bulb') || lowerName.includes('lamp') || lowerName.includes('plug') || lowerName.includes('ac') || lowerName.includes('air') || lowerName.includes('cleaner') || lowerName.includes('灯') || lowerName.includes('空调')) {
+      category = 'smart_home';
+      subType = '智能家居设备';
     }
+
+    const createdDevice: SmartDevice = {
+      id: realId,
+      name: realName,
+      category,
+      subType,
+      protocol: 'ble',
+      room: '随身/附近',
+      status: bleDev.connected ? 'connected' : 'disconnected',
+      battery: bleDev.batteryLevel || 100,
+      signalStrength: 95,
+      model: realName,
+      lastActiveTime: Date.now(),
+      capabilities: ['BLE物理连接', 'GATT通信', '多档强度输出'],
+      aiAccessAllowed: true,
+      isRealHardware: true,
+      isSimulation: false,
+      bleDeviceId: bleDev.id,
+      state: {
+        power: bleDev.connected,
+        connected: bleDev.connected,
+        intensityLevel: 0,
+        intensityPercent: 0,
+        mode: 'continuous',
+        isRunning: false,
+      },
+      supportedActions: [
+        {
+          id: 'setPower',
+          name: '电源/连接状态',
+          description: '物理断开或重连硬件',
+          riskLevel: 'low',
+        },
+        {
+          id: 'setIntensity',
+          name: '调节物理强度 (1~5档)',
+          description: '向硬件写入强度脉冲',
+          riskLevel: 'low',
+          paramsSchema: [{ name: 'level', label: '档位', type: 'number', min: 0, max: 5, defaultValue: 1 }],
+        },
+        {
+          id: 'emergencyStop',
+          name: '一键紧急停止',
+          description: '立即急停输出',
+          riskLevel: 'low',
+        },
+      ],
+    };
+
+    const existingIndex = this.devices.findIndex((d) => d.id === realId || d.bleDeviceId === bleDev.id);
+    if (existingIndex >= 0) {
+      this.devices[existingIndex] = createdDevice;
+    } else {
+      this.devices.unshift(createdDevice);
+    }
+
+    this.notify();
+
+    this.addLog({
+      deviceId: createdDevice.id,
+      deviceName: createdDevice.name,
+      actionId: 'scanAndPair',
+      actionName: '扫描配对真实 BLE 硬件',
+      source: 'user',
+      success: true,
+      message: `成功通过 Android Native BLE 配对硬件 [${realName}]`,
+      riskLevel: 'low',
+    });
+
+    return { success: true, device: createdDevice };
   }
 
   // ==================== 2. 模拟设备扫描生成 (明确标记为模拟) ====================

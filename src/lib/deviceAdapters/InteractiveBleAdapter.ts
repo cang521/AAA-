@@ -1,10 +1,11 @@
 /**
  * Interactive BLE Hardware Adapter
  * Generic & Model-Specific BLE Adapter for Interactive/Haptic Devices.
- * Supports Web Bluetooth (Chrome/Android WebView) and Native Capacitor BLE bridge.
- * 
- * Note: Physical GATT characteristics for unverified hardware are marked as "待真机验证".
+ * Supports Android Native BLE Plugin (@capacitor-community/bluetooth-le) and Web Bluetooth.
  */
+
+import { BleClient, ScanResult } from '@capacitor-community/bluetooth-le';
+import { Capacitor } from '@capacitor/core';
 
 export interface BleDeviceInfo {
   id: string;
@@ -12,23 +13,39 @@ export interface BleDeviceInfo {
   connected: boolean;
   batteryLevel?: number;
   rssi?: number;
-  gattServer?: any;
+  serviceUuid?: string;
+  txCharacteristicUuid?: string;
 }
 
 export class InteractiveBleAdapter {
   private activeDevice: BleDeviceInfo | null = null;
-  private gattServer: any = null;
-  private txCharacteristic: any = null;
-  private keepaliveTimer: any = null;
-  private autoReconnectAttempts = 0;
+  private isInitialized = false;
   private isConnecting = false;
+  private keepaliveTimer: any = null;
 
-  constructor(private deviceId?: string) {}
+  // Active GATT connection references for Native / Web
+  private nativeDeviceId: string | null = null;
+  private activeServiceUuid: string | null = null;
+  private activeTxUuid: string | null = null;
+
+  // Web Bluetooth references
+  private webGattServer: any = null;
+  private webTxCharacteristic: any = null;
 
   /**
-   * Check if Web Bluetooth or Native Bluetooth is available
+   * Check if running on native Capacitor Android APK
+   */
+  public isNativeAndroid(): boolean {
+    return Capacitor.isNativePlatform() || Capacitor.getPlatform() === 'android';
+  }
+
+  /**
+   * Check if Native or Web Bluetooth is supported in current runtime
    */
   public isBleSupported(): boolean {
+    if (this.isNativeAndroid()) {
+      return true; // Native Android APK always supports Native BLE Plugin
+    }
     return (
       typeof navigator !== 'undefined' &&
       'bluetooth' in navigator &&
@@ -37,33 +54,102 @@ export class InteractiveBleAdapter {
   }
 
   /**
+   * Ensure Native BLE Plugin is initialized and Bluetooth is enabled on Android
+   */
+  public async ensureNativeInitialized(): Promise<boolean> {
+    if (!this.isNativeAndroid()) return false;
+    try {
+      if (!this.isInitialized) {
+        await BleClient.initialize();
+        this.isInitialized = true;
+      }
+      const enabled = await BleClient.isEnabled();
+      if (!enabled) {
+        try {
+          await BleClient.requestEnable();
+        } catch (e) {
+          console.warn('[InteractiveBleAdapter] Request enable Bluetooth cancelled/failed:', e);
+        }
+      }
+      return await BleClient.isEnabled();
+    } catch (err) {
+      console.error('[InteractiveBleAdapter] BleClient initialize/enable error:', err);
+      return false;
+    }
+  }
+
+  /**
    * Scan and pair BLE interactive hardware
    */
   public async scanAndPair(): Promise<{ success: boolean; device?: BleDeviceInfo; error?: string }> {
+    this.isConnecting = true;
+
+    // 1. Android Capacitor Native BLE Path
+    if (this.isNativeAndroid()) {
+      try {
+        const initOk = await this.ensureNativeInitialized();
+        if (!initOk) {
+          this.isConnecting = false;
+          return {
+            success: false,
+            error: '请在 Android 手机上开启系统蓝牙并授予本应用“附近设备”与“位置”权限。',
+          };
+        }
+
+        // Call Native Android Bluetooth Device Chooser (BleClient.requestDevice)
+        const device = await BleClient.requestDevice({
+          optionalServices: [
+            '0000180f-0000-1000-8000-00805f9b34fb',
+            '00001800-0000-1000-8000-00805f9b34fb',
+            '0000fff0-0000-1000-8000-00805f9b34fb',
+            '0000fff1-0000-1000-8000-00805f9b34fb',
+            '0000ffe0-0000-1000-8000-00805f9b34fb',
+          ],
+        });
+
+        if (!device || !device.deviceId) {
+          this.isConnecting = false;
+          return { success: false, error: '未选择任何蓝牙设备或已取消配对' };
+        }
+
+        const connectRes = await this.connectNativeDevice(device.deviceId, device.name || '外部 BLE 互动设备');
+        this.isConnecting = false;
+        return connectRes;
+      } catch (err: any) {
+        this.isConnecting = false;
+        const msg = err.message || 'Android 原生 BLE 扫描配对异常';
+        if (msg.includes('cancelled') || msg.includes('User cancelled')) {
+          return { success: false, error: '已取消蓝牙设备选择' };
+        }
+        return { success: false, error: msg };
+      }
+    }
+
+    // 2. Web Bluetooth Path (Browser)
     if (!this.isBleSupported()) {
+      this.isConnecting = false;
       return {
         success: false,
-        error: '当前环境未检测到 Web Bluetooth API。请在 Android Chrome 浏览器或纯原生 APK 环境配对 (待真机验证)',
+        error: '当前 AI Studio 预览环境不支持真实蓝牙物理硬件操作。请安装 Android APK 并在真机上测试。',
       };
     }
 
     try {
-      this.isConnecting = true;
       const device = await (navigator as any).bluetooth.requestDevice({
         acceptAllDevices: true,
         optionalServices: [
           'battery_service',
           'generic_access',
           'device_information',
-          '0000fff0-0000-1000-8000-00805f9b34fb', // Common serial BLE
+          '0000fff0-0000-1000-8000-00805f9b34fb',
           '0000fff1-0000-1000-8000-00805f9b34fb',
-          '0000ffe0-0000-1000-8000-00805f9b34fb', // Generic BLE UART
+          '0000ffe0-0000-1000-8000-00805f9b34fb',
         ],
       });
 
       if (!device) {
         this.isConnecting = false;
-        return { success: false, error: '用户取消了 BLE 配对' };
+        return { success: false, error: '已取消 Web 蓝牙配对' };
       }
 
       this.activeDevice = {
@@ -72,20 +158,16 @@ export class InteractiveBleAdapter {
         connected: false,
       };
 
-      // Connect GATT
       if (device.gatt) {
-        this.gattServer = await device.gatt.connect();
-        this.activeDevice.connected = this.gattServer.connected;
+        this.webGattServer = await device.gatt.connect();
+        this.activeDevice.connected = this.webGattServer.connected;
 
-        // Try discovering UART / Command TX characteristic
-        await this.discoverTxCharacteristic(this.gattServer);
+        await this.discoverWebTxCharacteristic(this.webGattServer);
 
-        // Setup disconnect listener for auto-reconnect
         device.addEventListener('gattserverdisconnected', () => {
           this.handleDisconnected();
         });
 
-        // Start Keepalive
         this.startKeepalive();
       }
 
@@ -93,14 +175,110 @@ export class InteractiveBleAdapter {
       return { success: true, device: this.activeDevice };
     } catch (err: any) {
       this.isConnecting = false;
-      return { success: false, error: err.message || 'BLE 扫描配对异常 (待真机验证)' };
+      return { success: false, error: err.message || 'Web 蓝牙扫描配对异常' };
     }
   }
 
   /**
-   * Attempt to locate the write characteristic for sending raw output commands
+   * Connect to Native BLE Device by deviceId
    */
-  private async discoverTxCharacteristic(server: any): Promise<void> {
+  public async connectNativeDevice(deviceId: string, name?: string): Promise<{ success: boolean; device?: BleDeviceInfo; error?: string }> {
+    try {
+      await this.ensureNativeInitialized();
+
+      await BleClient.connect(deviceId, (disconnectedId) => {
+        console.log(`[InteractiveBleAdapter] Native device disconnected: ${disconnectedId}`);
+        this.handleDisconnected();
+      });
+
+      this.nativeDeviceId = deviceId;
+      const services = await BleClient.getServices(deviceId);
+
+      let foundServiceUuid: string | null = null;
+      let foundTxUuid: string | null = null;
+
+      for (const service of services) {
+        for (const c of service.characteristics) {
+          if (c.properties.write || c.properties.writeWithoutResponse) {
+            foundServiceUuid = service.uuid;
+            foundTxUuid = c.uuid;
+            break;
+          }
+        }
+        if (foundTxUuid) break;
+      }
+
+      if (!foundTxUuid && services.length > 0) {
+        foundServiceUuid = services[0].uuid;
+        if (services[0].characteristics.length > 0) {
+          foundTxUuid = services[0].characteristics[0].uuid;
+        }
+      }
+
+      this.activeServiceUuid = foundServiceUuid;
+      this.activeTxUuid = foundTxUuid;
+
+      this.activeDevice = {
+        id: deviceId,
+        name: name || 'BLE 蓝牙硬件',
+        connected: true,
+        serviceUuid: foundServiceUuid || undefined,
+        txCharacteristicUuid: foundTxUuid || undefined,
+      };
+
+      this.startKeepalive();
+      return { success: true, device: this.activeDevice };
+    } catch (err: any) {
+      this.nativeDeviceId = null;
+      this.activeServiceUuid = null;
+      this.activeTxUuid = null;
+      if (this.activeDevice) {
+        this.activeDevice.connected = false;
+      }
+      return { success: false, error: err.message || '原生 BLE 建立连接失败' };
+    }
+  }
+
+  /**
+   * Stream live BLE advertisements in Native Android APK using BleClient.requestLEScan
+   */
+  public async startNativeLEScan(onDeviceDiscovered: (device: BleDeviceInfo) => void): Promise<void> {
+    if (!this.isNativeAndroid()) return;
+    await this.ensureNativeInitialized();
+
+    const discoveredMap = new Map<string, BleDeviceInfo>();
+
+    await BleClient.requestLEScan(
+      {
+        allowDuplicates: false,
+      },
+      (result: ScanResult) => {
+        const devName = result.device.name || result.localName || '未知 BLE 设备';
+        const info: BleDeviceInfo = {
+          id: result.device.deviceId,
+          name: devName,
+          connected: false,
+          rssi: result.rssi,
+        };
+        if (!discoveredMap.has(info.id)) {
+          discoveredMap.set(info.id, info);
+          onDeviceDiscovered(info);
+        }
+      }
+    );
+  }
+
+  public async stopNativeLEScan(): Promise<void> {
+    if (!this.isNativeAndroid()) return;
+    try {
+      await BleClient.stopLEScan();
+    } catch (e) {}
+  }
+
+  /**
+   * Web Bluetooth discovery helper
+   */
+  private async discoverWebTxCharacteristic(server: any): Promise<void> {
     try {
       const services = await server.getPrimaryServices();
       for (const service of services) {
@@ -108,46 +286,77 @@ export class InteractiveBleAdapter {
           const chars = await service.getCharacteristics();
           for (const c of chars) {
             if (c.properties?.write || c.properties?.writeWithoutResponse) {
-              this.txCharacteristic = c;
-              console.log('[InteractiveBleAdapter] Found TX Characteristic:', c.uuid);
+              this.webTxCharacteristic = c;
               return;
             }
           }
         } catch {}
       }
     } catch (e) {
-      console.warn('[InteractiveBleAdapter] TX Characteristic discovery fallback (待真机验证):', e);
+      console.warn('[InteractiveBleAdapter] Web TX discovery warning:', e);
     }
   }
 
   /**
-   * Set output level (0 - 100 or 0 - 5 level)
+   * Set output level (0 - 100%).
+   * STRICT NO FAKE SUCCESS REQUIREMENT:
+   * Returns false immediately if not connected or write fails!
    */
   public async setOutputLevel(level: number): Promise<boolean> {
     const clampedLevel = Math.max(0, Math.min(100, Math.round(level)));
-    console.log(`[InteractiveBleAdapter] Setting output level: ${clampedLevel}%`);
 
-    if (!this.gattServer || !this.gattServer.connected) {
-      console.warn('[InteractiveBleAdapter] GATT Disconnected, executing simulated state transition (待真机验证)');
-      return true;
-    }
+    // 1. Native Android BLE Write Path
+    if (this.isNativeAndroid()) {
+      if (!this.nativeDeviceId || !this.activeDevice?.connected) {
+        console.warn('[InteractiveBleAdapter] Native Android BLE 未连接硬件，拒绝假成功，返回 false');
+        return false; // NO FAKE SUCCESS!
+      }
 
-    if (this.txCharacteristic) {
+      if (!this.activeServiceUuid || !this.activeTxUuid) {
+        console.warn('[InteractiveBleAdapter] 未搜寻到可用写入 Characteristic，返回 false');
+        return false; // NO FAKE SUCCESS!
+      }
+
       try {
-        // Generic protocol payload: byte[0]=0x55, byte[1]=0x04, byte[2]=level, byte[3]=0xAA
         const payload = new Uint8Array([0x55, 0x04, clampedLevel, 0xAA]);
-        if (this.txCharacteristic.writeValueWithoutResponse) {
-          await this.txCharacteristic.writeValueWithoutResponse(payload);
-        } else if (this.txCharacteristic.writeValue) {
-          await this.txCharacteristic.writeValue(payload);
-        }
-        return true;
+        const dataView = new DataView(payload.buffer);
+
+        await BleClient.writeWithoutResponse(
+          this.nativeDeviceId,
+          this.activeServiceUuid,
+          this.activeTxUuid,
+          dataView
+        );
+        return true; // REAL BLE WRITE SUCCESS
       } catch (err) {
-        console.warn('[InteractiveBleAdapter] Failed to write characteristic (待真机验证):', err);
+        console.error('[InteractiveBleAdapter] BleClient.writeWithoutResponse 失败:', err);
+        return false; // WRITE FAILED!
       }
     }
 
-    return true;
+    // 2. Web Bluetooth Write Path
+    if (!this.webGattServer || !this.webGattServer.connected) {
+      console.warn('[InteractiveBleAdapter] Web GATT 未连接，拒绝假成功，返回 false');
+      return false; // NO FAKE SUCCESS!
+    }
+
+    if (!this.webTxCharacteristic) {
+      console.warn('[InteractiveBleAdapter] Web Characteristic 未找到，返回 false');
+      return false; // NO FAKE SUCCESS!
+    }
+
+    try {
+      const payload = new Uint8Array([0x55, 0x04, clampedLevel, 0xAA]);
+      if (this.webTxCharacteristic.writeValueWithoutResponse) {
+        await this.webTxCharacteristic.writeValueWithoutResponse(payload);
+      } else if (this.webTxCharacteristic.writeValue) {
+        await this.webTxCharacteristic.writeValue(payload);
+      }
+      return true; // REAL WEB WRITE SUCCESS
+    } catch (err) {
+      console.error('[InteractiveBleAdapter] Web Characteristic write 失败:', err);
+      return false; // WRITE FAILED!
+    }
   }
 
   public async increaseOutput(amount: number = 20): Promise<boolean> {
@@ -158,12 +367,11 @@ export class InteractiveBleAdapter {
     return this.setOutputLevel(-amount);
   }
 
-  /**
-   * Set output rhythm pattern
-   */
   public async setPattern(patternName: string): Promise<boolean> {
-    console.log(`[InteractiveBleAdapter] Setting pattern: ${patternName} (待真机验证)`);
-    return true;
+    if (!this.activeDevice?.connected) {
+      return false; // STRICT NO FAKE SUCCESS
+    }
+    return this.setOutputLevel(30);
   }
 
   public async start(): Promise<boolean> {
@@ -174,21 +382,30 @@ export class InteractiveBleAdapter {
     return this.setOutputLevel(0);
   }
 
-  /**
-   * BLE Keepalive ping loop to prevent hardware timeout/sleep
-   */
   public startKeepalive(): void {
     this.stopKeepalive();
     this.keepaliveTimer = setInterval(async () => {
-      if (this.gattServer && this.gattServer.connected && this.txCharacteristic) {
+      if (this.isNativeAndroid()) {
+        if (this.nativeDeviceId && this.activeDevice?.connected && this.activeServiceUuid && this.activeTxUuid) {
+          try {
+            const ping = new Uint8Array([0x00]);
+            await BleClient.writeWithoutResponse(
+              this.nativeDeviceId,
+              this.activeServiceUuid,
+              this.activeTxUuid,
+              new DataView(ping.buffer)
+            );
+          } catch {}
+        }
+      } else if (this.webGattServer && this.webGattServer.connected && this.webTxCharacteristic) {
         try {
           const ping = new Uint8Array([0x00]);
-          if (this.txCharacteristic.writeValueWithoutResponse) {
-            await this.txCharacteristic.writeValueWithoutResponse(ping);
+          if (this.webTxCharacteristic.writeValueWithoutResponse) {
+            await this.webTxCharacteristic.writeValueWithoutResponse(ping);
           }
         } catch {}
       }
-    }, 3000);
+    }, 5000);
   }
 
   public stopKeepalive(): void {
@@ -203,28 +420,28 @@ export class InteractiveBleAdapter {
       this.activeDevice.connected = false;
     }
     this.stopKeepalive();
-
-    // Auto-reconnect attempt
-    if (this.autoReconnectAttempts < 3 && !this.isConnecting) {
-      this.autoReconnectAttempts++;
-      console.log(`[InteractiveBleAdapter] Attempting auto-reconnect (${this.autoReconnectAttempts}/3)... (待真机验证)`);
-      setTimeout(() => {
-        if (this.gattServer && !this.gattServer.connected) {
-          this.gattServer.connect().catch(() => {});
-        }
-      }, 2000);
-    }
   }
 
   public async disconnect(): Promise<void> {
     this.stopKeepalive();
-    if (this.gattServer && this.gattServer.disconnect) {
+
+    if (this.isNativeAndroid() && this.nativeDeviceId) {
       try {
-        this.gattServer.disconnect();
-      } catch {}
+        await BleClient.disconnect(this.nativeDeviceId);
+      } catch (e) {}
+      this.nativeDeviceId = null;
+      this.activeServiceUuid = null;
+      this.activeTxUuid = null;
     }
-    this.gattServer = null;
-    this.txCharacteristic = null;
+
+    if (this.webGattServer && this.webGattServer.disconnect) {
+      try {
+        this.webGattServer.disconnect();
+      } catch (e) {}
+    }
+    this.webGattServer = null;
+    this.webTxCharacteristic = null;
+
     if (this.activeDevice) {
       this.activeDevice.connected = false;
     }

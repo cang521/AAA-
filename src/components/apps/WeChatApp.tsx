@@ -93,6 +93,7 @@ import {
   MultiBubbleConfig,
 } from '../../lib/wechatMultiBubble';
 import { ChatMessageBubble } from './ChatMessageBubble';
+import { ContactSwipeRow } from './ContactSwipeRow';
 import { AiMemoryVaultModal } from './memory/AiMemoryVaultModal';
 import { searchAiMemoryChunks, deleteAiMemoryVault } from '../../lib/aiMemoryVaultDb';
 
@@ -1592,128 +1593,33 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                   <span className="text-[10px] text-zinc-500">向左轻扫卡片显示「锁定」与「删除」</span>
                 </div>
 
-                {/* Friend List with Swipe Left Actions (Requirement 10) */}
-                {characters.map((char) => {
-                  const isSwiped = swipedContactId === char.id;
-
-                  return (
-                    <div
-                      key={char.id}
-                      className="relative overflow-hidden rounded-2xl bg-zinc-800/80 border border-zinc-750 hover:border-zinc-650 transition shadow-xs"
-                    >
-                      <div
-                        onClick={() => {
-                          handleOpenChat(char.id);
-                          setActiveTab('chats');
-                        }}
-                        className={`p-3 flex items-center gap-3 transition-transform duration-200 cursor-pointer ${
-                          isSwiped ? '-translate-x-32' : 'translate-x-0'
-                        }`}
-                      >
-                        <img
-                          src={char.avatar}
-                          alt=""
-                          className="w-12 h-12 rounded-2xl object-cover border border-zinc-700 shrink-0 shadow-xs"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <h4 className="font-semibold text-sm text-zinc-100">{char.name}</h4>
-                            <span className="text-[10px] text-zinc-500 font-mono">({char.wxid})</span>
-                            {char.isCustom ? (
-                              <span className="px-1.5 py-0.2 text-[9px] rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                                自定义
-                              </span>
-                            ) : (
-                              <span className="px-1.5 py-0.2 text-[9px] rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                                系统
-                              </span>
-                            )}
-                            {char.relationship && (
-                              <span className="px-1.5 py-0.2 text-[9px] rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                {char.relationship}
-                              </span>
-                            )}
-                            {char.isLocked && (
-                              <span className="px-1.5 py-0.2 text-[9px] rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-0.5">
-                                <Lock className="w-2.5 h-2.5" /> 已锁
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[11px] text-zinc-400 truncate mt-0.5">{char.persona}</p>
-                          {char.personality && (
-                            <p className="text-[10px] text-zinc-500 truncate mt-0.5">
-                              性格: {char.personality}
-                            </p>
-                          )}
-                        </div>
-
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setMemoryVaultTargetChar(char);
-                            setShowMemoryVaultModal(true);
-                          }}
-                          className="p-1.5 rounded-xl bg-zinc-850 hover:bg-zinc-700 text-emerald-400 hover:text-emerald-300 transition cursor-pointer shrink-0"
-                          title="进入该 AI 专属独立记忆空间 (导入/检索资料)"
-                        >
-                          <Database className="w-3.5 h-3.5" />
-                        </button>
-
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSwipedContactId(isSwiped ? null : char.id);
-                          }}
-                          className="p-1 text-zinc-400 hover:text-white cursor-pointer shrink-0"
-                          title="展开快捷操作"
-                        >
-                          <MoreHorizontal className="w-4 h-4" />
-                        </button>
-                      </div>
-
-                      {/* Requirement 10: Swipe Left Actions (Hidden by default, revealed on swipe/click) */}
-                      <div className="absolute right-0 top-0 bottom-0 flex items-center">
-                        {char.isLocked ? (
-                          <button
-                            onClick={() => {
-                              onUpdateCharacters(
-                                characters.map((c) => (c.id === char.id ? { ...c, isLocked: false } : c))
-                              );
-                              setSwipedContactId(null);
-                            }}
-                            className="h-full px-4 bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium flex items-center gap-1 cursor-pointer transition"
-                          >
-                            <Unlock className="w-4 h-4" /> 解锁
-                          </button>
-                        ) : (
-                          <>
-                            <button
-                              onClick={() => {
-                                onUpdateCharacters(
-                                  characters.map((c) => (c.id === char.id ? { ...c, isLocked: true } : c))
-                                );
-                                setSwipedContactId(null);
-                              }}
-                              className="h-full px-3 bg-zinc-700 hover:bg-zinc-600 text-amber-300 text-xs font-medium flex items-center gap-1 cursor-pointer transition"
-                            >
-                              <Lock className="w-4 h-4" /> 锁定
-                            </button>
-                            <button
-                              onClick={() => {
-                                setCharacterToDelete(char);
-                                setDeleteMemoryVaultWithChar(true);
-                                setSwipedContactId(null);
-                              }}
-                              className="h-full px-3 bg-rose-600 hover:bg-rose-500 text-white text-xs font-medium flex items-center gap-1 cursor-pointer transition"
-                            >
-                              <Trash2 className="w-4 h-4" /> 删除
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                {/* Friend List with Swipe Left Actions */}
+                {characters.map((char) => (
+                  <ContactSwipeRow
+                    key={char.id}
+                    char={char}
+                    isOpen={swipedContactId === char.id}
+                    onOpen={(id) => setSwipedContactId(id)}
+                    onClose={() => setSwipedContactId(null)}
+                    onOpenChat={(id) => {
+                      handleOpenChat(id);
+                      setActiveTab('chats');
+                    }}
+                    onToggleLock={(targetChar) => {
+                      onUpdateCharacters(
+                        characters.map((c) => (c.id === targetChar.id ? { ...c, isLocked: !c.isLocked } : c))
+                      );
+                    }}
+                    onRequestDelete={(targetChar) => {
+                      setCharacterToDelete(targetChar);
+                      setDeleteMemoryVaultWithChar(true);
+                    }}
+                    onOpenMemoryVault={(targetChar) => {
+                      setMemoryVaultTargetChar(targetChar);
+                      setShowMemoryVaultModal(true);
+                    }}
+                  />
+                ))}
               </div>
             )}
           </>

@@ -47,15 +47,25 @@ async function callAiService({
   apiKey,
   baseUrl,
   providerType,
+  apiProtocol,
   responseMimeType,
   temperature = 0.7,
   timeoutMs = 35e3,
   customHeaders = {}
 }) {
-  const activeKey = apiKey && apiKey.trim() || process.env.GEMINI_API_KEY || "";
   const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, "") : "";
+  const cleanKey = apiKey && apiKey.trim() || "";
+  const activeKey = cleanKey || (!cleanBaseUrl && (!providerType || providerType === "google_gemini") && process.env.NODE_ENV !== "production" ? process.env.GEMINI_API_KEY || "" : "");
   const targetModel = model?.trim() || "gemini-3.6-flash";
-  const isOpenAiCompatible = providerType === "openai_compatible" || providerType === "deepseek" || providerType === "openrouter" || providerType === "groq" || providerType === "siliconflow" || providerType === "ollama" || providerType === "custom" || cleanBaseUrl && (cleanBaseUrl.includes("/v1") || cleanBaseUrl.includes("openai") || cleanBaseUrl.includes("deepseek") || cleanBaseUrl.includes("openrouter") || cleanBaseUrl.includes("groq") || cleanBaseUrl.includes("siliconflow") || cleanBaseUrl.includes("oneapi") || cleanBaseUrl.includes("newapi") || cleanBaseUrl.includes(":11434") || targetModel.startsWith("gpt-") || targetModel.startsWith("claude-") || targetModel.startsWith("deepseek-") || targetModel.startsWith("qwen") || targetModel.startsWith("llama"));
+  let isOpenAiCompatible = false;
+  let activeProtocol = apiProtocol;
+  if (activeProtocol === "openai_compatible") {
+    isOpenAiCompatible = true;
+  } else if (activeProtocol === "gemini_native") {
+    isOpenAiCompatible = false;
+  } else {
+    isOpenAiCompatible = providerType === "openai_compatible" || providerType === "deepseek" || providerType === "openrouter" || providerType === "groq" || providerType === "siliconflow" || providerType === "ollama" || providerType === "custom" || cleanBaseUrl && (cleanBaseUrl.includes("/v1") || cleanBaseUrl.includes("openai") || cleanBaseUrl.includes("deepseek") || cleanBaseUrl.includes("openrouter") || cleanBaseUrl.includes("groq") || cleanBaseUrl.includes("siliconflow") || cleanBaseUrl.includes("oneapi") || cleanBaseUrl.includes("newapi") || cleanBaseUrl.includes(":11434") || targetModel.startsWith("gpt-") || targetModel.startsWith("claude-") || targetModel.startsWith("deepseek-") || targetModel.startsWith("qwen") || targetModel.startsWith("llama"));
+  }
   if (isOpenAiCompatible) {
     if (!cleanBaseUrl && !activeKey) {
       throw new Error("\u672A\u914D\u7F6E Base URL \u6216 API Key\u3002\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u914D\u7F6E API Provider\u3002");
@@ -175,6 +185,37 @@ async function callAiService({
       return result.text || "";
     } catch (geminiErr) {
       const errMsg = geminiErr.message || "";
+      if (cleanBaseUrl && (errMsg.includes("404") || errMsg.includes("NOT_FOUND") || errMsg.includes("Cannot POST") || errMsg.includes("not found"))) {
+        try {
+          let fallbackEndpoint = cleanBaseUrl;
+          if (!fallbackEndpoint.endsWith("/chat/completions")) {
+            fallbackEndpoint = fallbackEndpoint.endsWith("/v1") ? `${fallbackEndpoint}/chat/completions` : `${fallbackEndpoint}/v1/chat/completions`;
+          }
+          const altRes = await fetch(fallbackEndpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${activeKey}`,
+              ...customHeaders
+            },
+            body: JSON.stringify({
+              model: targetModel,
+              messages: [
+                ...systemInstruction ? [{ role: "system", content: systemInstruction }] : [],
+                { role: "user", content: prompt }
+              ],
+              temperature
+            }),
+            signal: AbortSignal.timeout(timeoutMs)
+          });
+          if (altRes.ok) {
+            const j = await altRes.json();
+            const text = j.choices?.[0]?.message?.content;
+            if (typeof text === "string") return text;
+          }
+        } catch {
+        }
+      }
       if (errMsg.includes("401") || errMsg.includes("API_KEY_INVALID")) {
         throw new Error(`[Gemini 401 \u9274\u6743\u5931\u8D25] Gemini API Key \u65E0\u6548: ${errMsg}`);
       } else if (errMsg.includes("404") || errMsg.includes("NOT_FOUND")) {
@@ -190,7 +231,7 @@ async function callAiService({
 app.post("/api/provider/test-connection", async (req, res) => {
   const { providerType, baseUrl, apiKey, serviceType = "text", customHeaders } = req.body;
   const startTime = Date.now();
-  const cleanKey = apiKey && apiKey.trim() || (providerType === "google_gemini" ? process.env.GEMINI_API_KEY : "") || "";
+  const cleanKey = apiKey && apiKey.trim() || "";
   const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, "") : "";
   if (!cleanKey && providerType !== "ollama") {
     return res.status(400).json({
@@ -204,16 +245,52 @@ app.post("/api/provider/test-connection", async (req, res) => {
     });
   }
   const maskedKey = cleanKey.length > 8 ? `${cleanKey.slice(0, 3)}****${cleanKey.slice(-4)}` : cleanKey ? "****" : "(\u65E0\u5BC6\u94A5)";
-  if (providerType === "google_gemini" || !cleanBaseUrl && !providerType) {
-    const testEndpoint = cleanBaseUrl ? `${cleanBaseUrl}/v1beta/models?key=${cleanKey}` : `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanKey}`;
+  if (providerType === "google_gemini") {
+    const isV1Path = cleanBaseUrl.includes("/v1") && !cleanBaseUrl.includes("v1beta");
+    const testEndpoint = cleanBaseUrl ? isV1Path ? cleanBaseUrl.endsWith("/models") ? cleanBaseUrl : `${cleanBaseUrl}/models` : cleanBaseUrl.endsWith("/v1beta") ? `${cleanBaseUrl}/models?key=${cleanKey}` : `${cleanBaseUrl}/v1beta/models?key=${cleanKey}` : `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanKey}`;
     try {
       const resp = await fetch(testEndpoint, {
         method: "GET",
-        headers: { "User-Agent": "aistudio-build-provider-test" },
+        headers: {
+          "User-Agent": "aistudio-build-provider-test",
+          "x-goog-api-key": cleanKey,
+          "Authorization": `Bearer ${cleanKey}`,
+          ...customHeaders
+        },
         signal: AbortSignal.timeout(1e4)
       });
       const latencyMs = Date.now() - startTime;
       if (!resp.ok) {
+        if (cleanBaseUrl && (resp.status === 404 || resp.status === 405)) {
+          const probeEndpoint = cleanBaseUrl.endsWith("/v1beta") ? `${cleanBaseUrl}/models/gemini-2.5-flash:generateContent?key=${cleanKey}` : `${cleanBaseUrl}/v1beta/models/gemini-2.5-flash:generateContent?key=${cleanKey}`;
+          try {
+            const probeResp = await fetch(probeEndpoint, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-goog-api-key": cleanKey,
+                "Authorization": `Bearer ${cleanKey}`,
+                ...customHeaders
+              },
+              body: JSON.stringify({ contents: [{ parts: [{ text: "ping" }] }] }),
+              signal: AbortSignal.timeout(1e4)
+            });
+            if (probeResp.ok) {
+              return res.json({
+                success: true,
+                latencyMs: Date.now() - startTime,
+                statusCode: 200,
+                statusText: "OK",
+                providerType: "google_gemini",
+                checkedEndpoint: probeEndpoint.replace(cleanKey, "***"),
+                maskedKey,
+                availableModelsCount: 1,
+                message: `Google Gemini \u81EA\u5B9A\u4E49\u53CD\u4EE3 API \u8FDE\u901A\u6210\u529F\uFF01(generateContent \u94FE\u8DEF\u6B63\u5E38\uFF0C\u8017\u65F6 ${Date.now() - startTime}ms)`
+              });
+            }
+          } catch {
+          }
+        }
         const errText = await resp.text();
         let errMsg = errText;
         try {
@@ -231,7 +308,7 @@ app.post("/api/provider/test-connection", async (req, res) => {
             checkedEndpoint: testEndpoint.replace(cleanKey, "***"),
             errorType: "auth_error",
             maskedKey,
-            message: "Gemini API Key \u9274\u6743\u5931\u8D25",
+            message: cleanBaseUrl ? `\u53CD\u4EE3 API Key \u9274\u6743\u5931\u8D25 (${resp.status})` : "Gemini API Key \u9274\u6743\u5931\u8D25",
             error: errMsg
           });
         }
@@ -249,7 +326,7 @@ app.post("/api/provider/test-connection", async (req, res) => {
         });
       }
       const data = await resp.json();
-      const modelsCount = Array.isArray(data.models) ? data.models.length : 0;
+      const modelsCount = Array.isArray(data.models) ? data.models.length : Array.isArray(data.data) ? data.data.length : 0;
       return res.json({
         success: true,
         latencyMs,
@@ -259,7 +336,7 @@ app.post("/api/provider/test-connection", async (req, res) => {
         checkedEndpoint: testEndpoint.replace(cleanKey, "***"),
         maskedKey,
         availableModelsCount: modelsCount,
-        message: `Google Gemini \u5B98\u65B9/\u53CD\u4EE3 API \u8FDE\u901A\u6210\u529F\uFF01\u68C0\u6D4B\u5230 ${modelsCount} \u4E2A\u53EF\u7528\u6A21\u578B (\u8017\u65F6 ${latencyMs}ms)`
+        message: `${cleanBaseUrl ? "\u81EA\u5B9A\u4E49\u53CD\u4EE3" : "Google Gemini \u5B98\u65B9"} API \u8FDE\u901A\u6210\u529F\uFF01\u68C0\u6D4B\u5230 ${modelsCount} \u4E2A\u53EF\u7528\u6A21\u578B (\u8017\u65F6 ${latencyMs}ms)`
       });
     } catch (err) {
       const latencyMs = Date.now() - startTime;
@@ -406,168 +483,358 @@ app.post("/api/provider/test-connection", async (req, res) => {
 });
 app.post("/api/provider/fetch-models", async (req, res) => {
   const { providerType, baseUrl, apiKey, serviceType = "text", customHeaders } = req.body;
-  const cleanKey = apiKey && apiKey.trim() || (providerType === "google_gemini" ? process.env.GEMINI_API_KEY : "") || "";
+  const cleanKey = apiKey && apiKey.trim() || "";
   const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, "") : "";
-  if (providerType === "google_gemini" || !cleanBaseUrl && !providerType) {
-    const fetchUrl = cleanBaseUrl ? `${cleanBaseUrl}/v1beta/models?key=${cleanKey}` : `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanKey}`;
-    try {
-      const resp = await fetch(fetchUrl, {
-        method: "GET",
-        headers: { "User-Agent": "aistudio-build-models-fetch" },
-        signal: AbortSignal.timeout(12e3)
-      });
-      if (!resp.ok) {
-        const errText = await resp.text();
-        return res.status(resp.status).json({
-          success: false,
-          supported: true,
-          models: [],
-          message: `\u62C9\u53D6 Gemini \u6A21\u578B\u5217\u8868\u5931\u8D25 (${resp.status})`,
-          error: errText
-        });
-      }
-      const data = await resp.json();
-      const rawList = Array.isArray(data.models) ? data.models : [];
-      const formattedModels = rawList.map((m) => {
-        const id = (m.name || "").replace("models/", "");
-        const isImage = id.includes("imagen") || id.includes("image");
-        const isVoice = id.includes("audio") || id.includes("tts") || id.includes("speech");
-        return {
-          id,
-          name: m.displayName || id,
-          description: m.description || "",
-          type: isImage ? "image" : isVoice ? "voice" : "text",
-          contextWindow: m.inputTokenLimit,
-          owned_by: "Google"
-        };
-      });
-      return res.json({
-        success: true,
-        supported: true,
-        models: formattedModels,
-        sourceEndpoint: fetchUrl.replace(cleanKey, "***"),
-        message: `\u6210\u529F\u62C9\u53D6\u5230 ${formattedModels.length} \u4E2A Gemini \u771F\u5B9E\u6A21\u578B`
-      });
-    } catch (err) {
-      return res.status(500).json({
-        success: false,
-        supported: false,
-        models: [],
-        message: "\u62C9\u53D6 Gemini \u6A21\u578B\u5217\u8868\u5931\u8D25",
-        error: err.message
-      });
-    }
-  }
-  if (providerType === "ollama" || cleanBaseUrl.includes(":11434")) {
-    const tagsUrl = `${cleanBaseUrl}/api/tags`;
-    try {
-      const resp = await fetch(tagsUrl, { signal: AbortSignal.timeout(8e3) });
-      if (resp.ok) {
-        const data = await resp.json();
-        const rawList = Array.isArray(data.models) ? data.models : [];
-        const formatted = rawList.map((m) => ({
-          id: m.name,
-          name: m.name,
-          description: `Size: ${Math.round((m.size || 0) / 1024 / 1024)}MB, Format: ${m.details?.format || "gguf"}`,
-          type: "text",
-          owned_by: "Ollama-Local"
-        }));
-        return res.json({
-          success: true,
-          supported: true,
-          models: formatted,
-          sourceEndpoint: tagsUrl,
-          message: `\u6210\u529F\u62C9\u53D6\u5230 ${formatted.length} \u4E2A Ollama \u672C\u5730\u6A21\u578B`
-        });
-      }
-    } catch {
-    }
-  }
-  let modelsEndpoint = cleanBaseUrl;
-  if (!modelsEndpoint) modelsEndpoint = "https://api.openai.com/v1";
-  if (!modelsEndpoint.endsWith("/models")) {
-    modelsEndpoint = modelsEndpoint.endsWith("/v1") ? `${modelsEndpoint}/models` : `${modelsEndpoint}/v1/models`;
-  }
-  try {
-    const headers = {
-      "Content-Type": "application/json",
-      ...customHeaders
-    };
-    if (cleanKey) {
-      headers["Authorization"] = `Bearer ${cleanKey}`;
-    }
-    const resp = await fetch(modelsEndpoint, {
-      method: "GET",
-      headers,
-      signal: AbortSignal.timeout(15e3)
-    });
-    if (!resp.ok) {
-      if (resp.status === 404 || resp.status === 405) {
-        return res.json({
-          success: false,
-          supported: false,
-          models: [],
-          statusCode: resp.status,
-          message: "\u8BE5 Provider \u672A\u63D0\u4F9B /v1/models \u63A5\u53E3\uFF0C\u4E0D\u652F\u6301\u81EA\u52A8\u83B7\u53D6\u6A21\u578B\u5217\u8868\u3002\u8BF7\u5728\u4E0B\u65B9\u624B\u52A8\u8F93\u5165\u6A21\u578B\u540D\u79F0\u3002"
-        });
-      }
-      const errText = await resp.text();
-      return res.status(resp.status).json({
-        success: false,
-        supported: true,
-        models: [],
-        statusCode: resp.status,
-        message: `\u4ECE Provider \u83B7\u53D6\u6A21\u578B\u5217\u8868\u5931\u8D25 (${resp.status})`,
-        error: errText
-      });
-    }
-    const data = await resp.json();
-    let rawList = [];
-    if (Array.isArray(data.data)) {
-      rawList = data.data;
-    } else if (Array.isArray(data)) {
-      rawList = data;
-    } else if (Array.isArray(data.models)) {
-      rawList = data.models;
-    }
-    const formattedModels = rawList.map((m) => {
-      const id = typeof m === "string" ? m : m.id || m.name;
-      const lower = id.toLowerCase();
-      let type = "text";
-      if (lower.includes("dall-e") || lower.includes("image") || lower.includes("flux") || lower.includes("midjourney") || lower.includes("stable-diffusion")) {
-        type = "image";
-      } else if (lower.includes("tts") || lower.includes("whisper") || lower.includes("speech") || lower.includes("audio")) {
-        type = "voice";
-      } else if (lower.includes("embedding")) {
-        type = "embedding";
-      }
-      return {
-        id,
-        name: typeof m === "object" && m.name ? m.name : id,
-        owned_by: typeof m === "object" ? m.owned_by || m.permission?.[0]?.organization || "" : "",
-        created: typeof m === "object" ? m.created : void 0,
-        type
-      };
-    });
-    return res.json({
-      success: true,
-      supported: true,
-      models: formattedModels,
-      sourceEndpoint: modelsEndpoint,
-      message: `\u6210\u529F\u62C9\u53D6\u5230 ${formattedModels.length} \u4E2A\u771F\u5B9E\u6A21\u578B`
-    });
-  } catch (err) {
-    return res.status(500).json({
+  console.log("[API Key Log - Server fetch-models Auto-Probe Received]", {
+    providerType,
+    baseUrl: cleanBaseUrl,
+    serviceType,
+    keyIsEmpty: !cleanKey,
+    keyLength: cleanKey ? cleanKey.length : 0,
+    keyLast4: cleanKey ? cleanKey.slice(-4) : ""
+  });
+  if (!cleanKey && providerType !== "ollama") {
+    return res.status(400).json({
       success: false,
       supported: false,
       models: [],
-      message: "\u7F51\u7EDC\u5F02\u5E38\uFF0C\u65E0\u6CD5\u83B7\u53D6\u6A21\u578B\u5217\u8868",
-      error: err.message
+      errorType: "auth_error",
+      message: "\u8BF7\u5148\u8F93\u5165\u6709\u6548\u7684 API Key \u518D\u83B7\u53D6\u6A21\u578B\u5217\u8868\u3002"
     });
   }
+  const maskedKey = cleanKey ? cleanKey.length > 4 ? `***${cleanKey.slice(-4)}` : "***" : "";
+  const attemptsTrace = [];
+  const overallStartTime = Date.now();
+  {
+    let urlCandidate = "";
+    if (!cleanBaseUrl) {
+      urlCandidate = "https://api.openai.com/v1/models";
+    } else if (cleanBaseUrl.endsWith("/v1")) {
+      urlCandidate = `${cleanBaseUrl}/models`;
+    } else {
+      urlCandidate = `${cleanBaseUrl}/v1/models`;
+    }
+    const maskedUrl = urlCandidate.replace(cleanKey, maskedKey);
+    const startIso = (/* @__PURE__ */ new Date()).toISOString();
+    const tStart = Date.now();
+    try {
+      const headers = {
+        "User-Agent": "aistudio-build-models-fetch",
+        "Content-Type": "application/json",
+        ...customHeaders
+      };
+      if (cleanKey) {
+        headers["Authorization"] = `Bearer ${cleanKey}`;
+      }
+      const resp = await fetch(urlCandidate, {
+        method: "GET",
+        headers,
+        signal: AbortSignal.timeout(1e4)
+      });
+      const tEnd = Date.now();
+      const endIso = (/* @__PURE__ */ new Date()).toISOString();
+      if (resp.ok) {
+        const data = await resp.json();
+        const rawList = Array.isArray(data.data) ? data.data : Array.isArray(data.models) ? data.models : Array.isArray(data) ? data : [];
+        if (rawList && rawList.length > 0) {
+          const formatted = rawList.map((m) => {
+            const id = typeof m === "string" ? m : m.id || m.name;
+            const lower = String(id).toLowerCase();
+            let type = "text";
+            if (lower.includes("dall-e") || lower.includes("image") || lower.includes("flux") || lower.includes("midjourney") || lower.includes("imagen")) {
+              type = "image";
+            } else if (lower.includes("tts") || lower.includes("whisper") || lower.includes("speech") || lower.includes("audio")) {
+              type = "voice";
+            }
+            return {
+              id: String(id),
+              name: typeof m === "object" && m.name ? m.name : String(id),
+              type,
+              owned_by: typeof m === "object" ? m.owned_by || m.permission?.[0]?.organization || "OpenAI-Proxy" : "OpenAI-Proxy"
+            };
+          });
+          attemptsTrace.push({
+            attemptIndex: 1,
+            adapterName: "OpenAI-Compatible Adapter (/v1/models)",
+            protocolKey: "openai_compatible",
+            finalUrl: maskedUrl,
+            method: "GET",
+            authMethod: "Authorization: Bearer ***",
+            timeoutMs: 1e4,
+            startTime: startIso,
+            endTime: endIso,
+            latencyMs: tEnd - tStart,
+            httpStatus: resp.status,
+            success: true,
+            modelsCount: formatted.length
+          });
+          return res.json({
+            success: true,
+            supported: true,
+            apiProtocol: "openai_compatible",
+            models: formatted,
+            sourceEndpoint: maskedUrl,
+            message: `\u81EA\u52A8\u63A2\u6D4B\u6210\u529F\uFF01\u5339\u914D OpenAI \u517C\u5BB9\u534F\u8BAE\uFF0C\u6210\u529F\u83B7\u53D6 ${formatted.length} \u4E2A\u771F\u5B9E\u6A21\u578B`,
+            attemptsTrace,
+            totalTimeMs: Date.now() - overallStartTime
+          });
+        }
+      }
+      const errText = await resp.text().catch(() => "");
+      attemptsTrace.push({
+        attemptIndex: 1,
+        adapterName: "OpenAI-Compatible Adapter (/v1/models)",
+        protocolKey: "openai_compatible",
+        finalUrl: maskedUrl,
+        method: "GET",
+        authMethod: "Authorization: Bearer ***",
+        timeoutMs: 1e4,
+        startTime: startIso,
+        endTime: endIso,
+        latencyMs: tEnd - tStart,
+        httpStatus: resp.status,
+        success: false,
+        modelsCount: 0,
+        error: `HTTP ${resp.status}: ${errText.slice(0, 100) || "\u672A\u8FD4\u56DE\u6709\u6548\u6A21\u578B\u5217\u8868"}`
+      });
+    } catch (err) {
+      const tEnd = Date.now();
+      const endIso = (/* @__PURE__ */ new Date()).toISOString();
+      attemptsTrace.push({
+        attemptIndex: 1,
+        adapterName: "OpenAI-Compatible Adapter (/v1/models)",
+        protocolKey: "openai_compatible",
+        finalUrl: maskedUrl,
+        method: "GET",
+        authMethod: "Authorization: Bearer ***",
+        timeoutMs: 1e4,
+        startTime: startIso,
+        endTime: endIso,
+        latencyMs: tEnd - tStart,
+        success: false,
+        modelsCount: 0,
+        error: err.name === "AbortError" ? "\u8BF7\u6C42\u8D85\u65F6 (10\u79D2)" : err.message || "\u7F51\u7EDC\u8FDE\u63A5\u5F02\u5E38"
+      });
+    }
+  }
+  {
+    let urlCandidate = "";
+    if (!cleanBaseUrl) {
+      urlCandidate = `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanKey}`;
+    } else if (cleanBaseUrl.includes("v1beta")) {
+      urlCandidate = cleanBaseUrl.endsWith("/models") ? `${cleanBaseUrl}?key=${cleanKey}` : `${cleanBaseUrl}/models?key=${cleanKey}`;
+    } else if (cleanBaseUrl.endsWith("/v1")) {
+      urlCandidate = `${cleanBaseUrl}/models`;
+    } else {
+      urlCandidate = `${cleanBaseUrl}/v1beta/models?key=${cleanKey}`;
+    }
+    const maskedUrl = urlCandidate.replace(cleanKey, maskedKey);
+    const startIso = (/* @__PURE__ */ new Date()).toISOString();
+    const tStart = Date.now();
+    try {
+      const headers = {
+        "User-Agent": "aistudio-build-models-fetch",
+        "x-goog-api-key": cleanKey,
+        "Authorization": `Bearer ${cleanKey}`,
+        ...customHeaders
+      };
+      const resp = await fetch(urlCandidate, {
+        method: "GET",
+        headers,
+        signal: AbortSignal.timeout(1e4)
+      });
+      const tEnd = Date.now();
+      const endIso = (/* @__PURE__ */ new Date()).toISOString();
+      if (resp.ok) {
+        const data = await resp.json();
+        const rawList = Array.isArray(data.models) ? data.models : Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : [];
+        if (rawList && rawList.length > 0) {
+          const formatted = rawList.map((m) => {
+            const id = (typeof m === "string" ? m : m.id || m.name || "").replace(/^models\//, "");
+            const isImage = id.includes("imagen") || id.includes("image");
+            const isVoice = id.includes("audio") || id.includes("tts") || id.includes("speech");
+            return {
+              id,
+              name: typeof m === "object" && (m.displayName || m.name) ? m.displayName || m.name : id,
+              description: typeof m === "object" ? m.description || "" : "",
+              type: isImage ? "image" : isVoice ? "voice" : "text",
+              contextWindow: typeof m === "object" ? m.inputTokenLimit : void 0,
+              owned_by: typeof m === "object" && m.owned_by ? m.owned_by : cleanBaseUrl ? "Gemini-Proxy" : "Google"
+            };
+          });
+          attemptsTrace.push({
+            attemptIndex: 2,
+            adapterName: "Gemini Native REST Adapter (/v1beta/models)",
+            protocolKey: "gemini_native",
+            finalUrl: maskedUrl,
+            method: "GET",
+            authMethod: "QueryParam (?key=) & Headers",
+            timeoutMs: 1e4,
+            startTime: startIso,
+            endTime: endIso,
+            latencyMs: tEnd - tStart,
+            httpStatus: resp.status,
+            success: true,
+            modelsCount: formatted.length
+          });
+          return res.json({
+            success: true,
+            supported: true,
+            apiProtocol: "gemini_native",
+            models: formatted,
+            sourceEndpoint: maskedUrl,
+            message: `\u81EA\u52A8\u63A2\u6D4B\u6210\u529F\uFF01\u5339\u914D Gemini Native \u539F\u751F\u534F\u8BAE\uFF0C\u6210\u529F\u83B7\u53D6 ${formatted.length} \u4E2A\u771F\u5B9E\u6A21\u578B`,
+            attemptsTrace,
+            totalTimeMs: Date.now() - overallStartTime
+          });
+        }
+      }
+      const errText = await resp.text().catch(() => "");
+      attemptsTrace.push({
+        attemptIndex: 2,
+        adapterName: "Gemini Native REST Adapter (/v1beta/models)",
+        protocolKey: "gemini_native",
+        finalUrl: maskedUrl,
+        method: "GET",
+        authMethod: "QueryParam (?key=) & Headers",
+        timeoutMs: 1e4,
+        startTime: startIso,
+        endTime: endIso,
+        latencyMs: tEnd - tStart,
+        httpStatus: resp.status,
+        success: false,
+        modelsCount: 0,
+        error: `HTTP ${resp.status}: ${errText.slice(0, 100) || "\u672A\u8FD4\u56DE\u6709\u6548\u6A21\u578B\u5217\u8868"}`
+      });
+    } catch (err) {
+      const tEnd = Date.now();
+      const endIso = (/* @__PURE__ */ new Date()).toISOString();
+      attemptsTrace.push({
+        attemptIndex: 2,
+        adapterName: "Gemini Native REST Adapter (/v1beta/models)",
+        protocolKey: "gemini_native",
+        finalUrl: maskedUrl,
+        method: "GET",
+        authMethod: "QueryParam (?key=) & Headers",
+        timeoutMs: 1e4,
+        startTime: startIso,
+        endTime: endIso,
+        latencyMs: tEnd - tStart,
+        success: false,
+        modelsCount: 0,
+        error: err.name === "AbortError" ? "\u8BF7\u6C42\u8D85\u65F6 (10\u79D2)" : err.message || "\u7F51\u7EDC\u8FDE\u63A5\u5F02\u5E38"
+      });
+    }
+  }
+  if (cleanBaseUrl && !cleanBaseUrl.endsWith("/v1") && !cleanBaseUrl.includes("v1beta")) {
+    const urlCandidate = `${cleanBaseUrl}/models`;
+    const maskedUrl = urlCandidate.replace(cleanKey, maskedKey);
+    const startIso = (/* @__PURE__ */ new Date()).toISOString();
+    const tStart = Date.now();
+    try {
+      const headers = {
+        "User-Agent": "aistudio-build-models-fetch",
+        "Content-Type": "application/json",
+        ...customHeaders
+      };
+      if (cleanKey) {
+        headers["Authorization"] = `Bearer ${cleanKey}`;
+      }
+      const resp = await fetch(urlCandidate, {
+        method: "GET",
+        headers,
+        signal: AbortSignal.timeout(8e3)
+      });
+      const tEnd = Date.now();
+      const endIso = (/* @__PURE__ */ new Date()).toISOString();
+      if (resp.ok) {
+        const data = await resp.json();
+        const rawList = Array.isArray(data.data) ? data.data : Array.isArray(data.models) ? data.models : Array.isArray(data) ? data : [];
+        if (rawList && rawList.length > 0) {
+          const formatted = rawList.map((m) => {
+            const id = typeof m === "string" ? m : m.id || m.name;
+            return {
+              id: String(id),
+              name: typeof m === "object" && m.name ? m.name : String(id),
+              type: "text",
+              owned_by: "Proxy-Direct"
+            };
+          });
+          attemptsTrace.push({
+            attemptIndex: 3,
+            adapterName: "Direct Endpoint Adapter (/models)",
+            protocolKey: "openai_compatible",
+            finalUrl: maskedUrl,
+            method: "GET",
+            authMethod: "Authorization: Bearer ***",
+            timeoutMs: 8e3,
+            startTime: startIso,
+            endTime: endIso,
+            latencyMs: tEnd - tStart,
+            httpStatus: resp.status,
+            success: true,
+            modelsCount: formatted.length
+          });
+          return res.json({
+            success: true,
+            supported: true,
+            apiProtocol: "openai_compatible",
+            models: formatted,
+            sourceEndpoint: maskedUrl,
+            message: `\u81EA\u52A8\u63A2\u6D4B\u6210\u529F\uFF01\u5339\u914D\u76F4\u8FDE\u8DEF\u5F84 /models\uFF0C\u83B7\u53D6\u5230 ${formatted.length} \u4E2A\u6A21\u578B`,
+            attemptsTrace,
+            totalTimeMs: Date.now() - overallStartTime
+          });
+        }
+      }
+      const errText = await resp.text().catch(() => "");
+      attemptsTrace.push({
+        attemptIndex: 3,
+        adapterName: "Direct Endpoint Adapter (/models)",
+        protocolKey: "openai_compatible",
+        finalUrl: maskedUrl,
+        method: "GET",
+        authMethod: "Authorization: Bearer ***",
+        timeoutMs: 8e3,
+        startTime: startIso,
+        endTime: endIso,
+        latencyMs: tEnd - tStart,
+        httpStatus: resp.status,
+        success: false,
+        modelsCount: 0,
+        error: `HTTP ${resp.status}: ${errText.slice(0, 100) || "\u672A\u8FD4\u56DE\u6709\u6548\u6A21\u578B\u5217\u8868"}`
+      });
+    } catch (err) {
+      const tEnd = Date.now();
+      const endIso = (/* @__PURE__ */ new Date()).toISOString();
+      attemptsTrace.push({
+        attemptIndex: 3,
+        adapterName: "Direct Endpoint Adapter (/models)",
+        protocolKey: "openai_compatible",
+        finalUrl: maskedUrl,
+        method: "GET",
+        authMethod: "Authorization: Bearer ***",
+        timeoutMs: 8e3,
+        startTime: startIso,
+        endTime: endIso,
+        latencyMs: tEnd - tStart,
+        success: false,
+        modelsCount: 0,
+        error: err.name === "AbortError" ? "\u8BF7\u6C42\u8D85\u65F6 (8\u79D2)" : err.message || "\u7F51\u7EDC\u8FDE\u63A5\u5F02\u5E38"
+      });
+    }
+  }
+  return res.status(500).json({
+    success: false,
+    supported: false,
+    models: [],
+    message: "\u81EA\u52A8\u63A5\u53E3\u534F\u8BAE\u63A2\u6D4B\u5931\u8D25\uFF1A\u5F53\u524D Base URL \u4E0E API Key \u5747\u65E0\u6CD5\u901A\u8FC7 OpenAI \u517C\u5BB9\u6216 Gemini \u539F\u751F\u63A5\u53E3\u83B7\u53D6\u6A21\u578B\u5217\u8868\u3002\u8BF7\u68C0\u67E5 Base URL \u4E0E Key \u662F\u5426\u6B63\u786E\uFF0C\u6216\u5C1D\u8BD5\u624B\u52A8\u8F93\u5165\u6A21\u578B\u540D\u79F0\u3002",
+    attemptsTrace,
+    totalTimeMs: Date.now() - overallStartTime
+  });
 });
 app.post("/api/provider/test-model", async (req, res) => {
-  const { providerType, baseUrl, apiKey, model, serviceType = "text", testPrompt, customHeaders } = req.body;
+  const { providerType, baseUrl, apiKey, model, apiProtocol, serviceType = "text", testPrompt, customHeaders } = req.body;
   const startTime = Date.now();
   const prompt = testPrompt || "\u8BF7\u4EC5\u56DE\u590D\u4E00\u53E5\u8BDD\uFF1A\u6A21\u578B\u94FE\u8DEF\u6D4B\u8BD5\u6B63\u5E38\uFF0C\u5DF2\u51C6\u5907\u5C31\u7EEA\uFF01";
   try {
@@ -577,6 +844,7 @@ app.post("/api/provider/test-model", async (req, res) => {
       apiKey,
       baseUrl,
       providerType,
+      apiProtocol,
       temperature: 0.3,
       timeoutMs: 25e3,
       customHeaders
@@ -2640,6 +2908,13 @@ app.post("/api/provider/generate-speech", async (req, res) => {
     return res.status(500).json({ success: false, error: err.message || "\u8BED\u97F3\u5408\u6210\u7F51\u7EDC\u5F02\u5E38" });
   }
 });
+app.use("/api", (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: "API \u7AEF\u70B9\u672A\u627E\u5230",
+    message: `\u7AEF\u70B9 ${req.method} ${req.originalUrl} \u4E0D\u5B58\u5728`
+  });
+});
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
@@ -2655,7 +2930,7 @@ async function startServer() {
       res.sendFile(import_path.default.join(distPath, "index.html"));
     });
   }
-  app.listen(PORT, "127.0.0.1", () => {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log(`\u{1F4F1} Simulated Android AI Phone Server listening on port ${PORT}`);
   });
 }

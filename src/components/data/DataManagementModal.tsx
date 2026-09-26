@@ -52,6 +52,8 @@ import {
   createDataSnapshot,
   restoreDataSnapshot,
   deleteDataSnapshot,
+  LargeImportManager,
+  ImportJournal,
 } from '../../lib/dataManagement';
 import { loadCharacters } from '../../lib/storage';
 
@@ -225,10 +227,21 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
     }
   };
 
+  const [importProgress, setImportProgress] = useState<{
+    status: string;
+    percentage: number;
+    processedMessagesCount: number;
+    processedFiles: number;
+    totalFiles: number;
+    currentStageMessage: string;
+    currentFileName?: string;
+  } | null>(null);
+
   const handleRunImport = async () => {
     if (!parsedResult) return;
     setIsExecutingImport(true);
     setImportError(null);
+    setImportProgress(null);
 
     const execOptions: ImportExecutionOptions = {
       conflictStrategy,
@@ -243,8 +256,39 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
     };
 
     try {
-      const result = await executeImport(parsedResult, execOptions);
-      setImportSuccessResult(result);
+      // Auto Snapshot before import
+      const snapshot = await createDataSnapshot('导入前自动安全备份').catch(() => null);
+
+      if (currentFile && (currentFile.size > 5 * 1024 * 1024 || parsedResult.fileType === 'zip' || parsedResult.fileType === 'jsonl')) {
+        // Large File Streaming Pipeline
+        const journal = new ImportJournal(currentFile.name, currentFile.size);
+        journal.subscribe((state) => {
+          setImportProgress({
+            status: state.status,
+            percentage: state.percentage,
+            processedMessagesCount: state.processedMessagesCount,
+            processedFiles: state.processedFiles,
+            totalFiles: state.totalFiles,
+            currentStageMessage: state.currentStageMessage,
+            currentFileName: state.currentFileName,
+          });
+        });
+
+        await LargeImportManager.executeStreamingImport(currentFile, execOptions, journal);
+
+        setImportSuccessResult({
+          importedCharacterCount: parsedResult.characters.length,
+          importedMessageCount: journal.getState().processedMessagesCount,
+          importedGroupCount: parsedResult.groups.length,
+          importedMemoryCount: parsedResult.memories.length,
+          snapshotId: snapshot?.id || 'snap_auto',
+        });
+      } else {
+        // Normal Import Execution
+        const result = await executeImport(parsedResult, execOptions);
+        setImportSuccessResult(result);
+      }
+
       setSnapshots(listDataSnapshots());
       onDataChanged();
     } catch (err: any) {
@@ -1343,6 +1387,29 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                       </label>
                     </div>
                   </div>
+
+                  {/* Live Progress Bar Card during Streaming Import */}
+                  {isExecutingImport && importProgress && (
+                    <div className="p-3.5 rounded-2xl bg-blue-950/40 border border-blue-500/40 space-y-2.5">
+                      <div className="flex items-center justify-between text-xs text-blue-300 font-bold">
+                        <span className="flex items-center gap-1.5 min-w-0 truncate">
+                          <RefreshCw className="w-4 h-4 animate-spin text-blue-400 shrink-0" />
+                          <span className="truncate">{importProgress.currentStageMessage || '正在分块流式写入数据库...'}</span>
+                        </span>
+                        <span className="font-mono text-sm shrink-0">{importProgress.percentage}%</span>
+                      </div>
+                      <div className="w-full h-2.5 bg-zinc-800 rounded-full overflow-hidden border border-zinc-700">
+                        <div
+                          className="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-400 transition-all duration-200"
+                          style={{ width: `${importProgress.percentage}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
+                        <span>文件解压进度: {importProgress.processedFiles} / {importProgress.totalFiles || 1}</span>
+                        <span className="text-emerald-400 font-bold">已落盘消息: {importProgress.processedMessagesCount.toLocaleString()} 条</span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Safety Tip */}
                   <div className="flex items-center gap-2 text-[11px] text-zinc-400 bg-zinc-950/70 p-2.5 rounded-xl border border-zinc-800">

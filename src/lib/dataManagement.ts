@@ -331,10 +331,21 @@ export function deduplicateMessages(existingMessages: ChatMessage[], incomingMes
 // 3. File Parsing & Multi-format Normalization Engine
 // =========================================================================
 
+import { LargeImportManager } from './import/LargeImportManager';
+export { LargeImportManager } from './import/LargeImportManager';
+export { ZipStreamReader } from './import/ZipStreamReader';
+export { ImportJournal } from './import/ImportJournal';
+
 export async function parseImportFile(file: File, options?: ImportParseOptions): Promise<ImportParsedResult> {
   const fileName = file.name;
   const fileSize = file.size;
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
+
+  // Large File Pipeline (> 5MB or ZIP): delegate to LargeImportManager streaming analyzer to prevent memory crash
+  if (fileSize > 5 * 1024 * 1024 || ext === 'zip') {
+    return await LargeImportManager.analyzeFile(file, options);
+  }
+
   const currentMode = options?.recognitionMode || 'auto';
 
   const warnings: string[] = [];
