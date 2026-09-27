@@ -90,6 +90,9 @@ export interface AiCharacter {
   lastViewedTimestamp?: number;
 }
 
+export type HistorySourceType = 'live' | 'archived' | 'imported';
+export type HistoryImportance = 'P0' | 'P1' | 'P2' | 'P3' | 'P4';
+
 export interface ChatMessage {
   id: string;
   characterId: string;
@@ -108,6 +111,8 @@ export interface ChatMessage {
     dateStr: string;
     summaryText?: string;
   };
+  sourceType?: HistorySourceType;
+  importance?: HistoryImportance;
 }
 
 export type GroupMemberType = 'human' | 'ai' | 'npc';

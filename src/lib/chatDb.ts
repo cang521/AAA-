@@ -1,4 +1,5 @@
-import { ChatMessage } from '../types';
+import { ChatMessage, HistorySourceType, HistoryImportance } from '../types';
+import { classifyMessage, classifyImportance, determineSourceType } from './historyClassifier';
 
 const DB_NAME = 'PhoneSimChatDB_v2';
 const DB_VERSION = 2;
@@ -15,6 +16,23 @@ interface CharacterMeta {
 const metaCache = new Map<string, CharacterMeta>();
 let isMetaLoaded = false;
 const listeners = new Set<() => void>();
+
+// In-memory Inverted Index Cache for Chat History Search (O(1) lookup without scanning DB)
+interface ChatInvertedIndexCache {
+  messages: ChatMessage[];
+  keywordToMsgIds: Map<string, Set<string>>;
+  lastUpdated: number;
+}
+
+const chatIndexCacheMap = new Map<string, ChatInvertedIndexCache>();
+
+export function clearChatIndexCache(characterId?: string) {
+  if (characterId) {
+    chatIndexCacheMap.delete(characterId);
+  } else {
+    chatIndexCacheMap.clear();
+  }
+}
 
 function notifyChange() {
   listeners.forEach((fn) => {
@@ -137,6 +155,11 @@ function getDbCount(db: IDBDatabase): Promise<number> {
 }
 
 function addMessageToStore(db: IDBDatabase, msg: ChatMessage): Promise<void> {
+  if (!msg.sourceType || !msg.importance) {
+    const classified = classifyMessage(msg);
+    msg.sourceType = msg.sourceType || classified.sourceType;
+    msg.importance = msg.importance || classified.importance;
+  }
   return new Promise((resolve, reject) => {
     const tx = db.transaction([STORE_MESSAGES], 'readwrite');
     const store = tx.objectStore(STORE_MESSAGES);
@@ -263,6 +286,7 @@ export async function getMessagesPaged(
 export async function saveChatMessage(msg: ChatMessage): Promise<void> {
   const db = await getDb();
   await addMessageToStore(db, msg);
+  clearChatIndexCache(msg.characterId);
 
   // Update in-memory metadata cache immediately
   const meta = metaCache.get(msg.characterId) || {
@@ -284,7 +308,7 @@ export async function saveChatMessage(msg: ChatMessage): Promise<void> {
  */
 export async function saveChatMessagesBulk(
   msgs: ChatMessage[],
-  options?: { skipMetaReload?: boolean; skipNotify?: boolean }
+  options?: { skipMetaReload?: boolean; skipNotify?: boolean; isImported?: boolean }
 ): Promise<void> {
   if (msgs.length === 0) return;
   const db = await getDb();
@@ -293,6 +317,11 @@ export async function saveChatMessagesBulk(
   const store = tx.objectStore(STORE_MESSAGES);
 
   for (const msg of msgs) {
+    if (!msg.sourceType || !msg.importance) {
+      const classified = classifyMessage(msg, { isImported: options?.isImported });
+      msg.sourceType = msg.sourceType || classified.sourceType;
+      msg.importance = msg.importance || classified.importance;
+    }
     store.put(msg);
   }
 
@@ -300,6 +329,8 @@ export async function saveChatMessagesBulk(
     tx.oncomplete = () => res();
     tx.onerror = () => rej(tx.error);
   });
+
+  clearChatIndexCache();
 
   if (!options?.skipMetaReload) {
     await reloadMetaCache(db);
@@ -401,6 +432,7 @@ export async function rollbackImportSession(sessionId: string): Promise<number> 
   });
 
   // 5. Refresh DB metadata & notify UI once
+  clearChatIndexCache();
   await reloadMetaCache(db);
   notifyChange();
 
@@ -421,6 +453,7 @@ export async function deleteChatMessage(id: string, characterId: string): Promis
     tx.onerror = () => rej(tx.error);
   });
 
+  clearChatIndexCache(characterId);
   await reloadMetaCache(db);
   notifyChange();
 }
@@ -431,6 +464,7 @@ export async function deleteChatMessage(id: string, characterId: string): Promis
 export async function updateChatMessage(msg: ChatMessage): Promise<void> {
   const db = await getDb();
   await addMessageToStore(db, msg);
+  clearChatIndexCache(msg.characterId);
   await reloadMetaCache(db);
   notifyChange();
 }
@@ -473,29 +507,110 @@ export async function searchCharacterMessages(
   });
 }
 
+async function getOrBuildChatIndex(characterId: string, db: IDBDatabase): Promise<ChatInvertedIndexCache> {
+  const cached = chatIndexCacheMap.get(characterId);
+  if (cached) return cached;
+
+  return new Promise<ChatInvertedIndexCache>((resolve) => {
+    const tx = db.transaction([STORE_MESSAGES], 'readonly');
+    const store = tx.objectStore(STORE_MESSAGES);
+    const index = store.index('by_character_time');
+    const keyRange = IDBKeyRange.bound([characterId, 0], [characterId, Number.MAX_SAFE_INTEGER]);
+
+    const req = index.getAll(keyRange);
+
+    req.onsuccess = () => {
+      const messages = (req.result || []) as ChatMessage[];
+      const keywordToMsgIds = new Map<string, Set<string>>();
+
+      for (const msg of messages) {
+        if (!msg.sourceType || !msg.importance) {
+          const classified = classifyMessage(msg);
+          msg.sourceType = msg.sourceType || classified.sourceType;
+          msg.importance = msg.importance || classified.importance;
+        }
+
+        // Exclude P4 noise from inverted index completely
+        if (msg.importance === 'P4') continue;
+
+        const lowerText = msg.text.toLowerCase();
+        const terms = lowerText
+          .replace(/[，。！？、~～…\n\r\t\(\)\[\]\{\}":;]/g, ' ')
+          .split(/\s+/)
+          .filter((t) => t.length >= 2);
+
+        // Add 2-grams for Chinese character matching
+        const chinese = lowerText.replace(/[^\u4e00-\u9fa5]/g, '');
+        if (chinese.length >= 2) {
+          for (let i = 0; i < chinese.length - 1; i++) {
+            terms.push(chinese.slice(i, i + 2));
+          }
+        }
+
+        const uniqueTerms = new Set(terms);
+        for (const term of uniqueTerms) {
+          if (!keywordToMsgIds.has(term)) {
+            keywordToMsgIds.set(term, new Set());
+          }
+          keywordToMsgIds.get(term)!.add(msg.id);
+        }
+      }
+
+      const cacheEntry: ChatInvertedIndexCache = {
+        messages,
+        keywordToMsgIds,
+        lastUpdated: Date.now(),
+      };
+      chatIndexCacheMap.set(characterId, cacheEntry);
+      resolve(cacheEntry);
+    };
+
+    req.onerror = () => {
+      resolve({ messages: [], keywordToMsgIds: new Map(), lastUpdated: Date.now() });
+    };
+  });
+}
+
 /**
- * Intelligent Keyword & Semantic Memory Retrieval Engine (RAG for AI Long-term Recall)
- * Searches history for relevant context without overloading context token limits or sending 10,000 msgs.
+ * Intelligent Keyword & Tiered Memory Retrieval Engine (RAG for AI Long-term Recall with Early Stop)
+ * Strictly follows Priority Tiers:
+ * - Tier 1: Recent 4 months normal chat (live / recent archived) + Vault memories
+ * - Tier 2: Older archived normal chat (> 4 months)
+ * - Tier 3: External imported history
+ * Implements Early Stop (够用即停) to prevent scanning or returning excessive tokens.
  */
 export async function recallCharacterMemories(
   characterId: string,
   userMessage: string,
-  maxResults = 5
-): Promise<{ recalledText: string; matchedCount: number; durationMs: number }> {
+  maxResults = 4
+): Promise<{ recalledText: string; matchedCount: number; durationMs: number; tierReached?: string }> {
   const startTime = Date.now();
   if (!userMessage || userMessage.trim().length < 2) {
     return { recalledText: '', matchedCount: 0, durationMs: Date.now() - startTime };
   }
 
   const db = await getDb();
+  const chatIndex = await getOrBuildChatIndex(characterId, db);
 
-  // Extract meaningful tokens (2+ chars, filter out common punctuation & pure stop words)
-  const rawTokens = userMessage
-    .replace(/[，。！？、～~…,.!?]/g, ' ')
+  if (!chatIndex.messages || chatIndex.messages.length === 0) {
+    return { recalledText: '', matchedCount: 0, durationMs: Date.now() - startTime };
+  }
+
+  // Tokenize user message
+  const cleanQuery = userMessage.toLowerCase();
+  const rawKeywords = cleanQuery
+    .replace(/[，。！？、~～…\n\r\t\(\)\[\]\{\}":;]/g, ' ')
     .split(/\s+/)
     .filter((w) => w.length >= 2);
 
-  // Common Chinese/English stop words to ignore
+  const ngrams: string[] = [];
+  const chineseChars = cleanQuery.replace(/[^\u4e00-\u9fa5]/g, '');
+  if (chineseChars.length >= 2) {
+    for (let i = 0; i < chineseChars.length - 1; i++) {
+      ngrams.push(chineseChars.slice(i, i + 2));
+    }
+  }
+
   const stopWords = new Set([
     '这个',
     '那个',
@@ -515,93 +630,145 @@ export async function recallCharacterMemories(
     '你好',
     '在吗',
     'hello',
-    'what',
-    'with',
-    'from',
-    'that',
-    'this',
   ]);
+  const searchTerms = Array.from(new Set([...rawKeywords, ...ngrams])).filter(
+    (t) => t.length >= 2 && !stopWords.has(t)
+  );
 
-  const searchKeywords = rawTokens.filter((k) => !stopWords.has(k.toLowerCase()));
-
-  // Also include character name or key terms if present
-  if (searchKeywords.length === 0 && rawTokens.length > 0) {
-    searchKeywords.push(rawTokens[0]);
-  }
-
-  if (searchKeywords.length === 0) {
+  if (searchTerms.length === 0) {
     return { recalledText: '', matchedCount: 0, durationMs: Date.now() - startTime };
   }
 
-  return new Promise((resolve) => {
-    const tx = db.transaction([STORE_MESSAGES], 'readonly');
-    const store = tx.objectStore(STORE_MESSAGES);
-    const index = store.index('by_character_time');
-    const keyRange = IDBKeyRange.bound([characterId, 0], [characterId, Number.MAX_SAFE_INTEGER]);
-
-    const candidateMatches: { msg: ChatMessage; score: number }[] = [];
-    let scanned = 0;
-    const maxScan = 3000;
-
-    const cursorReq = index.openCursor(keyRange, 'prev');
-
-    cursorReq.onsuccess = (e) => {
-      const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
-      if (cursor && scanned < maxScan && candidateMatches.length < 50) {
-        scanned++;
-        const msg = cursor.value as ChatMessage;
-        let score = 0;
-        const lowerText = msg.text.toLowerCase();
-
-        for (const kw of searchKeywords) {
-          const lk = kw.toLowerCase();
-          if (lowerText.includes(lk)) {
-            score += lk.length >= 3 ? 3 : 2;
-            if (
-              lowerText.includes('喜欢') ||
-              lowerText.includes('记得') ||
-              lowerText.includes('上次') ||
-              lowerText.includes('生日') ||
-              lowerText.includes('约定') ||
-              lowerText.includes('秘密')
-            ) {
-              score += 2;
-            }
-          }
-        }
-
-        if (score > 0) {
-          candidateMatches.push({ msg, score });
-        }
-        cursor.continue();
-      } else {
-        candidateMatches.sort((a, b) => b.score - a.score || b.msg.timestamp - a.msg.timestamp);
-
-        const topMatches = candidateMatches.slice(0, maxResults);
-        if (topMatches.length === 0) {
-          resolve({ recalledText: '', matchedCount: 0, durationMs: Date.now() - startTime });
-          return;
-        }
-
-        const summaryLines = topMatches.map(
-          (m, idx) =>
-            `${idx + 1}. [${new Date(m.msg.timestamp).toLocaleDateString()}] ${
-              m.msg.sender === 'user' ? '用户曾说' : 'AI曾回复'
-            }: "${m.msg.text.slice(0, 120)}${m.msg.text.length > 120 ? '...' : ''}"`
-        );
-
-        resolve({
-          recalledText: `【🧠 本地检索到的长期相关历史对话记忆（RAG 记忆召回）】：\n${summaryLines.join('\n')}`,
-          matchedCount: topMatches.length,
-          durationMs: Date.now() - startTime,
-        });
+  // Find candidate message IDs
+  const candidateMsgIds = new Set<string>();
+  for (const term of searchTerms) {
+    const ids = chatIndex.keywordToMsgIds.get(term);
+    if (ids) {
+      for (const id of ids) {
+        candidateMsgIds.add(id);
       }
-    };
+    }
+  }
 
-    cursorReq.onerror = () => {
-      resolve({ recalledText: '', matchedCount: 0, durationMs: Date.now() - startTime });
-    };
+  if (candidateMsgIds.size === 0) {
+    return { recalledText: '', matchedCount: 0, durationMs: Date.now() - startTime };
+  }
+
+  // Map messages by ID
+  const msgById = new Map<string, ChatMessage>();
+  for (const m of chatIndex.messages) {
+    msgById.set(m.id, m);
+  }
+
+  // Group candidate messages by Priority Tiers
+  // Tier 1: 最近4个月正常聊天 (live or archived <= 4 months)
+  // Tier 2: 4个月以前的 archived 聊天
+  // Tier 3: imported 外部导入历史
+  const tier1Candidates: Array<{ msg: ChatMessage; score: number }> = [];
+  const tier2Candidates: Array<{ msg: ChatMessage; score: number }> = [];
+  const tier3Candidates: Array<{ msg: ChatMessage; score: number }> = [];
+
+  const FOUR_MONTHS_MS = 120 * 24 * 3600 * 1000;
+  const now = Date.now();
+
+  for (const msgId of candidateMsgIds) {
+    const msg = msgById.get(msgId);
+    if (!msg) continue;
+
+    // RULE: P3 (fragments) excluded by default, P4 (noise) NEVER allowed
+    const importance = msg.importance || classifyImportance(msg.text);
+    if (importance === 'P3' || importance === 'P4') continue;
+
+    const lowerText = msg.text.toLowerCase();
+    let baseScore = 0;
+
+    for (const term of searchTerms) {
+      if (lowerText.includes(term)) {
+        baseScore += term.length >= 3 ? 3 : 2;
+      }
+    }
+
+    if (baseScore <= 0) continue;
+
+    // Score multipliers by Importance (P0 核心: x2.0, P1 重要: x1.5, P2 普通: x1.0)
+    const importanceMultiplier = importance === 'P0' ? 2.0 : importance === 'P1' ? 1.5 : 1.0;
+    const finalScore = baseScore * importanceMultiplier;
+
+    const sourceType = msg.sourceType || determineSourceType(msg.timestamp);
+    const age = now - msg.timestamp;
+
+    if (sourceType === 'imported') {
+      tier3Candidates.push({ msg, score: finalScore });
+    } else if (sourceType === 'archived' && age > FOUR_MONTHS_MS) {
+      tier2Candidates.push({ msg, score: finalScore });
+    } else {
+      // live or recent archived <= 4 months
+      tier1Candidates.push({ msg, score: finalScore });
+    }
+  }
+
+  // Early Stop Evaluation Strategy
+  const selectedMatches: Array<{ msg: ChatMessage; score: number }> = [];
+  let tierReached = 'Tier1';
+
+  // 1. Evaluate Tier 1 (第一优先级: 最近4个月正常聊天)
+  tier1Candidates.sort((a, b) => b.score - a.score || b.msg.timestamp - a.msg.timestamp);
+  for (const item of tier1Candidates) {
+    selectedMatches.push(item);
+    if (selectedMatches.length >= maxResults) break;
+  }
+
+  // EARLY STOP CHECK 1: If Tier 1 has produced >= 2 strong matches (score >= 4) or reached maxResults, STOP IMMEDIATELY!
+  const tier1StrongCount = selectedMatches.filter((m) => m.score >= 4).length;
+  if (selectedMatches.length >= maxResults || tier1StrongCount >= 2) {
+    // Early stop triggered at Tier 1!
+  } else {
+    // 2. Evaluate Tier 2 (第二优先级: 4个月以前的 archived 聊天)
+    tierReached = 'Tier2';
+    tier2Candidates.sort((a, b) => b.score - a.score || b.msg.timestamp - a.msg.timestamp);
+    for (const item of tier2Candidates) {
+      selectedMatches.push(item);
+      if (selectedMatches.length >= maxResults) break;
+    }
+
+    // EARLY STOP CHECK 2: If Tier 1 + Tier 2 has produced enough matches OR user did not explicitly request imported memory, STOP IMMEDIATELY!
+    const userWantsImported = /回忆|查旧|过去|以前|导入|很久以前|最早|那时|记得吗|还记得|离线/.test(cleanQuery);
+    if (selectedMatches.length >= maxResults || (!userWantsImported && selectedMatches.length >= 2)) {
+      // Early stop triggered at Tier 2!
+    } else if (userWantsImported || selectedMatches.length < 2) {
+      // 3. Evaluate Tier 3 (第三优先级: imported 外部导入历史)
+      tierReached = 'Tier3';
+      tier3Candidates.sort((a, b) => b.score - a.score || b.msg.timestamp - a.msg.timestamp);
+      for (const item of tier3Candidates) {
+        selectedMatches.push(item);
+        if (selectedMatches.length >= maxResults) break;
+      }
+    }
+  }
+
+  if (selectedMatches.length === 0) {
+    return { recalledText: '', matchedCount: 0, durationMs: Date.now() - startTime, tierReached };
+  }
+
+  const topMatches = selectedMatches.slice(0, maxResults);
+  const summaryLines = topMatches.map((m, idx) => {
+    const dateStr = new Date(m.msg.timestamp).toLocaleDateString();
+    const speaker = m.msg.sender === 'user' ? '用户曾说' : 'AI曾回复';
+    const tag =
+      m.msg.sourceType === 'imported' ? ' [外部导入]' : m.msg.sourceType === 'archived' ? ' [早期归档]' : '';
+    const cleanExcerpt = m.msg.text.replace(/\s+/g, ' ').slice(0, 110);
+    return `${idx + 1}.${tag} [${dateStr}] ${speaker}: "${cleanExcerpt}${
+      m.msg.text.length > 110 ? '...' : ''
+    }"`;
   });
+
+  const durationMs = Date.now() - startTime;
+  return {
+    recalledText: `【🧠 本地检索到的长期对话记忆（RAG 按需精简召回）】:\n${summaryLines.join('\n')}`,
+    matchedCount: topMatches.length,
+    durationMs,
+    tierReached,
+  };
 }
 
 /**
@@ -627,6 +794,8 @@ export async function clearCharacterMessages(characterId: string): Promise<void>
     tx.oncomplete = () => res();
     tx.onerror = () => rej(tx.error);
   });
+
+  clearChatIndexCache(characterId);
 
   metaCache.set(characterId, {
     characterId,
