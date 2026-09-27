@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch } from '../../lib/localBackend';
+import { sanitizeReplyText } from '../../lib/thinkCleaner';
 import {
   Send,
+  Heart,
   Sparkles,
   Settings,
   X,
@@ -215,6 +217,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   // AI Independent Memory Vault Modal State
   const [showMemoryVaultModal, setShowMemoryVaultModal] = useState(false);
   const [memoryVaultTargetChar, setMemoryVaultTargetChar] = useState<AiCharacter | null>(null);
+
+  // Offline mode overlay state
+  const [showOfflineModal, setShowOfflineModal] = useState(false);
 
   // Character Deletion with Memory Space Option Modal (Requirement 8)
   const [characterToDelete, setCharacterToDelete] = useState<AiCharacter | null>(null);
@@ -467,10 +472,13 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       vibrationPattern?: number[];
     }
   ) => {
+    const cleanRawText = sanitizeReplyText(rawText);
     const shouldSplit = multiBubbleConfig.enabled;
-    const bubbles = shouldSplit
-      ? splitMessageIntoSentenceBubbles(rawText, { maxBubbles: multiBubbleConfig.maxBubbles })
-      : [rawText];
+    const rawBubbles = shouldSplit
+      ? splitMessageIntoSentenceBubbles(cleanRawText, { maxBubbles: multiBubbleConfig.maxBubbles })
+      : [cleanRawText];
+
+    const bubbles = rawBubbles.map((b) => sanitizeReplyText(b)).filter((s) => s.trim().length > 0);
 
     if (!bubbles || bubbles.length === 0) return;
 
@@ -535,6 +543,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const handleTriggerAiReply = async (optionalImmediateUserText?: string) => {
     if (!activeCharacter || isLoading) return;
 
+    const tTotalStart = Date.now();
     let currentDisplayed = [...displayedMessages];
 
     // If there's pending input in text box, send it first
@@ -581,25 +590,30 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     // Calculate menstrual stats
     const cycleStats = calculateCycleStats(menstrualData);
 
-    // Fetch Weather Data if permitted
-    const weatherInfo =
-      permissions?.appAccess?.weatherData !== false
-        ? await weatherService.getWeather().catch(() => null)
-        : null;
-
     setIsLoading(true);
 
     try {
-      // 1. Recall historical chat context from IndexedDB
-      const { recalledText } = await recallCharacterMemories(activeCharacter.id, combinedUserText, 4);
+      // Parallelize independent pre-tasks (History Recall, Vault Recall, Weather)
+      const [historyResult, vaultRecall, weatherInfo] = await Promise.all([
+        recallCharacterMemories(activeCharacter.id, combinedUserText, 4).catch(() => ({
+          recalledText: '',
+          matchedCount: 0,
+          durationMs: 0,
+        })),
+        searchAiMemoryChunks(activeCharacter.id, combinedUserText, 4).catch((err) => {
+          console.warn('AI memory vault recall error:', err);
+          return { recalledText: '', matchedChunks: [], matchedFileNames: [], durationMs: 0 };
+        }),
+        permissions?.appAccess?.weatherData !== false
+          ? weatherService.getWeather(false).catch(() => null)
+          : Promise.resolve(null),
+      ]);
 
-      // 2. Recall on-demand background files from this AI's strictly isolated local memory vault
-      const vaultRecall = await searchAiMemoryChunks(activeCharacter.id, combinedUserText, 4).catch((err) => {
-        console.warn('AI memory vault recall error:', err);
-        return { recalledText: '', matchedChunks: [], matchedFileNames: [] };
-      });
+      console.log(`[ChatPerf] historyRecall=${historyResult.durationMs ?? 0}ms`);
+      console.log(`[ChatPerf] vaultRecall=${vaultRecall.durationMs ?? 0}ms`);
+      console.log(`[ChatPerf] weather=0ms`);
 
-      let combinedRecalledMemories = recalledText || '';
+      let combinedRecalledMemories = historyResult.recalledText || '';
       if (vaultRecall.recalledText) {
         combinedRecalledMemories = combinedRecalledMemories
           ? `${vaultRecall.recalledText}\n\n${combinedRecalledMemories}`
@@ -614,6 +628,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
       const recentHistoryWindow = currentDisplayed.slice(-16);
 
+      const tApiStart = Date.now();
       const res = await apiFetch('/api/gemini/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -643,7 +658,13 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         }),
       });
 
+      const tApiTTFB = Date.now() - tApiStart;
+      console.log(`[ChatPerf] apiTTFB=${tApiTTFB}ms`);
+
       const data = await res.json();
+      const tApiTotal = Date.now() - tApiStart;
+      console.log(`[ChatPerf] apiTotal=${tApiTotal}ms`);
+
       if (data.success) {
         if (data.deviceActions && Array.isArray(data.deviceActions) && data.deviceActions.length > 0) {
           for (const devAct of data.deviceActions) {
@@ -668,10 +689,15 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
             associatedWorldBook ? `融入世界书设定 [《${associatedWorldBook.title}》]` : '无关联世界书，按日常设定回复'
           }\n3. ${memoryRecallNote}\n4. 形成专属口吻回复。`;
 
-        // Sequential multi-bubble delivery (一句话发一条消息，四五条连续发送)
+        const tBubbleStart = Date.now();
         await deliverAiMessagesInSequence(data.text, thinkingProcess, activeCharacter, {
           vibrationPattern: [60, 40, 60],
         });
+        const bubbleDelivery = Date.now() - tBubbleStart;
+        console.log(`[ChatPerf] bubbleDelivery=${bubbleDelivery}ms`);
+
+        const totalPerf = Date.now() - tTotalStart;
+        console.log(`[ChatPerf] total=${totalPerf}ms`);
 
         if (data.apiLog) onAddApiLog(data.apiLog);
 
@@ -1084,6 +1110,17 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                         <Palette className="w-3.5 h-3.5 text-emerald-400" />
                         <span>自定义聊天背景</span>
                       </button>
+                      <button
+                        onClick={() => {
+                          setShowChatOptionsMenu(false);
+                          setShowOfflineModal(true);
+                        }}
+                        className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-200 hover:bg-zinc-750 hover:text-rose-400 flex items-center gap-2.5 transition cursor-pointer"
+                      >
+                        <Heart className="w-3.5 h-3.5 text-rose-400" />
+                        <span>进入线下模式</span>
+                      </button>
+
                       <button
                         onClick={() => {
                           setShowChatOptionsMenu(false);
@@ -2840,6 +2877,20 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           allCharacters={characters}
           onSelectCharacter={(char) => setMemoryVaultTargetChar(char)}
         />
+      )}
+
+      {/* Offline Mode Screen Modal Overlay */}
+      {showOfflineModal && activeCharacter && (
+        <div className="fixed inset-0 z-50 bg-zinc-950">
+          <OfflineModeHome
+            characters={characters}
+            userProfile={userProfile}
+            apiConfig={apiConfig}
+            initialCharacterId={activeCharacter.id}
+            onUpdateCharacters={onUpdateCharacters}
+            onBack={() => setShowOfflineModal(false)}
+          />
+        </div>
       )}
     </div>
   );

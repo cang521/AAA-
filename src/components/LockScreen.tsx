@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Lock, Unlock, Delete, Phone, Camera, ShieldCheck } from 'lucide-react';
+import { ThemeId } from '../types';
 
 interface LockScreenProps {
   onUnlock: () => void;
@@ -8,6 +9,7 @@ interface LockScreenProps {
   isPinEnabled?: boolean;
   wallpaperUrl?: string;
   wallpaper?: string;
+  theme?: ThemeId;
 }
 
 export const LockScreen: React.FC<LockScreenProps> = ({
@@ -17,12 +19,15 @@ export const LockScreen: React.FC<LockScreenProps> = ({
   isPinEnabled = true,
   wallpaperUrl,
   wallpaper,
+  theme = 'default',
 }) => {
   const actualPin = correctPin || pinCode || '1234';
   const actualWallpaper =
     wallpaperUrl ||
     wallpaper ||
     'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1000&q=80';
+
+  const isLightWallpaper = actualWallpaper.includes('data:image/svg') || theme === 'cloud_milk';
 
   const [pinInput, setPinInput] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -70,14 +75,22 @@ export const LockScreen: React.FC<LockScreenProps> = ({
   };
 
   return (
-    <div className="relative w-full h-full flex flex-col justify-between text-white overflow-hidden select-none">
+    <div className={`relative w-full h-full flex flex-col justify-between overflow-hidden select-none ${
+      isLightWallpaper ? 'text-[#40566A]' : 'text-white'
+    }`}>
       {/* Background Wallpaper */}
       <img
         src={actualWallpaper}
         alt="Lock Wallpaper"
-        className="absolute inset-0 w-full h-full object-cover filter brightness-[0.82]"
+        className={`absolute inset-0 w-full h-full object-cover ${
+          isLightWallpaper ? 'brightness-[0.98]' : 'brightness-[0.82]'
+        }`}
       />
-      <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/80" />
+      <div className={`absolute inset-0 pointer-events-none ${
+        isLightWallpaper
+          ? 'bg-gradient-to-b from-sky-200/20 via-transparent to-sky-300/30'
+          : 'bg-gradient-to-b from-black/40 via-transparent to-black/80'
+      }`} />
 
       {/* Top Header Time & Date */}
       <div
@@ -86,14 +99,20 @@ export const LockScreen: React.FC<LockScreenProps> = ({
           paddingTop: 'calc(var(--safe-area-top, 0px) + 2rem)',
         }}
       >
-        <div className="flex items-center justify-center gap-1.5 text-xs text-white/80 mb-2 font-medium">
-          <Lock className="w-3.5 h-3.5 text-emerald-400" />
+        <div className={`flex items-center justify-center gap-1.5 text-xs mb-2 font-medium ${
+          isLightWallpaper ? 'text-[#67B7EA]' : 'text-white/80'
+        }`}>
+          <Lock className="w-3.5 h-3.5" />
           <span>{isPinEnabled ? '输入数字密码解锁' : '上滑解锁手机'}</span>
         </div>
-        <h1 className="text-6xl font-extralight tracking-tight font-sans drop-shadow-md">
+        <h1 className={`text-6xl font-extralight tracking-tight font-sans drop-shadow-sm ${
+          isLightWallpaper ? 'text-[#40566A]' : 'text-white'
+        }`}>
           {timeStr}
         </h1>
-        <p className="text-sm font-medium text-white/90 mt-1 drop-shadow-xs">{dateStr}</p>
+        <p className={`text-sm font-medium mt-1 drop-shadow-xs ${
+          isLightWallpaper ? 'text-[#7890A3]' : 'text-white/90'
+        }`}>{dateStr}</p>
       </div>
 
       {/* Center Keypad or Slide Guide */}
@@ -105,15 +124,19 @@ export const LockScreen: React.FC<LockScreenProps> = ({
               {[0, 1, 2, 3].map((idx) => (
                 <div
                   key={idx}
-                  className={`w-3.5 h-3.5 rounded-full border-2 border-white/80 transition-all ${
-                    idx < pinInput.length ? 'bg-emerald-400 border-emerald-400 scale-110 shadow-sm' : 'bg-transparent'
+                  className={`w-3.5 h-3.5 rounded-full border-2 transition-all ${
+                    isLightWallpaper ? 'border-[#8DCCF4]' : 'border-white/80'
+                  } ${
+                    idx < pinInput.length
+                      ? 'bg-[#67B7EA] border-[#67B7EA] scale-110 shadow-sm'
+                      : 'bg-transparent'
                   }`}
                 />
               ))}
             </div>
 
             {/* Error Message */}
-            <div className="h-5 mb-3 text-xs text-rose-400 font-medium text-center">
+            <div className="h-5 mb-3 text-xs text-rose-500 font-medium text-center">
               {errorMsg}
             </div>
 
@@ -123,7 +146,11 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                 <button
                   key={num}
                   onClick={() => handleKeyPress(num)}
-                  className="h-14 rounded-full bg-white/15 hover:bg-white/30 backdrop-blur-md flex items-center justify-center text-xl font-medium active:scale-95 transition text-white border border-white/10"
+                  className={`h-14 rounded-full backdrop-blur-md flex items-center justify-center text-xl font-medium active:scale-95 transition shadow-xs ${
+                    isLightWallpaper
+                      ? 'bg-white/70 hover:bg-white/90 text-[#40566A] border border-[#CFE9F8]'
+                      : 'bg-white/15 hover:bg-white/30 text-white border border-white/10'
+                  }`}
                 >
                   {num}
                 </button>
@@ -132,19 +159,29 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                 onClick={() => {
                   if (!isPinEnabled) onUnlock();
                 }}
-                className="h-14 rounded-full bg-white/5 flex items-center justify-center text-xs text-white/60 font-medium"
+                className={`h-14 rounded-full flex items-center justify-center text-xs font-medium ${
+                  isLightWallpaper ? 'bg-white/40 text-[#7890A3]' : 'bg-white/5 text-white/60'
+                }`}
               >
                 紧急
               </button>
               <button
                 onClick={() => handleKeyPress('0')}
-                className="h-14 rounded-full bg-white/15 hover:bg-white/30 backdrop-blur-md flex items-center justify-center text-xl font-medium active:scale-95 transition text-white border border-white/10"
+                className={`h-14 rounded-full backdrop-blur-md flex items-center justify-center text-xl font-medium active:scale-95 transition shadow-xs ${
+                  isLightWallpaper
+                    ? 'bg-white/70 hover:bg-white/90 text-[#40566A] border border-[#CFE9F8]'
+                    : 'bg-white/15 hover:bg-white/30 text-white border border-white/10'
+                }`}
               >
                 0
               </button>
               <button
                 onClick={handleDelete}
-                className="h-14 rounded-full bg-white/15 hover:bg-white/30 backdrop-blur-md flex items-center justify-center text-sm active:scale-95 transition text-white/80 border border-white/10"
+                className={`h-14 rounded-full backdrop-blur-md flex items-center justify-center text-sm active:scale-95 transition shadow-xs ${
+                  isLightWallpaper
+                    ? 'bg-white/70 hover:bg-white/90 text-[#40566A] border border-[#CFE9F8]'
+                    : 'bg-white/15 hover:bg-white/30 text-white/80 border border-white/10'
+                }`}
               >
                 <Delete className="w-5 h-5" />
               </button>
@@ -155,28 +192,40 @@ export const LockScreen: React.FC<LockScreenProps> = ({
             onClick={handleDirectSlideUnlock}
             className="group flex flex-col items-center gap-2 mb-10 cursor-pointer"
           >
-            <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center border border-white/30 group-hover:scale-105 transition shadow-lg">
-              <Unlock className="w-6 h-6 text-white" />
+            <div className={`w-12 h-12 rounded-full backdrop-blur-md flex items-center justify-center group-hover:scale-105 transition shadow-lg ${
+              isLightWallpaper
+                ? 'bg-white/80 text-[#67B7EA] border border-[#CFE9F8]'
+                : 'bg-white/20 text-white border border-white/30'
+            }`}>
+              <Unlock className="w-6 h-6" />
             </div>
-            <span className="text-xs text-white/80 font-medium">点击或上滑解锁</span>
+            <span className={`text-xs font-medium ${
+              isLightWallpaper ? 'text-[#40566A]' : 'text-white/80'
+            }`}>点击或上滑解锁</span>
           </button>
         )}
 
         {/* Bottom Quick Tools */}
         <div
-          className="w-full flex items-center justify-between text-white/70 px-4 pl-safe pr-safe"
+          className={`w-full flex items-center justify-between px-4 pl-safe pr-safe ${
+            isLightWallpaper ? 'text-[#7890A3]' : 'text-white/70'
+          }`}
           style={{
             paddingBottom: 'calc(var(--safe-area-bottom, 0px) + 1.25rem)',
           }}
         >
-          <button className="p-2.5 rounded-full bg-white/15 backdrop-blur-md hover:bg-white/25 transition">
+          <button className={`p-2.5 rounded-full backdrop-blur-md transition ${
+            isLightWallpaper ? 'bg-white/60 hover:bg-white/90 text-[#40566A]' : 'bg-white/15 hover:bg-white/25 text-white'
+          }`}>
             <Phone className="w-5 h-5" />
           </button>
-          <div className="flex items-center gap-1.5 text-[11px] text-white/60">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+          <div className="flex items-center gap-1.5 text-[11px] font-medium">
+            <ShieldCheck className="w-3.5 h-3.5 text-[#67B7EA]" />
             <span>AI 安全守护已启动</span>
           </div>
-          <button className="p-2.5 rounded-full bg-white/15 backdrop-blur-md hover:bg-white/25 transition">
+          <button className={`p-2.5 rounded-full backdrop-blur-md transition ${
+            isLightWallpaper ? 'bg-white/60 hover:bg-white/90 text-[#40566A]' : 'bg-white/15 hover:bg-white/25 text-white'
+          }`}>
             <Camera className="w-5 h-5" />
           </button>
         </div>

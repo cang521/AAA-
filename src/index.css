@@ -80,3 +80,181 @@ textarea,
   user-select: text !important;
   -webkit-touch-callout: default !important;
 }
+
+/* ======================================================
+   【晴空牛奶蓝 / Cloud Milk】 Theme System
+   ====================================================== */
+
+:root {
+  --theme-bg: #F5FBFF;
+  --theme-surface: #FFFFFF;
+  --theme-surface-soft: #EAF7FF;
+  --theme-primary: #8DCCF4;
+  --theme-primary-light: #DDF2FF;
+  --theme-primary-strong: #67B7EA;
+  --theme-text: #40566A;
+  --theme-text-secondary: #7890A3;
+  --theme-border: #CFE9F8;
+  --theme-shadow: rgba(92, 167, 214, 0.16);
+}
+
+.theme-cloud-milk,
+[data-theme="cloud_milk"] {
+  color-scheme: light !important;
+  background-color: var(--theme-bg) !important;
+  color: var(--theme-text) !important;
+}
+
+/* Canvas & Screen Overrides */
+.theme-cloud-milk .phone-screen,
+.theme-cloud-milk .bg-zinc-950,
+.theme-cloud-milk .bg-zinc-900,
+.theme-cloud-milk .bg-zinc-900\/90,
+.theme-cloud-milk .bg-zinc-900\/80,
+.theme-cloud-milk .bg-zinc-900\/60,
+.theme-cloud-milk .bg-black,
+.theme-cloud-milk .bg-black\/80,
+.theme-cloud-milk .bg-black\/60 {
+  background-color: var(--theme-bg) !important;
+}
+
+/* Structural Surface Overrides (Cards, Panels, Modals) */
+.theme-cloud-milk .bg-zinc-850,
+.theme-cloud-milk .bg-zinc-800,
+.theme-cloud-milk .bg-zinc-800\/80,
+.theme-cloud-milk .bg-zinc-800\/60,
+.theme-cloud-milk .bg-zinc-800\/90,
+.theme-cloud-milk .bg-zinc-800\/40,
+.theme-cloud-milk .bg-zinc-900\/70 {
+  background-color: var(--theme-surface) !important;
+}
+
+.theme-cloud-milk .bg-zinc-750,
+.theme-cloud-milk .bg-zinc-700,
+.theme-cloud-milk .bg-zinc-700\/80,
+.theme-cloud-milk .bg-zinc-700\/50 {
+  background-color: var(--theme-surface-soft) !important;
+}
+
+/* Typography Color Overrides */
+.theme-cloud-milk .text-white,
+.theme-cloud-milk .text-zinc-100,
+.theme-cloud-milk .text-zinc-200 {
+  color: var(--theme-text) !important;
+}
+
+.theme-cloud-milk .text-zinc-300,
+.theme-cloud-milk .text-zinc-400,
+.theme-cloud-milk .text-zinc-500 {
+  color: var(--theme-text-secondary) !important;
+}
+
+/* Hairline Border Overrides */
+.theme-cloud-milk .border-zinc-800,
+.theme-cloud-milk .border-zinc-750,
+.theme-cloud-milk .border-zinc-700,
+.theme-cloud-milk .border-zinc-600,
+.theme-cloud-milk .border-zinc-800\/60,
+.theme-cloud-milk .border-white\/10,
+.theme-cloud-milk .border-white\/20,
+.theme-cloud-milk .border-white\/30 {
+  border-color: var(--theme-border) !important;
+}
+
+/* Soft Shadows */
+.theme-cloud-milk .shadow-2xl,
+.theme-cloud-milk .shadow-xl,
+.theme-cloud-milk .shadow-lg,
+.theme-cloud-milk .shadow-md,
+.theme-cloud-milk .shadow-sm {
+  box-shadow: 0 4px 16px var(--theme-shadow) !important;
+}
+
+/* Primary Color Accents & Buttons */
+.theme-cloud-milk .bg-indigo-600,
+.theme-cloud-milk .bg-indigo-500,
+.theme-cloud-milk .bg-emerald-600,
+.theme-cloud-milk .bg-emerald-500,
+.theme-cloud-milk .bg-purple-600 {
+  background-color: var(--theme-primary-strong) !important;
+  color: #FFFFFF !important;
+}
+
+.theme-cloud-milk .text-indigo-400,
+.theme-cloud-milk .text-emerald-400,
+.theme-cloud-milk .text-purple-400,
+.theme-cloud-milk .text-amber-400 {
+  color: var(--theme-primary-strong) !important;
+}
+
+/* Form Controls & Text Inputs */
+.theme-cloud-milk input[type="text"],
+.theme-cloud-milk input[type="password"],
+.theme-cloud-milk input[type="number"],
+.theme-cloud-milk textarea,
+.theme-cloud-milk select {
+  background-color: var(--theme-surface) !important;
+  color: var(--theme-text) !important;
+  border-color: var(--theme-border) !important;
+}
+
+.theme-cloud-milk input::placeholder,
+.theme-cloud-milk textarea::placeholder {
+  color: var(--theme-text-secondary) !important;
+  opacity: 0.75;
+}
+
+.theme-cloud-milk input:focus,
+.theme-cloud-milk textarea:focus {
+  border-color: var(--theme-primary-strong) !important;
+  box-shadow: 0 0 0 3px rgba(103, 183, 234, 0.25) !important;
+}
+
+/* Toggle Switches */
+.theme-cloud-milk input[type="checkbox"]:not(.danger-checkbox) {
+  accent-color: var(--theme-primary-strong) !important;
+}
+
+/* WeChat Chat Bubble Overrides */
+.theme-cloud-milk .chat-bubble-user {
+  background-color: var(--theme-primary-light) !important;
+  color: var(--theme-text) !important;
+  border: 1px solid var(--theme-border) !important;
+}
+
+.theme-cloud-milk .chat-bubble-ai {
+  background-color: var(--theme-surface) !important;
+  color: var(--theme-text) !important;
+  border: 1px solid var(--theme-border) !important;
+  box-shadow: 0 2px 8px var(--theme-shadow) !important;
+}
+
+/* Unread Badges - Deeper Sky Blue, Not Harsh Red */
+.theme-cloud-milk .unread-badge,
+.theme-cloud-milk .bg-emerald-500\/20 {
+  background-color: var(--theme-primary-light) !important;
+  color: var(--theme-text) !important;
+  border-color: var(--theme-border) !important;
+}
+
+/* Retain Red for Danger / Destructive Actions */
+.theme-cloud-milk .bg-rose-600,
+.theme-cloud-milk .bg-red-600,
+.theme-cloud-milk .bg-rose-500,
+.theme-cloud-milk .bg-red-500 {
+  background-color: #EF4444 !important;
+  color: #FFFFFF !important;
+}
+
+.theme-cloud-milk .text-rose-400,
+.theme-cloud-milk .text-red-400,
+.theme-cloud-milk .text-rose-500 {
+  color: #EF4444 !important;
+}
+
+/* Smooth Transitions */
+.theme-cloud-milk * {
+  transition-property: background-color, border-color, color;
+  transition-duration: 200ms;
+  transition-timing-function: ease-out;
+}

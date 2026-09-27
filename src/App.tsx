@@ -42,6 +42,8 @@ import {
   saveSettings,
   loadWorldBooks,
   saveWorldBooks,
+  DEFAULT_DESKTOP_WALLPAPER,
+  DEFAULT_LOCK_WALLPAPER,
 } from './lib/storage';
 
 import { PhoneContainer } from './components/PhoneContainer';
@@ -60,6 +62,8 @@ import { MemoApp } from './components/apps/MemoApp';
 import { WorldBookApp } from './components/apps/WorldBookApp';
 import { GameCenterApp } from './components/apps/GameCenterApp';
 import { WeatherApp } from './components/apps/WeatherApp';
+import { OfflineModeHome } from './components/offline/OfflineModeHome';
+import { CLOUD_MILK_DESKTOP_WALLPAPER, CLOUD_MILK_LOCK_WALLPAPER } from './lib/themeWallpapers';
 import { initAllAiMemoryVaults } from './lib/aiMemoryVaultDb';
 import { InPhoneAskDialog } from './components/agent/InPhoneAskDialog';
 import { InPhoneNotificationBanner } from './components/agent/InPhoneNotificationBanner';
@@ -306,20 +310,40 @@ export function App() {
 
   const currentEngineConfig = getApiConfigForEngine();
 
+  const activeTheme = settings.theme || 'default';
+  const activeWallpaperSource = settings.wallpaperSource || 'default';
+
+  let activeDesktopWallpaper = settings.desktopWallpaper || DEFAULT_DESKTOP_WALLPAPER;
+  let activeLockWallpaper = settings.lockWallpaper || DEFAULT_LOCK_WALLPAPER;
+
+  if (activeWallpaperSource === 'theme' && activeTheme === 'cloud_milk') {
+    activeDesktopWallpaper = CLOUD_MILK_DESKTOP_WALLPAPER;
+    activeLockWallpaper = CLOUD_MILK_LOCK_WALLPAPER;
+  } else if (activeWallpaperSource === 'custom') {
+    if (settings.customDesktopWallpaper) {
+      activeDesktopWallpaper = settings.customDesktopWallpaper;
+    }
+    if (settings.customLockWallpaper) {
+      activeLockWallpaper = settings.customLockWallpaper;
+    }
+  }
+
   return (
     <div className="w-full h-screen bg-zinc-950 flex items-center justify-center select-none overflow-hidden">
       <PhoneContainer
         onLockClick={() => setIsLocked(true)}
         customCss={settings?.customCss}
+        theme={settings?.theme || 'default'}
       >
         {/* LOCK SCREEN LAYER */}
         {isLocked ? (
           <LockScreen
-            wallpaperUrl={settings.lockWallpaper}
-            wallpaper={settings.lockWallpaper}
+            wallpaperUrl={activeLockWallpaper}
+            wallpaper={activeLockWallpaper}
             correctPin={settings.pinCode}
             pinCode={settings.pinCode}
             isPinEnabled={settings.isPinEnabled}
+            theme={activeTheme}
             onUnlock={() => setIsLocked(false)}
           />
         ) : activeAppId ? (
@@ -390,20 +414,44 @@ export function App() {
             {activeAppId === 'beautification' && (
               <BeautificationApp
                 onBackToLauncher={() => setActiveAppId(null)}
-                desktopWallpaper={settings.desktopWallpaper}
-                lockWallpaper={settings.lockWallpaper}
+                desktopWallpaper={activeDesktopWallpaper}
+                lockWallpaper={activeLockWallpaper}
                 customCss={settings.customCss}
                 pinCode={settings.pinCode}
                 isPinEnabled={settings.isPinEnabled}
+                currentTheme={settings.theme || 'default'}
+                wallpaperSource={settings.wallpaperSource || 'default'}
+                customDesktopWallpaper={settings.customDesktopWallpaper}
+                customLockWallpaper={settings.customLockWallpaper}
                 icons={icons}
                 apiConfig={currentEngineConfig}
+                onUpdateTheme={(themeId) => {
+                  const updated = { ...settings, theme: themeId };
+                  setSettingsState(updated);
+                  saveSettings(updated);
+                }}
+                onUpdateWallpaperSource={(source) => {
+                  const updated = { ...settings, wallpaperSource: source };
+                  setSettingsState(updated);
+                  saveSettings(updated);
+                }}
                 onUpdateDesktopWallpaper={(url) => {
-                  const updated = { ...settings, desktopWallpaper: url };
+                  const updated = {
+                    ...settings,
+                    desktopWallpaper: url,
+                    customDesktopWallpaper: url,
+                    wallpaperSource: 'custom' as const,
+                  };
                   setSettingsState(updated);
                   saveSettings(updated);
                 }}
                 onUpdateLockWallpaper={(url) => {
-                  const updated = { ...settings, lockWallpaper: url };
+                  const updated = {
+                    ...settings,
+                    lockWallpaper: url,
+                    customLockWallpaper: url,
+                    wallpaperSource: 'custom' as const,
+                  };
                   setSettingsState(updated);
                   saveSettings(updated);
                 }}
@@ -481,9 +529,20 @@ export function App() {
               />
             )}
 
+            {activeAppId === 'offline' && (
+              <OfflineModeHome
+                characters={characters}
+                userProfile={userProfile}
+                apiConfig={currentEngineConfig}
+                onUpdateCharacters={updateCharacters}
+                onBack={() => setActiveAppId(null)}
+              />
+            )}
+
             {/* Fallback for unhandled or custom app IDs */}
             {![
               'wechat',
+              'offline',
               'weather',
               'worldbook',
               'gamecenter',
@@ -515,8 +574,8 @@ export function App() {
             widgets={widgets}
             pagesCount={pagesCount}
             onUpdatePagesCount={updatePagesCount}
-            wallpaperUrl={settings.desktopWallpaper}
-            wallpaper={settings.desktopWallpaper}
+            wallpaperUrl={activeDesktopWallpaper}
+            wallpaper={activeDesktopWallpaper}
             menstrualData={menstrualData}
             memos={memos}
             onUpdateIcons={updateIcons}

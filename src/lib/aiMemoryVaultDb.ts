@@ -444,6 +444,7 @@ export async function importFileToAiMemory(
   // Recalculate vault statistics
   await recalculateVaultStats(db, characterId);
 
+  clearVaultIndexCache(characterId);
   onProgress?.(100, '导入完成！已成功加入该 AI 专属独立记忆空间。');
   notifyMemoryChange();
 
@@ -701,21 +702,97 @@ async function recalculateVaultStats(db: IDBDatabase, characterId: string): Prom
   });
 }
 
+// In-memory Inverted Index Cache for O(1) Candidate Lookup
+interface InvertedIndexCache {
+  chunks: AiMemoryChunk[];
+  keywordToChunkIds: Map<string, Set<string>>;
+  lastUpdated: number;
+}
+
+const vaultIndexCacheMap = new Map<string, InvertedIndexCache>();
+
+export function clearVaultIndexCache(characterId?: string) {
+  if (characterId) {
+    vaultIndexCacheMap.delete(characterId);
+  } else {
+    vaultIndexCacheMap.clear();
+  }
+}
+
+async function getOrBuildVaultIndex(characterId: string, db: IDBDatabase): Promise<InvertedIndexCache> {
+  const cached = vaultIndexCacheMap.get(characterId);
+  if (cached) {
+    return cached;
+  }
+
+  return new Promise<InvertedIndexCache>((resolve) => {
+    const tx = db.transaction([STORE_CHUNKS], 'readonly');
+    const store = tx.objectStore(STORE_CHUNKS);
+    const index = store.index('by_character');
+
+    const req = index.getAll(IDBKeyRange.only(characterId));
+
+    req.onsuccess = () => {
+      const chunks = (req.result || []) as AiMemoryChunk[];
+      const keywordToChunkIds = new Map<string, Set<string>>();
+
+      for (const chunk of chunks) {
+        const text = chunk.text.toLowerCase();
+        // Tokenize words
+        const terms = text
+          .replace(/[，。！？、~～…\n\r\t\(\)\[\]\{\}":;]/g, ' ')
+          .split(/\s+/)
+          .filter((t) => t.length >= 2);
+
+        // Add 2-grams
+        const chinese = text.replace(/[^\u4e00-\u9fa5]/g, '');
+        if (chinese.length >= 2) {
+          for (let i = 0; i < chinese.length - 1; i++) {
+            terms.push(chinese.slice(i, i + 2));
+          }
+        }
+
+        const uniqueTerms = new Set(terms);
+        for (const term of uniqueTerms) {
+          if (!keywordToChunkIds.has(term)) {
+            keywordToChunkIds.set(term, new Set());
+          }
+          keywordToChunkIds.get(term)!.add(chunk.id);
+        }
+      }
+
+      const cacheEntry: InvertedIndexCache = {
+        chunks,
+        keywordToChunkIds,
+        lastUpdated: Date.now(),
+      };
+
+      vaultIndexCacheMap.set(characterId, cacheEntry);
+      resolve(cacheEntry);
+    };
+
+    req.onerror = () => {
+      resolve({ chunks: [], keywordToChunkIds: new Map(), lastUpdated: Date.now() });
+    };
+  });
+}
+
 /**
  * On-demand Retrieval Engine (按需检索):
  * When an AI is chatting and needs to recall background or past information,
- * this function queries ONLY the chunks belonging strictly to this characterId.
- * Never dumps raw full files into context.
+ * this function queries candidate chunks using an inverted index cache.
+ * Avoids scanning all chunks on every message turn.
  */
 export async function searchAiMemoryChunks(
   characterId: string,
   query: string,
   maxResults = 4
-): Promise<AiMemoryRecallResult> {
+): Promise<AiMemoryRecallResult & { durationMs: number }> {
+  const startTime = Date.now();
   const db = await getMemoryDb();
 
   if (!query || !query.trim()) {
-    return { recalledText: '', matchedChunks: [], matchedFileNames: [] };
+    return { recalledText: '', matchedChunks: [], matchedFileNames: [], durationMs: Date.now() - startTime };
   }
 
   // Tokenize query into meaningful search keywords
@@ -739,87 +816,94 @@ export async function searchAiMemoryChunks(
 
   const allSearchTerms = Array.from(new Set([...rawKeywords, ...ngrams])).filter((t) => t.length >= 2);
 
-  return new Promise<AiMemoryRecallResult>((resolve) => {
-    const tx = db.transaction([STORE_CHUNKS], 'readonly');
-    const store = tx.objectStore(STORE_CHUNKS);
-    const index = store.index('by_character');
+  if (allSearchTerms.length === 0) {
+    return { recalledText: '', matchedChunks: [], matchedFileNames: [], durationMs: Date.now() - startTime };
+  }
 
-    const matchedCandidates: Array<{
-      chunk: AiMemoryChunk;
-      score: number;
-    }> = [];
+  const vaultIndex = await getOrBuildVaultIndex(characterId, db);
+  if (!vaultIndex.chunks || vaultIndex.chunks.length === 0) {
+    return { recalledText: '', matchedChunks: [], matchedFileNames: [], durationMs: Date.now() - startTime };
+  }
 
-    // Strictly isolated query to only this character's chunks
-    const cursorReq = index.openCursor(IDBKeyRange.only(characterId));
-
-    cursorReq.onsuccess = (e) => {
-      const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
-      if (cursor) {
-        const chunk = cursor.value as AiMemoryChunk;
-        const lowerText = chunk.text.toLowerCase();
-
-        let score = 0;
-
-        for (const term of allSearchTerms) {
-          if (lowerText.includes(term)) {
-            // Longer term match has higher weight
-            score += term.length >= 4 ? 4 : term.length >= 3 ? 3 : 2;
-
-            // Extra bonus if term appears multiple times
-            const occurrences = lowerText.split(term).length - 1;
-            if (occurrences > 1) {
-              score += Math.min(occurrences - 1, 3);
-            }
-          }
-        }
-
-        if (score > 0) {
-          matchedCandidates.push({ chunk, score });
-        }
-
-        cursor.continue();
-      } else {
-        // All chunks scanned, rank by score
-        matchedCandidates.sort((a, b) => b.score - a.score);
-
-        const topMatches = matchedCandidates.slice(0, maxResults);
-        if (topMatches.length === 0) {
-          resolve({ recalledText: '', matchedChunks: [], matchedFileNames: [] });
-          return;
-        }
-
-        const matchedFileNames = Array.from(new Set(topMatches.map((m) => m.chunk.fileName)));
-
-        // Format clean excerpt summary for Gemini context injection
-        const summaryLines = topMatches.map((m, idx) => {
-          const cleanExcerpt = m.chunk.text.replace(/\s+/g, ' ').slice(0, 300);
-          return `${idx + 1}. [文件: ${m.chunk.fileName} / 片段 #${m.chunk.chunkIndex + 1}]: "${cleanExcerpt}${
-            m.chunk.text.length > 300 ? '...' : ''
-          }"`;
-        });
-
-        const formattedText = `【📁 从该角色专属本地记忆空间调阅到的资料（按需召回）】:\n来源文件: ${matchedFileNames.join(
-          '、'
-        )}\n${summaryLines.join('\n')}\n（说明：以上是该AI专属记忆空间检索到的相关知识/历史资料片段。请依据此资料并保持该AI的人设口吻自然回应。）`;
-
-        const returnMatches: AiMemoryRecallMatch[] = topMatches.map((m) => ({
-          fileId: m.chunk.fileId,
-          fileName: m.chunk.fileName,
-          chunkIndex: m.chunk.chunkIndex,
-          text: m.chunk.text,
-          score: m.score,
-        }));
-
-        resolve({
-          recalledText: formattedText,
-          matchedChunks: returnMatches,
-          matchedFileNames,
-        });
+  // Candidate lookup via inverted index
+  const candidateChunkIds = new Set<string>();
+  for (const term of allSearchTerms) {
+    const chunkIds = vaultIndex.keywordToChunkIds.get(term);
+    if (chunkIds) {
+      for (const id of chunkIds) {
+        candidateChunkIds.add(id);
       }
-    };
+    }
+  }
 
-    cursorReq.onerror = () => {
-      resolve({ recalledText: '', matchedChunks: [], matchedFileNames: [] });
-    };
+  if (candidateChunkIds.size === 0) {
+    return { recalledText: '', matchedChunks: [], matchedFileNames: [], durationMs: Date.now() - startTime };
+  }
+
+  // Map candidates
+  const chunkById = new Map<string, AiMemoryChunk>();
+  for (const c of vaultIndex.chunks) {
+    chunkById.set(c.id, c);
+  }
+
+  const matchedCandidates: Array<{ chunk: AiMemoryChunk; score: number }> = [];
+
+  for (const chunkId of candidateChunkIds) {
+    const chunk = chunkById.get(chunkId);
+    if (!chunk) continue;
+
+    const lowerText = chunk.text.toLowerCase();
+    let score = 0;
+
+    for (const term of allSearchTerms) {
+      if (lowerText.includes(term)) {
+        score += term.length >= 4 ? 4 : term.length >= 3 ? 3 : 2;
+        const occurrences = lowerText.split(term).length - 1;
+        if (occurrences > 1) {
+          score += Math.min(occurrences - 1, 3);
+        }
+      }
+    }
+
+    if (score > 0) {
+      matchedCandidates.push({ chunk, score });
+    }
+  }
+
+  matchedCandidates.sort((a, b) => b.score - a.score);
+
+  const topMatches = matchedCandidates.slice(0, maxResults);
+  const durationMs = Date.now() - startTime;
+
+  if (topMatches.length === 0) {
+    return { recalledText: '', matchedChunks: [], matchedFileNames: [], durationMs };
+  }
+
+  const matchedFileNames = Array.from(new Set(topMatches.map((m) => m.chunk.fileName)));
+
+  const summaryLines = topMatches.map((m, idx) => {
+    const cleanExcerpt = m.chunk.text.replace(/\s+/g, ' ').slice(0, 300);
+    return `${idx + 1}. [文件: ${m.chunk.fileName} / 片段 #${m.chunk.chunkIndex + 1}]: "${cleanExcerpt}${
+      m.chunk.text.length > 300 ? '...' : ''
+    }"`;
   });
+
+  const formattedText = `【📁 从该角色专属本地记忆空间调阅到的资料（按需召回）】:\n来源文件: ${matchedFileNames.join(
+    '、'
+  )}\n${summaryLines.join('\n')}\n（说明：以上是该AI专属记忆空间检索到的相关知识/历史资料片段。请依据此资料并保持该AI的人设口吻自然回应。）`;
+
+  const returnMatches: AiMemoryRecallMatch[] = topMatches.map((m) => ({
+    fileId: m.chunk.fileId,
+    fileName: m.chunk.fileName,
+    chunkIndex: m.chunk.chunkIndex,
+    text: m.chunk.text,
+    score: m.score,
+  }));
+
+  return {
+    recalledText: formattedText,
+    matchedChunks: returnMatches,
+    matchedFileNames,
+    durationMs,
+  };
 }

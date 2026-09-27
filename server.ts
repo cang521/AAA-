@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
+import { extractThinkingAndContent, sanitizeReplyText } from './src/lib/thinkCleaner';
 
 dotenv.config();
 
@@ -185,11 +186,15 @@ async function callAiService({
       }
 
       const resJson = await response.json();
-      const content = resJson.choices?.[0]?.message?.content;
-      if (typeof content === 'string') {
-        return content;
+      const choice = resJson.choices?.[0];
+      const messageObj = choice?.message;
+      const reasoning = messageObj?.reasoning_content || messageObj?.reasoning || messageObj?.thinking;
+      const content = typeof messageObj?.content === 'string' ? messageObj.content : '';
+
+      if (reasoning && typeof reasoning === 'string' && reasoning.trim()) {
+        return `<think>${reasoning.trim()}</think>${content}`;
       }
-      return '';
+      return content;
     } catch (err: any) {
       clearTimeout(timer);
       if (err.name === 'AbortError') {
@@ -1952,14 +1957,10 @@ ${devicesSummary}
       }
     }
 
-    // Extract <think> content
-    const thinkMatch = responseText.match(/<think>([\s\S]*?)<\/think>/i);
-    if (thinkMatch) {
-      thinkingProcess = thinkMatch[1].trim();
-      replyContent = responseText.replace(/<think>[\s\S]*?<\/think>/i, '').trim();
-    } else {
-      replyContent = responseText.trim();
-    }
+    // Robustly extract thinking process and clean reply content
+    const extracted = extractThinkingAndContent(responseText);
+    thinkingProcess = extracted.thinkingProcess;
+    replyContent = extracted.cleanText;
 
     // Extract <device_action> tags if present
     const deviceActionRegex = /<device_action>([\s\S]*?)<\/device_action>/gi;
@@ -1972,8 +1973,8 @@ ${devicesSummary}
         console.warn('Failed to parse device_action JSON from AI reply:', match[1]);
       }
     }
-    // Clean device action tags from display text
-    replyContent = replyContent.replace(/<device_action>[\s\S]*?<\/device_action>/gi, '').trim();
+    // Clean device action tags & sanitize any lingering thinking headers
+    replyContent = sanitizeReplyText(replyContent.replace(/<device_action>[\s\S]*?<\/device_action>/gi, '').trim());
 
     const duration = Date.now() - startTime;
     const promptTokens = Math.round(promptText.length / 2);

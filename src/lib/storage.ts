@@ -2,6 +2,8 @@ import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import {
   AppId,
+  ThemeId,
+  WallpaperSource,
   AiCharacter,
   ChatMessage,
   MomentPost,
@@ -59,6 +61,10 @@ const STORAGE_KEYS = {
   TELEPATHY_RECORDS: 'phone_telepathy_records',
   TELEPATHY_CHAR_STATS: 'phone_telepathy_char_stats',
   GROUP_CHATS: 'phone_group_chats',
+  THEME: 'phone_global_theme',
+  WALLPAPER_SOURCE: 'phone_wallpaper_source',
+  CUSTOM_DESKTOP_WALLPAPER: 'phone_custom_desktop_wallpaper',
+  CUSTOM_LOCK_WALLPAPER: 'phone_custom_lock_wallpaper',
 };
 
 // Default Wallpapers
@@ -216,17 +222,18 @@ const INITIAL_WORLD_BOOKS: WorldBook[] = [
 
 const INITIAL_ICONS: AppIconConfig[] = [
   { id: 'icon_wechat', name: '聊天', appId: 'wechat', pageIndex: 0, positionIndex: 0, builtInIcon: 'MessageCircle' },
-  { id: 'icon_weather', name: '实时天气', appId: 'weather', pageIndex: 0, positionIndex: 1, builtInIcon: 'CloudSun' },
-  { id: 'icon_worldbook', name: '世界书', appId: 'worldbook', pageIndex: 0, positionIndex: 2, builtInIcon: 'BookOpen' },
-  { id: 'icon_gamecenter', name: '游戏中心', appId: 'gamecenter', pageIndex: 0, positionIndex: 3, builtInIcon: 'Gamepad2' },
-  { id: 'icon_menstrual', name: '经期健康', appId: 'menstrual', pageIndex: 0, positionIndex: 4, builtInIcon: 'HeartPulse' },
-  { id: 'icon_memo', name: '备忘录', appId: 'memo', pageIndex: 0, positionIndex: 5, builtInIcon: 'FileText' },
-  { id: 'icon_apimonitor', name: 'API 监控', appId: 'apimonitor', pageIndex: 0, positionIndex: 6, builtInIcon: 'Activity' },
-  { id: 'icon_beautification', name: '界面美化', appId: 'beautification', pageIndex: 0, positionIndex: 7, builtInIcon: 'Palette' },
-  { id: 'icon_settings', name: '系统设置', appId: 'settings', pageIndex: 0, positionIndex: 8, builtInIcon: 'Settings' },
-  { id: 'icon_connectivity', name: '外部设备', appId: 'connectivity', pageIndex: 0, positionIndex: 9, builtInIcon: 'Link' },
-  { id: 'icon_permissions', name: 'AI 权限', appId: 'permissions', pageIndex: 0, positionIndex: 10, builtInIcon: 'Shield' },
-  { id: 'icon_ai_activity_logs', name: 'AI 活动记录', appId: 'ai_activity_logs', pageIndex: 0, positionIndex: 11, builtInIcon: 'FileCheck' },
+  { id: 'icon_offline', name: '线下模式', appId: 'offline', pageIndex: 0, positionIndex: 1, builtInIcon: 'Heart' },
+  { id: 'icon_weather', name: '实时天气', appId: 'weather', pageIndex: 0, positionIndex: 2, builtInIcon: 'CloudSun' },
+  { id: 'icon_worldbook', name: '世界书', appId: 'worldbook', pageIndex: 0, positionIndex: 3, builtInIcon: 'BookOpen' },
+  { id: 'icon_gamecenter', name: '游戏中心', appId: 'gamecenter', pageIndex: 0, positionIndex: 4, builtInIcon: 'Gamepad2' },
+  { id: 'icon_menstrual', name: '经期健康', appId: 'menstrual', pageIndex: 0, positionIndex: 5, builtInIcon: 'HeartPulse' },
+  { id: 'icon_memo', name: '备忘录', appId: 'memo', pageIndex: 0, positionIndex: 6, builtInIcon: 'FileText' },
+  { id: 'icon_apimonitor', name: 'API 监控', appId: 'apimonitor', pageIndex: 0, positionIndex: 7, builtInIcon: 'Activity' },
+  { id: 'icon_beautification', name: '界面美化', appId: 'beautification', pageIndex: 0, positionIndex: 8, builtInIcon: 'Palette' },
+  { id: 'icon_settings', name: '系统设置', appId: 'settings', pageIndex: 0, positionIndex: 9, builtInIcon: 'Settings' },
+  { id: 'icon_connectivity', name: '外部设备', appId: 'connectivity', pageIndex: 0, positionIndex: 10, builtInIcon: 'Link' },
+  { id: 'icon_permissions', name: 'AI 权限', appId: 'permissions', pageIndex: 0, positionIndex: 11, builtInIcon: 'Shield' },
+  { id: 'icon_ai_activity_logs', name: 'AI 活动记录', appId: 'ai_activity_logs', pageIndex: 0, positionIndex: 12, builtInIcon: 'FileCheck' },
 ];
 
 const INITIAL_WIDGETS: WidgetConfig[] = [
@@ -350,6 +357,10 @@ export interface SettingsState {
   customCss: string;
   pinCode: string;
   isPinEnabled: boolean;
+  theme: ThemeId;
+  wallpaperSource: WallpaperSource;
+  customDesktopWallpaper?: string;
+  customLockWallpaper?: string;
 }
 
 // Generic Storage Loaders
@@ -385,6 +396,7 @@ export const saveLauncherPagesCount = (count: number): void => {
 
 export const BUILTIN_APPS_REGISTRY: { appId: AppId; name: string; builtInIcon: string }[] = [
   { appId: 'wechat', name: '聊天', builtInIcon: 'MessageCircle' },
+  { appId: 'offline', name: '线下模式', builtInIcon: 'Heart' },
   { appId: 'weather', name: '实时天气', builtInIcon: 'CloudSun' },
   { appId: 'worldbook', name: '世界书', builtInIcon: 'BookOpen' },
   { appId: 'gamecenter', name: '游戏中心', builtInIcon: 'Gamepad2' },
@@ -407,6 +419,13 @@ export const loadIcons = (): AppIconConfig[] => {
   try {
     const loaded = JSON.parse(raw);
     if (Array.isArray(loaded)) {
+      const existingAppIds = new Set(loaded.map((icon: AppIconConfig) => icon.appId));
+      const missingIcons = INITIAL_ICONS.filter((icon) => !existingAppIds.has(icon.appId));
+      if (missingIcons.length > 0) {
+        const merged = [...loaded, ...missingIcons];
+        saveToStorage(STORAGE_KEYS.LAUNCHER_ICONS, merged);
+        return merged;
+      }
       return loaded;
     }
     return INITIAL_ICONS;
@@ -830,6 +849,10 @@ export const loadSettings = (): SettingsState => ({
   ),
   pinCode: loadFromStorage(STORAGE_KEYS.PIN, '1234'),
   isPinEnabled: loadFromStorage(STORAGE_KEYS.PIN_ENABLED, true),
+  theme: loadFromStorage<ThemeId>(STORAGE_KEYS.THEME, 'default'),
+  wallpaperSource: loadFromStorage<WallpaperSource>(STORAGE_KEYS.WALLPAPER_SOURCE, 'default'),
+  customDesktopWallpaper: loadFromStorage<string | undefined>(STORAGE_KEYS.CUSTOM_DESKTOP_WALLPAPER, undefined),
+  customLockWallpaper: loadFromStorage<string | undefined>(STORAGE_KEYS.CUSTOM_LOCK_WALLPAPER, undefined),
 });
 
 export const saveSettings = (s: SettingsState) => {
@@ -838,6 +861,14 @@ export const saveSettings = (s: SettingsState) => {
   saveToStorage(STORAGE_KEYS.CUSTOM_CSS, s.customCss);
   saveToStorage(STORAGE_KEYS.PIN, s.pinCode);
   saveToStorage(STORAGE_KEYS.PIN_ENABLED, s.isPinEnabled);
+  saveToStorage(STORAGE_KEYS.THEME, s.theme || 'default');
+  saveToStorage(STORAGE_KEYS.WALLPAPER_SOURCE, s.wallpaperSource || 'default');
+  if (s.customDesktopWallpaper !== undefined) {
+    saveToStorage(STORAGE_KEYS.CUSTOM_DESKTOP_WALLPAPER, s.customDesktopWallpaper);
+  }
+  if (s.customLockWallpaper !== undefined) {
+    saveToStorage(STORAGE_KEYS.CUSTOM_LOCK_WALLPAPER, s.customLockWallpaper);
+  }
 };
 
 // ==================== Group Chats Storage ====================

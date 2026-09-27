@@ -481,9 +481,10 @@ export async function recallCharacterMemories(
   characterId: string,
   userMessage: string,
   maxResults = 5
-): Promise<{ recalledText: string; matchedCount: number }> {
+): Promise<{ recalledText: string; matchedCount: number; durationMs: number }> {
+  const startTime = Date.now();
   if (!userMessage || userMessage.trim().length < 2) {
-    return { recalledText: '', matchedCount: 0 };
+    return { recalledText: '', matchedCount: 0, durationMs: Date.now() - startTime };
   }
 
   const db = await getDb();
@@ -529,7 +530,7 @@ export async function recallCharacterMemories(
   }
 
   if (searchKeywords.length === 0) {
-    return { recalledText: '', matchedCount: 0 };
+    return { recalledText: '', matchedCount: 0, durationMs: Date.now() - startTime };
   }
 
   return new Promise((resolve) => {
@@ -539,7 +540,6 @@ export async function recallCharacterMemories(
     const keyRange = IDBKeyRange.bound([characterId, 0], [characterId, Number.MAX_SAFE_INTEGER]);
 
     const candidateMatches: { msg: ChatMessage; score: number }[] = [];
-    // Scan recent 2000 messages or all messages for character
     let scanned = 0;
     const maxScan = 3000;
 
@@ -556,7 +556,6 @@ export async function recallCharacterMemories(
         for (const kw of searchKeywords) {
           const lk = kw.toLowerCase();
           if (lowerText.includes(lk)) {
-            // Give higher weight if exact match or in user preference/event sentences
             score += lk.length >= 3 ? 3 : 2;
             if (
               lowerText.includes('喜欢') ||
@@ -576,16 +575,14 @@ export async function recallCharacterMemories(
         }
         cursor.continue();
       } else {
-        // Sort by score descending, then timestamp recency
         candidateMatches.sort((a, b) => b.score - a.score || b.msg.timestamp - a.msg.timestamp);
 
         const topMatches = candidateMatches.slice(0, maxResults);
         if (topMatches.length === 0) {
-          resolve({ recalledText: '', matchedCount: 0 });
+          resolve({ recalledText: '', matchedCount: 0, durationMs: Date.now() - startTime });
           return;
         }
 
-        // Format as memory summary
         const summaryLines = topMatches.map(
           (m, idx) =>
             `${idx + 1}. [${new Date(m.msg.timestamp).toLocaleDateString()}] ${
@@ -596,12 +593,13 @@ export async function recallCharacterMemories(
         resolve({
           recalledText: `【🧠 本地检索到的长期相关历史对话记忆（RAG 记忆召回）】：\n${summaryLines.join('\n')}`,
           matchedCount: topMatches.length,
+          durationMs: Date.now() - startTime,
         });
       }
     };
 
     cursorReq.onerror = () => {
-      resolve({ recalledText: '', matchedCount: 0 });
+      resolve({ recalledText: '', matchedCount: 0, durationMs: Date.now() - startTime });
     };
   });
 }

@@ -72,8 +72,8 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
             }}
             className={`relative rounded-2xl px-3.5 py-2.5 text-xs shadow-xs whitespace-pre-wrap leading-relaxed ${
               isUser
-                ? 'bg-emerald-600 text-white rounded-tr-xs'
-                : 'bg-zinc-800 text-zinc-100 border border-zinc-750 rounded-tl-xs'
+                ? 'bg-emerald-600 text-white rounded-tr-xs chat-bubble-user'
+                : 'bg-zinc-800 text-zinc-100 border border-zinc-750 rounded-tl-xs chat-bubble-ai'
             }`}
           >
             {/* Quote Preview */}

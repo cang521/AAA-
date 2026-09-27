@@ -13,6 +13,7 @@ import { BUILTIN_APPS_REGISTRY } from '../lib/storage';
 import { autoPaginateLayout, getWidgetSlotCost, PAGE_MAX_SLOTS } from '../lib/layoutPaginator';
 import {
   MessageCircle,
+  Heart,
   HeartPulse,
   FileText,
   FileCheck,
@@ -447,6 +448,8 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     switch (iconName) {
       case 'MessageCircle':
         return <MessageCircle className="w-6 h-6 text-white" />;
+      case 'Heart':
+        return <Heart className="w-6 h-6 text-white" />;
       case 'HeartPulse':
         return <HeartPulse className="w-6 h-6 text-white" />;
       case 'FileText':
@@ -478,6 +481,8 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     switch (appId) {
       case 'wechat':
         return 'bg-gradient-to-tr from-emerald-600 to-green-500 shadow-emerald-500/20';
+      case 'offline':
+        return 'bg-gradient-to-tr from-rose-500 to-pink-500 shadow-rose-500/20';
       case 'weather':
         return 'bg-gradient-to-tr from-sky-500 to-blue-600 shadow-sky-500/20';
       case 'worldbook':

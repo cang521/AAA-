@@ -1,3 +1,6 @@
+export type ThemeId = 'default' | 'cloud_milk';
+export type WallpaperSource = 'default' | 'theme' | 'custom';
+
 export type AppId =
   | 'wechat'
   | 'menstrual'
@@ -11,7 +14,8 @@ export type AppId =
   | 'worldbook'
   | 'gamecenter'
   | 'weather'
-  | 'lock';
+  | 'lock'
+  | 'offline';
 
 export interface WorldBookEntry {
   id: string;

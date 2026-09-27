@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { apiFetch } from '../../lib/localBackend';
-import { AppIconConfig, ApiLog, ApiConfig } from '../../types';
+import { AppIconConfig, ApiLog, ApiConfig, ThemeId, WallpaperSource } from '../../types';
 import {
   ArrowLeft,
   Palette,
@@ -14,6 +14,8 @@ import {
   Smartphone,
   Crop,
   RotateCcw,
+  Sun,
+  X,
 } from 'lucide-react';
 import { ImagePickerModal } from '../ImagePickerModal';
 import { IconCropperModal } from '../IconCropperModal';
@@ -25,8 +27,14 @@ interface BeautificationAppProps {
   customCss: string;
   pinCode: string;
   isPinEnabled: boolean;
+  currentTheme?: ThemeId;
+  wallpaperSource?: WallpaperSource;
+  customDesktopWallpaper?: string;
+  customLockWallpaper?: string;
   icons: AppIconConfig[];
   apiConfig?: ApiConfig;
+  onUpdateTheme?: (theme: ThemeId) => void;
+  onUpdateWallpaperSource?: (source: WallpaperSource) => void;
   onUpdateDesktopWallpaper: (url: string) => void;
   onUpdateLockWallpaper: (url: string) => void;
   onUpdateCustomCss: (css: string) => void;
@@ -43,8 +51,14 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
   customCss,
   pinCode,
   isPinEnabled,
+  currentTheme = 'default',
+  wallpaperSource = 'default',
+  customDesktopWallpaper,
+  customLockWallpaper,
   icons,
   apiConfig,
+  onUpdateTheme,
+  onUpdateWallpaperSource,
   onUpdateDesktopWallpaper,
   onUpdateLockWallpaper,
   onUpdateCustomCss,
@@ -61,6 +75,7 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
   const [croppingTargetIcon, setCroppingTargetIcon] = useState<AppIconConfig | null>(null);
   const [isFixingCss, setIsFixingCss] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+  const [showThemeWallpaperModal, setShowThemeWallpaperModal] = useState(false);
 
   const handleFixCssWithAi = async () => {
     if (!cssCode.trim()) return;
@@ -108,7 +123,7 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
         </button>
         <span className="font-semibold text-sm text-zinc-100 flex items-center gap-1.5">
           <Palette className="w-4 h-4 text-purple-400" />
-          界面美化与 CSS 自适应
+          界面美化与主题系统
         </span>
         <div className="w-16" />
       </div>
@@ -122,12 +137,136 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
           </div>
         )}
 
-        {/* 1. Wallpaper Settings */}
+        {/* 0. System Global Theme Selector */}
+        <div className="p-4 rounded-3xl bg-zinc-900 border border-zinc-800 space-y-3 shadow-sm card-box">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-sm text-sky-400 flex items-center gap-2">
+              <Sun className="w-4 h-4 text-sky-400" />
+              全局系统主题 (Theme System)
+            </h3>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-medium">
+              无缝切换
+            </span>
+          </div>
+
+          <p className="text-[11px] text-zinc-400">
+            选择应用主题，一键在默认经典暗黑与【晴空牛奶蓝】软萌轻盈主题间切换：
+          </p>
+
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            {/* Option 1: Classic Dark */}
+            <div
+              onClick={() => {
+                if (onUpdateTheme) onUpdateTheme('default');
+                setSuccessMsg('已应用：默认经典暗黑主题');
+                setTimeout(() => setSuccessMsg(''), 2500);
+              }}
+              className={`p-3 rounded-2xl border transition cursor-pointer flex flex-col justify-between space-y-2 ${
+                currentTheme === 'default'
+                  ? 'bg-zinc-800 border-sky-400 ring-2 ring-sky-400/30 shadow-md'
+                  : 'bg-zinc-850 border-zinc-750 hover:border-zinc-600'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-xs text-zinc-100">默认经典暗黑</span>
+                {currentTheme === 'default' && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-sky-500 text-white font-semibold">当前</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 py-1">
+                <span className="w-4 h-4 rounded-full bg-zinc-950 border border-zinc-700" title="#09090b" />
+                <span className="w-4 h-4 rounded-full bg-zinc-800 border border-zinc-700" title="#27272a" />
+                <span className="w-4 h-4 rounded-full bg-emerald-500" title="#10b981" />
+                <span className="w-4 h-4 rounded-full bg-indigo-500" title="#6366f1" />
+              </div>
+              <span className="text-[10px] text-zinc-400">极简暗黑高级质感</span>
+            </div>
+
+            {/* Option 2: Cloud Milk (晴空牛奶蓝) */}
+            <div
+              onClick={() => {
+                setShowThemeWallpaperModal(true);
+              }}
+              className={`p-3 rounded-2xl border transition cursor-pointer flex flex-col justify-between space-y-2 ${
+                currentTheme === 'cloud_milk'
+                  ? 'bg-[#EAF7FF] border-[#67B7EA] ring-2 ring-[#8DCCF4]/50 shadow-md'
+                  : 'bg-zinc-850 border-zinc-750 hover:border-sky-400/40'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-xs text-[#40566A]">晴空牛奶蓝</span>
+                {currentTheme === 'cloud_milk' && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-[#67B7EA] text-white font-semibold">当前</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 py-1">
+                <span className="w-4 h-4 rounded-full bg-[#F5FBFF] border border-[#CFE9F8]" title="#F5FBFF (背景)" />
+                <span className="w-4 h-4 rounded-full bg-[#FFFFFF] border border-[#CFE9F8]" title="#FFFFFF (卡片)" />
+                <span className="w-4 h-4 rounded-full bg-[#8DCCF4]" title="#8DCCF4 (天空蓝)" />
+                <span className="w-4 h-4 rounded-full bg-[#DDF2FF]" title="#DDF2FF (牛奶蓝)" />
+              </div>
+              <span className="text-[10px] text-[#7890A3]">天蓝+奶白·清爽柔软轻盈</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 1. Wallpaper Settings & Source Selection */}
         <div className="p-4 rounded-3xl bg-zinc-900 border border-zinc-800 space-y-3 shadow-sm">
-          <h3 className="font-bold text-sm text-purple-400 flex items-center gap-2">
-            <ImageIcon className="w-4 h-4" />
-            1. 壁纸管理 (桌面 & 锁屏)
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-sm text-purple-400 flex items-center gap-2">
+              <ImageIcon className="w-4 h-4" />
+              1. 壁纸管理 (桌面 & 锁屏)
+            </h3>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-mono">
+              {wallpaperSource === 'theme' ? '🌸 主题配套' : wallpaperSource === 'custom' ? '🖼️ 自定义' : '🌌 默认静谧'}
+            </span>
+          </div>
+
+          {/* Wallpaper Source Selection Tabs */}
+          <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-zinc-850 border border-zinc-750 text-[11px]">
+            <button
+              onClick={() => {
+                if (onUpdateWallpaperSource) onUpdateWallpaperSource('theme');
+                setSuccessMsg('已应用：主题配套云朵壁纸');
+                setTimeout(() => setSuccessMsg(''), 2000);
+              }}
+              className={`flex-1 py-1.5 rounded-xl font-medium transition ${
+                wallpaperSource === 'theme'
+                  ? 'bg-sky-500 text-white shadow-xs font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              🌸 主题壁纸
+            </button>
+            <button
+              onClick={() => {
+                if (onUpdateWallpaperSource) onUpdateWallpaperSource('default');
+                setSuccessMsg('已恢复：默认静谧壁纸');
+                setTimeout(() => setSuccessMsg(''), 2000);
+              }}
+              className={`flex-1 py-1.5 rounded-xl font-medium transition ${
+                wallpaperSource === 'default'
+                  ? 'bg-sky-500 text-white shadow-xs font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              🌌 默认壁纸
+            </button>
+            <button
+              onClick={() => {
+                if (onUpdateWallpaperSource) onUpdateWallpaperSource('custom');
+                setSuccessMsg('已切换为：自定义壁纸');
+                setTimeout(() => setSuccessMsg(''), 2000);
+              }}
+              className={`flex-1 py-1.5 rounded-xl font-medium transition ${
+                wallpaperSource === 'custom'
+                  ? 'bg-sky-500 text-white shadow-xs font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              🖼️ 自定义壁纸
+            </button>
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             {/* Desktop Wallpaper */}
@@ -347,6 +486,57 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
             setTimeout(() => setSuccessMsg(''), 3000);
           }}
         />
+      )}
+      {/* Theme Wallpaper Dialog Prompt Modal */}
+      {showThemeWallpaperModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-sm rounded-3xl bg-zinc-900 border border-sky-400/40 p-5 text-white shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2 text-sky-400 font-bold text-sm">
+                <Sun className="w-4 h-4" />
+                <span>应用晴空牛奶蓝主题</span>
+              </div>
+              <button
+                onClick={() => setShowThemeWallpaperModal(false)}
+                className="text-zinc-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              您正在切换为【晴空牛奶蓝】全局软萌主题。是否同时应用配套的天蓝奶白云朵精美壁纸？
+            </p>
+
+            <div className="space-y-2 pt-1">
+              <button
+                onClick={() => {
+                  if (onUpdateTheme) onUpdateTheme('cloud_milk');
+                  if (onUpdateWallpaperSource) onUpdateWallpaperSource('theme');
+                  setSuccessMsg('🎉 已同时应用【晴空牛奶蓝】界面与配套云朵壁纸！');
+                  setShowThemeWallpaperModal(false);
+                  setTimeout(() => setSuccessMsg(''), 3000);
+                }}
+                className="w-full py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-white font-bold text-xs shadow-md transition cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>应用主题 + 配套云朵壁纸</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  if (onUpdateTheme) onUpdateTheme('cloud_milk');
+                  setSuccessMsg('🎉 已成功应用【晴空牛奶蓝】界面主题（保留当前壁纸）！');
+                  setShowThemeWallpaperModal(false);
+                  setTimeout(() => setSuccessMsg(''), 3000);
+                }}
+                className="w-full py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs border border-zinc-700 transition cursor-pointer"
+              >
+                只更换界面主题（保留原有壁纸）
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
