@@ -32,6 +32,7 @@ import {
   saveMemos,
   loadWorldBooks,
   saveWorldBooks,
+  DEFAULT_AI_AVATAR,
 } from './storage';
 import {
   getAllChatMessages,
@@ -757,7 +758,7 @@ function parseJsonContent(text: string, fileName: string, options?: ImportParseO
             id: charId,
             name: charName,
             wxid: 'chat_' + Math.random().toString(36).slice(2, 6),
-            avatar: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=300&q=80',
+            avatar: DEFAULT_AI_AVATAR,
             persona: `从 ChatGPT 导出会话 [${charName}] 提取的 AI 对话角色。`,
             greeting: '你好！这是从 ChatGPT 导入的会话。',
             memories: [],
@@ -794,7 +795,7 @@ function parseJsonContent(text: string, fileName: string, options?: ImportParseO
           id: charId,
           name: charName,
           wxid: 'chat_' + Math.random().toString(36).slice(2, 6),
-          avatar: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=300&q=80',
+          avatar: DEFAULT_AI_AVATAR,
           persona: `从 ChatGPT 导出会话 [${charName}] 提取的 AI 对话角色。`,
           greeting: '你好！我是从导入会话中提取的角色。',
           memories: [],
@@ -1201,7 +1202,7 @@ function parseTxtContent(text: string, fileName: string, options?: ImportParseOp
       id: assignedCharId,
       name: detectedCharName,
       wxid: localMatched?.wxid || 'chat_' + Math.random().toString(36).slice(2, 6),
-      avatar: localMatched?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
+      avatar: localMatched?.avatar || DEFAULT_AI_AVATAR,
       persona: localMatched?.persona || `从聊天记录文本 [${cleanFileName}] 智能分析提取的对话角色。`,
       greeting: messages[0]?.text || '你好呀！很高兴认识你~',
       memories: [],
@@ -1253,7 +1254,7 @@ function parseTxtContent(text: string, fileName: string, options?: ImportParseOp
       id: localMatch ? localMatch.id : detectedCharId,
       name: detectedCharName,
       wxid: localMatch?.wxid || 'ai_' + Math.random().toString(36).slice(2, 6),
-      avatar: localMatch?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
+      avatar: localMatch?.avatar || DEFAULT_AI_AVATAR,
       persona: detectedPersona.trim(),
       greeting: detectedGreeting,
       memories: detectedMemories,
@@ -1295,7 +1296,7 @@ function normalizeCharacterSchema(raw: any): AiCharacter {
     avatar:
       raw.avatar ||
       raw.avatarUrl ||
-      'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
+      DEFAULT_AI_AVATAR,
     persona: raw.persona || raw.description || raw.char_persona || '贴心温暖的AI好友。',
     personality: raw.personality || raw.personalityTraits || '温柔、细致',
     greeting: raw.greeting || raw.first_mes || '你好呀！很高兴认识你~',
@@ -1323,7 +1324,7 @@ function normalizeTavernCharacter(rawCard: any): {
   const personality = (d.personality || '').trim();
   const avatar =
     d.avatar ||
-    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80';
+    DEFAULT_AI_AVATAR;
 
   const extractedMemories: string[] = [];
   const features: string[] = [];
@@ -1465,7 +1466,7 @@ export async function executeImport(
           id: newId,
           name: baseName,
           wxid: 'ai_uni_' + Math.random().toString(36).slice(2, 6),
-          avatar: firstChar?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
+          avatar: firstChar?.avatar || DEFAULT_AI_AVATAR,
           persona: firstChar?.persona || '统一归入导入的对话角色。',
           greeting: firstChar?.greeting || '你好！',
           memories: [],

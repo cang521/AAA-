@@ -13,7 +13,7 @@ import {
   User,
 } from 'lucide-react';
 import { AiCharacter, UserProfile, GroupChat, GroupMember } from '../../../types';
-import { generateGroupInviteCode } from '../../../lib/storage';
+import { generateGroupInviteCode, DEFAULT_USER_AVATAR, DEFAULT_AI_AVATAR } from '../../../lib/storage';
 
 interface CreateGroupModalProps {
   isOpen: boolean;
@@ -24,11 +24,8 @@ interface CreateGroupModalProps {
 }
 
 const PRESET_GROUP_AVATARS = [
-  'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=300&q=80',
-  'https://images.unsplash.com/photo-1543269865-cbf427effbad?auto=format&fit=crop&w=300&q=80',
-  'https://images.unsplash.com/photo-1529156069898-49953e39b3ac?auto=format&fit=crop&w=300&q=80',
-  'https://images.unsplash.com/photo-1517048676732-d65bc937f952?auto=format&fit=crop&w=300&q=80',
-  'https://images.unsplash.com/photo-1511632765486-a01980e01a18?auto=format&fit=crop&w=300&q=80',
+  DEFAULT_AI_AVATAR,
+  DEFAULT_USER_AVATAR,
 ];
 
 export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
@@ -88,7 +85,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
       {
         id: 'user_main',
         name: `${userProfile.name || '小清'} (我)`,
-        avatar: userProfile.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
+        avatar: userProfile.avatar || DEFAULT_USER_AVATAR,
         memberType: 'human',
         role: 'owner',
         joinedAt: Date.now(),
@@ -125,7 +122,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
           groupId: '', // will be set
           senderId: 'user_main',
           senderName: `${userProfile.name || '小清'}`,
-          senderAvatar: userProfile.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
+          senderAvatar: userProfile.avatar || DEFAULT_USER_AVATAR,
           senderType: 'human',
           text: `🎉 创建了群聊 “${finalGroupName}”`,
           timestamp: now,
@@ -133,9 +130,9 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
         {
           id: 'gmsg_' + (now + 1) + '_greet',
           groupId: '',
-          senderId: selectedChars[0]?.id || 'char_1',
-          senderName: selectedChars[0]?.name || '林思微',
-          senderAvatar: selectedChars[0]?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
+          senderId: selectedChars[0]?.id || 'char_ai',
+          senderName: selectedChars[0]?.name || 'AI成员',
+          senderAvatar: selectedChars[0]?.avatar || DEFAULT_AI_AVATAR,
           senderType: 'ai',
           text: `大家好呀！很高兴和大家一起进群交流~ ✨`,
           timestamp: now + 500,
@@ -205,10 +202,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="relative">
                     <img
-                      src={
-                        userProfile.avatar ||
-                        'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80'
-                      }
+                      src={userProfile.avatar || DEFAULT_USER_AVATAR}
                       alt={userProfile.name}
                       className="w-8 h-8 rounded-full object-cover border border-emerald-400/40"
                     />

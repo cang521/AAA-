@@ -22,6 +22,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { GroupChat, GroupMember, GroupJoinRequest, AiCharacter, UserProfile } from '../../../types';
+import { DEFAULT_AI_AVATAR } from '../../../lib/storage';
 import { generateGroupInviteCode } from '../../../lib/storage';
 import { EditGroupAiMemberModal } from './EditGroupAiMemberModal';
 
@@ -119,7 +120,7 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
       groupId: group.id,
       senderId: 'system',
       senderName: '系统消息',
-      senderAvatar: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=300&q=80',
+      senderAvatar: DEFAULT_AI_AVATAR,
       senderType: 'human' as const,
       text: `🎉 欢迎新成员 “${request.userName}” 加入群聊！`,
       timestamp: now,
@@ -163,7 +164,7 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
       groupId: group.id,
       senderId: 'system',
       senderName: '系统消息',
-      senderAvatar: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=300&q=80',
+      senderAvatar: DEFAULT_AI_AVATAR,
       senderType: 'human' as const,
       text: `“${targetMember?.name || '成员'}” 已离开群聊`,
       timestamp: now,
@@ -203,7 +204,7 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
       groupId: group.id,
       senderId: 'system',
       senderName: '系统消息',
-      senderAvatar: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=300&q=80',
+      senderAvatar: DEFAULT_AI_AVATAR,
       senderType: 'human' as const,
       text: `“${userProfile.name || '小清'}” 邀请 “${char.name}” 加入了群聊`,
       timestamp: now,

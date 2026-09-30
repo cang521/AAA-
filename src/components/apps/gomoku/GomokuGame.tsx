@@ -42,6 +42,8 @@ import {
   Users,
 } from 'lucide-react';
 
+import { DEFAULT_AI_AVATAR } from '../../../lib/storage';
+
 interface GomokuGameProps {
   onBack: () => void;
   characters: AiCharacter[];
@@ -72,7 +74,7 @@ export const GomokuGame: React.FC<GomokuGameProps> = ({
     id: 'char_default',
     name: 'AI 棋手',
     wxid: 'ai_player',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
+    avatar: DEFAULT_AI_AVATAR,
     persona: '温和沉着的AI棋艺大师',
     greeting: '来一局五子棋吗？',
     memories: [],

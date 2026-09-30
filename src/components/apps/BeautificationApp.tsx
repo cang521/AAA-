@@ -15,6 +15,8 @@ import {
   Crop,
   RotateCcw,
   Sun,
+  Moon,
+  Monitor,
   X,
 } from 'lucide-react';
 import { ImagePickerModal } from '../ImagePickerModal';
@@ -137,75 +139,108 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
           </div>
         )}
 
-        {/* 0. System Global Theme Selector */}
+        {/* 0. System Global Theme & Appearance Mode Selector */}
         <div className="p-4 rounded-3xl bg-zinc-900 border border-zinc-800 space-y-3 shadow-sm card-box">
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-sm text-sky-400 flex items-center gap-2">
               <Sun className="w-4 h-4 text-sky-400" />
-              全局系统主题 (Theme System)
+              外观模式 (Appearance Mode)
             </h3>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-medium">
-              无缝切换
+              全局自动响应
             </span>
           </div>
 
           <p className="text-[11px] text-zinc-400">
-            选择应用主题，一键在默认经典暗黑与【晴空牛奶蓝】软萌轻盈主题间切换：
+            切换整个小手机 App 的白天/黑夜外观，页面、弹窗、输入框与 Widget 均实时随全局主题同步：
           </p>
 
-          <div className="grid grid-cols-2 gap-3 pt-1">
-            {/* Option 1: Classic Dark */}
-            <div
-              onClick={() => {
-                if (onUpdateTheme) onUpdateTheme('default');
-                setSuccessMsg('已应用：默认经典暗黑主题');
-                setTimeout(() => setSuccessMsg(''), 2500);
-              }}
-              className={`p-3 rounded-2xl border transition cursor-pointer flex flex-col justify-between space-y-2 ${
-                currentTheme === 'default'
-                  ? 'bg-zinc-800 border-sky-400 ring-2 ring-sky-400/30 shadow-md'
-                  : 'bg-zinc-850 border-zinc-750 hover:border-zinc-600'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-xs text-zinc-100">默认经典暗黑</span>
-                {currentTheme === 'default' && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-sky-500 text-white font-semibold">当前</span>
-                )}
-              </div>
-              <div className="flex items-center gap-1.5 py-1">
-                <span className="w-4 h-4 rounded-full bg-zinc-950 border border-zinc-700" title="#09090b" />
-                <span className="w-4 h-4 rounded-full bg-zinc-800 border border-zinc-700" title="#27272a" />
-                <span className="w-4 h-4 rounded-full bg-emerald-500" title="#10b981" />
-                <span className="w-4 h-4 rounded-full bg-indigo-500" title="#6366f1" />
-              </div>
-              <span className="text-[10px] text-zinc-400">极简暗黑高级质感</span>
-            </div>
-
-            {/* Option 2: Cloud Milk (晴空牛奶蓝) */}
+          <div className="grid grid-cols-3 gap-2.5 pt-1">
+            {/* Option 1: Light Mode (白天模式) */}
             <div
               onClick={() => {
                 setShowThemeWallpaperModal(true);
               }}
               className={`p-3 rounded-2xl border transition cursor-pointer flex flex-col justify-between space-y-2 ${
-                currentTheme === 'cloud_milk'
-                  ? 'bg-[#EAF7FF] border-[#67B7EA] ring-2 ring-[#8DCCF4]/50 shadow-md'
+                currentTheme === 'light' || currentTheme === 'cloud_milk'
+                  ? 'bg-sky-50 dark:bg-sky-950/40 border-sky-400 ring-2 ring-sky-400/40 shadow-sm'
                   : 'bg-zinc-850 border-zinc-750 hover:border-sky-400/40'
               }`}
             >
               <div className="flex items-center justify-between">
-                <span className="font-bold text-xs text-[#40566A]">晴空牛奶蓝</span>
-                {currentTheme === 'cloud_milk' && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-[#67B7EA] text-white font-semibold">当前</span>
+                <span className="font-bold text-xs text-sky-600 dark:text-sky-300 flex items-center gap-1">
+                  <Sun className="w-3.5 h-3.5 text-amber-500" />
+                  <span>白天模式</span>
+                </span>
+                {(currentTheme === 'light' || currentTheme === 'cloud_milk') && (
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-sky-500 text-white font-semibold">当前</span>
                 )}
               </div>
-              <div className="flex items-center gap-1.5 py-1">
-                <span className="w-4 h-4 rounded-full bg-[#F5FBFF] border border-[#CFE9F8]" title="#F5FBFF (背景)" />
-                <span className="w-4 h-4 rounded-full bg-[#FFFFFF] border border-[#CFE9F8]" title="#FFFFFF (卡片)" />
-                <span className="w-4 h-4 rounded-full bg-[#8DCCF4]" title="#8DCCF4 (天空蓝)" />
-                <span className="w-4 h-4 rounded-full bg-[#DDF2FF]" title="#DDF2FF (牛奶蓝)" />
+              <div className="flex items-center gap-1 py-1">
+                <span className="w-3.5 h-3.5 rounded-full bg-[#F5FBFF] border border-[#CFE9F8]" title="#F5FBFF (背景)" />
+                <span className="w-3.5 h-3.5 rounded-full bg-[#FFFFFF] border border-[#CFE9F8]" title="#FFFFFF (卡片)" />
+                <span className="w-3.5 h-3.5 rounded-full bg-[#67B7EA]" title="#67B7EA (天蓝)" />
               </div>
-              <span className="text-[10px] text-[#7890A3]">天蓝+奶白·清爽柔软轻盈</span>
+              <span className="text-[9px] text-zinc-400">明亮清爽·晴空牛奶蓝</span>
+            </div>
+
+            {/* Option 2: Dark Mode (黑夜模式) */}
+            <div
+              onClick={() => {
+                if (onUpdateTheme) onUpdateTheme('dark');
+                setSuccessMsg('已应用：全局黑夜模式 (云海夜空)');
+                setTimeout(() => setSuccessMsg(''), 2500);
+              }}
+              className={`p-3 rounded-2xl border transition cursor-pointer flex flex-col justify-between space-y-2 ${
+                currentTheme === 'dark' || currentTheme === 'default'
+                  ? 'bg-zinc-800 border-sky-400 ring-2 ring-sky-400/40 shadow-sm'
+                  : 'bg-zinc-850 border-zinc-750 hover:border-zinc-600'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-xs text-zinc-100 flex items-center gap-1">
+                  <Moon className="w-3.5 h-3.5 text-sky-400" />
+                  <span>黑夜模式</span>
+                </span>
+                {(currentTheme === 'dark' || currentTheme === 'default') && (
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-sky-500 text-white font-semibold">当前</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1 py-1">
+                <span className="w-3.5 h-3.5 rounded-full bg-[#090D12] border border-zinc-700" title="#090D12 (夜空黑)" />
+                <span className="w-3.5 h-3.5 rounded-full bg-[#121820] border border-zinc-700" title="#121820 (深色卡片)" />
+                <span className="w-3.5 h-3.5 rounded-full bg-[#38BDF8]" title="#38BDF8 (天空蓝)" />
+              </div>
+              <span className="text-[9px] text-zinc-400">深沉护眼·夜空天空蓝</span>
+            </div>
+
+            {/* Option 3: Follow System (跟随系统) */}
+            <div
+              onClick={() => {
+                if (onUpdateTheme) onUpdateTheme('system');
+                setSuccessMsg('已应用：自动跟随系统外观设置');
+                setTimeout(() => setSuccessMsg(''), 2500);
+              }}
+              className={`p-3 rounded-2xl border transition cursor-pointer flex flex-col justify-between space-y-2 ${
+                currentTheme === 'system'
+                  ? 'bg-zinc-800 border-sky-400 ring-2 ring-sky-400/40 shadow-sm'
+                  : 'bg-zinc-850 border-zinc-750 hover:border-zinc-600'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-xs text-zinc-100 flex items-center gap-1">
+                  <Monitor className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>跟随系统</span>
+                </span>
+                {currentTheme === 'system' && (
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500 text-white font-semibold">当前</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1 py-1">
+                <span className="w-3.5 h-3.5 rounded-full bg-gradient-to-r from-amber-400 to-sky-500" title="Auto" />
+                <span className="w-3.5 h-3.5 rounded-full bg-zinc-700" title="System" />
+              </div>
+              <span className="text-[9px] text-zinc-400">设备系统主题感应</span>
             </div>
           </div>
         </div>

@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { CloudMilkIcon } from './CloudMilkIcon';
+import { WidgetCard } from './WidgetCard';
+import { CLOUD_MILK_DESKTOP_WALLPAPER } from '../lib/themeWallpapers';
 import {
   AppIconConfig,
   WidgetConfig,
@@ -9,7 +12,7 @@ import {
 } from '../types';
 import { computeCycleStats } from '../lib/menstrual';
 import { weatherService } from '../lib/weatherService';
-import { BUILTIN_APPS_REGISTRY } from '../lib/storage';
+import { BUILTIN_APPS_REGISTRY, loadLauncherCurrentPage, saveLauncherCurrentPage } from '../lib/storage';
 import { autoPaginateLayout, getWidgetSlotCost, PAGE_MAX_SLOTS } from '../lib/layoutPaginator';
 import {
   MessageCircle,
@@ -43,6 +46,7 @@ import {
   Grid,
   CheckCircle,
   RotateCcw,
+  Globe,
 } from 'lucide-react';
 import { ImagePickerModal } from './ImagePickerModal';
 
@@ -84,14 +88,28 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   const actualWallpaper =
     wallpaperUrl ||
     wallpaper ||
-    'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1000&q=80';
+    CLOUD_MILK_DESKTOP_WALLPAPER;
 
   const handleOpenApp = (appId: AppId) => {
     if (onOpenApp) onOpenApp(appId);
     else if (onLaunchApp) onLaunchApp(appId);
   };
 
-  const [currentPage, setCurrentPage] = useState(0);
+  const [currentPage, setCurrentPage] = useState<number>(() => loadLauncherCurrentPage());
+
+  // Desktop Page Horizontal Sliding Animation & Follow-finger Dragging State
+  const pageContainerRef = useRef<HTMLDivElement | null>(null);
+  const [isPageDragging, setIsPageDragging] = useState(false);
+  const [dragOffsetX, setDragOffsetX] = useState(0);
+
+  const handleSetCurrentPage = (pageAction: number | ((prev: number) => number)) => {
+    setCurrentPage((prev) => {
+      const next = typeof pageAction === 'function' ? pageAction(prev) : pageAction;
+      const clamped = Math.max(0, Math.min(pagesCount - 1, next));
+      saveLauncherCurrentPage(clamped);
+      return clamped;
+    });
+  };
   const [isEditMode, setIsEditMode] = useState(false);
 
   // Modals & Popup states
@@ -130,7 +148,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   // Ensure currentPage is valid when pagesCount changes
   useEffect(() => {
     if (currentPage >= pagesCount) {
-      setCurrentPage(Math.max(0, pagesCount - 1));
+      handleSetCurrentPage(Math.max(0, pagesCount - 1));
     }
   }, [pagesCount, currentPage]);
 
@@ -146,64 +164,131 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     }
   }, [widgets, icons, pagesCount]);
 
-  // Touch Swipe Page Navigation Setup
+  // Touch & Mouse Swipe Page Navigation Setup with Real-time Follow-Finger Transform
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
+  const touchStartTimeRef = useRef<number>(0);
   const isSwiping = useRef<boolean>(false);
   const swipeHandledRef = useRef<boolean>(false);
+  const isHorizontalDragRef = useRef<boolean | null>(null);
 
-  const handleTouchStart = (e: React.TouchEvent | React.MouseEvent) => {
-    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+  const handlePageDragStart = (clientX: number, clientY: number) => {
     touchStartX.current = clientX;
     touchStartY.current = clientY;
+    touchStartTimeRef.current = Date.now();
     isSwiping.current = true;
     swipeHandledRef.current = false;
+    isHorizontalDragRef.current = null;
   };
 
-  const handleTouchMove = (e: React.TouchEvent | React.MouseEvent) => {
+  const handlePageDragMove = (clientX: number, clientY: number) => {
     if (!isSwiping.current || touchStartX.current === null || touchStartY.current === null) return;
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent | React.MouseEvent) => {
-    if (
-      !isSwiping.current ||
-      touchStartX.current === null ||
-      touchStartY.current === null ||
-      swipeHandledRef.current
-    ) {
-      isSwiping.current = false;
-      return;
-    }
-    const clientX =
-      'changedTouches' in e
-        ? e.changedTouches[0].clientX
-        : 'clientX' in e
-        ? (e as React.MouseEvent).clientX
-        : touchStartX.current;
-    const clientY =
-      'changedTouches' in e
-        ? e.changedTouches[0].clientY
-        : 'clientY' in e
-        ? (e as React.MouseEvent).clientY
-        : touchStartY.current;
 
     const deltaX = clientX - touchStartX.current;
     const deltaY = clientY - touchStartY.current;
 
-    // Trigger horizontal swipe if deltaX > 40px and horizontal movement is greater than vertical movement
-    if (Math.abs(deltaX) > 40 && Math.abs(deltaX) > Math.abs(deltaY)) {
-      swipeHandledRef.current = true;
-      if (deltaX < 0 && currentPage < pagesCount - 1) {
-        setCurrentPage((prev) => Math.min(pagesCount - 1, prev + 1));
-      } else if (deltaX > 0 && currentPage > 0) {
-        setCurrentPage((prev) => Math.max(0, prev - 1));
+    // If moved more than 8px, cancel blank press timer for edit mode
+    if (Math.abs(deltaX) > 8 || Math.abs(deltaY) > 8) {
+      handleEndBlankPress();
+    }
+
+    // Determine direction lock if not set yet
+    if (isHorizontalDragRef.current === null) {
+      if (Math.abs(deltaX) > 6 || Math.abs(deltaY) > 6) {
+        if (Math.abs(deltaX) > Math.abs(deltaY)) {
+          isHorizontalDragRef.current = true;
+          setIsPageDragging(true);
+        } else {
+          isHorizontalDragRef.current = false;
+        }
       }
     }
 
+    if (isHorizontalDragRef.current) {
+      // Damping at edge boundaries (first and last page)
+      let effectiveOffset = deltaX;
+      if ((currentPage === 0 && deltaX > 0) || (currentPage === pagesCount - 1 && deltaX < 0)) {
+        effectiveOffset = deltaX * 0.35; // Soft elastic resistance
+      }
+      setDragOffsetX(effectiveOffset);
+    }
+  };
+
+  const handlePageDragEnd = (clientX: number, clientY: number) => {
+    if (!isSwiping.current || touchStartX.current === null) {
+      setIsPageDragging(false);
+      setDragOffsetX(0);
+      isSwiping.current = false;
+      return;
+    }
+
+    const deltaX = clientX - touchStartX.current;
+    const duration = Math.max(1, Date.now() - touchStartTimeRef.current);
+    const velocity = Math.abs(deltaX) / duration; // px per ms
+    const containerWidth = pageContainerRef.current?.clientWidth || window.innerWidth || 360;
+
+    setIsPageDragging(false);
+
+    if (isHorizontalDragRef.current && Math.abs(deltaX) > 10) {
+      swipeHandledRef.current = true;
+      const distanceThreshold = containerWidth * 0.22; // 22% container width
+      const isFlick = velocity > 0.28 && Math.abs(deltaX) > 25; // quick swipe gesture
+
+      if (Math.abs(deltaX) > distanceThreshold || isFlick) {
+        if (deltaX < 0 && currentPage < pagesCount - 1) {
+          handleSetCurrentPage((prev) => Math.min(pagesCount - 1, prev + 1));
+        } else if (deltaX > 0 && currentPage > 0) {
+          handleSetCurrentPage((prev) => Math.max(0, prev - 1));
+        }
+      }
+    }
+
+    setDragOffsetX(0);
     touchStartX.current = null;
     touchStartY.current = null;
     isSwiping.current = false;
+    isHorizontalDragRef.current = null;
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    if (touch) {
+      handlePageDragStart(touch.clientX, touch.clientY);
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (isSwiping.current && isHorizontalDragRef.current) {
+      if (e.cancelable) e.preventDefault();
+    }
+    const touch = e.touches[0];
+    if (touch) {
+      handlePageDragMove(touch.clientX, touch.clientY);
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    const touch = e.changedTouches[0] || e.touches[0];
+    const clientX = touch ? touch.clientX : (touchStartX.current || 0);
+    const clientY = touch ? touch.clientY : (touchStartY.current || 0);
+    handlePageDragEnd(clientX, clientY);
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    handlePageDragStart(e.clientX, e.clientY);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isSwiping.current) {
+      handlePageDragMove(e.clientX, e.clientY);
+    }
+  };
+
+  const handleMouseUp = (e: React.MouseEvent) => {
+    if (isSwiping.current) {
+      handlePageDragEnd(e.clientX, e.clientY);
+    }
   };
 
   // Blank Long Press for Desktop Edit Mode
@@ -263,13 +348,13 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     if (clientX < EDGE_THRESHOLD) {
       if (!edgeFlipLockedRef.current && currentPage > 0) {
         edgeFlipLockedRef.current = true;
-        setCurrentPage((prev) => Math.max(0, prev - 1));
+        handleSetCurrentPage((prev) => Math.max(0, prev - 1));
         dragOverPageRef.current = Math.max(0, dragOverPageRef.current - 1);
       }
     } else if (clientX > winWidth - EDGE_THRESHOLD) {
       if (!edgeFlipLockedRef.current && currentPage < pagesCount - 1) {
         edgeFlipLockedRef.current = true;
-        setCurrentPage((prev) => Math.min(pagesCount - 1, prev + 1));
+        handleSetCurrentPage((prev) => Math.min(pagesCount - 1, prev + 1));
         dragOverPageRef.current = Math.min(pagesCount - 1, dragOverPageRef.current + 1);
       }
     } else {
@@ -512,8 +597,19 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
 
   return (
     <div
-      onMouseDown={handleStartBlankPress}
-      onMouseUp={handleEndBlankPress}
+      onMouseDown={(e) => {
+        handleStartBlankPress();
+        handleMouseDown(e);
+      }}
+      onMouseMove={handleMouseMove}
+      onMouseUp={(e) => {
+        handleEndBlankPress();
+        handleMouseUp(e);
+      }}
+      onMouseLeave={(e) => {
+        handleEndBlankPress();
+        if (isSwiping.current) handleMouseUp(e);
+      }}
       onTouchStart={(e) => {
         handleStartBlankPress();
         handleTouchStart(e);
@@ -582,25 +678,36 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
           className="relative z-20 px-4"
           style={{ paddingTop: 'calc(var(--safe-area-top, 0px) + 0.75rem)' }}
         >
-          <div className="w-full h-10 rounded-2xl bg-white/20 backdrop-blur-md border border-white/20 flex items-center px-3 gap-2 text-white/80 shadow-sm">
-            <Search className="w-4 h-4 text-white/70" />
+          <div
+            className="w-full h-10 rounded-2xl backdrop-blur-md border flex items-center px-3.5 gap-2.5 shadow-xs cursor-pointer transition"
+            style={{
+              backgroundColor: 'var(--widget-search-bg, rgba(255, 255, 255, 0.85))',
+              borderColor: 'var(--widget-border, rgba(186, 230, 253, 0.75))',
+            }}
+            onClick={() => handleOpenApp('memo')}
+          >
+            <Search className="w-4 h-4 text-sky-500/80 shrink-0" />
             <input
               type="text"
               placeholder="搜索 App、联系人、备忘录..."
-              className="w-full bg-transparent text-xs text-white placeholder-white/60 focus:outline-none cursor-pointer"
+              className="w-full bg-transparent text-xs text-slate-800 placeholder-slate-400 focus:outline-none cursor-pointer font-normal"
               readOnly
-              onClick={() => handleOpenApp('memo')}
             />
           </div>
         </div>
       )}
 
       {/* Main Horizontal Paging Container */}
-      <div className="relative z-10 flex-1 w-full h-full overflow-hidden my-2">
+      <div ref={pageContainerRef} className="relative z-10 flex-1 w-full h-full overflow-hidden my-2">
         <div
-          className="w-full h-full flex transition-transform duration-300 ease-out"
+          className={`w-full h-full flex ${
+            isPageDragging
+              ? 'transition-none'
+              : 'transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]'
+          }`}
           style={{
-            transform: `translateX(-${currentPage * 100}%)`,
+            transform: `translateX(-${currentPage * 100}%) translate3d(${dragOffsetX}px, 0px, 0px)`,
+            willChange: 'transform',
           }}
         >
           {[...Array(pagesCount)].map((_, pageIdx) => {
@@ -627,7 +734,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                       {isEditMode && (
                         <button
                           onClick={() => handleDeleteWidget(widget.id)}
-                          className="absolute -top-2 -right-2 z-30 w-6 h-6 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-md hover:bg-rose-600"
+                          className="absolute -top-2 -right-2 z-30 w-6 h-6 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-md hover:bg-rose-600 transition"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -635,46 +742,43 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
 
                       {/* Weather Widget */}
                       {widget.type === 'weather' && (
-                        <div
-                          onClick={() => handleOpenApp('weather')}
-                          className="w-full rounded-3xl bg-gradient-to-r from-sky-600/85 via-blue-600/85 to-indigo-600/85 backdrop-blur-md p-4 text-white shadow-lg border border-white/25 cursor-pointer active:scale-[0.98] transition hover:brightness-105"
-                        >
+                        <WidgetCard onClick={() => handleOpenApp('weather')}>
                           <div className="flex items-center justify-between mb-2">
                             <div className="flex items-center gap-1.5">
-                              <CloudSun className="w-4 h-4 text-sky-200" />
-                              <span className="font-semibold text-sm">
+                              <CloudSun className="w-4.5 h-4.5 text-sky-500" />
+                              <span className="font-semibold text-xs text-slate-800">
                                 {weather?.city || '实时天气'}
                               </span>
                               {weather?.isAutoLocation && weather?.city && (
-                                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-white/20 text-sky-100">
+                                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-sky-100/90 text-sky-700 border border-sky-200/80 font-medium">
                                   GPS
                                 </span>
                               )}
                             </div>
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/20 text-white font-medium flex items-center gap-1">
+                            <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-sky-100/80 text-sky-700 border border-sky-200/80 font-medium flex items-center gap-1">
                               <span>AI 天气感知</span>
                             </span>
                           </div>
 
                           <div className="flex items-center justify-between pt-1">
                             <div className="flex items-baseline gap-1.5">
-                              <span className="text-3xl font-light tracking-tight">
+                              <span className="text-3xl font-light tracking-tight text-sky-900">
                                 {weather?.temp ?? 28}°
                               </span>
-                              <span className="text-sm font-medium text-sky-100">
+                              <span className="text-xs font-semibold text-sky-700">
                                 {weather?.condition || '多云'}
                               </span>
-                              <span className="text-xs text-sky-200 ml-1">
+                              <span className="text-[11px] text-slate-500 ml-1">
                                 体感 {weather?.feelsLike ?? 30}°
                               </span>
                             </div>
 
                             <div className="text-right">
-                              <div className="text-[11px] font-medium text-sky-100">
+                              <div className="text-[11px] font-medium text-slate-600">
                                 最高 {weather?.tempMax ?? 33}° · 最低 {weather?.tempMin ?? 24}°
                               </div>
-                              <div className="text-[10px] text-sky-200 flex items-center justify-end gap-1 mt-0.5">
-                                <Droplets className="w-3 h-3 text-sky-300" />
+                              <div className="text-[10px] text-slate-500 flex items-center justify-end gap-1 mt-0.5">
+                                <Droplets className="w-3 h-3 text-sky-500" />
                                 <span>降雨率 {weather?.precipProbability ?? 20}%</span>
                                 <span className="text-sky-300">·</span>
                                 <span>{weather?.windDirection || '东南风 3级'}</span>
@@ -683,62 +787,64 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                           </div>
 
                           {weather?.alerts && weather.alerts.length > 0 ? (
-                            <div className="mt-2.5 pt-2 border-t border-white/15 flex items-center gap-1.5 text-[11px] text-amber-200 font-medium truncate">
-                              <AlertTriangle className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                            <div className="mt-2.5 pt-2 border-t border-sky-100/80 flex items-center gap-1.5 text-[11px] text-amber-700 font-medium truncate">
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                               <span className="truncate">
                                 {weather.alerts[0].title}: {weather.alerts[0].description}
                               </span>
                             </div>
                           ) : weather?.rainForecastSummary ? (
-                            <div className="mt-2.5 pt-2 border-t border-white/15 flex items-center gap-1.5 text-[11px] text-sky-100 font-normal truncate">
-                              <CloudRain className="w-3.5 h-3.5 text-sky-300 shrink-0" />
+                            <div className="mt-2.5 pt-2 border-t border-sky-100/80 flex items-center gap-1.5 text-[11px] text-sky-700 font-normal truncate">
+                              <CloudRain className="w-3.5 h-3.5 text-sky-500 shrink-0" />
                               <span className="truncate">{weather.rainForecastSummary}</span>
                             </div>
                           ) : null}
-                        </div>
+                        </WidgetCard>
                       )}
 
                       {/* Menstrual Widget */}
                       {widget.type === 'menstrual' && (
-                        <div
-                          onClick={() => handleOpenApp('menstrual')}
-                          className="w-full rounded-3xl bg-gradient-to-r from-rose-500/90 to-pink-500/90 backdrop-blur-md p-4 text-white shadow-lg border border-white/20 cursor-pointer active:scale-[0.98] transition"
-                        >
+                        <WidgetCard onClick={() => handleOpenApp('menstrual')}>
                           <div className="flex items-center justify-between mb-2">
                             <div className="flex items-center gap-2">
-                              <HeartPulse className="w-5 h-5 text-rose-100 animate-pulse" />
-                              <span className="font-semibold text-sm">女性健康经期预测</span>
+                              <div className="w-6 h-6 rounded-lg bg-sky-100/90 border border-sky-200/80 flex items-center justify-center text-sky-600 shadow-2xs">
+                                <HeartPulse className="w-3.5 h-3.5" />
+                              </div>
+                              <span className="font-semibold text-xs text-slate-800">女性健康经期预测</span>
+                              {cycleStats.currentPeriodDay && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" title="经期中" />
+                              )}
                             </div>
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/20 text-white font-medium">
+                            <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-sky-100/80 text-sky-700 border border-sky-200/80 font-medium">
                               AI 共享数据
                             </span>
                           </div>
 
                           <div className="grid grid-cols-3 gap-2 text-center pt-1">
-                            <div className="bg-white/15 rounded-2xl p-2 backdrop-blur-xs">
-                              <span className="block text-[10px] text-rose-100">距离下期</span>
-                              <span className="text-lg font-bold">
+                            <div className="bg-white/90 border border-sky-100/90 rounded-2xl p-2 shadow-2xs">
+                              <span className="block text-[10px] text-slate-500">距离下期</span>
+                              <span className="text-base font-bold text-sky-600">
                                 {cycleStats.daysUntilNextPeriod}{' '}
-                                <span className="text-[10px] font-normal">天</span>
+                                <span className="text-[10px] font-normal text-slate-500">天</span>
                               </span>
                             </div>
-                            <div className="bg-white/15 rounded-2xl p-2 backdrop-blur-xs">
-                              <span className="block text-[10px] text-rose-100">当前周期</span>
-                              <span className="text-lg font-bold">
+                            <div className="bg-white/90 border border-sky-100/90 rounded-2xl p-2 shadow-2xs">
+                              <span className="block text-[10px] text-slate-500">当前周期</span>
+                              <span className="text-base font-bold text-slate-800">
                                 {cycleStats.currentPeriodDay
                                   ? `第 ${cycleStats.currentPeriodDay} 天`
                                   : '非经期'}
                               </span>
                             </div>
-                            <div className="bg-white/15 rounded-2xl p-2 backdrop-blur-xs">
-                              <span className="block text-[10px] text-rose-100">距离排卵</span>
-                              <span className="text-lg font-bold">
+                            <div className="bg-white/90 border border-sky-100/90 rounded-2xl p-2 shadow-2xs">
+                              <span className="block text-[10px] text-slate-500">距离排卵</span>
+                              <span className="text-base font-bold text-sky-600">
                                 {cycleStats.daysUntilOvulation}{' '}
-                                <span className="text-[10px] font-normal">天</span>
+                                <span className="text-[10px] font-normal text-slate-500">天</span>
                               </span>
                             </div>
                           </div>
-                        </div>
+                        </WidgetCard>
                       )}
 
                       {/* Time Widget */}
@@ -746,74 +852,70 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                         const cityTime = getCityTime(widget.timeOffset ?? 8);
                         const cityName = widget.timeCity || '北京时间 (GMT+8)';
                         return (
-                          <div
-                            onClick={() => setEditingClockWidget(widget)}
-                            className="w-full rounded-3xl bg-black/35 backdrop-blur-md p-4 text-white border border-white/15 shadow-md flex items-center justify-between cursor-pointer hover:bg-black/45 transition active:scale-[0.98]"
-                          >
-                            <div className="flex items-center gap-3">
-                              <Clock className="w-8 h-8 text-amber-400" />
-                              <div>
-                                <div className="text-2xl font-bold tracking-tight">
-                                  {cityTime.timeStr}
+                          <WidgetCard onClick={() => setEditingClockWidget(widget)}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-2xl bg-sky-100/90 border border-sky-200/80 flex items-center justify-center text-sky-600 shadow-2xs shrink-0">
+                                  <Clock className="w-6 h-6" />
                                 </div>
-                                <div className="text-[11px] text-zinc-300">
-                                  {cityTime.dateStr}
+                                <div>
+                                  <div className="text-2xl font-bold tracking-tight text-slate-800">
+                                    {cityTime.timeStr}
+                                  </div>
+                                  <div className="text-[11px] text-slate-500">
+                                    {cityTime.dateStr}
+                                  </div>
                                 </div>
                               </div>
+                              <div className="text-right">
+                                <span className="text-[10px] px-2.5 py-1 rounded-full bg-sky-100/90 text-sky-700 font-medium border border-sky-200/80 flex items-center gap-1 shadow-2xs">
+                                  <span>{cityName}</span>
+                                  <Globe className="w-3 h-3 text-sky-500 shrink-0" />
+                                </span>
+                              </div>
                             </div>
-                            <div className="text-right">
-                              <span className="text-[10px] px-2.5 py-1 rounded-full bg-amber-400/20 text-amber-300 font-medium border border-amber-400/30">
-                                {cityName} 🌐
-                              </span>
-                            </div>
-                          </div>
+                          </WidgetCard>
                         );
                       })()}
 
                       {/* Calendar Widget */}
                       {widget.type === 'calendar' && (
-                        <div
-                          onClick={() => handleOpenApp('menstrual')}
-                          className="w-full rounded-3xl bg-white/20 backdrop-blur-md p-3 text-white border border-white/20 shadow-md cursor-pointer"
-                        >
+                        <WidgetCard onClick={() => handleOpenApp('menstrual')}>
                           <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-1.5 text-xs font-semibold">
-                              <CalendarIcon className="w-4 h-4 text-emerald-300" />
+                            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                              <CalendarIcon className="w-4 h-4 text-sky-500" />
                               <span>
                                 {new Date().getFullYear()}年 {new Date().getMonth() + 1}月
                               </span>
                             </div>
-                            <span className="text-[10px] text-white/70">查看完整日历</span>
+                            <span className="text-[10px] text-slate-400 hover:text-sky-600 transition">查看完整日历</span>
                           </div>
-                          <div className="grid grid-cols-7 text-center text-[10px] gap-1 font-medium text-white/80">
+                          <div className="grid grid-cols-7 text-center text-[10px] gap-1 font-medium text-slate-500">
                             {['日', '一', '二', '三', '四', '五', '六'].map((d) => (
                               <span key={d}>{d}</span>
                             ))}
                             {[...Array(28)].map((_, i) => (
                               <span
                                 key={i}
-                                className={`py-1 rounded-lg ${
+                                className={`py-1 rounded-lg transition ${
                                   i + 1 === new Date().getDate()
-                                    ? 'bg-emerald-500 font-bold text-white'
-                                    : 'hover:bg-white/10'
+                                    ? 'bg-sky-500 font-bold text-white shadow-xs'
+                                    : 'text-slate-700 hover:bg-sky-100/80'
                                 }`}
                               >
                                 {i + 1}
                               </span>
                             ))}
                           </div>
-                        </div>
+                        </WidgetCard>
                       )}
 
                       {/* Memo Widget */}
                       {widget.type === 'memo' && (
-                        <div
-                          onClick={() => handleOpenApp('memo')}
-                          className="w-full rounded-3xl bg-amber-500/85 backdrop-blur-md p-3.5 text-zinc-900 border border-white/30 shadow-md cursor-pointer active:scale-[0.98] transition"
-                        >
+                        <WidgetCard onClick={() => handleOpenApp('memo')}>
                           <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-1.5 font-bold text-xs">
-                              <FileText className="w-4 h-4" />
+                            <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                              <FileText className="w-4 h-4 text-sky-500" />
                               <span>桌面备忘录</span>
                             </div>
                             <button
@@ -821,7 +923,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                                 e.stopPropagation();
                                 handleOpenApp('memo');
                               }}
-                              className="text-[10px] font-semibold bg-zinc-900/20 px-2 py-0.5 rounded-full hover:bg-zinc-900/30"
+                              className="text-[10px] font-semibold bg-sky-100/80 text-sky-700 border border-sky-200/80 px-2.5 py-0.5 rounded-full hover:bg-sky-200/80 transition"
                             >
                               所有便签
                             </button>
@@ -830,14 +932,14 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                             {memos.slice(0, 2).map((m) => (
                               <div
                                 key={m.id}
-                                className="text-xs bg-white/40 p-2 rounded-xl border border-white/20"
+                                className="text-xs bg-white/90 p-2 rounded-xl border border-sky-100/90 text-slate-700 shadow-2xs"
                               >
-                                <div className="font-semibold truncate">{m.title}</div>
-                                <div className="text-[11px] opacity-80 truncate">{m.content}</div>
+                                <div className="font-semibold text-slate-800 truncate">{m.title}</div>
+                                <div className="text-[11px] text-slate-500 truncate">{m.content}</div>
                               </div>
                             ))}
                           </div>
-                        </div>
+                        </WidgetCard>
                       )}
 
                       {/* Sticker Widget */}
@@ -847,31 +949,34 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                           widget.stickerIsCountdown ?? true
                         );
                         return (
-                          <div
+                          <WidgetCard
                             onClick={() => {
                               setEditingStickerWidget(widget);
                               setStickerTitleInput(widget.stickerTitle || '倒计时贴纸');
                               setStickerDateInput(widget.stickerTargetDate || '2026-12-31');
                               setStickerIsCountdownInput(widget.stickerIsCountdown ?? true);
                             }}
-                            className="w-full rounded-3xl bg-black/35 backdrop-blur-md p-3.5 text-white border border-white/15 shadow-md flex items-center justify-between cursor-pointer hover:bg-black/45 transition active:scale-[0.98]"
                           >
-                            <div className="flex items-center gap-2.5">
-                              <Tag className="w-6 h-6 text-purple-400" />
-                              <div>
-                                <div className="text-xs font-semibold">
-                                  {widget.stickerTitle || '倒计时贴纸'}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-2xl bg-sky-100/90 border border-sky-200/80 flex items-center justify-center text-sky-600 shadow-2xs shrink-0">
+                                  <Tag className="w-4 h-4" />
                                 </div>
-                                <div className="text-[10px] text-zinc-300">
-                                  {widget.stickerIsCountdown ?? true ? '目标日期' : '起始日期'}:{' '}
-                                  {widget.stickerTargetDate || '2026-12-31'}
+                                <div>
+                                  <div className="text-xs font-semibold text-slate-800">
+                                    {widget.stickerTitle || '倒计时贴纸'}
+                                  </div>
+                                  <div className="text-[10px] text-slate-500">
+                                    {widget.stickerIsCountdown ?? true ? '目标日期' : '起始日期'}:{' '}
+                                    {widget.stickerTargetDate || '2026-12-31'}
+                                  </div>
                                 </div>
                               </div>
+                              <div className="bg-sky-100/90 text-sky-700 border border-sky-200/80 px-3 py-1.5 rounded-2xl font-bold text-lg flex items-baseline gap-1 shadow-2xs">
+                                {days} <span className="text-[10px] font-normal text-sky-600">天</span>
+                              </div>
                             </div>
-                            <div className="bg-purple-500/20 text-purple-300 border border-purple-500/30 px-3 py-1.5 rounded-2xl font-bold text-lg flex items-baseline gap-1">
-                              {days} <span className="text-[10px] font-normal text-purple-200">天</span>
-                            </div>
-                          </div>
+                          </WidgetCard>
                         );
                       })()}
                     </div>
@@ -881,9 +986,9 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                   {isEditMode && pageIdx === currentPage && (
                     <button
                       onClick={() => setShowAddWidgetModal(true)}
-                      className="w-full py-2.5 rounded-2xl border-2 border-dashed border-white/40 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold flex items-center justify-center gap-2 backdrop-blur-xs transition"
+                      className="w-full py-2.5 rounded-2xl border-2 border-dashed border-sky-300/80 bg-white/70 hover:bg-white/90 text-sky-700 text-xs font-semibold flex items-center justify-center gap-2 backdrop-blur-sm transition shadow-2xs"
                     >
-                      <PlusCircle className="w-4 h-4 text-emerald-400" />
+                      <PlusCircle className="w-4 h-4 text-sky-500" />
                       <span>添加桌面小组件</span>
                     </button>
                   )}
@@ -910,21 +1015,14 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                             isBeingDragged ? 'opacity-30 scale-90' : 'active:scale-95'
                           }`}
                         >
-                          {/* Custom Image or Built-in Icon */}
-                          <div
-                            className={`relative w-14 h-14 rounded-2xl flex items-center justify-center shadow-md border border-white/20 overflow-hidden ${
-                              icon.customImage ? 'bg-zinc-800' : getBuiltInIconBg(icon.appId)
-                            }`}
-                          >
-                            {icon.customImage ? (
-                              <img
-                                src={icon.customImage}
-                                alt={icon.name}
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              getBuiltInIconComponent(icon.builtInIcon)
-                            )}
+                          {/* Custom Image or Cloud Milk Built-in Icon */}
+                          <div className="relative">
+                            <CloudMilkIcon
+                              appId={icon.appId}
+                              customImage={icon.customImage}
+                              name={icon.name}
+                              size={56}
+                            />
 
                             {/* Edit Mode Delete Badge */}
                             {isEditMode && (
@@ -987,17 +1085,12 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
           className="fixed z-50 pointer-events-none transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center opacity-90 scale-110 drop-shadow-2xl"
           style={{ left: dragPos.x, top: dragPos.y }}
         >
-          <div
-            className={`w-14 h-14 rounded-2xl flex items-center justify-center border-2 border-emerald-400 overflow-hidden ${
-              draggingIcon.customImage ? 'bg-zinc-800' : getBuiltInIconBg(draggingIcon.appId)
-            }`}
-          >
-            {draggingIcon.customImage ? (
-              <img src={draggingIcon.customImage} alt="" className="w-full h-full object-cover" />
-            ) : (
-              getBuiltInIconComponent(draggingIcon.builtInIcon)
-            )}
-          </div>
+          <CloudMilkIcon
+            appId={draggingIcon.appId}
+            customImage={draggingIcon.customImage}
+            name={draggingIcon.name}
+            size={56}
+          />
           <span className="mt-1 text-[10px] font-bold text-white bg-black/60 px-1.5 py-0.5 rounded-full">
             {draggingIcon.name}
           </span>
@@ -1013,7 +1106,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
           {[...Array(pagesCount)].map((_, idx) => (
             <button
               key={idx}
-              onClick={() => setCurrentPage(idx)}
+              onClick={() => handleSetCurrentPage(idx)}
               className={`h-2 rounded-full transition-all ${
                 currentPage === idx ? 'w-5 bg-emerald-400' : 'w-2 bg-white/40 hover:bg-white/70'
               }`}
@@ -1058,13 +1151,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                     className="p-3 rounded-2xl bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-between"
                   >
                     <div className="flex items-center gap-3">
-                      <div
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden ${getBuiltInIconBg(
-                          app.appId
-                        )}`}
-                      >
-                        {getBuiltInIconComponent(app.builtInIcon)}
-                      </div>
+                      <CloudMilkIcon appId={app.appId} size={40} />
                       <div>
                         <div className="font-semibold text-xs text-zinc-100">{app.name}</div>
                         <div className="text-[10px] text-zinc-400">ID: {app.appId}</div>
@@ -1104,21 +1191,12 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
             className="w-full max-w-xs rounded-3xl bg-zinc-900 border border-zinc-800 p-4 text-white shadow-2xl space-y-3"
           >
             <div className="flex items-center gap-3 border-b border-zinc-800 pb-3">
-              <div
-                className={`w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden ${getBuiltInIconBg(
-                  activeIconMenu.appId
-                )}`}
-              >
-                {activeIconMenu.customImage ? (
-                  <img
-                    src={activeIconMenu.customImage}
-                    alt=""
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  getBuiltInIconComponent(activeIconMenu.builtInIcon)
-                )}
-              </div>
+              <CloudMilkIcon
+                appId={activeIconMenu.appId}
+                customImage={activeIconMenu.customImage}
+                name={activeIconMenu.name}
+                size={40}
+              />
               <div className="flex-1 min-w-0">
                 <h4 className="font-semibold text-sm truncate">{activeIconMenu.name}</h4>
                 <p className="text-[10px] text-zinc-400">应用布局与设置</p>
@@ -1212,62 +1290,67 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
 
       {/* Add Widget Modal */}
       {showAddWidgetModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-xs rounded-3xl bg-zinc-900 border border-zinc-800 p-4 text-white shadow-2xl">
-            <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
-              <PlusCircle className="w-4 h-4 text-emerald-400" />
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-xs rounded-3xl bg-white/95 backdrop-blur-2xl border border-sky-200/80 p-4 text-slate-800 shadow-2xl">
+            <h3 className="font-semibold text-sm mb-3 flex items-center gap-2 text-slate-800">
+              <PlusCircle className="w-4 h-4 text-sky-500" />
               选择添加桌面小组件
             </h3>
             <div className="grid grid-cols-2 gap-2 text-xs mb-4">
               <button
                 onClick={() => handleAddWidget('weather')}
-                className="p-3 rounded-2xl bg-sky-500/20 border border-sky-500/40 text-sky-300 font-medium hover:bg-sky-500/30 text-left col-span-2"
+                className="p-3 rounded-2xl bg-sky-50/80 border border-sky-200/80 text-sky-900 font-medium hover:bg-sky-100/90 text-left col-span-2 transition shadow-2xs"
               >
-                <CloudSun className="w-5 h-5 mb-1 text-sky-400" />
-                <div className="font-semibold">实时天气小组件</div>
-                <div className="text-[10px] text-sky-200/80">
+                <CloudSun className="w-5 h-5 mb-1 text-sky-500" />
+                <div className="font-semibold text-slate-800">实时天气小组件</div>
+                <div className="text-[10px] text-slate-500">
                   显示气温、天气、降雨预测与灾害预警
                 </div>
               </button>
               <button
                 onClick={() => handleAddWidget('menstrual')}
-                className="p-3 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-300 font-medium hover:bg-rose-500/30 text-left"
+                className="p-3 rounded-2xl bg-sky-50/80 border border-sky-200/80 text-slate-800 font-medium hover:bg-sky-100/90 text-left transition shadow-2xs"
               >
-                <HeartPulse className="w-5 h-5 mb-1 text-rose-400" />
-                经期预测组件
+                <HeartPulse className="w-5 h-5 mb-1 text-sky-500" />
+                <div className="font-semibold">经期预测</div>
+                <div className="text-[10px] text-slate-500">女性健康数据</div>
               </button>
               <button
                 onClick={() => handleAddWidget('time')}
-                className="p-3 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-300 font-medium hover:bg-amber-500/30 text-left"
+                className="p-3 rounded-2xl bg-sky-50/80 border border-sky-200/80 text-slate-800 font-medium hover:bg-sky-100/90 text-left transition shadow-2xs"
               >
-                <Clock className="w-5 h-5 mb-1 text-amber-400" />
-                时间组件
+                <Clock className="w-5 h-5 mb-1 text-sky-500" />
+                <div className="font-semibold">世界时间</div>
+                <div className="text-[10px] text-slate-500">多时区时钟</div>
               </button>
               <button
                 onClick={() => handleAddWidget('calendar')}
-                className="p-3 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-medium hover:bg-emerald-500/30 text-left"
+                className="p-3 rounded-2xl bg-sky-50/80 border border-sky-200/80 text-slate-800 font-medium hover:bg-sky-100/90 text-left transition shadow-2xs"
               >
-                <CalendarIcon className="w-5 h-5 mb-1 text-emerald-400" />
-                月历组件
+                <CalendarIcon className="w-5 h-5 mb-1 text-sky-500" />
+                <div className="font-semibold">月历日程</div>
+                <div className="text-[10px] text-slate-500">日期状态视图</div>
               </button>
               <button
                 onClick={() => handleAddWidget('memo')}
-                className="p-3 rounded-2xl bg-purple-500/20 border border-purple-500/40 text-purple-300 font-medium hover:bg-purple-500/30 text-left"
+                className="p-3 rounded-2xl bg-sky-50/80 border border-sky-200/80 text-slate-800 font-medium hover:bg-sky-100/90 text-left transition shadow-2xs"
               >
-                <FileText className="w-5 h-5 mb-1 text-purple-400" />
-                备忘录组件
+                <FileText className="w-5 h-5 mb-1 text-sky-500" />
+                <div className="font-semibold">桌面备忘录</div>
+                <div className="text-[10px] text-slate-500">快捷便签浏览</div>
               </button>
               <button
                 onClick={() => handleAddWidget('sticker')}
-                className="p-3 rounded-2xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 font-medium hover:bg-indigo-500/30 text-left col-span-2"
+                className="p-3 rounded-2xl bg-sky-50/80 border border-sky-200/80 text-slate-800 font-medium hover:bg-sky-100/90 text-left col-span-2 transition shadow-2xs"
               >
-                <Tag className="w-5 h-5 mb-1 text-indigo-400" />
-                倒计时贴纸组件
+                <Tag className="w-5 h-5 mb-1 text-sky-500" />
+                <div className="font-semibold">倒计时贴纸</div>
+                <div className="text-[10px] text-slate-500">目标日期与纪念日累积</div>
               </button>
             </div>
             <button
               onClick={() => setShowAddWidgetModal(false)}
-              className="w-full py-2 text-xs rounded-xl bg-zinc-800 text-zinc-300"
+              className="w-full py-2 text-xs rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium transition"
             >
               取消
             </button>
@@ -1277,44 +1360,44 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
 
       {/* Edit Sticker Date Modal */}
       {editingStickerWidget && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-xs rounded-3xl bg-zinc-900 border border-zinc-800 p-4 text-white shadow-2xl space-y-3">
-            <h3 className="font-semibold text-sm flex items-center gap-2 text-purple-400">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-xs rounded-3xl bg-white/95 backdrop-blur-2xl border border-sky-200/80 p-4 text-slate-800 shadow-2xl space-y-3">
+            <h3 className="font-semibold text-sm flex items-center gap-2 text-sky-600">
               <Tag className="w-4 h-4" />
               倒计时贴纸设置
             </h3>
 
             <div className="space-y-1 text-xs">
-              <label className="block text-zinc-400">贴纸标题 / 倒计时名称</label>
+              <label className="block text-slate-500 font-medium">贴纸标题 / 倒计时名称</label>
               <input
                 type="text"
                 value={stickerTitleInput}
                 onChange={(e) => setStickerTitleInput(e.target.value)}
                 placeholder="例如: 高考倒计时 / 恋爱纪念日"
-                className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-purple-500"
+                className="w-full px-3 py-2 rounded-xl bg-sky-50/60 border border-sky-200/80 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1 text-xs">
-              <label className="block text-zinc-400">选择目标 / 开始日期</label>
+              <label className="block text-slate-500 font-medium">选择目标 / 开始日期</label>
               <input
                 type="date"
                 value={stickerDateInput}
                 onChange={(e) => setStickerDateInput(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-purple-500"
+                className="w-full px-3 py-2 rounded-xl bg-sky-50/60 border border-sky-200/80 text-slate-800 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="flex items-center justify-between text-xs py-1">
-              <span className="text-zinc-300">模式选择</span>
+              <span className="text-slate-600 font-medium">模式选择</span>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setStickerIsCountdownInput(true)}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition ${
                     stickerIsCountdownInput
-                      ? 'bg-purple-600 text-white'
-                      : 'bg-zinc-800 text-zinc-400'
+                      ? 'bg-sky-500 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                   }`}
                 >
                   目标倒计时
@@ -1324,8 +1407,8 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                   onClick={() => setStickerIsCountdownInput(false)}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition ${
                     !stickerIsCountdownInput
-                      ? 'bg-purple-600 text-white'
-                      : 'bg-zinc-800 text-zinc-400'
+                      ? 'bg-sky-500 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                   }`}
                 >
                   起始已累计
@@ -1333,10 +1416,10 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
               </div>
             </div>
 
-            <div className="flex gap-2 justify-end pt-2 border-t border-zinc-800">
+            <div className="flex gap-2 justify-end pt-2 border-t border-sky-100">
               <button
                 onClick={() => setEditingStickerWidget(null)}
-                className="px-3 py-1.5 text-xs rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                className="px-3 py-1.5 text-xs rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 transition"
               >
                 取消
               </button>
@@ -1356,7 +1439,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                   );
                   setEditingStickerWidget(null);
                 }}
-                className="px-4 py-1.5 text-xs font-semibold rounded-xl bg-purple-600 text-white hover:bg-purple-500 shadow-md"
+                className="px-4 py-1.5 text-xs font-semibold rounded-xl bg-sky-500 text-white hover:bg-sky-600 shadow-sm transition"
               >
                 保存贴纸
               </button>
@@ -1367,13 +1450,13 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
 
       {/* World Clock Region Selection Modal */}
       {editingClockWidget && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-xs rounded-3xl bg-zinc-900 border border-zinc-800 p-4 text-white shadow-2xl space-y-3">
-            <h3 className="font-semibold text-sm flex items-center gap-2 text-amber-400">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-xs rounded-3xl bg-white/95 backdrop-blur-2xl border border-sky-200/80 p-4 text-slate-800 shadow-2xl space-y-3">
+            <h3 className="font-semibold text-sm flex items-center gap-2 text-sky-600">
               <Clock className="w-4 h-4" />
               选择时区地区时间
             </h3>
-            <p className="text-[11px] text-zinc-400">
+            <p className="text-[11px] text-slate-500">
               点击下方地区即可随时切换时间小组件的显示城市与时区：
             </p>
 
@@ -1404,12 +1487,12 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                     }}
                     className={`w-full p-2.5 rounded-2xl border text-left flex items-center justify-between transition ${
                       isSelected
-                        ? 'bg-amber-500/20 border-amber-500 text-amber-300 font-bold'
-                        : 'bg-zinc-800 border-zinc-700 text-zinc-200 hover:bg-zinc-750'
+                        ? 'bg-sky-100/90 border-sky-300 text-sky-800 font-bold shadow-2xs'
+                        : 'bg-sky-50/40 border-sky-200/60 text-slate-700 hover:bg-sky-100/60'
                     }`}
                   >
                     <span>{region.city}</span>
-                    <span className="text-[10px] opacity-80">{getCityTime(region.offset).timeStr}</span>
+                    <span className="text-[10px] text-slate-500">{getCityTime(region.offset).timeStr}</span>
                   </button>
                 );
               })}
@@ -1417,7 +1500,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
 
             <button
               onClick={() => setEditingClockWidget(null)}
-              className="w-full py-2 text-xs rounded-xl bg-zinc-800 text-zinc-300 mt-2"
+              className="w-full py-2 text-xs rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 transition mt-2 font-medium"
             >
               取消
             </button>

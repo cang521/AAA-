@@ -36,8 +36,8 @@ export const PhoneContainer: React.FC<PhoneContainerProps> = ({
       {/* Main Full-Screen Display Area (No outer phone chassis or fake metal borders) */}
       <div
         data-theme={theme}
-        className={`phone-screen relative w-full h-full flex-1 overflow-hidden flex flex-col transition-colors duration-200 ${
-          theme === 'cloud_milk' ? 'theme-cloud-milk bg-[#F5FBFF]' : 'bg-zinc-900'
+        className={`phone-screen relative w-full h-full flex-1 overflow-hidden flex flex-col transition-colors duration-200 theme-${theme} ${
+          theme === 'light' || theme === 'cloud_milk' ? 'theme-cloud-milk bg-[#F5FBFF]' : 'theme-dark bg-[#090D12]'
         }`}
       >
         {/* Main Application Active View Area */}

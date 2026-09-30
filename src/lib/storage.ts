@@ -52,6 +52,7 @@ const STORAGE_KEYS = {
   VOICE_API_CONFIG: 'new_voice_api_config',
   AI_CONTROLS: 'phone_ai_controls',
   LAUNCHER_PAGES: 'phone_launcher_pages_count',
+  LAUNCHER_CURRENT_PAGE: 'phone_launcher_current_page',
   LAUNCHER_ICONS: 'phone_launcher_icons',
   LAUNCHER_WIDGETS: 'phone_launcher_widgets',
   GOMOKU_RECORDS: 'phone_gomoku_records',
@@ -67,48 +68,29 @@ const STORAGE_KEYS = {
   CUSTOM_LOCK_WALLPAPER: 'phone_custom_lock_wallpaper',
 };
 
-// Default Wallpapers
-export const DEFAULT_DESKTOP_WALLPAPER =
-  'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1000&q=80';
-export const DEFAULT_LOCK_WALLPAPER =
-  'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1000&q=80';
+import { CLOUD_MILK_DESKTOP_WALLPAPER, CLOUD_MILK_LOCK_WALLPAPER } from './themeWallpapers';
+export { CLOUD_MILK_DESKTOP_WALLPAPER, CLOUD_MILK_LOCK_WALLPAPER };
 
-// Initial AI Characters
-const INITIAL_CHARACTERS: AiCharacter[] = [
-  {
-    id: 'char_1',
-    name: '林思微',
-    wxid: 'siwei_lin',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-    persona: '温柔细心的学姐，声音甜美体贴，非常关心用户的日常生活、情绪变化与健康状况。说话喜欢带有暖心的表情。',
-    greeting: '学弟/学妹，今天工作学习辛苦啦！有好好吃晚饭吗？喝水了吗？',
-    memories: ['用户喜欢在深夜看书', '用户对奶茶半糖微冰有特别偏好', '用户经期来临前容易痛经'],
-    isLocked: false,
-    tags: ['治愈系', '学姐', '贴心'],
-  },
-  {
-    id: 'char_2',
-    name: '顾沉',
-    wxid: 'chen_gu_ceo',
-    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&q=80',
-    persona: '外冷内热的年轻总裁，表面言语干练高冷，实际上默默留意用户的一切琐事，会悄悄安排好各种照顾。',
-    greeting: '听说你今天又加班了？别以为我不知道。资料我已经让人处理了，你现在立刻去休息。',
-    memories: ['用户工作遇到困难习惯自己扛', '用户胃不好不能吃太辣'],
-    isLocked: true,
-    tags: ['霸总', '傲娇', '安全感'],
-  },
-  {
-    id: 'char_3',
-    name: '小助手 灵犀',
-    wxid: 'lingxi_ai',
-    avatar: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=300&q=80',
-    persona: '高效理性的AI全能助手，知识面极其广阔，解答用户在技术、生活规划、健康预测方面的所有疑问。',
-    greeting: '你好！我是灵犀。我已经连接了你的系统健康组件与备忘录，随时准备为你服务。',
-    memories: ['用户正在探索人工智能与手机美化'],
-    isLocked: false,
-    tags: ['工具', '全能', '智能'],
-  },
-];
+// SVG Vector Default Avatars
+export const DEFAULT_AI_AVATAR = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none"><rect width="128" height="128" rx="64" fill="%23E0F2FE"/><circle cx="64" cy="64" r="54" fill="%23BAE6FD"/><path d="M64 34C65.5 48 76 58.5 90 60C76 61.5 65.5 72 64 86C62.5 72 52 61.5 38 60C52 58.5 62.5 48 64 34Z" fill="%230284C7"/><circle cx="86" cy="40" r="4" fill="%2338BDF8"/><circle cx="42" cy="80" r="3" fill="%2338BDF8"/></svg>`;
+
+export const DEFAULT_USER_AVATAR = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none"><rect width="128" height="128" rx="64" fill="%23E0F2FE"/><circle cx="64" cy="64" r="54" fill="%23BAE6FD"/><circle cx="64" cy="48" r="20" fill="%230284C7"/><path d="M36 96C36 80.536 48.536 68 64 68C79.464 68 92 80.536 92 96V98H36V96Z" fill="%230284C7"/></svg>`;
+
+// Default Wallpapers
+export const DEFAULT_DESKTOP_WALLPAPER = CLOUD_MILK_DESKTOP_WALLPAPER;
+export const DEFAULT_LOCK_WALLPAPER = CLOUD_MILK_LOCK_WALLPAPER;
+
+// Known Demo Identifiers for Purging Legacy Pre-populated Storage
+const PRESET_DEMO_CHARACTER_IDS = new Set(['char_1', 'char_2', 'char_3']);
+const PRESET_DEMO_GROUP_IDS = new Set(['group_default_1']);
+const PRESET_DEMO_MOMENT_IDS = new Set(['post_1']);
+const PRESET_DEMO_MEMO_IDS = new Set(['memo_1', 'memo_2']);
+const PRESET_DEMO_WORLDBOOK_IDS = new Set(['wb_1', 'wb_2']);
+const PRESET_DEMO_GAME_RECORD_IDS = new Set(['rec_1', 'rec_2', 'ttt_rec_1', 'ttt_rec_2', 'rps_rec_1', 'rps_rec_2', 'tele_rec_1']);
+const PRESET_DEMO_LOG_IDS = new Set(['log_1', 'log_2', 'log_3']);
+
+// Initial AI Characters (Empty by default for production)
+const INITIAL_CHARACTERS: AiCharacter[] = [];
 
 export function generateUserInviteCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -120,105 +102,28 @@ export function generateUserInviteCode(): string {
 }
 
 const INITIAL_USER_PROFILE: UserProfile = {
-  avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=300&q=80',
-  name: '小清',
-  wxid: 'xiaoqing_2026',
+  avatar: DEFAULT_USER_AVATAR,
+  name: '我的手机',
+  wxid: 'user_main',
   bio: '探索AI与生活的无限可能 ✨',
-  persona: '性格随和可爱，对新事物充满好奇，喜欢看电影、听音乐，偶尔小懒惰，近期关注女性健康与高效生活。',
-  preferences: '喜欢被关怀，不喜欢说教式聊天。',
+  persona: '',
+  preferences: '',
   inviteCode: 'WX-8K92F1',
-  personality: '温柔随和、同理心强、慢热但真诚、偶尔有点小迷糊',
-  interests: '半糖温热奶茶、猫咪、科幻电影、轻音乐、养生泡脚',
-  chatCarePreference: '生病/经期时希望主动关怀问候，日常聊天幽默轻松，多鼓励少说教',
 };
 
 const INITIAL_MENSTRUAL_DATA: MenstrualData = {
   cycleLength: 28,
   periodDuration: 5,
-  records: [
-    { startDate: '2026-07-05', endDate: '2026-07-10' },
-    { startDate: '2026-06-07', endDate: '2026-06-12' },
-  ],
-  notes: {
-    '2026-07-05': '第一天感觉有点疲惫，喝了红糖水',
-    '2026-07-06': '腹痛缓解，睡眠良好',
-  },
+  records: [],
+  notes: {},
   aiAccessEnabled: true,
 };
 
-const INITIAL_MEMOS: Memo[] = [
-  {
-    id: 'memo_1',
-    title: '📱 仿真手机待办事项',
-    content: '1. 给林思微学姐回复朋友圈\n2. 检查本月经期预测预测日期\n3. 测试一键 AI CSS 修复功能\n4. 查看 API 监控日志',
-    updatedAt: Date.now() - 3600000,
-    tags: ['待办', '工作'],
-  },
-  {
-    id: 'memo_2',
-    title: '💡 AI人设灵感笔记',
-    content: '想要尝试创建一个古风医圣人设，可以在微信联系人中点击右上角【新建 AI】进行配置！',
-    updatedAt: Date.now() - 86400000,
-    tags: ['灵感'],
-  },
-];
+const INITIAL_MEMOS: Memo[] = [];
 
-const INITIAL_MOMENTS: MomentPost[] = [
-  {
-    id: 'post_1',
-    authorId: 'char_1',
-    authorName: '林思微',
-    authorAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-    content: '今天路过林荫道，看到了好漂亮的晚霞！大家今天过得怎么样？别忘了按时吃晚餐小休息一下哦 🌇',
-    images: ['https://images.unsplash.com/photo-1495616811223-4d98c6e9c869?auto=format&fit=crop&w=600&q=80'],
-    timestamp: Date.now() - 7200000,
-    likes: [
-      { id: 'user', name: '小清', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=300&q=80' },
-    ],
-    comments: [
-      {
-        id: 'c_1',
-        authorId: 'char_2',
-        authorName: '顾沉',
-        authorAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&q=80',
-        text: '公司的项目报告我看过了，拍照倒是不错。',
-        timestamp: Date.now() - 3600000,
-      },
-    ],
-  },
-];
+const INITIAL_MOMENTS: MomentPost[] = [];
 
-const INITIAL_WORLD_BOOKS: WorldBook[] = [
-  {
-    id: 'wb_1',
-    title: '赛博夜城·纪元2088',
-    description: '霓虹闪烁与高度义体化的赛博朋克大都会，巨型财阀与地下黑客交织的未来世界。',
-    tags: ['赛博朋克', '未来科幻', '财阀都市'],
-    worldSetting: '时间处于公元2088年，世界被超大型科技财阀“天穹集团”与“新亚动力”掌控。绝大多数市民接受了神经义体改造，网络意识与现实世界深度融合。街区分为上层光鲜亮丽的浮空穹顶区与底层充斥着雨水、霓虹灯与黑客交易的贫民九龙区。AI在此世界被视为高智能管家或地下觉醒同盟。',
-    entries: [
-      { id: 'entry_1', keyword: '神经义体', content: '人体与机械电子的神经级连接接口，可通过思维直接访问赛博网络。' },
-      { id: 'entry_2', keyword: '浮空穹顶', content: '上流财阀阶级居住的悬浮生态圈，享有纯净空气与定制气候。' },
-      { id: 'entry_3', keyword: '九龙地下城', content: '底层黑客、义体改装医生和流浪佣兵聚集的地下霓虹街区。' },
-    ],
-    associatedCharacterIds: [],
-    createdAt: Date.now() - 172800000,
-    updatedAt: Date.now() - 86400000,
-  },
-  {
-    id: 'wb_2',
-    title: '云霄修仙界·九重天阙',
-    description: '灵气复苏的古典东方修真世界，仙门百家，御剑乘风，长生问道。',
-    tags: ['东方玄幻', '仙侠修真', '宗门'],
-    worldSetting: '云霄大界分九重天宇，灵气充沛，修士以引气入体、筑基、金丹、元婴至化神登仙为追求。各大仙宗坐落于灵脉福地，凡尘与修真界互有往来。日常行文带有些许古风仙侠韵味与道法术数常识。',
-    entries: [
-      { id: 'entry_1', keyword: '传音玉符', content: '修士间千里传音通讯的灵石法器，相当于修真界的手提即时通讯设备。' },
-      { id: 'entry_2', keyword: '洗髓丹', content: '筑基期修士淬炼经脉、排除肉体杂质的上品灵丹。' },
-    ],
-    associatedCharacterIds: [],
-    createdAt: Date.now() - 259200000,
-    updatedAt: Date.now() - 172800000,
-  },
-];
+const INITIAL_WORLD_BOOKS: WorldBook[] = [];
 
 const INITIAL_ICONS: AppIconConfig[] = [
   { id: 'icon_wechat', name: '聊天', appId: 'wechat', pageIndex: 0, positionIndex: 0, builtInIcon: 'MessageCircle' },
@@ -394,6 +299,16 @@ export const saveLauncherPagesCount = (count: number): void => {
   saveToStorage(STORAGE_KEYS.LAUNCHER_PAGES, count);
 };
 
+export const loadLauncherCurrentPage = (): number => {
+  const loaded = loadFromStorage<number>(STORAGE_KEYS.LAUNCHER_CURRENT_PAGE, 0);
+  if (typeof loaded !== 'number' || loaded < 0) return 0;
+  return loaded;
+};
+
+export const saveLauncherCurrentPage = (page: number): void => {
+  saveToStorage(STORAGE_KEYS.LAUNCHER_CURRENT_PAGE, Math.max(0, page));
+};
+
 export const BUILTIN_APPS_REGISTRY: { appId: AppId; name: string; builtInIcon: string }[] = [
   { appId: 'wechat', name: '聊天', builtInIcon: 'MessageCircle' },
   { appId: 'offline', name: '线下模式', builtInIcon: 'Heart' },
@@ -453,37 +368,39 @@ export const loadWidgets = (): WidgetConfig[] => {
 };
 export const saveWidgets = (widgets: WidgetConfig[]) => saveToStorage(STORAGE_KEYS.LAUNCHER_WIDGETS, widgets);
 
-export const loadCharacters = () => {
-  const loaded = loadFromStorage<AiCharacter[]>(STORAGE_KEYS.CHARACTERS, INITIAL_CHARACTERS);
-  if (!Array.isArray(loaded) || loaded.length === 0) {
-    return INITIAL_CHARACTERS;
+export const loadCharacters = (): AiCharacter[] => {
+  const loaded = loadFromStorage<AiCharacter[]>(STORAGE_KEYS.CHARACTERS, []);
+  if (!Array.isArray(loaded)) return [];
+  const cleaned = loaded.filter((c) => c && c.id && !PRESET_DEMO_CHARACTER_IDS.has(c.id));
+  if (cleaned.length !== loaded.length) {
+    saveToStorage(STORAGE_KEYS.CHARACTERS, cleaned);
   }
-  // Incrementally supplement missing default characters if any exist
-  const existingIds = new Set(loaded.map((c) => c.id));
-  const missing = INITIAL_CHARACTERS.filter((c) => !existingIds.has(c.id));
-  if (missing.length > 0) {
-    const merged = [...loaded, ...missing];
-    saveToStorage(STORAGE_KEYS.CHARACTERS, merged);
-    return merged;
-  }
-  return loaded;
+  return cleaned;
 };
 export const saveCharacters = (chars: AiCharacter[]) => saveToStorage(STORAGE_KEYS.CHARACTERS, chars);
 
-export const loadMessages = () =>
-  loadFromStorage<ChatMessage[]>(STORAGE_KEYS.MESSAGES, [
-    {
-      id: 'msg_welcome_1',
-      characterId: 'char_1',
-      sender: 'ai',
-      text: '小清，今天工作学习辛苦啦！有没有按时吃晚饭？记得多喝热水哦~',
-      timestamp: Date.now() - 3600000,
-      thinkingProcess: '用户系统数据显示此时为晚间。根据记忆条目“关注用户日常与情绪”，发出亲切问候，询问晚饭与喝水情况。',
-    },
-  ]);
+export const loadMessages = (): ChatMessage[] => {
+  const loaded = loadFromStorage<ChatMessage[]>(STORAGE_KEYS.MESSAGES, []);
+  if (!Array.isArray(loaded)) return [];
+  const cleaned = loaded.filter(
+    (m) => m && m.id !== 'msg_welcome_1' && (!m.characterId || !PRESET_DEMO_CHARACTER_IDS.has(m.characterId))
+  );
+  if (cleaned.length !== loaded.length) {
+    saveToStorage(STORAGE_KEYS.MESSAGES, cleaned);
+  }
+  return cleaned;
+};
 export const saveMessages = (msgs: ChatMessage[]) => saveToStorage(STORAGE_KEYS.MESSAGES, msgs);
 
-export const loadMoments = () => loadFromStorage<MomentPost[]>(STORAGE_KEYS.MOMENTS, INITIAL_MOMENTS);
+export const loadMoments = (): MomentPost[] => {
+  const loaded = loadFromStorage<MomentPost[]>(STORAGE_KEYS.MOMENTS, []);
+  if (!Array.isArray(loaded)) return [];
+  const cleaned = loaded.filter((p) => p && p.id && !PRESET_DEMO_MOMENT_IDS.has(p.id));
+  if (cleaned.length !== loaded.length) {
+    saveToStorage(STORAGE_KEYS.MOMENTS, cleaned);
+  }
+  return cleaned;
+};
 export const saveMoments = (moments: MomentPost[]) => saveToStorage(STORAGE_KEYS.MOMENTS, moments);
 
 export const loadUserProfile = (): UserProfile => {
@@ -600,235 +517,105 @@ export const loadPermissions = () => {
 };
 export const savePermissions = (p: AiPermissions) => saveToStorage(STORAGE_KEYS.PERMISSIONS, p);
 
-export const loadApiLogs = () => loadFromStorage<ApiLog[]>(STORAGE_KEYS.API_LOGS, INITIAL_API_LOGS);
+export const loadApiLogs = (): ApiLog[] => {
+  const loaded = loadFromStorage<ApiLog[]>(STORAGE_KEYS.API_LOGS, []);
+  if (!Array.isArray(loaded)) return [];
+  const cleaned = loaded.filter((l) => l && l.id && !PRESET_DEMO_LOG_IDS.has(l.id));
+  if (cleaned.length !== loaded.length) {
+    saveToStorage(STORAGE_KEYS.API_LOGS, cleaned);
+  }
+  return cleaned;
+};
 export const saveApiLogs = (logs: ApiLog[]) => saveToStorage(STORAGE_KEYS.API_LOGS, logs);
 
-export const loadWorldBooks = () => loadFromStorage<WorldBook[]>(STORAGE_KEYS.WORLD_BOOKS, INITIAL_WORLD_BOOKS);
+export const loadWorldBooks = (): WorldBook[] => {
+  const loaded = loadFromStorage<WorldBook[]>(STORAGE_KEYS.WORLD_BOOKS, []);
+  if (!Array.isArray(loaded)) return [];
+  const cleaned = loaded.filter((w) => w && w.id && !PRESET_DEMO_WORLDBOOK_IDS.has(w.id));
+  if (cleaned.length !== loaded.length) {
+    saveToStorage(STORAGE_KEYS.WORLD_BOOKS, cleaned);
+  }
+  return cleaned;
+};
 export const saveWorldBooks = (books: WorldBook[]) => saveToStorage(STORAGE_KEYS.WORLD_BOOKS, books);
 
-export const loadMemos = () => loadFromStorage<Memo[]>(STORAGE_KEYS.MEMOS, INITIAL_MEMOS);
+export const loadMemos = (): Memo[] => {
+  const loaded = loadFromStorage<Memo[]>(STORAGE_KEYS.MEMOS, []);
+  if (!Array.isArray(loaded)) return [];
+  const cleaned = loaded.filter((m) => m && m.id && !PRESET_DEMO_MEMO_IDS.has(m.id));
+  if (cleaned.length !== loaded.length) {
+    saveToStorage(STORAGE_KEYS.MEMOS, cleaned);
+  }
+  return cleaned;
+};
 export const saveMemos = (memos: Memo[]) => saveToStorage(STORAGE_KEYS.MEMOS, memos);
 
-const INITIAL_GOMOKU_RECORDS: GomokuRecord[] = [
-  {
-    id: 'rec_1',
-    timestamp: Date.now() - 3600000 * 5,
-    mode: 'pve',
-    playerColor: 'black',
-    opponentId: 'char_1',
-    opponentName: '林思微',
-    opponentAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-    difficulty: 'normal',
-    result: 'win',
-    totalMoves: 27,
-    durationSec: 142,
-  },
-  {
-    id: 'rec_2',
-    timestamp: Date.now() - 3600000 * 24,
-    mode: 'pve',
-    playerColor: 'black',
-    opponentId: 'char_2',
-    opponentName: '顾沉',
-    opponentAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&q=80',
-    difficulty: 'hard',
-    result: 'loss',
-    totalMoves: 34,
-    durationSec: 215,
-  },
-];
+const INITIAL_GOMOKU_RECORDS: GomokuRecord[] = [];
 
-export const loadGomokuRecords = () => loadFromStorage<GomokuRecord[]>(STORAGE_KEYS.GOMOKU_RECORDS, INITIAL_GOMOKU_RECORDS);
+export const loadGomokuRecords = (): GomokuRecord[] => {
+  const loaded = loadFromStorage<GomokuRecord[]>(STORAGE_KEYS.GOMOKU_RECORDS, []);
+  if (!Array.isArray(loaded)) return [];
+  const cleaned = loaded.filter((r) => r && r.id && !PRESET_DEMO_GAME_RECORD_IDS.has(r.id));
+  if (cleaned.length !== loaded.length) {
+    saveToStorage(STORAGE_KEYS.GOMOKU_RECORDS, cleaned);
+  }
+  return cleaned;
+};
 export const saveGomokuRecords = (recs: GomokuRecord[]) => saveToStorage(STORAGE_KEYS.GOMOKU_RECORDS, recs);
 
-const INITIAL_TICTACTOE_RECORDS: TicTacToeRecord[] = [
-  {
-    id: 'ttt_rec_1',
-    timestamp: Date.now() - 3600000 * 2,
-    mode: 'pve',
-    playerSymbol: 'X',
-    opponentId: 'char_1',
-    opponentName: '林思微',
-    opponentAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-    difficulty: 'normal',
-    result: 'win',
-    totalMoves: 5,
-    durationSec: 36,
-  },
-  {
-    id: 'ttt_rec_2',
-    timestamp: Date.now() - 3600000 * 12,
-    mode: 'pve',
-    playerSymbol: 'X',
-    opponentId: 'char_2',
-    opponentName: '顾沉',
-    opponentAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&q=80',
-    difficulty: 'hard',
-    result: 'draw',
-    totalMoves: 9,
-    durationSec: 54,
-  },
-];
+const INITIAL_TICTACTOE_RECORDS: TicTacToeRecord[] = [];
 
-export const loadTicTacToeRecords = () => loadFromStorage<TicTacToeRecord[]>(STORAGE_KEYS.TICTACTOE_RECORDS, INITIAL_TICTACTOE_RECORDS);
+export const loadTicTacToeRecords = (): TicTacToeRecord[] => {
+  const loaded = loadFromStorage<TicTacToeRecord[]>(STORAGE_KEYS.TICTACTOE_RECORDS, []);
+  if (!Array.isArray(loaded)) return [];
+  const cleaned = loaded.filter((r) => r && r.id && !PRESET_DEMO_GAME_RECORD_IDS.has(r.id));
+  if (cleaned.length !== loaded.length) {
+    saveToStorage(STORAGE_KEYS.TICTACTOE_RECORDS, cleaned);
+  }
+  return cleaned;
+};
 export const saveTicTacToeRecords = (recs: TicTacToeRecord[]) => saveToStorage(STORAGE_KEYS.TICTACTOE_RECORDS, recs);
 
-const INITIAL_RPS_RECORDS: RpsRecord[] = [
-  {
-    id: 'rps_rec_1',
-    timestamp: Date.now() - 3600000 * 1,
-    mode: 'pve',
-    playerGesture: 'rock',
-    aiGesture: 'scissors',
-    opponentId: 'char_1',
-    opponentName: '林思微',
-    opponentAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-    result: 'win',
-    question: '学姐周末有什么安排呀？',
-    answer: '这周末打算去图书馆借两本心理学的书，然后去尝尝新开的抹茶甜品店~ 你要一起来吗？',
-    questionAsker: '玩家',
-    questionAnswerer: '林思微',
-    streakAfter: 1,
-  },
-  {
-    id: 'rps_rec_2',
-    timestamp: Date.now() - 3600000 * 4,
-    mode: 'pve',
-    playerGesture: 'scissors',
-    aiGesture: 'rock',
-    opponentId: 'char_2',
-    opponentName: '顾沉',
-    opponentAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&q=80',
-    result: 'loss',
-    question: '你平时工作那么忙，最解压的方式是什么？',
-    answer: '听音乐，还有和你下棋猜拳。',
-    questionAsker: '顾沉',
-    questionAnswerer: '玩家',
-    streakAfter: 0,
-  },
-];
+const INITIAL_RPS_RECORDS: RpsRecord[] = [];
 
 const INITIAL_RPS_STATS: RpsStats = {
-  currentStreak: 1,
-  maxStreak: 4,
-  totalGames: 8,
-  playerWins: 5,
-  aiWins: 2,
-  draws: 1,
-  winRate: 63,
+  currentStreak: 0,
+  maxStreak: 0,
+  totalGames: 0,
+  playerWins: 0,
+  aiWins: 0,
+  draws: 0,
+  winRate: 0,
 };
 
-export const loadRpsRecords = () => loadFromStorage<RpsRecord[]>(STORAGE_KEYS.RPS_RECORDS, INITIAL_RPS_RECORDS);
+export const loadRpsRecords = (): RpsRecord[] => {
+  const loaded = loadFromStorage<RpsRecord[]>(STORAGE_KEYS.RPS_RECORDS, []);
+  if (!Array.isArray(loaded)) return [];
+  const cleaned = loaded.filter((r) => r && r.id && !PRESET_DEMO_GAME_RECORD_IDS.has(r.id));
+  if (cleaned.length !== loaded.length) {
+    saveToStorage(STORAGE_KEYS.RPS_RECORDS, cleaned);
+  }
+  return cleaned;
+};
 export const saveRpsRecords = (recs: RpsRecord[]) => saveToStorage(STORAGE_KEYS.RPS_RECORDS, recs);
 
 export const loadRpsStats = () => loadFromStorage<RpsStats>(STORAGE_KEYS.RPS_STATS, INITIAL_RPS_STATS);
 export const saveRpsStats = (stats: RpsStats) => saveToStorage(STORAGE_KEYS.RPS_STATS, stats);
 
 // Telepathy (心有灵犀) Initial Records & Stats
-const INITIAL_TELEPATHY_RECORDS: TelepathyRecord[] = [
-  {
-    id: 'tele_rec_1',
-    timestamp: Date.now() - 3600000 * 2,
-    characterId: 'char_1',
-    characterName: '林思微',
-    characterAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-    gameMode: '5_rounds',
-    totalRounds: 5,
-    matchCount: 4,
-    matchRate: 80,
-    maxStreak: 3,
-    affinityLevelTitle: '心有灵犀 ❤️',
-    rounds: [
-      {
-        roundIndex: 1,
-        question: {
-          id: 'q_daily_1',
-          category: 'daily',
-          categoryLabel: '日常选择',
-          question: '如果现在出去玩，你更想去哪里？',
-          options: [
-            { id: 'A', text: '吃饭', icon: '🍜' },
-            { id: 'B', text: '看电影', icon: '🎬' },
-            { id: 'C', text: '打游戏', icon: '🎮' },
-            { id: 'D', text: '散步', icon: '🌃' },
-          ],
-        },
-        playerChoiceId: 'D',
-        playerChoiceText: '散步',
-        aiChoiceId: 'D',
-        aiChoiceText: '散步',
-        isMatch: true,
-        aiReaction: '我就知道你会选散步，微风吹着最舒服啦~',
-      },
-      {
-        roundIndex: 2,
-        question: {
-          id: 'q_pref_1',
-          category: 'preference',
-          categoryLabel: '喜好倾向',
-          question: '你更喜欢哪一种天气？',
-          options: [
-            { id: 'A', text: '晴天', icon: '☀️' },
-            { id: 'B', text: '雨天', icon: '🌧️' },
-            { id: 'C', text: '下雪', icon: '❄️' },
-            { id: 'D', text: '阴天', icon: '🌙' },
-          ],
-        },
-        playerChoiceId: 'B',
-        playerChoiceText: '雨天',
-        aiChoiceId: 'B',
-        aiChoiceText: '雨天',
-        isMatch: true,
-        aiReaction: '听着雨声静静待着，我也觉得很安心。',
-      },
-    ],
-  },
-];
+const INITIAL_TELEPATHY_RECORDS: TelepathyRecord[] = [];
 
-const INITIAL_TELEPATHY_CHAR_STATS: Record<string, TelepathyCharacterStats> = {
-  char_1: {
-    characterId: 'char_1',
-    characterName: '林思微',
-    characterAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-    totalQuestions: 15,
-    totalMatches: 13,
-    matchRate: 87,
-    currentStreak: 4,
-    maxStreak: 6,
-    highestScore: 87,
-    totalGamesPlayed: 3,
-    lastPlayedTimestamp: Date.now() - 3600000 * 2,
-  },
-  char_2: {
-    characterId: 'char_2',
-    characterName: '顾沉',
-    characterAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&q=80',
-    totalQuestions: 10,
-    totalMatches: 6,
-    matchRate: 60,
-    currentStreak: 1,
-    maxStreak: 3,
-    highestScore: 60,
-    totalGamesPlayed: 2,
-    lastPlayedTimestamp: Date.now() - 3600000 * 12,
-  },
-  char_3: {
-    characterId: 'char_3',
-    characterName: '小助手 灵犀',
-    characterAvatar: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=300&q=80',
-    totalQuestions: 5,
-    totalMatches: 2,
-    matchRate: 40,
-    currentStreak: 0,
-    maxStreak: 2,
-    highestScore: 40,
-    totalGamesPlayed: 1,
-    lastPlayedTimestamp: Date.now() - 3600000 * 24,
-  },
+const INITIAL_TELEPATHY_CHAR_STATS: Record<string, TelepathyCharacterStats> = {};
+
+export const loadTelepathyRecords = (): TelepathyRecord[] => {
+  const loaded = loadFromStorage<TelepathyRecord[]>(STORAGE_KEYS.TELEPATHY_RECORDS, []);
+  if (!Array.isArray(loaded)) return [];
+  const cleaned = loaded.filter((r) => r && r.id && !PRESET_DEMO_GAME_RECORD_IDS.has(r.id));
+  if (cleaned.length !== loaded.length) {
+    saveToStorage(STORAGE_KEYS.TELEPATHY_RECORDS, cleaned);
+  }
+  return cleaned;
 };
-
-export const loadTelepathyRecords = () =>
-  loadFromStorage<TelepathyRecord[]>(STORAGE_KEYS.TELEPATHY_RECORDS, INITIAL_TELEPATHY_RECORDS);
 export const saveTelepathyRecords = (recs: TelepathyRecord[]) =>
   saveToStorage(STORAGE_KEYS.TELEPATHY_RECORDS, recs);
 
@@ -845,7 +632,7 @@ export const loadSettings = (): SettingsState => ({
   lockWallpaper: loadFromStorage(STORAGE_KEYS.LOCK_WALLPAPER, DEFAULT_LOCK_WALLPAPER),
   customCss: loadFromStorage(
     STORAGE_KEYS.CUSTOM_CSS,
-    '/* 自定义 CSS 示例 */\n.phone-screen {\n  font-family: system-ui, -apple-system, sans-serif;\n}'
+    '/* 自定义 CSS */\n.phone-screen {\n  font-family: system-ui, -apple-system, sans-serif;\n}'
   ),
   pinCode: loadFromStorage(STORAGE_KEYS.PIN, '1234'),
   isPinEnabled: loadFromStorage(STORAGE_KEYS.PIN_ENABLED, true),
@@ -882,109 +669,16 @@ export const generateGroupInviteCode = (): string => {
   return code;
 };
 
-export const INITIAL_GROUP_CHATS: GroupChat[] = [
-  {
-    id: 'group_default_1',
-    name: '✨ 灵犀AI好友茶话会',
-    avatar: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=300&q=80',
-    notice: '欢迎来到AI好友茶话会！在这里可以和所有AI伙伴共同探讨生活、工作与奇思妙想，也可以@某位AI单独互动或召唤全员发言哦~',
-    ownerId: 'user_main',
-    inviteCode: 'WX-GRP-892401',
-    inviteCodeActive: true,
-    createdAt: Date.now() - 86400000 * 2,
-    updatedAt: Date.now() - 3600000 * 3,
-    members: [
-      {
-        id: 'user_main',
-        name: '小清 (我)',
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-        memberType: 'human',
-        role: 'owner',
-        joinedAt: Date.now() - 86400000 * 2,
-        wxid: 'xiaoqing',
-      },
-      {
-        id: 'char_1',
-        name: '林思微',
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-        memberType: 'ai',
-        role: 'admin',
-        joinedAt: Date.now() - 86400000 * 2,
-        wxid: 'siwei_lin',
-        characterId: 'char_1',
-        customPersona: '温柔细心的学姐，声音甜美体贴，非常关心用户的日常生活与情绪。在群里喜欢带暖心表情包。',
-        customPersonality: '温柔体贴、知性暖心、爱笑',
-        memories: ['群主小清平时比较辛苦', '喜欢和大家在群里聊天交流'],
-      },
-      {
-        id: 'char_2',
-        name: '顾言',
-        avatar: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=300&q=80',
-        memberType: 'ai',
-        role: 'member',
-        joinedAt: Date.now() - 86400000 * 2,
-        wxid: 'yan_gu',
-        characterId: 'char_2',
-        customPersona: '冷静理性的高冷学霸，在群里善于从逻辑与科学角度分析问题，表面话少其实很靠谱。',
-        customPersonality: '严谨理性、寡言毒舌但关心细节',
-        memories: ['群内讨论需要注重逻辑严密性'],
-      },
-      {
-        id: 'char_3',
-        name: '陆沉',
-        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&q=80',
-        memberType: 'ai',
-        role: 'member',
-        joinedAt: Date.now() - 86400000 * 2,
-        wxid: 'lu_chen',
-        characterId: 'char_3',
-        customPersona: '成熟稳重的集团总裁，说话言简意赅，格局宏大，对群友格外关照。',
-        customPersonality: '成熟从容、上位者气场、细致周全',
-        memories: ['偶尔在群里发表见解与商业思考'],
-      },
-    ],
-    messages: [
-      {
-        id: 'gmsg_init_1',
-        groupId: 'group_default_1',
-        senderId: 'char_1',
-        senderName: '林思微',
-        senderAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-        senderType: 'ai',
-        text: '大家好呀！欢迎来到我们的小群~ 今天大家过得怎么样呀？✨',
-        timestamp: Date.now() - 7200000,
-      },
-      {
-        id: 'gmsg_init_2',
-        groupId: 'group_default_1',
-        senderId: 'char_2',
-        senderName: '顾言',
-        senderAvatar: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=300&q=80',
-        senderType: 'ai',
-        text: '思微下午好。刚整理完一组实验文献，正好上线看看。大家有什么话题想聊？',
-        timestamp: Date.now() - 7100000,
-      },
-      {
-        id: 'gmsg_init_3',
-        groupId: 'group_default_1',
-        senderId: 'char_3',
-        senderName: '陆沉',
-        senderAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&q=80',
-        senderType: 'ai',
-        text: '挺热闹。工作告一段落，大家有任何想法随时在群里交流。',
-        timestamp: Date.now() - 7000000,
-      },
-    ],
-    joinRequests: [],
-  },
-];
+export const INITIAL_GROUP_CHATS: GroupChat[] = [];
 
 export const loadGroupChats = (): GroupChat[] => {
-  const loaded = loadFromStorage<GroupChat[]>(STORAGE_KEYS.GROUP_CHATS, INITIAL_GROUP_CHATS);
-  if (!Array.isArray(loaded) || loaded.length === 0) {
-    return INITIAL_GROUP_CHATS;
+  const loaded = loadFromStorage<GroupChat[]>(STORAGE_KEYS.GROUP_CHATS, []);
+  if (!Array.isArray(loaded)) return [];
+  const cleaned = loaded.filter((g) => g && g.id && !PRESET_DEMO_GROUP_IDS.has(g.id));
+  if (cleaned.length !== loaded.length) {
+    saveToStorage(STORAGE_KEYS.GROUP_CHATS, cleaned);
   }
-  return loaded;
+  return cleaned;
 };
 
 export const saveGroupChats = (groups: GroupChat[]): void => {
@@ -1013,55 +707,40 @@ export {
 
 /**
  * Reset all localStorage items to factory defaults.
- * Removes custom additions, restores original wallpapers, system settings,
- * default AI characters, original profile, clean initial states.
  */
 export function resetStorageToFactoryDefaults(): void {
-  // Clear all localStorage entries
   localStorage.clear();
 
-  // Re-seed original default values
   saveToStorage(STORAGE_KEYS.DESKTOP_WALLPAPER, DEFAULT_DESKTOP_WALLPAPER);
   saveToStorage(STORAGE_KEYS.LOCK_WALLPAPER, DEFAULT_LOCK_WALLPAPER);
   saveToStorage(
     STORAGE_KEYS.CUSTOM_CSS,
-    '/* 自定义 CSS 示例 */\n.phone-screen {\n  font-family: system-ui, -apple-system, sans-serif;\n}'
+    '/* 自定义 CSS */\n.phone-screen {\n  font-family: system-ui, -apple-system, sans-serif;\n}'
   );
   saveToStorage(STORAGE_KEYS.PIN, '1234');
   saveToStorage(STORAGE_KEYS.PIN_ENABLED, true);
   saveToStorage(STORAGE_KEYS.IS_LOCKED, false);
 
-  saveToStorage(STORAGE_KEYS.CHARACTERS, INITIAL_CHARACTERS);
+  saveToStorage(STORAGE_KEYS.CHARACTERS, []);
   saveToStorage(STORAGE_KEYS.USER_PROFILE, INITIAL_USER_PROFILE);
   saveToStorage(STORAGE_KEYS.MENSTRUAL, INITIAL_MENSTRUAL_DATA);
-  saveToStorage(STORAGE_KEYS.MEMOS, INITIAL_MEMOS);
-  saveToStorage(STORAGE_KEYS.MOMENTS, INITIAL_MOMENTS);
-  saveToStorage(STORAGE_KEYS.WORLD_BOOKS, INITIAL_WORLD_BOOKS);
+  saveToStorage(STORAGE_KEYS.MEMOS, []);
+  saveToStorage(STORAGE_KEYS.MOMENTS, []);
+  saveToStorage(STORAGE_KEYS.WORLD_BOOKS, []);
   saveToStorage(STORAGE_KEYS.LAUNCHER_PAGES, 2);
   saveToStorage(STORAGE_KEYS.LAUNCHER_ICONS, INITIAL_ICONS);
   saveToStorage(STORAGE_KEYS.LAUNCHER_WIDGETS, INITIAL_WIDGETS);
-  saveToStorage(STORAGE_KEYS.API_LOGS, INITIAL_API_LOGS);
+  saveToStorage(STORAGE_KEYS.API_LOGS, []);
   saveToStorage(STORAGE_KEYS.PERMISSIONS, INITIAL_PERMISSIONS);
   saveApiConfig(INITIAL_API_CONFIG);
   saveToStorage(STORAGE_KEYS.AI_CONTROLS, INITIAL_AI_CONTROLS);
-  saveToStorage(STORAGE_KEYS.GOMOKU_RECORDS, INITIAL_GOMOKU_RECORDS);
-  saveToStorage(STORAGE_KEYS.TICTACTOE_RECORDS, INITIAL_TICTACTOE_RECORDS);
-  saveToStorage(STORAGE_KEYS.RPS_RECORDS, INITIAL_RPS_RECORDS);
+  saveToStorage(STORAGE_KEYS.GOMOKU_RECORDS, []);
+  saveToStorage(STORAGE_KEYS.TICTACTOE_RECORDS, []);
+  saveToStorage(STORAGE_KEYS.RPS_RECORDS, []);
   saveToStorage(STORAGE_KEYS.RPS_STATS, INITIAL_RPS_STATS);
-  saveToStorage(STORAGE_KEYS.TELEPATHY_RECORDS, INITIAL_TELEPATHY_RECORDS);
-  saveToStorage(STORAGE_KEYS.TELEPATHY_CHAR_STATS, INITIAL_TELEPATHY_CHAR_STATS);
-  saveToStorage(STORAGE_KEYS.GROUP_CHATS, INITIAL_GROUP_CHATS);
-
-  // Initial welcome message
-  saveToStorage(STORAGE_KEYS.MESSAGES, [
-    {
-      id: 'msg_welcome_1',
-      characterId: 'char_1',
-      sender: 'ai',
-      text: '小清，今天工作学习辛苦啦！有没有按时吃晚饭？记得多喝热水哦~',
-      timestamp: Date.now() - 3600000,
-      thinkingProcess: '用户系统数据显示此时为晚间。根据记忆条目“关注用户日常与情绪”，发出亲切问候，询问晚饭与喝水情况。',
-    },
-  ]);
+  saveToStorage(STORAGE_KEYS.TELEPATHY_RECORDS, []);
+  saveToStorage(STORAGE_KEYS.TELEPATHY_CHAR_STATS, {});
+  saveToStorage(STORAGE_KEYS.GROUP_CHATS, []);
+  saveToStorage(STORAGE_KEYS.MESSAGES, []);
 }
 

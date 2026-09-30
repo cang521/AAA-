@@ -49,7 +49,15 @@ import {
 import { DataManagementModal } from '../data/DataManagementModal';
 import { clearAllChatMessages } from '../../lib/chatDb';
 import { clearAllAiMemoryVaults } from '../../lib/aiMemoryVaultDb';
-import { resetStorageToFactoryDefaults } from '../../lib/storage';
+import { resetStorageToFactoryDefaults, loadCharacters } from '../../lib/storage';
+import {
+  getAiArchiveConfig,
+  saveAiArchiveConfig,
+  performIncrementalArchive,
+  getPendingMessageCount,
+  AiArchiveConfig,
+  subscribeArchiveDb,
+} from '../../lib/chatArchiveDb';
 import {
   getUpgradeProtectionLogs,
   CURRENT_APP_DATA_VERSION,
@@ -115,6 +123,70 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
   // Active Provider Category Tab
   const [activeCategory, setActiveCategory] = useState<'text' | 'image' | 'voice'>('text');
+
+  // Chat Archiving Settings States
+  const [allCharacters] = useState(() => loadCharacters());
+  const [selectedCharId, setSelectedCharId] = useState<string>(() => (loadCharacters()[0]?.id || 'char_1'));
+  const [archiveConfig, setArchiveConfig] = useState<AiArchiveConfig | null>(null);
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [archiveSuccessMsg, setArchiveSuccessMsg] = useState('');
+
+  const loadArchiveConfigForChar = async (charId: string) => {
+    const cfg = await getAiArchiveConfig(charId);
+    const pending = await getPendingMessageCount(charId, cfg.lastArchivedTimestamp || 0);
+    setArchiveConfig({
+      ...cfg,
+      pendingCount: pending,
+    });
+  };
+
+  useEffect(() => {
+    if (selectedCharId) {
+      loadArchiveConfigForChar(selectedCharId);
+    }
+  }, [selectedCharId]);
+
+  useEffect(() => {
+    const unsub = subscribeArchiveDb(() => {
+      if (selectedCharId) {
+        loadArchiveConfigForChar(selectedCharId);
+      }
+    });
+    return unsub;
+  }, [selectedCharId]);
+
+  const handleUpdateFrequency = async (freq: 'off' | 'daily' | 'weekly' | 'monthly') => {
+    if (!archiveConfig) return;
+    const updated = { ...archiveConfig, autoArchiveFrequency: freq };
+    setArchiveConfig(updated);
+    await saveAiArchiveConfig(updated);
+  };
+
+  const handleUpdateSearchMode = async (mode: 'off' | 'auto' | 'deep') => {
+    if (!archiveConfig) return;
+    const updated = { ...archiveConfig, searchMode: mode };
+    setArchiveConfig(updated);
+    await saveAiArchiveConfig(updated);
+  };
+
+  const handleManualArchiveNow = async () => {
+    if (!selectedCharId || isArchiving) return;
+    setIsArchiving(true);
+    setArchiveSuccessMsg('');
+
+    try {
+      const res = await performIncrementalArchive(selectedCharId, true);
+      if (res.status === 'completed') {
+        setArchiveSuccessMsg(`成功增量归档 ${res.archivedCount} 条聊天消息！`);
+        setTimeout(() => setArchiveSuccessMsg(''), 4000);
+      }
+      await loadArchiveConfigForChar(selectedCharId);
+    } catch (e: any) {
+      console.error('Archive error:', e);
+    } finally {
+      setIsArchiving(false);
+    }
+  };
 
   // Key Visibility toggles
   const [showTextKey, setShowTextKey] = useState(false);
@@ -736,6 +808,155 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                 onChange={(e) => setControls({ ...controls, proactivePopups: e.target.checked })}
                 className="w-4 h-4 accent-white rounded cursor-pointer"
               />
+            </div>
+          </div>
+        </section>
+
+        {/* AI 聊天记录本地归档与高效检索 */}
+        <section className="space-y-2">
+          <div className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider px-1">
+            <Archive className="w-3.5 h-3.5 text-sky-400" />
+            <span>AI 聊天记录增量归档与检索设置</span>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-4">
+            {/* AI 角色选择器 */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-300">选择要设置的 AI 角色</label>
+              <select
+                value={selectedCharId}
+                onChange={(e) => setSelectedCharId(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-100 focus:outline-none focus:border-sky-500"
+              >
+                {allCharacters.length === 0 ? (
+                  <option value="char_1">默认 AI 角色</option>
+                ) : (
+                  allCharacters.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.id})
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+
+            {/* 自动归档频率 */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-zinc-200">自动归档周期</span>
+                <span className="text-[11px] text-zinc-500">定时增量归档到本地</span>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5 pt-1">
+                {(
+                  [
+                    { id: 'off', label: '关闭' },
+                    { id: 'daily', label: '每天' },
+                    { id: 'weekly', label: '每周' },
+                    { id: 'monthly', label: '每月' },
+                  ] as const
+                ).map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handleUpdateFrequency(item.id)}
+                    className={`py-1.5 px-2 rounded-xl text-xs font-medium transition ${
+                      archiveConfig?.autoArchiveFrequency === item.id
+                        ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40 font-bold'
+                        : 'bg-zinc-900 text-zinc-400 border border-zinc-850 hover:bg-zinc-850'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 历史回忆检索模式 */}
+            <div className="space-y-1.5 border-t border-zinc-850 pt-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-zinc-200">AI 对话回忆检索模式</span>
+                <span className="text-[11px] text-zinc-500">控制历史索引的使用范围</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 pt-1">
+                {(
+                  [
+                    { id: 'off', label: '关闭检索', desc: '不查旧归档' },
+                    { id: 'auto', label: '智能回忆', desc: '按需命中索引' },
+                    { id: 'deep', label: '深度检索', desc: '扩大搜索深度' },
+                  ] as const
+                ).map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handleUpdateSearchMode(item.id)}
+                    className={`p-2 rounded-xl text-xs text-left transition ${
+                      archiveConfig?.searchMode === item.id
+                        ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40 font-bold'
+                        : 'bg-zinc-900 text-zinc-400 border border-zinc-850 hover:bg-zinc-850'
+                    }`}
+                  >
+                    <div className="font-semibold text-[11px]">{item.label}</div>
+                    <div className="text-[10px] text-zinc-500">{item.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 状态卡片与手动归档按钮 */}
+            <div className="bg-zinc-900/80 border border-zinc-850 rounded-xl p-3 space-y-2.5 text-xs text-zinc-300">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-zinc-500">上次归档时间:</span>
+                <span className="font-mono text-zinc-300">
+                  {archiveConfig?.lastArchivedAt
+                    ? new Date(archiveConfig.lastArchivedAt).toLocaleString()
+                    : '从未归档'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-zinc-500">归档游标状态:</span>
+                <span className="font-medium text-sky-400">
+                  {archiveConfig?.archiveStatus === 'running'
+                    ? '⏳ 归档进行中...'
+                    : archiveConfig?.archiveStatus === 'completed'
+                    ? '✅ 已完成'
+                    : archiveConfig?.archiveStatus === 'failed'
+                    ? '❌ 归档失败'
+                    : '就绪'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-zinc-500">待归档增量消息:</span>
+                <span className="font-bold text-amber-400">{archiveConfig?.pendingCount ?? 0} 条</span>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-zinc-500">归档库累计储存:</span>
+                <span className="font-bold text-zinc-200">{archiveConfig?.archivedTotalCount ?? 0} 条</span>
+              </div>
+
+              {archiveConfig?.lastFailedError && (
+                <div className="text-[11px] text-rose-400 bg-rose-950/30 border border-rose-900/40 p-2 rounded-lg">
+                  ❌ 归档失败信息: {archiveConfig.lastFailedError}
+                </div>
+              )}
+
+              {archiveSuccessMsg && (
+                <div className="text-[11px] text-emerald-400 bg-emerald-950/30 border border-emerald-900/40 p-2 rounded-lg">
+                  ✨ {archiveSuccessMsg}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleManualArchiveNow}
+                disabled={isArchiving}
+                className="w-full py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer mt-1"
+              >
+                <Archive className="w-3.5 h-3.5" />
+                <span>{isArchiving ? '增量归档中...' : '立即增量归档'}</span>
+              </button>
             </div>
           </div>
         </section>

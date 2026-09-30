@@ -6,8 +6,6 @@
 }
 
 :root {
-  color-scheme: dark;
-  background-color: #09090b;
   --safe-area-top: max(
     env(safe-area-inset-top, 0px),
     var(--safe-area-inset-top, 0px),
@@ -31,8 +29,6 @@
 }
 
 html, body, #root {
-  background-color: #09090b;
-  color-scheme: dark;
   width: 100%;
   height: 100%;
   margin: 0;
@@ -41,38 +37,19 @@ html, body, #root {
   -webkit-tap-highlight-color: transparent;
 }
 
-.pt-safe {
-  padding-top: var(--safe-area-top);
-}
-
-.pb-safe {
-  padding-bottom: var(--safe-area-bottom);
-}
-
-.pl-safe {
-  padding-left: var(--safe-area-left);
-}
-
-.pr-safe {
-  padding-right: var(--safe-area-right);
-}
-
+.pt-safe { padding-top: var(--safe-area-top); }
+.pb-safe { padding-bottom: var(--safe-area-bottom); }
+.pl-safe { padding-left: var(--safe-area-left); }
+.pr-safe { padding-right: var(--safe-area-right); }
 .p-safe {
   padding-top: var(--safe-area-top);
   padding-bottom: var(--safe-area-bottom);
   padding-left: var(--safe-area-left);
   padding-right: var(--safe-area-right);
 }
+.top-safe { top: var(--safe-area-top); }
+.bottom-safe { bottom: var(--safe-area-bottom); }
 
-.top-safe {
-  top: var(--safe-area-top);
-}
-
-.bottom-safe {
-  bottom: var(--safe-area-bottom);
-}
-
-/* 确保可编辑表单元素不受父级 select-none 影响，恢复 Android 原生长按/复制/粘贴/选择与 Callout 菜单 */
 input,
 textarea,
 [contenteditable="true"] {
@@ -82,178 +59,291 @@ textarea,
 }
 
 /* ======================================================
-   【晴空牛奶蓝 / Cloud Milk】 Theme System
+   CLOUD MILK GLOBAL THEME SYSTEM (Light & Dark Modes)
    ====================================================== */
 
-:root {
+/* 1. LIGHT MODE (白天模式 / 晴空牛奶蓝) */
+:root,
+[data-theme="light"],
+[data-theme="cloud_milk"],
+.theme-light,
+.theme-cloud-milk {
+  color-scheme: light !important;
   --theme-bg: #F5FBFF;
   --theme-surface: #FFFFFF;
   --theme-surface-soft: #EAF7FF;
   --theme-primary: #8DCCF4;
   --theme-primary-light: #DDF2FF;
   --theme-primary-strong: #67B7EA;
-  --theme-text: #40566A;
-  --theme-text-secondary: #7890A3;
+  --theme-text: #1E293B;
+  --theme-text-secondary: #64748B;
   --theme-border: #CFE9F8;
   --theme-shadow: rgba(92, 167, 214, 0.16);
+
+  /* Desktop Widget Light Mode Theme Variables */
+  --widget-bg: rgba(255, 255, 255, 0.88);
+  --widget-search-bg: rgba(255, 255, 255, 0.85);
+  --widget-border: rgba(186, 230, 253, 0.85);
+  --widget-shadow: 0 8px 24px rgba(56, 189, 248, 0.14);
+  --widget-radius: 1.5rem;
+  --widget-text-main: #1E293B;
+  --widget-text-sub: #64748B;
+  --widget-accent: #0284C7;
+  --widget-accent-light: #E0F2FE;
+  --widget-accent-border: #BAE6FD;
 }
 
-.theme-cloud-milk,
-[data-theme="cloud_milk"] {
-  color-scheme: light !important;
-  background-color: var(--theme-bg) !important;
-  color: var(--theme-text) !important;
-}
-
-/* Canvas & Screen Overrides */
+/* Light Mode DOM Overrides */
+[data-theme="light"] .phone-screen,
+[data-theme="cloud_milk"] .phone-screen,
+.theme-light .phone-screen,
 .theme-cloud-milk .phone-screen,
-.theme-cloud-milk .bg-zinc-950,
-.theme-cloud-milk .bg-zinc-900,
-.theme-cloud-milk .bg-zinc-900\/90,
-.theme-cloud-milk .bg-zinc-900\/80,
-.theme-cloud-milk .bg-zinc-900\/60,
-.theme-cloud-milk .bg-black,
-.theme-cloud-milk .bg-black\/80,
-.theme-cloud-milk .bg-black\/60 {
+[data-theme="light"] .bg-zinc-950,
+[data-theme="cloud_milk"] .bg-zinc-950,
+[data-theme="light"] .bg-zinc-900,
+[data-theme="cloud_milk"] .bg-zinc-900 {
   background-color: var(--theme-bg) !important;
 }
 
-/* Structural Surface Overrides (Cards, Panels, Modals) */
-.theme-cloud-milk .bg-zinc-850,
-.theme-cloud-milk .bg-zinc-800,
-.theme-cloud-milk .bg-zinc-800\/80,
-.theme-cloud-milk .bg-zinc-800\/60,
-.theme-cloud-milk .bg-zinc-800\/90,
-.theme-cloud-milk .bg-zinc-800\/40,
-.theme-cloud-milk .bg-zinc-900\/70 {
+[data-theme="light"] .bg-zinc-850,
+[data-theme="cloud_milk"] .bg-zinc-850,
+[data-theme="light"] .bg-zinc-800,
+[data-theme="cloud_milk"] .bg-zinc-800,
+[data-theme="light"] .bg-zinc-900\/90,
+[data-theme="cloud_milk"] .bg-zinc-900\/90,
+[data-theme="light"] .bg-zinc-900\/80,
+[data-theme="cloud_milk"] .bg-zinc-900\/80 {
   background-color: var(--theme-surface) !important;
 }
 
-.theme-cloud-milk .bg-zinc-750,
-.theme-cloud-milk .bg-zinc-700,
-.theme-cloud-milk .bg-zinc-700\/80,
-.theme-cloud-milk .bg-zinc-700\/50 {
+[data-theme="light"] .bg-zinc-750,
+[data-theme="cloud_milk"] .bg-zinc-750,
+[data-theme="light"] .bg-zinc-700,
+[data-theme="cloud_milk"] .bg-zinc-700 {
   background-color: var(--theme-surface-soft) !important;
 }
 
-/* Typography Color Overrides */
-.theme-cloud-milk .text-white,
-.theme-cloud-milk .text-zinc-100,
-.theme-cloud-milk .text-zinc-200 {
+[data-theme="light"] .text-white,
+[data-theme="cloud_milk"] .text-white,
+[data-theme="light"] .text-zinc-100,
+[data-theme="cloud_milk"] .text-zinc-100,
+[data-theme="light"] .text-zinc-200,
+[data-theme="cloud_milk"] .text-zinc-200 {
   color: var(--theme-text) !important;
 }
 
-.theme-cloud-milk .text-zinc-300,
-.theme-cloud-milk .text-zinc-400,
-.theme-cloud-milk .text-zinc-500 {
+[data-theme="light"] .text-zinc-300,
+[data-theme="cloud_milk"] .text-zinc-300,
+[data-theme="light"] .text-zinc-400,
+[data-theme="cloud_milk"] .text-zinc-400,
+[data-theme="light"] .text-zinc-500,
+[data-theme="cloud_milk"] .text-zinc-500 {
   color: var(--theme-text-secondary) !important;
 }
 
-/* Hairline Border Overrides */
-.theme-cloud-milk .border-zinc-800,
-.theme-cloud-milk .border-zinc-750,
-.theme-cloud-milk .border-zinc-700,
-.theme-cloud-milk .border-zinc-600,
-.theme-cloud-milk .border-zinc-800\/60,
-.theme-cloud-milk .border-white\/10,
-.theme-cloud-milk .border-white\/20,
-.theme-cloud-milk .border-white\/30 {
+[data-theme="light"] .border-zinc-800,
+[data-theme="cloud_milk"] .border-zinc-800,
+[data-theme="light"] .border-zinc-750,
+[data-theme="cloud_milk"] .border-zinc-750,
+[data-theme="light"] .border-zinc-700,
+[data-theme="cloud_milk"] .border-zinc-700,
+[data-theme="light"] .border-zinc-600,
+[data-theme="cloud_milk"] .border-zinc-600 {
   border-color: var(--theme-border) !important;
 }
 
-/* Soft Shadows */
-.theme-cloud-milk .shadow-2xl,
-.theme-cloud-milk .shadow-xl,
-.theme-cloud-milk .shadow-lg,
-.theme-cloud-milk .shadow-md,
-.theme-cloud-milk .shadow-sm {
-  box-shadow: 0 4px 16px var(--theme-shadow) !important;
-}
-
-/* Primary Color Accents & Buttons */
-.theme-cloud-milk .bg-indigo-600,
-.theme-cloud-milk .bg-indigo-500,
-.theme-cloud-milk .bg-emerald-600,
-.theme-cloud-milk .bg-emerald-500,
-.theme-cloud-milk .bg-purple-600 {
-  background-color: var(--theme-primary-strong) !important;
-  color: #FFFFFF !important;
-}
-
-.theme-cloud-milk .text-indigo-400,
-.theme-cloud-milk .text-emerald-400,
-.theme-cloud-milk .text-purple-400,
-.theme-cloud-milk .text-amber-400 {
-  color: var(--theme-primary-strong) !important;
-}
-
-/* Form Controls & Text Inputs */
-.theme-cloud-milk input[type="text"],
-.theme-cloud-milk input[type="password"],
-.theme-cloud-milk input[type="number"],
-.theme-cloud-milk textarea,
-.theme-cloud-milk select {
+[data-theme="light"] input[type="text"],
+[data-theme="cloud_milk"] input[type="text"],
+[data-theme="light"] input[type="password"],
+[data-theme="cloud_milk"] input[type="password"],
+[data-theme="light"] input[type="number"],
+[data-theme="cloud_milk"] input[type="number"],
+[data-theme="light"] textarea,
+[data-theme="cloud_milk"] textarea,
+[data-theme="light"] select,
+[data-theme="cloud_milk"] select {
   background-color: var(--theme-surface) !important;
   color: var(--theme-text) !important;
   border-color: var(--theme-border) !important;
 }
 
-.theme-cloud-milk input::placeholder,
-.theme-cloud-milk textarea::placeholder {
+[data-theme="light"] input::placeholder,
+[data-theme="cloud_milk"] input::placeholder,
+[data-theme="light"] textarea::placeholder,
+[data-theme="cloud_milk"] textarea::placeholder {
   color: var(--theme-text-secondary) !important;
   opacity: 0.75;
 }
 
-.theme-cloud-milk input:focus,
-.theme-cloud-milk textarea:focus {
-  border-color: var(--theme-primary-strong) !important;
-  box-shadow: 0 0 0 3px rgba(103, 183, 234, 0.25) !important;
+/* 2. DARK MODE (黑夜模式 / 云海夜空) */
+[data-theme="dark"],
+[data-theme="default"],
+.theme-dark {
+  color-scheme: dark !important;
+  --theme-bg: #090D12;
+  --theme-surface: #121820;
+  --theme-surface-soft: #18222E;
+  --theme-primary: #38BDF8;
+  --theme-primary-light: rgba(56, 189, 248, 0.15);
+  --theme-primary-strong: #38BDF8;
+  --theme-text: #F8FAFC;
+  --theme-text-secondary: #94A3B8;
+  --theme-border: rgba(141, 204, 244, 0.18);
+  --theme-shadow: rgba(0, 0, 0, 0.4);
+
+  /* Desktop Widget Dark Mode Theme Variables */
+  --widget-bg: rgba(18, 24, 32, 0.88);
+  --widget-search-bg: rgba(21, 29, 40, 0.85);
+  --widget-border: rgba(141, 204, 244, 0.22);
+  --widget-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --widget-text-main: #F8FAFC;
+  --widget-text-sub: #94A3B8;
+  --widget-accent: #38BDF8;
+  --widget-accent-light: rgba(56, 189, 248, 0.15);
+  --widget-accent-border: rgba(56, 189, 248, 0.3);
 }
 
-/* Toggle Switches */
-.theme-cloud-milk input[type="checkbox"]:not(.danger-checkbox) {
-  accent-color: var(--theme-primary-strong) !important;
+/* Dark Mode DOM Overrides */
+[data-theme="dark"] .phone-screen,
+[data-theme="default"] .phone-screen,
+.theme-dark .phone-screen,
+[data-theme="dark"] .bg-zinc-950,
+[data-theme="default"] .bg-zinc-950,
+[data-theme="dark"] .bg-zinc-900,
+[data-theme="default"] .bg-zinc-900 {
+  background-color: #090D12 !important;
 }
 
-/* WeChat Chat Bubble Overrides */
-.theme-cloud-milk .chat-bubble-user {
-  background-color: var(--theme-primary-light) !important;
-  color: var(--theme-text) !important;
-  border: 1px solid var(--theme-border) !important;
+[data-theme="dark"] .bg-zinc-850,
+[data-theme="default"] .bg-zinc-850,
+[data-theme="dark"] .bg-zinc-800,
+[data-theme="default"] .bg-zinc-800,
+[data-theme="dark"] .bg-zinc-900\/80,
+[data-theme="default"] .bg-zinc-900\/80 {
+  background-color: #121820 !important;
 }
 
-.theme-cloud-milk .chat-bubble-ai {
-  background-color: var(--theme-surface) !important;
-  color: var(--theme-text) !important;
-  border: 1px solid var(--theme-border) !important;
-  box-shadow: 0 2px 8px var(--theme-shadow) !important;
+[data-theme="dark"] .bg-zinc-900\/95,
+[data-theme="default"] .bg-zinc-900\/95,
+[data-theme="dark"] .bg-zinc-900\/90,
+[data-theme="default"] .bg-zinc-900\/90 {
+  background-color: #1B2432 !important;
 }
 
-/* Unread Badges - Deeper Sky Blue, Not Harsh Red */
-.theme-cloud-milk .unread-badge,
-.theme-cloud-milk .bg-emerald-500\/20 {
-  background-color: var(--theme-primary-light) !important;
-  color: var(--theme-text) !important;
-  border-color: var(--theme-border) !important;
+[data-theme="dark"] input[type="text"],
+[data-theme="default"] input[type="text"],
+[data-theme="dark"] input[type="password"],
+[data-theme="default"] input[type="password"],
+[data-theme="dark"] input[type="number"],
+[data-theme="default"] input[type="number"],
+[data-theme="dark"] textarea,
+[data-theme="default"] textarea,
+[data-theme="dark"] select,
+[data-theme="default"] select,
+[data-theme="dark"] .bg-zinc-750,
+[data-theme="default"] .bg-zinc-750,
+[data-theme="dark"] .bg-zinc-700,
+[data-theme="default"] .bg-zinc-700 {
+  background-color: #151D28 !important;
+  color: #F8FAFC !important;
+  border-color: rgba(141, 204, 244, 0.2) !important;
 }
 
-/* Retain Red for Danger / Destructive Actions */
-.theme-cloud-milk .bg-rose-600,
-.theme-cloud-milk .bg-red-600,
-.theme-cloud-milk .bg-rose-500,
-.theme-cloud-milk .bg-red-500 {
+[data-theme="dark"] input::placeholder,
+[data-theme="default"] input::placeholder,
+[data-theme="dark"] textarea::placeholder,
+[data-theme="default"] textarea::placeholder {
+  color: #94A3B8 !important;
+  opacity: 0.75;
+}
+
+[data-theme="dark"] input:focus,
+[data-theme="default"] input:focus,
+[data-theme="dark"] textarea:focus,
+[data-theme="default"] textarea:focus {
+  border-color: #38BDF8 !important;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.25) !important;
+}
+
+[data-theme="dark"] .text-white,
+[data-theme="default"] .text-white,
+[data-theme="dark"] .text-zinc-100,
+[data-theme="default"] .text-zinc-100,
+[data-theme="dark"] .text-zinc-200,
+[data-theme="default"] .text-zinc-200 {
+  color: #F8FAFC !important;
+}
+
+[data-theme="dark"] .text-zinc-300,
+[data-theme="default"] .text-zinc-300,
+[data-theme="dark"] .text-zinc-400,
+[data-theme="default"] .text-zinc-400,
+[data-theme="dark"] .text-zinc-500,
+[data-theme="default"] .text-zinc-500 {
+  color: #94A3B8 !important;
+}
+
+[data-theme="dark"] .border-zinc-800,
+[data-theme="default"] .border-zinc-800,
+[data-theme="dark"] .border-zinc-750,
+[data-theme="default"] .border-zinc-750,
+[data-theme="dark"] .border-zinc-700,
+[data-theme="default"] .border-zinc-700,
+[data-theme="dark"] .border-zinc-600,
+[data-theme="default"] .border-zinc-600 {
+  border-color: rgba(141, 204, 244, 0.18) !important;
+}
+
+[data-theme="dark"] .bg-emerald-600,
+[data-theme="default"] .bg-emerald-600,
+[data-theme="dark"] .bg-emerald-500,
+[data-theme="default"] .bg-emerald-500,
+[data-theme="dark"] .bg-indigo-600,
+[data-theme="default"] .bg-indigo-600,
+[data-theme="dark"] .bg-indigo-500,
+[data-theme="default"] .bg-indigo-500 {
+  background-color: #0284C7 !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme="dark"] .text-emerald-400,
+[data-theme="default"] .text-emerald-400,
+[data-theme="dark"] .text-indigo-400,
+[data-theme="default"] .text-indigo-400,
+[data-theme="dark"] .text-purple-400,
+[data-theme="default"] .text-purple-400,
+[data-theme="dark"] .text-sky-400,
+[data-theme="default"] .text-sky-400 {
+  color: #38BDF8 !important;
+}
+
+/* Chat Bubbles in Dark Mode */
+[data-theme="dark"] .chat-bubble-user,
+[data-theme="default"] .chat-bubble-user {
+  background-color: #0284C7 !important;
+  color: #FFFFFF !important;
+  border: 1px solid rgba(56, 189, 248, 0.3) !important;
+}
+
+[data-theme="dark"] .chat-bubble-ai,
+[data-theme="default"] .chat-bubble-ai {
+  background-color: #121820 !important;
+  color: #F8FAFC !important;
+  border: 1px solid rgba(141, 204, 244, 0.2) !important;
+}
+
+/* Danger / Destructive Actions (Universal Red) */
+.bg-rose-600, .bg-red-600, .bg-rose-500, .bg-red-500 {
   background-color: #EF4444 !important;
   color: #FFFFFF !important;
 }
 
-.theme-cloud-milk .text-rose-400,
-.theme-cloud-milk .text-red-400,
-.theme-cloud-milk .text-rose-500 {
+.text-rose-400, .text-red-400, .text-rose-500 {
   color: #EF4444 !important;
 }
 
-/* Smooth Transitions */
-.theme-cloud-milk * {
+/* Smooth Theme Switch Transitions */
+* {
   transition-property: background-color, border-color, color;
   transition-duration: 200ms;
   transition-timing-function: ease-out;

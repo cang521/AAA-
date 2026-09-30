@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Upload, Image as ImageIcon, Check } from 'lucide-react';
+import { X, Upload, Image as ImageIcon } from 'lucide-react';
 
 interface ImagePickerModalProps {
   isOpen: boolean;
@@ -7,18 +7,6 @@ interface ImagePickerModalProps {
   onSelectImage: (imageUrl: string) => void;
   title?: string;
 }
-
-const PRESET_IMAGES = [
-  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
-  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80',
-  'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=400&q=80',
-  'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=400&q=80',
-  'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=400&q=80',
-  'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=400&q=80',
-  'https://images.unsplash.com/photo-1518791841217-8f162f1e1131?auto=format&fit=crop&w=400&q=80',
-  'https://images.unsplash.com/photo-1526772662000-3f88f10405ff?auto=format&fit=crop&w=400&q=80',
-  'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=400&q=80',
-];
 
 export const ImagePickerModal: React.FC<ImagePickerModalProps> = ({
   isOpen,
@@ -98,31 +86,25 @@ export const ImagePickerModal: React.FC<ImagePickerModalProps> = ({
           />
         </div>
 
-        {/* Presets Grid */}
-        <div className="mb-4">
-          <span className="block text-xs text-zinc-400 mb-2">预设图标与壁纸</span>
-          <div className="grid grid-cols-5 gap-2 max-h-36 overflow-y-auto pr-1">
-            {PRESET_IMAGES.map((img, idx) => (
+        {/* Selected Image Preview */}
+        {preview && (
+          <div className="mb-4 p-2.5 rounded-2xl bg-zinc-850 border border-zinc-800 flex items-center gap-3">
+            <img src={preview} alt="预览" className="w-12 h-12 rounded-xl object-cover border border-zinc-700" />
+            <div className="flex-1 min-w-0 text-xs">
+              <p className="text-zinc-200 font-medium truncate">已选图片预览</p>
               <button
-                key={idx}
+                type="button"
                 onClick={() => {
-                  setPreview(img);
-                  setCustomUrl(img);
+                  setPreview(null);
+                  setCustomUrl('');
                 }}
-                className={`relative aspect-square rounded-xl overflow-hidden border-2 transition ${
-                  preview === img ? 'border-emerald-500 scale-95' : 'border-transparent hover:border-zinc-600'
-                }`}
+                className="text-[10px] text-rose-400 hover:underline mt-0.5"
               >
-                <img src={img} alt="" className="w-full h-full object-cover" />
-                {preview === img && (
-                  <div className="absolute inset-0 bg-emerald-500/30 flex items-center justify-center">
-                    <Check className="w-4 h-4 text-white" />
-                  </div>
-                )}
+                清除选择
               </button>
-            ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Action buttons */}
         <div className="flex gap-2 justify-end pt-2 border-t border-zinc-800">
@@ -134,7 +116,8 @@ export const ImagePickerModal: React.FC<ImagePickerModalProps> = ({
           </button>
           <button
             onClick={handleConfirm}
-            className="px-4 py-2 text-xs font-medium rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 transition shadow-sm"
+            disabled={!preview && !customUrl.trim()}
+            className="px-4 py-2 text-xs font-medium rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 text-white transition shadow-sm"
           >
             确认使用
           </button>

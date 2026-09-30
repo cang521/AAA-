@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { DEFAULT_AI_AVATAR } from '../../../lib/storage';
 import {
   AiCharacter,
   ApiConfig,
@@ -99,7 +100,7 @@ export const RpsGame: React.FC<RpsGameProps> = ({
       id: 'default_ai',
       name: 'AI 伙伴',
       wxid: 'ai_friend',
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
+      avatar: DEFAULT_AI_AVATAR,
       persona: '温柔细心的AI伙伴',
       greeting: '一起来猜拳吧！',
       memories: ['喜欢和用户一起游戏'],

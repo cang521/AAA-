@@ -1,4 +1,4 @@
-export type ThemeId = 'default' | 'cloud_milk';
+export type ThemeId = 'light' | 'dark' | 'system' | 'cloud_milk' | 'default';
 export type WallpaperSource = 'default' | 'theme' | 'custom';
 
 export type AppId =

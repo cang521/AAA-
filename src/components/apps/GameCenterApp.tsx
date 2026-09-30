@@ -27,6 +27,7 @@ import {
   loadTelepathyRecords,
   saveTelepathyRecords,
   loadTelepathyCharStats,
+  DEFAULT_AI_AVATAR,
 } from '../../lib/storage';
 import { GomokuGame } from './gomoku/GomokuGame';
 import { TicTacToeGame } from './tictactoe/TicTacToeGame';
@@ -65,16 +66,16 @@ import {
 } from 'lucide-react';
 
 const FALLBACK_AI_CHARACTER: AiCharacter = {
-  id: 'char_1',
-  name: '林思微',
-  wxid: 'lin_siwei',
-  avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-  persona: '温柔体贴的大学学姐，对生活充满热爱，细心体贴，情绪感知力极强。',
-  personality: '温柔知性，耐心倾听，善解人意。',
-  relationship: '学姐/好友',
-  greeting: '小清，今天过得怎么样？很高兴和你一起玩游戏！',
+  id: 'char_default',
+  name: 'AI好友',
+  wxid: 'ai_friend',
+  avatar: DEFAULT_AI_AVATAR,
+  persona: '高效知性的AI游戏伴侣。',
+  personality: '幽默轻松、认真对局。',
+  relationship: '游戏对友',
+  greeting: '你好呀！很高兴和你一起进行游戏对局！',
   memories: [],
-  tags: ['学姐', '知心'],
+  tags: ['游戏', 'AI'],
   isLocked: false,
 };
 

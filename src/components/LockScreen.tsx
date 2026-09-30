@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Lock, Unlock, Delete, Phone, Camera, ShieldCheck } from 'lucide-react';
 import { ThemeId } from '../types';
+import { CLOUD_MILK_LOCK_WALLPAPER } from '../lib/themeWallpapers';
 
 interface LockScreenProps {
   onUnlock: () => void;
@@ -25,9 +26,9 @@ export const LockScreen: React.FC<LockScreenProps> = ({
   const actualWallpaper =
     wallpaperUrl ||
     wallpaper ||
-    'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1000&q=80';
+    CLOUD_MILK_LOCK_WALLPAPER;
 
-  const isLightWallpaper = actualWallpaper.includes('data:image/svg') || theme === 'cloud_milk';
+  const isLightWallpaper = actualWallpaper.includes('data:image/svg') || theme === 'cloud_milk' || theme === 'light';
 
   const [pinInput, setPinInput] = useState('');
   const [errorMsg, setErrorMsg] = useState('');

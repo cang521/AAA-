@@ -65,6 +65,7 @@ import { WeatherApp } from './components/apps/WeatherApp';
 import { OfflineModeHome } from './components/offline/OfflineModeHome';
 import { CLOUD_MILK_DESKTOP_WALLPAPER, CLOUD_MILK_LOCK_WALLPAPER } from './lib/themeWallpapers';
 import { initAllAiMemoryVaults } from './lib/aiMemoryVaultDb';
+import { checkAndRunScheduledArchives } from './lib/chatArchiveDb';
 import { InPhoneAskDialog } from './components/agent/InPhoneAskDialog';
 import { InPhoneNotificationBanner } from './components/agent/InPhoneNotificationBanner';
 import { agentOrchestrator } from './lib/agent/AgentOrchestrator';
@@ -308,15 +309,79 @@ export function App() {
     styleEl.innerHTML = safeCss;
   }, [settings?.customCss]);
 
+  // Scheduled background archive trigger
+  useEffect(() => {
+    if (characters && characters.length > 0) {
+      const charIds = characters.map((c) => c.id);
+      checkAndRunScheduledArchives(charIds);
+
+      const handleFocus = () => checkAndRunScheduledArchives(charIds);
+      const handleVisibility = () => {
+        if (document.visibilityState === 'visible') {
+          checkAndRunScheduledArchives(charIds);
+        }
+      };
+
+      window.addEventListener('focus', handleFocus);
+      document.addEventListener('visibilitychange', handleVisibility);
+
+      return () => {
+        window.removeEventListener('focus', handleFocus);
+        document.removeEventListener('visibilitychange', handleVisibility);
+      };
+    }
+  }, [characters]);
+
+  // Listen for system theme media query changes for 'system' mode
+  const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() => {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = (e: MediaQueryListEvent) => {
+      setSystemPrefersDark(e.matches);
+    };
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
   const currentEngineConfig = getApiConfigForEngine();
 
-  const activeTheme = settings.theme || 'default';
+  const activeTheme = settings.theme || 'light';
+  const effectiveTheme: 'light' | 'dark' =
+    activeTheme === 'system'
+      ? systemPrefersDark
+        ? 'dark'
+        : 'light'
+      : activeTheme === 'light' || activeTheme === 'cloud_milk'
+      ? 'light'
+      : 'dark';
+
+  // Synchronize document root attribute for global modal and body styling
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-theme', effectiveTheme);
+      if (effectiveTheme === 'light') {
+        document.documentElement.classList.add('theme-light', 'theme-cloud-milk');
+        document.documentElement.classList.remove('theme-dark');
+      } else {
+        document.documentElement.classList.add('theme-dark');
+        document.documentElement.classList.remove('theme-light', 'theme-cloud-milk');
+      }
+    }
+  }, [effectiveTheme]);
+
   const activeWallpaperSource = settings.wallpaperSource || 'default';
 
   let activeDesktopWallpaper = settings.desktopWallpaper || DEFAULT_DESKTOP_WALLPAPER;
   let activeLockWallpaper = settings.lockWallpaper || DEFAULT_LOCK_WALLPAPER;
 
-  if (activeWallpaperSource === 'theme' && activeTheme === 'cloud_milk') {
+  if (activeWallpaperSource === 'theme' && effectiveTheme === 'light') {
     activeDesktopWallpaper = CLOUD_MILK_DESKTOP_WALLPAPER;
     activeLockWallpaper = CLOUD_MILK_LOCK_WALLPAPER;
   } else if (activeWallpaperSource === 'custom') {
@@ -333,7 +398,7 @@ export function App() {
       <PhoneContainer
         onLockClick={() => setIsLocked(true)}
         customCss={settings?.customCss}
-        theme={settings?.theme || 'default'}
+        theme={effectiveTheme}
       >
         {/* LOCK SCREEN LAYER */}
         {isLocked ? (
@@ -343,7 +408,7 @@ export function App() {
             correctPin={settings.pinCode}
             pinCode={settings.pinCode}
             isPinEnabled={settings.isPinEnabled}
-            theme={activeTheme}
+            theme={effectiveTheme}
             onUnlock={() => setIsLocked(false)}
           />
         ) : activeAppId ? (

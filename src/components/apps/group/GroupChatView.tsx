@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch } from '../../../lib/localBackend';
+import { DEFAULT_USER_AVATAR } from '../../../lib/storage';
 import {
   ChevronLeft,
   MoreHorizontal,
@@ -60,6 +61,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
 
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const isComposingRef = useRef(false);
   const aiChainCountRef = useRef<number>(0);
 
   // Sync messages from group prop if changed externally
@@ -227,7 +229,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
       senderName: userProfile.name || '小清',
       senderAvatar:
         userProfile.avatar ||
-        'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
+        DEFAULT_USER_AVATAR,
       senderType: 'human',
       text,
       timestamp: Date.now(),
@@ -555,8 +557,26 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
               setShowMentionPicker(true);
             }
           }}
+          onInput={(e) => {
+            const val = e.currentTarget.value;
+            setInputText(val);
+            if (val.endsWith('@')) {
+              setShowMentionPicker(true);
+            }
+          }}
+          onCompositionStart={() => {
+            isComposingRef.current = true;
+          }}
+          onCompositionEnd={(e) => {
+            isComposingRef.current = false;
+            const val = e.currentTarget.value;
+            setInputText(val);
+            if (val.endsWith('@')) {
+              setShowMentionPicker(true);
+            }
+          }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter' && !e.shiftKey && !isComposingRef.current) {
               e.preventDefault();
               handleSendMessage();
             }

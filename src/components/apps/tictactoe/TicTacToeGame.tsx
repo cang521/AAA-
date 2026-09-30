@@ -38,6 +38,8 @@ import {
   Check,
 } from 'lucide-react';
 
+import { DEFAULT_AI_AVATAR } from '../../../lib/storage';
+
 interface TicTacToeGameProps {
   onBack: () => void;
   characters: AiCharacter[];
@@ -70,7 +72,7 @@ export const TicTacToeGame: React.FC<TicTacToeGameProps> = ({
     id: 'char_default',
     name: 'AI 棋手',
     wxid: 'ai_player',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
+    avatar: DEFAULT_AI_AVATAR,
     persona: '机智自信的AI棋手',
     greeting: '来一局井字棋吗？三连决胜！',
     memories: [],

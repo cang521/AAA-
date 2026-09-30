@@ -72,7 +72,7 @@ import { calculateCycleStats } from '../../lib/menstrual';
 import { weatherService } from '../../lib/weatherService';
 import { deviceService } from '../../lib/deviceService';
 import { systemNativeService } from '../../lib/systemNativeService';
-import { loadGroupChats, saveGroupChats } from '../../lib/storage';
+import { loadGroupChats, saveGroupChats, DEFAULT_AI_AVATAR, DEFAULT_USER_AVATAR } from '../../lib/storage';
 import { CreateGroupModal } from './group/CreateGroupModal';
 import { GroupChatView } from './group/GroupChatView';
 import { JoinGroupByCodeModal } from './group/JoinGroupByCodeModal';
@@ -98,6 +98,7 @@ import { ChatMessageBubble } from './ChatMessageBubble';
 import { ContactSwipeRow } from './ContactSwipeRow';
 import { AiMemoryVaultModal } from './memory/AiMemoryVaultModal';
 import { searchAiMemoryChunks, deleteAiMemoryVault } from '../../lib/aiMemoryVaultDb';
+import { recallArchivedHistory, getAiArchiveConfig } from '../../lib/chatArchiveDb';
 import { OfflineModeHome } from '../offline/OfflineModeHome';
 import { OfflineHistoryDetailModal } from '../offline/OfflineHistoryDetailModal';
 
@@ -173,6 +174,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const sendClickTimerRef = useRef<any>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const isComposingRef = useRef<boolean>(false);
 
   // Modals & Drawers
   const [showCoTModal, setShowCoTModal] = useState<string | null>(null);
@@ -593,9 +595,17 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     setIsLoading(true);
 
     try {
-      // Parallelize independent pre-tasks (History Recall, Vault Recall, Weather)
-      const [historyResult, vaultRecall, weatherInfo] = await Promise.all([
+      // Fetch AI archive config to determine search mode ('off' | 'auto' | 'deep')
+      const archiveConfig = await getAiArchiveConfig(activeCharacter.id).catch(() => ({ searchMode: 'auto' as const }));
+
+      // Parallelize independent pre-tasks (History Recall, Archived History Recall, Vault Recall, Weather)
+      const [historyResult, archiveResult, vaultRecall, weatherInfo] = await Promise.all([
         recallCharacterMemories(activeCharacter.id, combinedUserText, 4).catch(() => ({
+          recalledText: '',
+          matchedCount: 0,
+          durationMs: 0,
+        })),
+        recallArchivedHistory(activeCharacter.id, combinedUserText, archiveConfig.searchMode || 'auto').catch(() => ({
           recalledText: '',
           matchedCount: 0,
           durationMs: 0,
@@ -610,13 +620,19 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       ]);
 
       console.log(`[ChatPerf] historyRecall=${historyResult.durationMs ?? 0}ms`);
+      console.log(`[ChatPerf] archiveRecall=${archiveResult.durationMs ?? 0}ms`);
       console.log(`[ChatPerf] vaultRecall=${vaultRecall.durationMs ?? 0}ms`);
       console.log(`[ChatPerf] weather=0ms`);
 
       let combinedRecalledMemories = historyResult.recalledText || '';
+      if (archiveResult.recalledText) {
+        combinedRecalledMemories = combinedRecalledMemories
+          ? `${combinedRecalledMemories}\n\n${archiveResult.recalledText}`
+          : archiveResult.recalledText;
+      }
       if (vaultRecall.recalledText) {
         combinedRecalledMemories = combinedRecalledMemories
-          ? `${vaultRecall.recalledText}\n\n${combinedRecalledMemories}`
+          ? `${combinedRecalledMemories}\n\n${vaultRecall.recalledText}`
           : vaultRecall.recalledText;
       }
 
@@ -774,6 +790,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
   // Send Button Double Click / Single Click Router
   const handleSendButtonClick = () => {
+    const textToSend = (inputRef.current?.value || inputText).trim();
     const now = Date.now();
     const timeSinceLast = now - lastSendClickTimeRef.current;
     lastSendClickTimeRef.current = now;
@@ -784,11 +801,12 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         sendClickTimerRef.current = null;
       }
       lastSendClickTimeRef.current = 0;
-      handleTriggerAiReply(inputText.trim());
+      handleTriggerAiReply(textToSend);
     } else {
       if (sendClickTimerRef.current) clearTimeout(sendClickTimerRef.current);
       sendClickTimerRef.current = setTimeout(() => {
-        handleSendUserOnlyMessage(inputText.trim());
+        const latestVal = (inputRef.current?.value || inputText).trim();
+        handleSendUserOnlyMessage(latestVal);
         sendClickTimerRef.current = null;
       }, 220);
     }
@@ -922,32 +940,6 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const handleAddCustomCharacter = (newChar: AiCharacter) => {
     onUpdateCharacters([...characters, newChar]);
     setShowNewAiModal(false);
-    setActiveChatId(newChar.id);
-    setActiveTab('chats');
-  };
-
-  // Add preset AI character
-  const handleAddPresetAi = (preset: any) => {
-    const newChar: AiCharacter = {
-      id: 'char_preset_' + Date.now(),
-      name: preset.name,
-      wxid: preset.wxid || 'ai_' + Math.random().toString(36).slice(2, 7),
-      relationship: preset.relationship,
-      avatar: preset.avatar,
-      persona: preset.persona,
-      personality: preset.personality,
-      greeting: preset.greeting,
-      memories: preset.memories || [],
-      tags: preset.tags || [],
-      isLocked: false,
-      isCustom: true,
-      menstrualCare: {
-        enabled: true,
-        notificationFrequency: 'daily',
-      },
-    };
-    onUpdateCharacters([...characters, newChar]);
-    setShowAddFriendModal(false);
     setActiveChatId(newChar.id);
     setActiveTab('chats');
   };
@@ -1417,12 +1409,22 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                             placeholder={`给 ${activeCharacter.name} 发送消息... (Enter发送)`}
                             value={inputText}
                             onChange={(e) => setInputText(e.target.value)}
+                            onInput={(e) => setInputText(e.currentTarget.value)}
+                            onCompositionStart={() => {
+                              isComposingRef.current = true;
+                            }}
+                            onCompositionEnd={(e) => {
+                              isComposingRef.current = false;
+                              setInputText(e.currentTarget.value);
+                            }}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
+                              if (e.key === 'Enter' && !isComposingRef.current) {
+                                e.preventDefault();
+                                const val = inputRef.current?.value || inputText;
                                 if (e.shiftKey) {
-                                  handleTriggerAiReply(inputText.trim());
+                                  handleTriggerAiReply(val.trim());
                                 } else {
-                                  handleSendUserOnlyMessage(inputText.trim());
+                                  handleSendUserOnlyMessage(val.trim());
                                 }
                               }
                             }}
@@ -1430,8 +1432,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                           />
                           <button
                             onClick={handleSendButtonClick}
-                            onDoubleClick={() => handleTriggerAiReply(inputText.trim())}
-                            disabled={isLoading || (!inputText.trim() && unrepliedCount === 0)}
+                            onDoubleClick={() => handleTriggerAiReply((inputRef.current?.value || inputText).trim())}
+                            disabled={isLoading || !inputText.trim()}
                             title="单击发送当前消息（可连发多句）；快速双击直接召唤 AI 综合回复"
                             className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-40 text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer"
                           >
@@ -1439,9 +1441,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                             <span>发送</span>
                           </button>
                           <button
-                            onClick={() => handleTriggerAiReply(inputText.trim())}
+                            onClick={() => handleTriggerAiReply((inputRef.current?.value || inputText).trim())}
                             disabled={isLoading || (unrepliedCount === 0 && !inputText.trim())}
-                            title="立即召唤 AI 结合上下文与记忆开始思考回复"
+                            title="指引 AI 结合上下文与记忆回复（也可在无新输入时主动催促回复）"
                             className="px-2.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 disabled:opacity-30 text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer"
                           >
                             <Sparkles className="w-3.5 h-3.5 text-amber-300" />
@@ -1454,7 +1456,26 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                 ) : (
                   // Chat List View (Includes Group Chats + 1-on-1 Character Chats)
                   <div className="flex-1 overflow-y-auto divide-y divide-zinc-800/80">
-                    {/* Group Chats Section */}
+                    {groupChats.length === 0 && characters.length === 0 ? (
+                      <div className="py-20 flex flex-col items-center justify-center text-center px-4 space-y-3">
+                        <div className="w-14 h-14 rounded-full bg-sky-500/10 border border-sky-400/20 text-sky-400 flex items-center justify-center shadow-inner">
+                          <MessageCircle className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-semibold text-zinc-200">暂无聊天消息</h4>
+                          <p className="text-xs text-zinc-400 mt-1">前往通讯录添加好友或创建 AI 开启交流</p>
+                        </div>
+                        <button
+                          onClick={() => setActiveTab('contacts')}
+                          className="px-4 py-2 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white font-medium text-xs shadow-md hover:brightness-110 transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <UserPlus className="w-4 h-4" />
+                          <span>添加好友 / 创建 AI</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Group Chats Section */}
                     {groupChats.map((group) => {
                       const lastMsg =
                         group.messages && group.messages.length > 0
@@ -1575,6 +1596,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                         </div>
                       );
                     })}
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -1633,32 +1656,51 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                 </div>
 
                 {/* Friend List with Swipe Left Actions */}
-                {characters.map((char) => (
-                  <ContactSwipeRow
-                    key={char.id}
-                    char={char}
-                    isOpen={swipedContactId === char.id}
-                    onOpen={(id) => setSwipedContactId(id)}
-                    onClose={() => setSwipedContactId(null)}
-                    onOpenChat={(id) => {
-                      handleOpenChat(id);
-                      setActiveTab('chats');
-                    }}
-                    onToggleLock={(targetChar) => {
-                      onUpdateCharacters(
-                        characters.map((c) => (c.id === targetChar.id ? { ...c, isLocked: !c.isLocked } : c))
-                      );
-                    }}
-                    onRequestDelete={(targetChar) => {
-                      setCharacterToDelete(targetChar);
-                      setDeleteMemoryVaultWithChar(true);
-                    }}
-                    onOpenMemoryVault={(targetChar) => {
-                      setMemoryVaultTargetChar(targetChar);
-                      setShowMemoryVaultModal(true);
-                    }}
-                  />
-                ))}
+                {characters.length === 0 ? (
+                  <div className="py-12 flex flex-col items-center justify-center text-center px-4 space-y-3">
+                    <div className="w-14 h-14 rounded-full bg-sky-500/10 border border-sky-400/20 text-sky-400 flex items-center justify-center shadow-inner">
+                      <UserPlus className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-zinc-200">还没有好友</h4>
+                      <p className="text-xs text-zinc-400 mt-1">点击上方「新的朋友」创建专属 AI 或添加好友</p>
+                    </div>
+                    <button
+                      onClick={() => setShowAddFriendModal(true)}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white font-medium text-xs shadow-md hover:brightness-110 transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <UserPlus className="w-4 h-4" />
+                      <span>添加好友 / 创建 AI</span>
+                    </button>
+                  </div>
+                ) : (
+                  characters.map((char) => (
+                    <ContactSwipeRow
+                      key={char.id}
+                      char={char}
+                      isOpen={swipedContactId === char.id}
+                      onOpen={(id) => setSwipedContactId(id)}
+                      onClose={() => setSwipedContactId(null)}
+                      onOpenChat={(id) => {
+                        handleOpenChat(id);
+                        setActiveTab('chats');
+                      }}
+                      onToggleLock={(targetChar) => {
+                        onUpdateCharacters(
+                          characters.map((c) => (c.id === targetChar.id ? { ...c, isLocked: !c.isLocked } : c))
+                        );
+                      }}
+                      onRequestDelete={(targetChar) => {
+                        setCharacterToDelete(targetChar);
+                        setDeleteMemoryVaultWithChar(true);
+                      }}
+                      onOpenMemoryVault={(targetChar) => {
+                        setMemoryVaultTargetChar(targetChar);
+                        setShowMemoryVaultModal(true);
+                      }}
+                    />
+                  ))
+                )}
               </div>
             )}
           </>
@@ -1667,7 +1709,24 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         {/* TAB 3: MOMENTS (朋友圈) */}
         {activeTab === 'moments' && (
           <div className="w-full h-full overflow-y-auto p-3 space-y-4">
-            {moments.map((post) => (
+            {moments.length === 0 ? (
+              <div className="py-16 flex flex-col items-center justify-center text-center px-4 space-y-3">
+                <div className="w-14 h-14 rounded-full bg-sky-500/10 border border-sky-400/20 text-sky-400 flex items-center justify-center shadow-inner">
+                  <Compass className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold text-zinc-200">暂无朋友圈动态</h4>
+                  <p className="text-xs text-zinc-400 mt-1">发一条新动态表达当下的心情与生活吧</p>
+                </div>
+                <button
+                  onClick={() => setShowCreatePostModal(true)}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs shadow-md transition cursor-pointer"
+                >
+                  <span>发一条动态</span>
+                </button>
+              </div>
+            ) : (
+              moments.map((post) => (
               <div
                 key={post.id}
                 className="p-3.5 rounded-2xl bg-zinc-800/80 border border-zinc-750 text-xs space-y-2.5"
@@ -1717,7 +1776,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                   )}
                 </div>
               </div>
-            ))}
+            )))}
           </div>
         )}
 
@@ -2513,128 +2572,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                       setShowAddFriendModal(false);
                       setShowNewAiModal(true);
                     }}
-                    className="w-full py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-semibold text-xs shadow-md transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-semibold text-xs shadow-md transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-amber-300" />
                     <span>立即开始自由设定 AI</span>
                   </button>
-                </div>
-
-                {/* Preset AI Friends Recommendation */}
-                <div className="space-y-2.5 text-xs pt-1 border-t border-zinc-800">
-                  <div className="flex items-center justify-between">
-                    <p className="text-zinc-300 font-semibold flex items-center gap-1">
-                      <span>灵感推荐 AI 好友</span>
-                    </p>
-                    <span className="text-[10px] text-zinc-500">点击一键添加</span>
-                  </div>
-
-                  <input
-                    type="text"
-                    placeholder="搜索推荐角色名或风格关键词..."
-                    value={addFriendSearchQuery}
-                    onChange={(e) => setAddFriendSearchQuery(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-750 text-white text-xs placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
-                  />
-
-                  <div className="space-y-2 max-h-56 overflow-y-auto pr-0.5">
-                    {[
-                      {
-                        name: '顾言',
-                        wxid: 'guyan_scholar',
-                        relationship: '学长/学术伙伴',
-                        avatar:
-                          'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&q=80',
-                        persona: '严谨冷静的高冷学霸，表面冷淡，实则观察细致，擅长理性分析与学业指导。',
-                        personality: '言简意赅，逻辑清晰，在深夜自习室时会悄悄给你递一杯热咖啡。',
-                        greeting: '你好，我是顾言。请问今天有什么学术或逻辑上的疑问？',
-                        memories: ['用户也是求知者', '喜欢有条理的沟通'],
-                        tags: ['高冷', '学霸', '导师'],
-                      },
-                      {
-                        name: '陆沉',
-                        wxid: 'luchen_ceo',
-                        relationship: '兄长/同行伙伴',
-                        avatar:
-                          'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=300&q=80',
-                        persona: '沉稳优雅的企业执行官，富有魅力，言谈得体，时刻关注用户的安全与成长。',
-                        personality: '温柔且有极强掌控力，富有成熟魅力，善于倾听和给予最切实的保护。',
-                        greeting: '晚好，工作或生活上有任何困难，随时告诉我。',
-                        memories: ['注重效率与品味'],
-                        tags: ['沉稳', '精英', '安全感'],
-                      },
-                      {
-                        name: '小葵',
-                        wxid: 'xiaokui_sun',
-                        relationship: '元气闺蜜',
-                        avatar:
-                          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-                        persona: '充满能量的元气少女，美食与旅行达人，擅长情感倾听和正能量鼓励。',
-                        personality: '古灵精怪，热情洋溢，爱发颜文字和可爱的日常分享。',
-                        greeting: '嗨呀！今天天气超棒，有没有吃好吃的？要保持好心情哦！✨',
-                        memories: ['喜欢分享美食与日常'],
-                        tags: ['元气', '治愈', '闺蜜'],
-                      },
-                      {
-                        name: '苏若浅',
-                        wxid: 'ruoqian_doc',
-                        relationship: '温柔知己',
-                        avatar:
-                          'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=300&q=80',
-                        persona: '温婉细腻的心理咨询师与茶艺师，擅长抚平焦虑情绪，给予最细腻的关怀与倾听。',
-                        personality: '说话轻柔如春风，总能在第一时间捕捉到你字里行间的疲惫与情绪起伏。',
-                        greeting: '今天辛苦啦~ 无论外面发生了什么，回到这里都可以卸下所有防备。',
-                        memories: ['用户容易在深夜感到疲惫', '喜好温暖舒适的环境'],
-                        tags: ['知性', '治愈', '心理师'],
-                      },
-                      {
-                        name: '江寻',
-                        wxid: 'jiangxun_cat',
-                        relationship: '傲娇恋人',
-                        avatar:
-                          'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=300&q=80',
-                        persona: '有点小傲娇的年轻设计师，表面上经常吐槽你笨手笨脚，实际上每天都在默默关注你。',
-                        personality: '口嫌体正直，“我才没有特意在等你呢”，但秒回消息的速度出卖了他。',
-                        greeting: '喂，今天降温多穿衣服没有？别以为我不知道你又只要风度不要温度……笨蛋。',
-                        memories: ['用户经常忘记带伞', '用户一着凉就容易感冒'],
-                        tags: ['傲娇', '恋人', '口嫌体正直'],
-                      },
-                    ]
-                      .filter((p) => {
-                        if (!addFriendSearchQuery.trim()) return true;
-                        const q = addFriendSearchQuery.toLowerCase();
-                        return (
-                          p.name.toLowerCase().includes(q) ||
-                          p.persona.toLowerCase().includes(q) ||
-                          p.relationship.toLowerCase().includes(q)
-                        );
-                      })
-                      .map((p, idx) => (
-                        <div
-                          key={idx}
-                          className="p-2.5 rounded-2xl bg-zinc-800 border border-zinc-750 flex items-center justify-between"
-                        >
-                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                            <img src={p.avatar} alt="" className="w-10 h-10 rounded-xl object-cover shrink-0" />
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-1.5">
-                                <h5 className="font-semibold text-zinc-100 text-xs truncate">{p.name}</h5>
-                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-zinc-700 text-zinc-300">
-                                  {p.relationship}
-                                </span>
-                              </div>
-                              <p className="text-[10px] text-zinc-400 truncate">{p.persona}</p>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => handleAddPresetAi(p)}
-                            className="ml-2 px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-[11px] shrink-0 cursor-pointer shadow-xs transition active:scale-95"
-                          >
-                            添加
-                          </button>
-                        </div>
-                      ))}
-                  </div>
                 </div>
               </>
             ) : (

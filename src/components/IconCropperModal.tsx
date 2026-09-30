@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Upload, ZoomIn, ZoomOut, RotateCw, Check, Image as ImageIcon } from 'lucide-react';
+import { CLOUD_MILK_DESKTOP_WALLPAPER, DEFAULT_AI_AVATAR, DEFAULT_USER_AVATAR } from '../lib/storage';
 
 interface IconCropperModalProps {
   isOpen: boolean;
@@ -17,7 +18,7 @@ export const IconCropperModal: React.FC<IconCropperModalProps> = ({
   onCropComplete,
 }) => {
   const [imageSrc, setImageSrc] = useState<string>(
-    initialImageUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=400&q=80'
+    initialImageUrl || DEFAULT_AI_AVATAR
   );
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
@@ -29,15 +30,7 @@ export const IconCropperModal: React.FC<IconCropperModalProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageObjRef = useRef<HTMLImageElement | null>(null);
 
-  // Preset sample pictures
-  const samplePictures = [
-    'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=400&q=80',
-    'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?auto=format&fit=crop&w=400&q=80',
-    'https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&w=400&q=80',
-    'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=400&q=80',
-    'https://images.unsplash.com/photo-1614680376593-902f749f7cfc?auto=format&fit=crop&w=400&q=80',
-  ];
-
+  // Remove sample preset pictures
   useEffect(() => {
     if (initialImageUrl) {
       setImageSrc(initialImageUrl);
@@ -140,27 +133,25 @@ export const IconCropperModal: React.FC<IconCropperModalProps> = ({
             />
           </div>
 
-          {/* Sample Preset Selection */}
-          <div className="space-y-1.5">
-            <span className="block text-[11px] text-zinc-400">预设图样快速选取:</span>
-            <div className="flex items-center gap-2 overflow-x-auto pb-1">
-              {samplePictures.map((url, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => {
-                    setImageSrc(url);
-                    setZoom(1);
-                    setOffsetX(0);
-                    setOffsetY(0);
-                  }}
-                  className={`w-10 h-10 rounded-xl overflow-hidden shrink-0 border-2 transition ${
-                    imageSrc === url ? 'border-purple-400 ring-2 ring-purple-500/30' : 'border-zinc-700 opacity-70 hover:opacity-100'
-                  }`}
-                >
-                  <img src={url} alt="" className="w-full h-full object-cover" />
-                </button>
-              ))}
-            </div>
+          {/* URL Input */}
+          <div className="space-y-1">
+            <span className="block text-[11px] text-zinc-400">或输入图片 URL:</span>
+            <input
+              type="text"
+              placeholder="https://..."
+              value={customUrlInput}
+              onChange={(e) => {
+                setCustomUrlInput(e.target.value);
+                if (e.target.value.trim()) {
+                  setImageSrc(e.target.value.trim());
+                  setZoom(1);
+                  setOffsetX(0);
+                  setOffsetY(0);
+                  setRotation(0);
+                }
+              }}
+              className="w-full px-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-purple-500 text-xs"
+            />
           </div>
 
           {/* Interactive Crop Mask Preview Box */}

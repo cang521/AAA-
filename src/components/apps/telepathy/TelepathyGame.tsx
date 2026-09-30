@@ -52,6 +52,8 @@ import {
   Zap,
 } from 'lucide-react';
 
+import { DEFAULT_AI_AVATAR } from '../../../lib/storage';
+
 interface TelepathyGameProps {
   onBack: () => void;
   characters: AiCharacter[];
@@ -64,16 +66,16 @@ interface TelepathyGameProps {
 }
 
 const FALLBACK_TELEPATHY_CHAR: AiCharacter = {
-  id: 'char_1',
-  name: '林思微',
-  wxid: 'lin_siwei',
-  avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-  persona: '温柔体贴的大学学姐，对生活充满热爱，细心体贴，情绪感知力极强。',
-  personality: '温柔知性，耐心倾听，善解人意。',
-  relationship: '学姐/好友',
-  greeting: '小清，今天过得怎么样？很高兴和你一起玩游戏！',
+  id: 'char_default',
+  name: 'AI好友',
+  wxid: 'ai_friend',
+  avatar: DEFAULT_AI_AVATAR,
+  persona: '高效知性的AI搭档。',
+  personality: '真诚幽默。',
+  relationship: '好友',
+  greeting: '你好呀！一起来进行默契测试吧！',
   memories: [],
-  tags: ['学姐', '知心'],
+  tags: ['AI', '默契'],
   isLocked: false,
 };
 

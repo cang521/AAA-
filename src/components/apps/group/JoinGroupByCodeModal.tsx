@@ -11,6 +11,7 @@ import {
   Send,
 } from 'lucide-react';
 import { GroupChat, GroupJoinRequest, UserProfile } from '../../../types';
+import { DEFAULT_USER_AVATAR } from '../../../lib/storage';
 
 interface JoinGroupByCodeModalProps {
   isOpen: boolean;
@@ -24,17 +25,17 @@ interface JoinGroupByCodeModalProps {
 const PRESET_SIMULATED_HUMANS = [
   {
     name: '安然 (摄影师)',
-    avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=300&q=80',
+    avatar: DEFAULT_USER_AVATAR,
     bio: '爱好风光摄影与旅行，希望能和大家一起探讨生活灵感！',
   },
   {
     name: '陈航 (独立开发者)',
-    avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=300&q=80',
+    avatar: DEFAULT_USER_AVATAR,
     bio: '全栈开发工程师，关注大模型智能体与分布式架构。',
   },
   {
     name: '苏夏 (插画师)',
-    avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=300&q=80',
+    avatar: DEFAULT_USER_AVATAR,
     bio: '喜欢手绘与二次元，在群里多向大家学习~',
   },
 ];
@@ -96,7 +97,7 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
       groupId: matchedGroup.id,
       userId: 'user_main',
       userName: userProfile.name || '小清',
-      userAvatar: userProfile.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
+      userAvatar: userProfile.avatar || DEFAULT_USER_AVATAR,
       userBio: userProfile.bio || '申请加入群聊',
       inviteCodeUsed: matchedGroup.inviteCode,
       status: 'pending',
