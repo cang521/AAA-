@@ -83,7 +83,26 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
               </div>
             )}
 
+            {/* Attached Image Preview */}
+            {msg.imageUrl && (
+              <div className="mb-1.5 overflow-hidden rounded-xl border border-white/20">
+                <img
+                  src={msg.imageUrl}
+                  alt="图片附件"
+                  className="max-w-full max-h-56 object-cover cursor-pointer hover:opacity-95 transition"
+                  onClick={() => window.open(msg.imageUrl, '_blank')}
+                />
+              </div>
+            )}
+
             {msg.text}
+
+            {/* Vision API status footnote if failed */}
+            {msg.imageAnalysisStatus === 'failed' && (
+              <span className="block text-[9px] text-rose-300 font-mono mt-1 opacity-90">
+                ⚠️ 图片识别调用未能完成 (消息与图片已保存)
+              </span>
+            )}
 
             {msg.isRefreshed && (
               <span className="block text-[9px] text-amber-300 font-mono mt-1 opacity-80">已刷新回答</span>
@@ -108,6 +127,8 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
     return (
       prev.msg.id === next.msg.id &&
       prev.msg.text === next.msg.text &&
+      prev.msg.imageUrl === next.msg.imageUrl &&
+      prev.msg.imageAnalysisStatus === next.msg.imageAnalysisStatus &&
       prev.msg.thinkingProcess === next.msg.thinkingProcess &&
       prev.msg.isRefreshed === next.msg.isRefreshed &&
       prev.quoteText === next.quoteText &&

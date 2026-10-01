@@ -98,6 +98,9 @@ export interface ChatMessage {
   characterId: string;
   sender: 'user' | 'ai';
   text: string;
+  imageUrl?: string;
+  imageAnalysis?: string;
+  imageAnalysisStatus?: 'success' | 'failed' | 'none';
   timestamp: number;
   thinkingProcess?: string;
   quoteMessageId?: string;

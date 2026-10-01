@@ -163,17 +163,19 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [dbVersionKey, setDbVersionKey] = useState(0);
 
-  // Input & quote states
+  // Input & quote & image attachment states
   const [inputText, setInputText] = useState('');
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [quoteMsgId, setQuoteMsgId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showWorldBookModal, setShowWorldBookModal] = useState<WorldBook | null>(null);
 
-  // Double click detection on Send Button
+  // Double click detection on Send Button & refs
   const lastSendClickTimeRef = useRef<number>(0);
   const sendClickTimerRef = useRef<any>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const imageFileInputRef = useRef<HTMLInputElement | null>(null);
   const isComposingRef = useRef<boolean>(false);
 
   // Modals & Drawers
@@ -440,19 +442,24 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   });
 
   // 1. Single User Message Send (Queues without immediate AI reply)
-  const handleSendUserOnlyMessage = async (text: string) => {
-    if (!text.trim() || !activeCharacter) return;
+  const handleSendUserOnlyMessage = async (text: string, imageToSendArg?: string | null) => {
+    const cleanText = text.trim();
+    const imageToSend = imageToSendArg !== undefined ? imageToSendArg : selectedImage;
+    if (!cleanText && !imageToSend) return;
+    if (!activeCharacter) return;
 
     const userMsg: ChatMessage = {
       id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       characterId: activeCharacter.id,
       sender: 'user',
-      text: text.trim(),
+      text: cleanText,
+      imageUrl: imageToSend || undefined,
       timestamp: Date.now(),
       quoteMessageId: quoteMsgId || undefined,
     };
 
     setInputText('');
+    setSelectedImage(null);
     setQuoteMsgId(null);
     setDisplayedMessages((prev) => [...prev, userMsg]);
     setTotalHistoryCount((c) => c + 1);
@@ -462,6 +469,40 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       await saveChatMessage(userMsg);
     } catch (e) {
       console.error('Save chat message error', e);
+    }
+
+    // Call Vision API asynchronously if an image was attached
+    if (imageToSend) {
+      try {
+        const visionRes = await apiFetch('/api/gemini/analyze-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageUrl: imageToSend,
+            prompt: '请用中文详细识别并总结描述这张图片中的事物、文字、场景以及主要细节。',
+            apiConfig,
+          }),
+        });
+        const visionData = await visionRes.json();
+        if (visionData.success && visionData.description) {
+          userMsg.imageAnalysis = visionData.description;
+          userMsg.imageAnalysisStatus = 'success';
+        } else {
+          userMsg.imageAnalysisStatus = 'failed';
+        }
+      } catch (e) {
+        console.warn('Vision API call error:', e);
+        userMsg.imageAnalysisStatus = 'failed';
+      }
+
+      try {
+        await saveChatMessage(userMsg);
+        setDisplayedMessages((prev) =>
+          prev.map((m) => (m.id === userMsg.id ? { ...userMsg } : m))
+        );
+      } catch (e) {
+        console.warn('Failed to save image analysis to DB:', e);
+      }
     }
   };
 
@@ -643,6 +684,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           : undefined;
 
       const recentHistoryWindow = currentDisplayed.slice(-16);
+      const lastUserMsgWithImage = [...currentDisplayed].reverse().find((m) => m.sender === 'user' && m.imageAnalysis);
+      const currentImageAnalysis = lastUserMsgWithImage?.imageAnalysis;
 
       const tApiStart = Date.now();
       const res = await apiFetch('/api/gemini/chat', {
@@ -651,6 +694,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         body: JSON.stringify({
           character: activeCharacter,
           userMessage: combinedUserText,
+          currentImageAnalysis,
           conversationHistory: recentHistoryWindow,
           recalledMemoriesSummary: combinedRecalledMemories || undefined,
           userProfile,
@@ -788,27 +832,23 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     }
   };
 
-  // Send Button Double Click / Single Click Router
+  // Send Button Single Click (Send User Msg) & Double Click (Trigger AI Reply) Router
   const handleSendButtonClick = () => {
     const textToSend = (inputRef.current?.value || inputText).trim();
+    const imageToSend = selectedImage;
     const now = Date.now();
     const timeSinceLast = now - lastSendClickTimeRef.current;
     lastSendClickTimeRef.current = now;
 
-    if (timeSinceLast < 380) {
-      if (sendClickTimerRef.current) {
-        clearTimeout(sendClickTimerRef.current);
-        sendClickTimerRef.current = null;
-      }
+    if (timeSinceLast < 350) {
+      // Rapid double click detected: Trigger AI reply directly
       lastSendClickTimeRef.current = 0;
-      handleTriggerAiReply(textToSend);
+      handleTriggerAiReply();
     } else {
-      if (sendClickTimerRef.current) clearTimeout(sendClickTimerRef.current);
-      sendClickTimerRef.current = setTimeout(() => {
-        const latestVal = (inputRef.current?.value || inputText).trim();
-        handleSendUserOnlyMessage(latestVal);
-        sendClickTimerRef.current = null;
-      }, 220);
+      // Single click: Send user message if valid draft text or image exists
+      if (textToSend || imageToSend) {
+        handleSendUserOnlyMessage(textToSend, imageToSend);
+      }
     }
   };
 
@@ -1393,62 +1433,109 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                       </div>
                     )}
 
-                    {/* Message Input Box */}
+                    {/* Message Input Box with Attachment Preview & Plus Button */}
                     {(() => {
-                      let unrepliedCount = 0;
-                      for (let i = displayedMessages.length - 1; i >= 0; i--) {
-                        if (displayedMessages[i].sender === 'user') unrepliedCount++;
-                        else break;
-                      }
-
                       return (
-                        <div className="p-2 bg-zinc-850/90 backdrop-blur-xs border-t border-zinc-800 flex items-center gap-1.5 shrink-0 z-10">
-                          <input
-                            ref={inputRef}
-                            type="text"
-                            placeholder={`给 ${activeCharacter.name} 发送消息... (Enter发送)`}
-                            value={inputText}
-                            onChange={(e) => setInputText(e.target.value)}
-                            onInput={(e) => setInputText(e.currentTarget.value)}
-                            onCompositionStart={() => {
-                              isComposingRef.current = true;
-                            }}
-                            onCompositionEnd={(e) => {
-                              isComposingRef.current = false;
-                              setInputText(e.currentTarget.value);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && !isComposingRef.current) {
-                                e.preventDefault();
-                                const val = inputRef.current?.value || inputText;
-                                if (e.shiftKey) {
-                                  handleTriggerAiReply(val.trim());
-                                } else {
-                                  handleSendUserOnlyMessage(val.trim());
+                        <div className="flex flex-col shrink-0 z-10">
+                          {/* Image Attachment Preview Bar */}
+                          {selectedImage && (
+                            <div className="px-3 py-1.5 bg-zinc-850/95 border-t border-zinc-750 flex items-center justify-between text-xs animate-fadeIn">
+                              <div className="flex items-center gap-2.5">
+                                <img
+                                  src={selectedImage}
+                                  alt="待发送图片"
+                                  className="w-9 h-9 rounded-lg object-cover border border-emerald-500/60 shadow-xs"
+                                />
+                                <div>
+                                  <p className="text-zinc-200 font-medium text-xs">已选择 1 张图片</p>
+                                  <p className="text-[10px] text-zinc-400">发送时将自动调用 AI 视觉识别分析</p>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedImage(null)}
+                                className="p-1 rounded-full text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 transition cursor-pointer"
+                                title="移除当前选中的图片"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          )}
+
+                          <div className="p-2 bg-zinc-850/90 backdrop-blur-xs border-t border-zinc-800 flex items-center gap-1.5 shrink-0">
+                            {/* Hidden Image File Input */}
+                            <input
+                              ref={imageFileInputRef}
+                              type="file"
+                              accept="image/png, image/jpeg, image/jpg, image/webp"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.onload = () => {
+                                    if (typeof reader.result === 'string') {
+                                      setSelectedImage(reader.result);
+                                    }
+                                  };
+                                  reader.readAsDataURL(file);
                                 }
-                              }
-                            }}
-                            className="flex-1 px-3 py-2 text-xs rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors"
-                          />
-                          <button
-                            onClick={handleSendButtonClick}
-                            onDoubleClick={() => handleTriggerAiReply((inputRef.current?.value || inputText).trim())}
-                            disabled={isLoading || !inputText.trim()}
-                            title="单击发送当前消息（可连发多句）；快速双击直接召唤 AI 综合回复"
-                            className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-40 text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer"
-                          >
-                            <Send className="w-3.5 h-3.5" />
-                            <span>发送</span>
-                          </button>
-                          <button
-                            onClick={() => handleTriggerAiReply((inputRef.current?.value || inputText).trim())}
-                            disabled={isLoading || (unrepliedCount === 0 && !inputText.trim())}
-                            title="指引 AI 结合上下文与记忆回复（也可在无新输入时主动催促回复）"
-                            className="px-2.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 disabled:opacity-30 text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer"
-                          >
-                            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                            <span className="hidden sm:inline">召唤回复</span>
-                          </button>
+                                e.target.value = '';
+                              }}
+                            />
+
+                            {/* Left-side "+" Button to select image */}
+                            <button
+                              type="button"
+                              onClick={() => imageFileInputRef.current?.click()}
+                              title="选择并发送图片"
+                              className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 active:scale-95 text-sky-400 hover:text-sky-300 border border-zinc-700 transition cursor-pointer shrink-0"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+
+                            {/* Input Field */}
+                            <input
+                              ref={inputRef}
+                              type="text"
+                              placeholder={`给 ${activeCharacter.name} 发送消息... (Enter发送)`}
+                              value={inputText}
+                              onChange={(e) => setInputText(e.target.value)}
+                              onInput={(e) => setInputText(e.currentTarget.value)}
+                              onCompositionStart={() => {
+                                isComposingRef.current = true;
+                              }}
+                              onCompositionEnd={(e) => {
+                                isComposingRef.current = false;
+                                setInputText(e.currentTarget.value);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !isComposingRef.current) {
+                                  e.preventDefault();
+                                  const val = (inputRef.current?.value || inputText).trim();
+                                  if (e.shiftKey) {
+                                    handleTriggerAiReply();
+                                  } else {
+                                    if (val || selectedImage) {
+                                      handleSendUserOnlyMessage(val, selectedImage);
+                                    }
+                                  }
+                                }
+                              }}
+                              className="flex-1 px-3 py-2 text-xs rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                            />
+
+                            {/* Send Button */}
+                            <button
+                              onClick={handleSendButtonClick}
+                              disabled={isLoading}
+                              title="单击发送当前消息/图片（可连发多句）；快速双击直接召唤 AI 综合回复"
+                              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-40 text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0"
+                            >
+                              <Send className="w-3.5 h-3.5" />
+                              <span>发送</span>
+                            </button>
+                          </div>
                         </div>
                       );
                     })()}

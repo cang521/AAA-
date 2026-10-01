@@ -1770,6 +1770,137 @@ ${memosSummary}
   }
 });
 
+// Multimodal Vision / Image Analysis Endpoint
+app.post('/api/gemini/analyze-image', async (req, res) => {
+  const { imageUrl, prompt, apiConfig } = req.body;
+  if (!imageUrl || typeof imageUrl !== 'string') {
+    return res.status(400).json({ success: false, error: '未提供有效的图片数据 (imageUrl)' });
+  }
+
+  const startTime = Date.now();
+  const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+  const customPrompt = prompt || '请用中文详细总结识别这张图片中的核心事物、文字、场景以及主要细节。';
+
+  try {
+    let description = '';
+
+    // Check if imageUrl is a base64 data URL
+    let mimeType = 'image/jpeg';
+    let base64Data = '';
+    const isDataUrl = imageUrl.startsWith('data:');
+
+    if (isDataUrl) {
+      const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (matches) {
+        mimeType = matches[1];
+        base64Data = matches[2];
+      }
+    }
+
+    const isOpenAi =
+      apiConfig?.textApiProtocol === 'openai_compatible' ||
+      apiConfig?.textProvider === 'openai_compatible' ||
+      apiConfig?.textProvider === 'deepseek' ||
+      apiConfig?.textProvider === 'openrouter' ||
+      (apiConfig?.textBaseUrl &&
+        (apiConfig.textBaseUrl.includes('/v1') || apiConfig.textBaseUrl.includes('openai')));
+
+    if (isOpenAi) {
+      const endpoint = apiConfig?.textBaseUrl
+        ? apiConfig.textBaseUrl.endsWith('/chat/completions')
+          ? apiConfig.textBaseUrl
+          : `${apiConfig.textBaseUrl.replace(/\/+$/, '')}/chat/completions`
+        : 'https://api.openai.com/v1/chat/completions';
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (apiConfig?.textApiKey) {
+        headers['Authorization'] = `Bearer ${apiConfig.textApiKey}`;
+      }
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: selectedModel.includes('gemini') ? 'gpt-4o-mini' : selectedModel,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: customPrompt },
+                { type: 'image_url', image_url: { url: imageUrl } },
+              ],
+            },
+          ],
+          max_tokens: 800,
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`OpenAI Vision API 返回错误 ${response.status}: ${errText.slice(0, 200)}`);
+      }
+
+      const resJson = await response.json();
+      description = resJson.choices?.[0]?.message?.content || '';
+    } else {
+      // Default: Google Gemini Vision Call via @google/genai SDK
+      const activeKey =
+        apiConfig?.textApiKey ||
+        (!apiConfig?.textBaseUrl && process.env.NODE_ENV !== 'production' ? process.env.GEMINI_API_KEY || '' : '');
+
+      if (!activeKey) {
+        throw new Error('未配置 Gemini API Key，无法调用图片识别服务');
+      }
+
+      const clientOptions: any = {
+        apiKey: activeKey,
+        httpOptions: {
+          headers: { 'User-Agent': 'aistudio-build-phone' },
+        },
+      };
+      if (apiConfig?.textBaseUrl) {
+        clientOptions.httpOptions.baseUrl = apiConfig.textBaseUrl;
+      }
+
+      const aiClient = new GoogleGenAI(clientOptions);
+
+      let parts: any[] = [];
+      if (base64Data) {
+        parts = [
+          { inlineData: { mimeType, data: base64Data } },
+          { text: customPrompt },
+        ];
+      } else {
+        parts = [{ text: `${customPrompt}\n图片URL: ${imageUrl}` }];
+      }
+
+      const visionModel = selectedModel.includes('gemini') ? selectedModel : 'gemini-3.6-flash';
+      const aiResponse = await aiClient.models.generateContent({
+        model: visionModel,
+        contents: [{ role: 'user', parts }],
+      });
+
+      description = aiResponse.text || '';
+    }
+
+    const duration = Date.now() - startTime;
+    return res.json({
+      success: true,
+      description: description.trim() || '分析完成，未能提取有效视觉文字。',
+      duration,
+    });
+  } catch (err: any) {
+    console.error('Analyze image error:', err);
+    return res.json({
+      success: false,
+      error: err.message || '图片视觉识别失败',
+      description: '图片识别调用失败或未配置',
+    });
+  }
+});
+
 // 1. AI WeChat Chat Endpoint (with Thinking Process CoT, WorldBook & Smart Devices Control)
 app.post('/api/gemini/chat', async (req, res) => {
   const {
@@ -1921,10 +2052,18 @@ ${devicesSummary}
     const contents = [];
     if (conversationHistory && conversationHistory.length > 0) {
       conversationHistory.slice(-6).forEach((msg: any) => {
-        contents.push(`${msg.sender === 'user' ? userProfile?.name || '用户' : character.name}: ${msg.text}`);
+        let msgStr = `${msg.sender === 'user' ? userProfile?.name || '用户' : character.name}: ${msg.text || ''}`;
+        if (msg.imageUrl) {
+          msgStr += ` [图片附件${msg.imageAnalysis ? `: ${msg.imageAnalysis}` : ''}]`;
+        }
+        contents.push(msgStr);
       });
     }
-    contents.push(`${userProfile?.name || '用户'}: ${userMessage}`);
+    let currentMsgStr = `${userProfile?.name || '用户'}: ${userMessage || ''}`;
+    if (req.body.currentImageAnalysis) {
+      currentMsgStr += `\n【用户本次发出的图片识别感知描述】:\n${req.body.currentImageAnalysis}`;
+    }
+    contents.push(currentMsgStr);
 
     const promptText = contextPrompt + '\n对话历史：\n' + contents.join('\n');
 
