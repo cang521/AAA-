@@ -362,6 +362,94 @@ export interface AiControls {
   proactivePopups: boolean;
 }
 
+// ==================== 主动消息系统 (Proactive Messages Engine) ====================
+export interface PerAiProactiveConfig {
+  enabled: boolean;
+  allowedTriggers?: string[]; // e.g. ['inactivity', 'weather', 'period', 'greetings', 'events', 'followup', 'device']
+  inactivityHours?: number; // Custom per-AI inactivity threshold
+}
+
+export interface CustomProactiveEvent {
+  id: string;
+  title: string;
+  date: string; // YYYY-MM-DD
+  type: 'birthday' | 'anniversary' | 'exam' | 'date' | 'task' | 'custom';
+  remindBeforeDays: number;
+  allowFollowup?: boolean;
+}
+
+export interface FollowupTopicItem {
+  id: string;
+  sourceMsgId?: string;
+  title: string;
+  targetDateStr: string; // YYYY-MM-DD
+  status: 'pending' | 'completed' | 'cancelled';
+  hasFollowedUp: boolean;
+  createdAt: number;
+}
+
+export interface ProactiveSettings {
+  enabled: boolean; // Master toggle
+  allowAllCharacters: boolean;
+  allowedCharacterIds: string[];
+  perAiConfigs: Record<string, PerAiProactiveConfig>;
+
+  // Triggers
+  inactivity: {
+    enabled: boolean;
+    hours: number; // 2, 6, 12, 24, or custom
+  };
+  weather: {
+    enabled: boolean;
+    rainSoon: boolean;
+    snowSoon: boolean;
+    tempDrop: boolean;
+    heatWave: boolean;
+    severeWeather: boolean;
+  };
+  menstrual: {
+    enabled: boolean; // Independent privacy toggle
+    daysBefore: number; // 3, 2, 1, 0
+    allowedCharacterIds: string[]; // Explicit AI authorization for health data
+  };
+  greetings: {
+    enabled: boolean;
+    morning: boolean; // 06:30 - 09:00
+    noon: boolean;    // 11:30 - 13:30
+    night: boolean;   // 21:30 - 23:30
+  };
+  importantEvents: {
+    enabled: boolean;
+    notifyBeforeDays: number;
+    notifyOnDay: boolean;
+    allowFollowup: boolean;
+    customEvents: CustomProactiveEvent[];
+  };
+  followupTopics: {
+    enabled: boolean;
+    items: FollowupTopicItem[];
+  };
+  deviceEvents: {
+    enabled: boolean;
+    lowBattery: boolean; // <= 15%
+    lateNightUsage: boolean; // 23:30 - 04:00
+    appUnopenedDays: boolean; // >= 3 days
+  };
+
+  // Anti-Harassment & Rate Limits
+  quietHours: {
+    enabled: boolean;
+    startStr: string; // e.g. "23:30"
+    endStr: string;   // e.g. "08:00"
+  };
+  dailyCap: number; // default 3
+  minCooldownMinutes: number; // default 120 (2h)
+  allowHighPriorityBypassQuiet: boolean; // default true
+
+  // System Notification
+  systemNotificationsEnabled: boolean;
+}
+
 // ==================== 外部设备与智能中心系统 ====================
 export type DeviceProtocol = 'wifi' | 'bluetooth' | 'zigbee' | 'matter' | 'ble' | 'cloud';
 

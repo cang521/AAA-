@@ -62,6 +62,44 @@ export const TEXT_PROVIDER_PRESETS: ProviderPreset[] = [
   },
 ];
 
+export const IMAGE_PROVIDER_PRESETS: ProviderPreset[] = [
+  {
+    id: 'google_gemini',
+    name: 'Google Gemini Imagen (官方 / 原生)',
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com',
+    defaultModel: 'imagen-3.0-generate-002',
+    badge: '官方推荐',
+    description: '支持 Imagen 3.0 图像生成与多模态分析',
+  },
+  {
+    id: 'custom',
+    name: 'OpenAI / 自定义图像网关',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'dall-e-3',
+    badge: '自定义',
+    description: '支持 DALL-E 3、FLUX 或自定义中转图像接口',
+  },
+];
+
+export const VOICE_PROVIDER_PRESETS: ProviderPreset[] = [
+  {
+    id: 'google_gemini',
+    name: 'Google Gemini Voice (官方 / 原生)',
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com',
+    defaultModel: 'gemini-2.5-flash',
+    badge: '官方推荐',
+    description: '支持 Gemini 音频多模态与 TTS/STT 交互',
+  },
+  {
+    id: 'custom',
+    name: 'OpenAI / 自定义语音网关',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'tts-1',
+    badge: '自定义',
+    description: '支持 OpenAI TTS-1、Whisper 或自定义语音中转接口',
+  },
+];
+
 export interface CustomPresetItem {
   id: string;
   name: string;
@@ -109,6 +147,7 @@ export interface ApiSettingsPanelProps {
 
   // Models & Test actions
   fetchedModels: RemoteModelItem[];
+  fetchedModelsMap?: Record<'text' | 'image' | 'voice', RemoteModelItem[]>;
   isTestingConnection: boolean;
   connectionResult: ConnectionTestResult | null;
   handleTestConnection: () => Promise<void>;
@@ -183,6 +222,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   handleClearImageKey,
   handleClearVoiceKey,
   fetchedModels,
+  fetchedModelsMap,
   isTestingConnection,
   connectionResult,
   handleTestConnection,
@@ -256,12 +296,16 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   const currentTextKey = settings.text.apiKey || '';
   const currentTextBaseUrl = settings.text.baseUrl || '';
   const currentImageKey = settings.image.apiKey || '';
+  const currentImageBaseUrl = settings.image.baseUrl || '';
   const currentVoiceKey = settings.voice.apiKey || '';
+  const currentVoiceBaseUrl = settings.voice.baseUrl || '';
 
   // 自定义配置列表状态
   const [customPresets, setCustomPresets] = useState<CustomPresetItem[]>(loadSavedPresets);
   const [showPresetManager, setShowPresetManager] = useState<boolean>(false);
   const [selectedPresetId, setSelectedPresetId] = useState<string>('custom');
+  const [selectedImagePresetId, setSelectedImagePresetId] = useState<string>('custom');
+  const [selectedVoicePresetId, setSelectedVoicePresetId] = useState<string>('custom');
   const [newPresetName, setNewPresetName] = useState<string>('');
   const [actionNotice, setActionNotice] = useState<string | null>(null);
 
@@ -275,6 +319,56 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
     setTimeout(() => {
       setActionNotice(null);
     }, 2500);
+  };
+
+  // 下拉切换图像预设配置
+  const handleSelectImagePreset = (id: string) => {
+    setSelectedImagePresetId(id);
+    if (id === 'custom') {
+      setSettings((prev) => ({
+        ...prev,
+        image: { ...prev.image, provider: 'custom' },
+      }));
+      return;
+    }
+    const preset = IMAGE_PROVIDER_PRESETS.find((p) => p.id === id);
+    if (preset) {
+      setSettings((prev) => ({
+        ...prev,
+        image: {
+          ...prev.image,
+          provider: preset.id,
+          baseUrl: preset.defaultBaseUrl,
+          model: preset.defaultModel,
+        },
+      }));
+      showNotice(`已切换到图像预设：${preset.name}`);
+    }
+  };
+
+  // 下拉切换语音预设配置
+  const handleSelectVoicePreset = (id: string) => {
+    setSelectedVoicePresetId(id);
+    if (id === 'custom') {
+      setSettings((prev) => ({
+        ...prev,
+        voice: { ...prev.voice, provider: 'custom' },
+      }));
+      return;
+    }
+    const preset = VOICE_PROVIDER_PRESETS.find((p) => p.id === id);
+    if (preset) {
+      setSettings((prev) => ({
+        ...prev,
+        voice: {
+          ...prev.voice,
+          provider: preset.id,
+          baseUrl: preset.defaultBaseUrl,
+          model: preset.defaultModel,
+        },
+      }));
+      showNotice(`已切换到语音预设：${preset.name}`);
+    }
   };
 
   // 下拉切换预设配置
@@ -773,22 +867,30 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
       {/* ================= 2. 图像 API 连接 ================= */}
       {activeCategory === 'image' && (
         <div className="space-y-4">
+          {/* 1. 图像 API 反代地址 */}
           <div className="space-y-1.5">
             <label className="text-xs text-zinc-300 font-medium block">
-              1. 图像 API 反代地址 (留空默认同主接口)
+              1. 图像 API 反代地址 (Proxy / Base URL)
             </label>
             <input
               type="text"
-              placeholder="https://api.openai.com/v1"
-              value={settings.image.baseUrl || ''}
+              placeholder="https://api.openai.com/v1 或留空使用默认"
+              value={currentImageBaseUrl}
+              onInput={(e) => {
+                const val = (e.currentTarget as HTMLInputElement).value;
+                setSettings((prev) => ({
+                  ...prev,
+                  image: { ...prev.image, baseUrl: val },
+                }));
+              }}
               onChange={(e) => {
                 const val = e.target.value;
                 addDiagnosticLog({
                   tag: '[SETTINGS_WRITE:PANEL_IMAGE_BASE_URL_INPUT]',
-                  baseUrlLen: currentTextBaseUrl.length,
-                  baseUrlVal: currentTextBaseUrl,
-                  keyLen: currentTextKey.length,
-                  keyLast4: currentTextKey.slice(-4),
+                  baseUrlLen: val.length,
+                  baseUrlVal: val,
+                  keyLen: currentImageKey.length,
+                  keyLast4: currentImageKey.slice(-4),
                   details: `image.baseUrl changed to "${val}"`,
                 });
                 setSettings((prev) => ({
@@ -796,14 +898,24 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   image: { ...prev.image, baseUrl: val },
                 }));
               }}
+              onBlur={(e) => {
+                const val = e.target.value;
+                if (val !== currentImageBaseUrl) {
+                  setSettings((prev) => ({
+                    ...prev,
+                    image: { ...prev.image, baseUrl: val },
+                  }));
+                }
+              }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
             />
           </div>
 
+          {/* 2. 图像 API 密钥 */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-xs text-zinc-300 font-medium">
-                2. 图像 API 密钥 (留空默认同主密钥)
+                2. 图像 API 密钥 (Key / API Key)
               </label>
               {currentImageKey ? (
                 <div className="flex items-center gap-2">
@@ -825,14 +937,21 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 type={showImageKey ? 'text' : 'password'}
                 placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
                 value={currentImageKey}
+                onInput={(e) => {
+                  const val = (e.currentTarget as HTMLInputElement).value;
+                  setSettings((prev) => ({
+                    ...prev,
+                    image: { ...prev.image, apiKey: val },
+                  }));
+                }}
                 onChange={(e) => {
                   const val = e.target.value;
                   addDiagnosticLog({
                     tag: '[SETTINGS_WRITE:PANEL_IMAGE_KEY_INPUT]',
-                    baseUrlLen: currentTextBaseUrl.length,
-                    baseUrlVal: currentTextBaseUrl,
-                    keyLen: currentTextKey.length,
-                    keyLast4: currentTextKey.slice(-4),
+                    baseUrlLen: currentImageBaseUrl.length,
+                    baseUrlVal: currentImageBaseUrl,
+                    keyLen: val.length,
+                    keyLast4: val.slice(-4),
                     details: `image.apiKey changed (len=${val.length})`,
                   });
                   setSettings((prev) => ({
@@ -840,34 +959,82 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                     image: { ...prev.image, apiKey: val },
                   }));
                 }}
+                onBlur={(e) => {
+                  const val = e.target.value;
+                  if (val !== currentImageKey) {
+                    setSettings((prev) => ({
+                      ...prev,
+                      image: { ...prev.image, apiKey: val },
+                    }));
+                  }
+                }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
               />
               <button
                 type="button"
                 onClick={() => setShowImageKey(!showImageKey)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-0.5 transition"
+                title={showImageKey ? '隐藏密钥' : '显示密钥'}
               >
                 {showImageKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
           </div>
 
+          {/* 3. 图像模型选择 */}
           <div className="space-y-1.5">
             <label className="text-xs text-zinc-300 font-medium block">
               3. 图像模型选择
             </label>
+            {(fetchedModelsMap?.image || fetchedModels).length > 0 && (
+              <select
+                value={settings.image.model || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val) {
+                    addDiagnosticLog({
+                      tag: '[SETTINGS_WRITE:PANEL_IMAGE_MODEL_SELECT]',
+                      baseUrlLen: currentImageBaseUrl.length,
+                      baseUrlVal: currentImageBaseUrl,
+                      keyLen: currentImageKey.length,
+                      keyLast4: currentImageKey.slice(-4),
+                      details: `image model select val="${val}"`,
+                    });
+                    setSettings((prev) => ({
+                      ...prev,
+                      image: { ...prev.image, model: val },
+                    }));
+                  }
+                }}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs font-mono focus:outline-none focus:border-zinc-500 mb-1.5"
+              >
+                <option value="">-- 点击选择已拉取的图像模型 --</option>
+                {(fetchedModelsMap?.image || fetchedModels).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id} {m.name && m.name !== m.id ? `(${m.name})` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
             <input
               type="text"
               placeholder="dall-e-3, imagen-3.0-generate-002, flux-schnell..."
               value={settings.image.model || ''}
+              onInput={(e) => {
+                const val = (e.currentTarget as HTMLInputElement).value;
+                setSettings((prev) => ({
+                  ...prev,
+                  image: { ...prev.image, model: val },
+                }));
+              }}
               onChange={(e) => {
                 const val = e.target.value;
                 addDiagnosticLog({
                   tag: '[SETTINGS_WRITE:PANEL_IMAGE_MODEL_INPUT]',
-                  baseUrlLen: currentTextBaseUrl.length,
-                  baseUrlVal: currentTextBaseUrl,
-                  keyLen: currentTextKey.length,
-                  keyLast4: currentTextKey.slice(-4),
+                  baseUrlLen: currentImageBaseUrl.length,
+                  baseUrlVal: currentImageBaseUrl,
+                  keyLen: currentImageKey.length,
+                  keyLast4: currentImageKey.slice(-4),
                   details: `image.model changed to "${val}"`,
                 });
                 setSettings((prev) => ({
@@ -879,6 +1046,53 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             />
           </div>
 
+          {/* 4. 图像预设配置 */}
+          <div className="space-y-1.5">
+            <label className="text-xs text-zinc-300 font-medium block">
+              4. 图像预设配置
+            </label>
+            <div className="flex gap-2">
+              <select
+                value={selectedImagePresetId}
+                onChange={(e) => handleSelectImagePreset(e.target.value)}
+                className="flex-1 px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs focus:outline-none focus:border-zinc-500 font-medium truncate"
+              >
+                <option value="custom">-- 自定义配置 --</option>
+                {IMAGE_PROVIDER_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+                {customPresets.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+
+              {selectedImagePresetId !== 'custom' && (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteCustomPreset(selectedImagePresetId)}
+                  className="px-3 py-2.5 rounded-xl bg-zinc-900 hover:bg-rose-950/40 border border-zinc-800 hover:border-rose-900/50 text-rose-400 text-xs font-medium transition active:scale-95 shrink-0 flex items-center gap-1"
+                  title="删除当前选中的自定义配置"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">删除</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowPresetManager(true)}
+                className="px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-xs font-medium transition active:scale-95 shrink-0"
+              >
+                管理
+              </button>
+            </div>
+          </div>
+
+          {/* 5. 底部按钮与状态 */}
           <div className="space-y-3 pt-2">
             <div className="grid grid-cols-3 gap-2">
               <button
@@ -912,8 +1126,43 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             </div>
 
             {connectionResult && (
-              <div className="p-3 rounded-xl bg-zinc-900/90 border border-zinc-800 text-xs text-zinc-200">
-                {connectionResult.message}
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+                  connectionResult.success
+                    ? 'bg-zinc-900/90 border-zinc-800 text-zinc-200'
+                    : 'bg-zinc-900/90 border-zinc-800 text-rose-300'
+                }`}
+              >
+                <div className="flex items-center gap-2 truncate">
+                  {connectionResult.success ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  )}
+                  <span className="truncate">
+                    {connectionResult.message || (connectionResult.success ? '连接成功 (HTTP 200)' : '连接失败')}
+                  </span>
+                </div>
+                <span className="font-mono text-[11px] text-zinc-400 shrink-0 ml-2">
+                  {connectionResult.latencyMs}ms
+                </span>
+              </div>
+            )}
+
+            {modelFetchResult && (
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                  modelFetchResult.success
+                    ? 'bg-zinc-900/90 border-zinc-800 text-zinc-200'
+                    : 'bg-zinc-900/90 border-zinc-800 text-amber-300'
+                }`}
+              >
+                {modelFetchResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                )}
+                <span className="truncate">{modelFetchResult.message}</span>
               </div>
             )}
           </div>
@@ -923,22 +1172,30 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
       {/* ================= 3. 语音 API 连接 ================= */}
       {activeCategory === 'voice' && (
         <div className="space-y-4">
+          {/* 1. 语音 API 反代地址 */}
           <div className="space-y-1.5">
             <label className="text-xs text-zinc-300 font-medium block">
-              1. 语音 API 反代地址 (留空默认同主接口)
+              1. 语音 API 反代地址 (Proxy / Base URL)
             </label>
             <input
               type="text"
-              placeholder="https://api.openai.com/v1"
-              value={settings.voice.baseUrl || ''}
+              placeholder="https://api.openai.com/v1 或留空使用默认"
+              value={currentVoiceBaseUrl}
+              onInput={(e) => {
+                const val = (e.currentTarget as HTMLInputElement).value;
+                setSettings((prev) => ({
+                  ...prev,
+                  voice: { ...prev.voice, baseUrl: val },
+                }));
+              }}
               onChange={(e) => {
                 const val = e.target.value;
                 addDiagnosticLog({
                   tag: '[SETTINGS_WRITE:PANEL_VOICE_BASE_URL_INPUT]',
-                  baseUrlLen: currentTextBaseUrl.length,
-                  baseUrlVal: currentTextBaseUrl,
-                  keyLen: currentTextKey.length,
-                  keyLast4: currentTextKey.slice(-4),
+                  baseUrlLen: val.length,
+                  baseUrlVal: val,
+                  keyLen: currentVoiceKey.length,
+                  keyLast4: currentVoiceKey.slice(-4),
                   details: `voice.baseUrl changed to "${val}"`,
                 });
                 setSettings((prev) => ({
@@ -946,14 +1203,24 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   voice: { ...prev.voice, baseUrl: val },
                 }));
               }}
+              onBlur={(e) => {
+                const val = e.target.value;
+                if (val !== currentVoiceBaseUrl) {
+                  setSettings((prev) => ({
+                    ...prev,
+                    voice: { ...prev.voice, baseUrl: val },
+                  }));
+                }
+              }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
             />
           </div>
 
+          {/* 2. 语音 API 密钥 */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-xs text-zinc-300 font-medium">
-                2. 语音 API 密钥 (留空默认同主密钥)
+                2. 语音 API 密钥 (Key / API Key)
               </label>
               {currentVoiceKey ? (
                 <div className="flex items-center gap-2">
@@ -975,14 +1242,21 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 type={showVoiceKey ? 'text' : 'password'}
                 placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
                 value={currentVoiceKey}
+                onInput={(e) => {
+                  const val = (e.currentTarget as HTMLInputElement).value;
+                  setSettings((prev) => ({
+                    ...prev,
+                    voice: { ...prev.voice, apiKey: val },
+                  }));
+                }}
                 onChange={(e) => {
                   const val = e.target.value;
                   addDiagnosticLog({
                     tag: '[SETTINGS_WRITE:PANEL_VOICE_KEY_INPUT]',
-                    baseUrlLen: currentTextBaseUrl.length,
-                    baseUrlVal: currentTextBaseUrl,
-                    keyLen: currentTextKey.length,
-                    keyLast4: currentTextKey.slice(-4),
+                    baseUrlLen: currentVoiceBaseUrl.length,
+                    baseUrlVal: currentVoiceBaseUrl,
+                    keyLen: val.length,
+                    keyLast4: val.slice(-4),
                     details: `voice.apiKey changed (len=${val.length})`,
                   });
                   setSettings((prev) => ({
@@ -990,34 +1264,82 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                     voice: { ...prev.voice, apiKey: val },
                   }));
                 }}
+                onBlur={(e) => {
+                  const val = e.target.value;
+                  if (val !== currentVoiceKey) {
+                    setSettings((prev) => ({
+                      ...prev,
+                      voice: { ...prev.voice, apiKey: val },
+                    }));
+                  }
+                }}
                 className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
               />
               <button
                 type="button"
                 onClick={() => setShowVoiceKey(!showVoiceKey)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-0.5 transition"
+                title={showVoiceKey ? '隐藏密钥' : '显示密钥'}
               >
                 {showVoiceKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
           </div>
 
+          {/* 3. 语音模型选择 */}
           <div className="space-y-1.5">
             <label className="text-xs text-zinc-300 font-medium block">
               3. 语音模型选择
             </label>
+            {(fetchedModelsMap?.voice || fetchedModels).length > 0 && (
+              <select
+                value={settings.voice.model || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val) {
+                    addDiagnosticLog({
+                      tag: '[SETTINGS_WRITE:PANEL_VOICE_MODEL_SELECT]',
+                      baseUrlLen: currentVoiceBaseUrl.length,
+                      baseUrlVal: currentVoiceBaseUrl,
+                      keyLen: currentVoiceKey.length,
+                      keyLast4: currentVoiceKey.slice(-4),
+                      details: `voice model select val="${val}"`,
+                    });
+                    setSettings((prev) => ({
+                      ...prev,
+                      voice: { ...prev.voice, model: val },
+                    }));
+                  }
+                }}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs font-mono focus:outline-none focus:border-zinc-500 mb-1.5"
+              >
+                <option value="">-- 点击选择已拉取的语音模型 --</option>
+                {(fetchedModelsMap?.voice || fetchedModels).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id} {m.name && m.name !== m.id ? `(${m.name})` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
             <input
               type="text"
               placeholder="tts-1, tts-1-hd, whisper-1..."
               value={settings.voice.model || ''}
+              onInput={(e) => {
+                const val = (e.currentTarget as HTMLInputElement).value;
+                setSettings((prev) => ({
+                  ...prev,
+                  voice: { ...prev.voice, model: val },
+                }));
+              }}
               onChange={(e) => {
                 const val = e.target.value;
                 addDiagnosticLog({
                   tag: '[SETTINGS_WRITE:PANEL_VOICE_MODEL_INPUT]',
-                  baseUrlLen: currentTextBaseUrl.length,
-                  baseUrlVal: currentTextBaseUrl,
-                  keyLen: currentTextKey.length,
-                  keyLast4: currentTextKey.slice(-4),
+                  baseUrlLen: currentVoiceBaseUrl.length,
+                  baseUrlVal: currentVoiceBaseUrl,
+                  keyLen: currentVoiceKey.length,
+                  keyLast4: currentVoiceKey.slice(-4),
                   details: `voice.model changed to "${val}"`,
                 });
                 setSettings((prev) => ({
@@ -1029,6 +1351,53 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             />
           </div>
 
+          {/* 4. 语音预设配置 */}
+          <div className="space-y-1.5">
+            <label className="text-xs text-zinc-300 font-medium block">
+              4. 语音预设配置
+            </label>
+            <div className="flex gap-2">
+              <select
+                value={selectedVoicePresetId}
+                onChange={(e) => handleSelectVoicePreset(e.target.value)}
+                className="flex-1 px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs focus:outline-none focus:border-zinc-500 font-medium truncate"
+              >
+                <option value="custom">-- 自定义配置 --</option>
+                {VOICE_PROVIDER_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+                {customPresets.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+
+              {selectedVoicePresetId !== 'custom' && (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteCustomPreset(selectedVoicePresetId)}
+                  className="px-3 py-2.5 rounded-xl bg-zinc-900 hover:bg-rose-950/40 border border-zinc-800 hover:border-rose-900/50 text-rose-400 text-xs font-medium transition active:scale-95 shrink-0 flex items-center gap-1"
+                  title="删除当前选中的自定义配置"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">删除</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowPresetManager(true)}
+                className="px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-xs font-medium transition active:scale-95 shrink-0"
+              >
+                管理
+              </button>
+            </div>
+          </div>
+
+          {/* 5. 底部按钮与状态 */}
           <div className="space-y-3 pt-2">
             <div className="grid grid-cols-3 gap-2">
               <button
@@ -1062,8 +1431,43 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             </div>
 
             {connectionResult && (
-              <div className="p-3 rounded-xl bg-zinc-900/90 border border-zinc-800 text-xs text-zinc-200">
-                {connectionResult.message}
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+                  connectionResult.success
+                    ? 'bg-zinc-900/90 border-zinc-800 text-zinc-200'
+                    : 'bg-zinc-900/90 border-zinc-800 text-rose-300'
+                }`}
+              >
+                <div className="flex items-center gap-2 truncate">
+                  {connectionResult.success ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  )}
+                  <span className="truncate">
+                    {connectionResult.message || (connectionResult.success ? '连接成功 (HTTP 200)' : '连接失败')}
+                  </span>
+                </div>
+                <span className="font-mono text-[11px] text-zinc-400 shrink-0 ml-2">
+                  {connectionResult.latencyMs}ms
+                </span>
+              </div>
+            )}
+
+            {modelFetchResult && (
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                  modelFetchResult.success
+                    ? 'bg-zinc-900/90 border-zinc-800 text-zinc-200'
+                    : 'bg-zinc-900/90 border-zinc-800 text-amber-300'
+                }`}
+              >
+                {modelFetchResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                )}
+                <span className="truncate">{modelFetchResult.message}</span>
               </div>
             )}
           </div>

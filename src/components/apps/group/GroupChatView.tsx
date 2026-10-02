@@ -1,4 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  shouldShowTimeDivider,
+  formatMessageTimeDivider,
+  getMessageTimestamp,
+} from '../../../lib/timeUtils';
 import { apiFetch } from '../../../lib/localBackend';
 import { DEFAULT_USER_AVATAR } from '../../../lib/storage';
 import {
@@ -351,10 +356,13 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
         {messages.map((msg, index) => {
           const isMe = msg.senderId === 'user_main';
           const isSystem = msg.senderId === 'system';
+          const prevMsg = index > 0 ? messages[index - 1] : undefined;
+          const showDivider = shouldShowTimeDivider(msg, prevMsg);
+          const ts = getMessageTimestamp(msg);
 
           if (isSystem) {
             return (
-              <div key={msg.id} className="flex justify-center my-2">
+              <div key={msg.id} className="flex justify-center my-2 select-none">
                 <span className="px-2.5 py-0.5 rounded-full bg-zinc-200/80 dark:bg-zinc-800/80 text-[10px] text-zinc-500 dark:text-zinc-400">
                   {msg.text}
                 </span>
@@ -367,26 +375,41 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
             msg.mentionedMemberIds?.includes('user_main') || msg.mentionedMemberIds?.includes('@all');
 
           return (
-            <div
-              key={msg.id}
-              className={`flex items-start gap-2 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}
-            >
+            <React.Fragment key={msg.id}>
+              {showDivider && ts && (
+                <div className="flex justify-center my-2 select-none">
+                  <span className="px-2.5 py-0.5 rounded-md bg-zinc-200/80 dark:bg-zinc-800/80 text-[10px] font-medium text-zinc-600 dark:text-zinc-400 shadow-2xs">
+                    {formatMessageTimeDivider(ts)}
+                  </span>
+                </div>
+              )}
+              <div
+                className={`flex items-start gap-2 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}
+              >
               {/* Avatar */}
               <div
                 onClick={() => {
-                  if (!isMe) {
+                  if (isMe) return;
+                  if (msg.senderType === 'ai' || msg.thinkingProcess) {
+                    setShowCoTModal(msg.thinkingProcess || '该条消息生成时暂未附带详细思考链数据。');
+                  } else {
                     setInputText((prev) => prev + `@${msg.senderName} `);
                     if (inputRef.current) inputRef.current.focus();
                   }
                 }}
                 className="relative cursor-pointer shrink-0"
-                title={isMe ? '' : `点击快捷@${msg.senderName}`}
+                title={msg.senderType === 'ai' || msg.thinkingProcess ? '点击查看 AI 思考链 (CoT)' : `点击快捷@${msg.senderName}`}
               >
                 <img
                   src={msg.senderAvatar}
                   alt={msg.senderName}
                   className="w-9 h-9 rounded-lg object-cover shadow-sm border border-black/5 dark:border-white/10"
                 />
+                {(msg.senderType === 'ai' || msg.thinkingProcess) && (
+                  <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-amber-400 rounded-full border border-zinc-900 flex items-center justify-center shadow-xs">
+                    <Brain className="w-2.5 h-2.5 text-zinc-950" />
+                  </span>
+                )}
               </div>
 
               {/* Message Content & Name */}
@@ -448,24 +471,11 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
                   )}
 
                   <p className="whitespace-pre-wrap">{msg.text}</p>
-
-                  {/* Thinking Process badge if AI */}
-                  {msg.thinkingProcess && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowCoTModal(msg.thinkingProcess || null);
-                      }}
-                      className="mt-1 pt-1 border-t border-purple-500/20 text-[9px] font-bold text-purple-600 dark:text-purple-400 flex items-center gap-1 hover:underline"
-                    >
-                      <Brain className="w-2.5 h-2.5" />
-                      <span>查看心理活动 / 推理链路</span>
-                    </button>
-                  )}
                 </div>
               </div>
             </div>
-          );
+          </React.Fragment>
+        );
         })}
 
         {/* Multi-AI Typing Indicator */}
@@ -587,8 +597,8 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
 
         <button
           onClick={handleSendMessage}
-          disabled={!inputText.trim()}
-          className="px-3.5 py-2 rounded-xl bg-[#07C160] hover:bg-[#06ad56] disabled:opacity-40 text-white font-bold text-xs shadow-sm transition flex items-center justify-center shrink-0"
+          title="发送群消息"
+          className="px-3.5 py-2 rounded-xl bg-[#07C160] hover:bg-[#06ad56] text-white font-bold text-xs shadow-sm transition flex items-center justify-center shrink-0 cursor-pointer"
         >
           <Send className="w-4 h-4" />
         </button>

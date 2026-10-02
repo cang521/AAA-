@@ -1902,6 +1902,34 @@ app.post('/api/gemini/analyze-image', async (req, res) => {
 });
 
 // 1. AI WeChat Chat Endpoint (with Thinking Process CoT, WorldBook & Smart Devices Control)
+function formatFullDateTime(timestamp?: number | string | Date): string {
+  if (!timestamp) return '时间未知';
+  let d: Date;
+  if (timestamp instanceof Date) {
+    d = timestamp;
+  } else if (typeof timestamp === 'number') {
+    d = new Date(timestamp);
+  } else {
+    const parsedNum = Number(timestamp);
+    if (!isNaN(parsedNum) && parsedNum > 0) {
+      d = new Date(parsedNum);
+    } else {
+      d = new Date(timestamp);
+    }
+  }
+
+  if (isNaN(d.getTime())) return '时间未知';
+
+  const YYYY = d.getFullYear();
+  const MM = String(d.getMonth() + 1).padStart(2, '0');
+  const DD = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+
+  return `${YYYY}-${MM}-${DD} ${hh}:${mm}:${ss}`;
+}
+
 app.post('/api/gemini/chat', async (req, res) => {
   const {
     character,
@@ -1944,7 +1972,9 @@ ${recalledMemoriesSummary ? `\n${recalledMemoriesSummary}\n` : ''}
 `;
 
     // Inject Real Native Phone System Time & Location Context
-    const currentNativeTime = systemTime || new Date().toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
+    const now = new Date();
+    const dynamicTimeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+    const currentNativeTime = systemTime || `${dynamicTimeStr} (设备本地时区)`;
     const currentNativeLoc = locationCity || realDeviceContext?.locationCity || weatherInfo?.city;
     contextPrompt += `\n【📱 Android 手机原生底层感知·真实时间与环境】:
 - 手机系统本地真实时间：${currentNativeTime}
@@ -2051,15 +2081,18 @@ ${devicesSummary}
 
     const contents = [];
     if (conversationHistory && conversationHistory.length > 0) {
-      conversationHistory.slice(-6).forEach((msg: any) => {
-        let msgStr = `${msg.sender === 'user' ? userProfile?.name || '用户' : character.name}: ${msg.text || ''}`;
+      conversationHistory.slice(-16).forEach((msg: any) => {
+        const msgTime = formatFullDateTime(msg.timestamp || msg.createdAt || msg.time);
+        const senderLabel = msg.sender === 'user' ? (userProfile?.name || '用户') : character.name;
+        let msgStr = `[${msgTime}] ${senderLabel}: ${msg.text || ''}`;
         if (msg.imageUrl) {
           msgStr += ` [图片附件${msg.imageAnalysis ? `: ${msg.imageAnalysis}` : ''}]`;
         }
         contents.push(msgStr);
       });
     }
-    let currentMsgStr = `${userProfile?.name || '用户'}: ${userMessage || ''}`;
+    const currentUserTime = formatFullDateTime(req.body.userMessageTimestamp || Date.now());
+    let currentMsgStr = `[${currentUserTime}] ${userProfile?.name || '用户'}: ${userMessage || ''}`;
     if (req.body.currentImageAnalysis) {
       currentMsgStr += `\n【用户本次发出的图片识别感知描述】:\n${req.body.currentImageAnalysis}`;
     }
@@ -2177,8 +2210,9 @@ app.post('/api/gemini/group-chat', async (req, res) => {
 
     // Format recent chat history
     const historyText = recentMessages.map((m: any) => {
+      const msgTime = formatFullDateTime(m.timestamp || m.createdAt || m.time);
       const mentions = m.mentionedMemberIds && m.mentionedMemberIds.length > 0 ? ` [@${m.mentionedMemberIds.join(', ')}]` : '';
-      return `[${m.senderName} (${m.senderType})]: ${m.text}${mentions}`;
+      return `[${msgTime}] [${m.senderName} (${m.senderType})]: ${m.text}${mentions}`;
     }).join('\n');
 
     const nativeTime = systemTime || new Date().toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
@@ -3156,6 +3190,88 @@ app.post('/api/gemini/rps-answer-question', async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/gemini/proactive-generate', async (req, res) => {
+  try {
+    const { character, triggerType, eventData, userProfile, recentMessages = [], apiConfig } = req.body;
+    const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || 'gemini-3.6-flash';
+
+    let triggerDescription = '';
+    if (triggerType === 'inactivity_timeout') {
+      triggerDescription = `【触发场景: 长时间未联系】你与用户已经有 ${eventData?.hoursInactive || 12} 小时没有发过消息了。请主动向用户发一条自然熟络的微信短消息，聊聊天、问候一下或接续近期话题。`;
+    } else if (triggerType === 'weather_alert') {
+      triggerDescription = `【触发场景: 真实气象提醒】最新气象感知显示：${eventData?.weatherEventTitle || '天气变化'} (${eventData?.weatherSummary || '气象预警'})。请依据此真实数据，以你的性格口吻提醒用户（例如提醒带伞、加衣或注意出行）。不要夸大事实。`;
+    } else if (triggerType === 'menstrual_care') {
+      triggerDescription = `【触发场景: 经期健康关怀】用户预计将在 ${eventData?.daysBefore || 2} 天后进入生理期。请以你的性格口吻向用户表达贴心关怀（提醒备好温水、卫生用品、注意保暖）。`;
+    } else if (triggerType === 'greeting') {
+      const gType = eventData?.greetingType || 'morning';
+      const label = gType === 'morning' ? '早安' : gType === 'noon' ? '午间' : '晚安';
+      triggerDescription = `【触发场景: ${label}问候】现在是${label}时段。请主动向用户发一条自然有温度的${label}问候短消息。`;
+    } else if (triggerType === 'important_event') {
+      triggerDescription = `【触发场景: 重要日期提醒】用户有一个重要日程/事件：[${eventData?.eventTitle || '重要事件'}]，将在 ${eventData?.daysRemaining === 0 ? '今天' : eventData?.daysRemaining + '天后'} (${eventData?.eventDate || ''}) 到来。请主动向用户送上问候与关怀。`;
+    } else if (triggerType === 'followup_topic') {
+      triggerDescription = `【触发场景: 待跟进事项追问】用户之前提到过这件事：[${eventData?.topicTitle || '之前的计划'}]。现在时间到了，请主动微信询问事情的后续进展或结果。`;
+    } else if (triggerType === 'device_life_event') {
+      const sub = eventData?.deviceSubtype || 'low_battery';
+      if (sub === 'low_battery') {
+        triggerDescription = `【触发场景: 手机低电量提醒】检测到用户手机电量低至 ${eventData?.batteryLevel || 12}% (${eventData?.isCharging ? '正在充电' : '未充电'})。请像关心好朋友一样提醒用户插上充电器。`;
+      } else if (sub === 'late_night') {
+        triggerDescription = `【触发场景: 深夜玩手机提醒】现在已经是深夜 ${eventData?.currentTimeStr || '23:40'} 了，用户还在玩手机。请温柔提醒用户注意休息、早点睡觉。`;
+      } else {
+        triggerDescription = `【触发场景: App很久未打开问候】用户已经有好几天没打开 App 啦，请主动发一条消息问候并表达想念。`;
+      }
+    } else {
+      triggerDescription = `【触发场景: 模拟测试触发】测试场景：${eventData?.testScenario || '主动微信问候'}。请生成一条生动贴切的微信消息。`;
+    }
+
+    const historyText = (recentMessages || [])
+      .slice(-6)
+      .map((m: any) => `${m.sender === 'user' ? userProfile?.name || '用户' : character.name}: ${m.text || ''}`)
+      .join('\n');
+
+    const systemPrompt = `你现在正在扮演仿真微信中的 AI 角色：【${character.name}】(微信号: ${character.wxid || 'ai_user'})。
+角色身份与人设：${character.persona}
+性格特征与口吻：${character.personality || '自然亲切'}
+${character.relationship ? `与用户的关系：${character.relationship}\n` : ''}
+长期记忆：${(character.memories || []).join('；')}
+
+对话人（你的微信好友）：
+- 姓名/昵称：${userProfile?.name || '小清'}
+
+【主动消息触发背景与真实事实】：
+${triggerDescription}
+
+【最近聊天上下文】：
+${historyText || '(近期暂无聊天)'}
+
+【核心输出要求】：
+1. 必须用 <think>...</think> 标签在最前面输出思考过程。
+2. 在 </think> 标签后，直接输出你要发给用户的微信消息文本（1~2 句微信口语化短句，切忌像机器人念说明书）。
+3. 严格基于系统给出的事实，禁止虚构不存在的天气或事件。`;
+
+    const responseText = await callAiService({
+      prompt: systemPrompt,
+      model: selectedModel,
+      apiKey: apiConfig?.textApiKey,
+      baseUrl: apiConfig?.textBaseUrl,
+      providerType: apiConfig?.textProvider,
+      customHeaders: apiConfig?.customHeaders,
+      timeoutMs: apiConfig?.timeoutMs || 35000,
+    });
+
+    const extracted = extractThinkingAndContent(responseText);
+
+    res.json({
+      success: true,
+      text: extracted.cleanText || `${character.name}: 嗨，想起你啦，今天过得怎么样？`,
+      thinkingProcess: extracted.thinkingProcess,
+      triggerType,
+    });
+  } catch (error: any) {
+    console.error('Proactive generate error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Proactive generation failed' });
   }
 });
 

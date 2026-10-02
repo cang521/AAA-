@@ -200,6 +200,32 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   // Fetch Models States
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<RemoteModelItem[]>([]);
+  const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<'text' | 'image' | 'voice', RemoteModelItem[]>>({
+    text: [
+      { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (默认推荐/超快响应)', type: 'text', owned_by: 'Google' },
+      { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (深度推理模型)', type: 'text', owned_by: 'Google' },
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (最新低延迟)', type: 'text', owned_by: 'Google' },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (逻辑与计算增强)', type: 'text', owned_by: 'Google' },
+      { id: 'deepseek-chat', name: 'DeepSeek V3 (Chat 官方兼容)', type: 'text', owned_by: 'DeepSeek' },
+      { id: 'deepseek-reasoner', name: 'DeepSeek R1 (深度推理模型)', type: 'text', owned_by: 'DeepSeek' },
+      { id: 'gpt-4o', name: 'GPT-4o (OpenAI 官方/反代)', type: 'text', owned_by: 'OpenAI' },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini (轻量级高并发)', type: 'text', owned_by: 'OpenAI' },
+      { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (Anthropic)', type: 'text', owned_by: 'Anthropic' },
+    ],
+    image: [
+      { id: 'imagen-3.0-generate-002', name: 'Imagen 3.0 (Google 官方/推荐)', type: 'image', owned_by: 'Google' },
+      { id: 'dall-e-3', name: 'DALL-E 3 (OpenAI 官方/反代)', type: 'image', owned_by: 'OpenAI' },
+      { id: 'dall-e-2', name: 'DALL-E 2 (OpenAI 经典图像模型)', type: 'image', owned_by: 'OpenAI' },
+      { id: 'flux-schnell', name: 'FLUX.1 Schnell (极速生图)', type: 'image', owned_by: 'Black Forest Labs' },
+      { id: 'flux-dev', name: 'FLUX.1 Dev (高质量细节增强)', type: 'image', owned_by: 'Black Forest Labs' },
+    ],
+    voice: [
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (语音/多模态支持)', type: 'voice', owned_by: 'Google' },
+      { id: 'tts-1', name: 'TTS-1 (OpenAI 标准语音合成)', type: 'voice', owned_by: 'OpenAI' },
+      { id: 'tts-1-hd', name: 'TTS-1 HD (OpenAI 高清音质合成)', type: 'voice', owned_by: 'OpenAI' },
+      { id: 'whisper-1', name: 'Whisper 1 (OpenAI 语音识别/转写)', type: 'voice', owned_by: 'OpenAI' },
+    ],
+  });
   const [modelFetchResult, setModelFetchResult] = useState<ModelFetchResult | null>(null);
   const [fetchDebugInfo, setFetchDebugInfo] = useState<{
     timestamp: string;
@@ -543,6 +569,10 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
       if (data.success && data.models && data.models.length > 0) {
         setFetchedModels(data.models);
+        setFetchedModelsMap((prev) => ({
+          ...prev,
+          [activeCategory]: data.models,
+        }));
 
         // 自动将后端自动探测得出的 apiProtocol 回写
         const detectedProtocol = (data as any).apiProtocol;
@@ -759,7 +789,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
             handleClearTextKey={handleClearTextKey}
             handleClearImageKey={handleClearImageKey}
             handleClearVoiceKey={handleClearVoiceKey}
-            fetchedModels={fetchedModels}
+            fetchedModels={fetchedModelsMap[activeCategory] || fetchedModels}
+            fetchedModelsMap={fetchedModelsMap}
             isTestingConnection={isTestingConnection}
             connectionResult={connectionResult}
             handleTestConnection={handleTestConnection}

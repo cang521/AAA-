@@ -1,4 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  shouldShowTimeDivider,
+  formatMessageTimeDivider,
+  getMessageTimestamp,
+} from '../../lib/timeUtils';
 import { apiFetch } from '../../lib/localBackend';
 import { sanitizeReplyText } from '../../lib/thinkCleaner';
 import {
@@ -153,8 +158,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const [showJoinGroupByCodeModal, setShowJoinGroupByCodeModal] = useState(false);
   const [showTopPlusMenu, setShowTopPlusMenu] = useState(false);
 
-  // Unread AI messages tracking (Requirement 9)
+  // Unread AI & Group messages tracking
   const [unreadAiCounts, setUnreadAiCounts] = useState<Record<string, number>>({});
+  const [unreadGroupCounts, setUnreadGroupCounts] = useState<Record<string, number>>({});
 
   // Active chat paginated messages state
   const [displayedMessages, setDisplayedMessages] = useState<ChatMessage[]>([]);
@@ -352,9 +358,32 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     }
   }, [userProfile]);
 
-  // Clear unread count when opening a chat (Requirement 9)
+  const activeChatIdRef = useRef<string | null>(activeChatId);
+  useEffect(() => {
+    activeChatIdRef.current = activeChatId;
+    if (activeChatId) {
+      setUnreadAiCounts((prev) => ({
+        ...prev,
+        [activeChatId]: 0,
+      }));
+    }
+  }, [activeChatId]);
+
+  const activeGroupChatIdRef = useRef<string | null>(activeGroupChatId);
+  useEffect(() => {
+    activeGroupChatIdRef.current = activeGroupChatId;
+    if (activeGroupChatId) {
+      setUnreadGroupCounts((prev) => ({
+        ...prev,
+        [activeGroupChatId]: 0,
+      }));
+    }
+  }, [activeGroupChatId]);
+
+  // Clear unread count when opening a chat
   const handleOpenChat = (charId: string) => {
     setActiveChatId(charId);
+    setActiveGroupChatId(null);
     setUnreadAiCounts((prev) => ({
       ...prev,
       [charId]: 0,
@@ -441,12 +470,36 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     quotesMap.set(m.id, m.text);
   });
 
+  // Track latest messages for immediate synchronous access without stale closure issues
+  const latestMessagesRef = useRef<ChatMessage[]>(displayedMessages);
+  useEffect(() => {
+    latestMessagesRef.current = displayedMessages;
+  }, [displayedMessages]);
+
+  const lastUserMsgSubmitRef = useRef<{ text: string; image?: string | null; time: number }>({
+    text: '',
+    image: null,
+    time: 0,
+  });
+
   // 1. Single User Message Send (Queues without immediate AI reply)
   const handleSendUserOnlyMessage = async (text: string, imageToSendArg?: string | null) => {
     const cleanText = text.trim();
     const imageToSend = imageToSendArg !== undefined ? imageToSendArg : selectedImage;
     if (!cleanText && !imageToSend) return;
     if (!activeCharacter) return;
+
+    // Defense-in-depth: Prevent duplicate user message submission within 1200ms window
+    const now = Date.now();
+    if (
+      lastUserMsgSubmitRef.current.text === cleanText &&
+      lastUserMsgSubmitRef.current.image === (imageToSend || null) &&
+      now - lastUserMsgSubmitRef.current.time < 1200
+    ) {
+      console.warn('[Chat] Blocked duplicate user message creation within 1200ms window');
+      return;
+    }
+    lastUserMsgSubmitRef.current = { text: cleanText, image: imageToSend || null, time: now };
 
     const userMsg: ChatMessage = {
       id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
@@ -459,8 +512,14 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     };
 
     setInputText('');
+    if (inputRef.current) {
+      inputRef.current.value = '';
+    }
     setSelectedImage(null);
     setQuoteMsgId(null);
+
+    // Synchronously update latest messages ref before React state re-renders
+    latestMessagesRef.current = [...latestMessagesRef.current, userMsg];
     setDisplayedMessages((prev) => [...prev, userMsg]);
     setTotalHistoryCount((c) => c + 1);
     scrollToBottom(true);
@@ -541,6 +600,12 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       if (permissions?.realDevice?.vibration && typeof navigator !== 'undefined' && navigator.vibrate) {
         navigator.vibrate(options?.vibrationPattern || [50]);
       }
+      if (activeChatIdRef.current !== character.id) {
+        setUnreadAiCounts((prev) => ({
+          ...prev,
+          [character.id]: (prev[character.id] || 0) + 1,
+        }));
+      }
       return;
     }
 
@@ -578,6 +643,13 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       }
     }
 
+    if (activeChatIdRef.current !== character.id) {
+      setUnreadAiCounts((prev) => ({
+        ...prev,
+        [character.id]: (prev[character.id] || 0) + 1,
+      }));
+    }
+
     setIsAiMultiTyping(false);
     setMultiTypingName(null);
   };
@@ -587,7 +659,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     if (!activeCharacter || isLoading) return;
 
     const tTotalStart = Date.now();
-    let currentDisplayed = [...displayedMessages];
+    let currentDisplayed = [
+      ...(latestMessagesRef.current.length > 0 ? latestMessagesRef.current : displayedMessages),
+    ];
 
     // If there's pending input in text box, send it first
     if (optionalImmediateUserText && optionalImmediateUserText.trim()) {
@@ -834,20 +908,48 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
   // Send Button Single Click (Send User Msg) & Double Click (Trigger AI Reply) Router
   const handleSendButtonClick = () => {
-    const textToSend = (inputRef.current?.value || inputText).trim();
-    const imageToSend = selectedImage;
     const now = Date.now();
-    const timeSinceLast = now - lastSendClickTimeRef.current;
+    const lastTime = lastSendClickTimeRef.current;
+    const timeSinceLast = lastTime > 0 ? now - lastTime : Infinity;
+
+    const doubleClickWindow = 350; // ms
+
+    if (timeSinceLast < doubleClickWindow) {
+      // Rapid second click detected: Trigger AI reply ONLY (Do NOT send duplicate user message)
+      lastSendClickTimeRef.current = 0;
+
+      // Force-clear input DOM and state so no draft can be re-consumed
+      setInputText('');
+      if (inputRef.current) {
+        inputRef.current.value = '';
+      }
+      setSelectedImage(null);
+
+      if (!isLoading) {
+        handleTriggerAiReply();
+      }
+      return;
+    }
+
+    // Single click (or 1st click of a double click)
     lastSendClickTimeRef.current = now;
 
-    if (timeSinceLast < 350) {
-      // Rapid double click detected: Trigger AI reply directly
-      lastSendClickTimeRef.current = 0;
-      handleTriggerAiReply();
+    const rawVal = inputRef.current?.value !== undefined ? inputRef.current.value : inputText;
+    const textToSend = rawVal.trim();
+    const imageToSend = selectedImage;
+
+    if (textToSend || imageToSend) {
+      // Immediately clear DOM and React state BEFORE dispatching to prevent stale closures or duplicate reads
+      if (inputRef.current) {
+        inputRef.current.value = '';
+      }
+      setInputText('');
+      setSelectedImage(null);
+
+      handleSendUserOnlyMessage(textToSend, imageToSend);
     } else {
-      // Single click: Send user message if valid draft text or image exists
-      if (textToSend || imageToSend) {
-        handleSendUserOnlyMessage(textToSend, imageToSend);
+      if (!isLoading) {
+        handleTriggerAiReply();
       }
     }
   };
@@ -973,6 +1075,12 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   };
 
   const handleOpenCoT = (msgId: string) => {
+    const targetMsg = (latestMessagesRef.current || displayedMessages).find((m) => m.id === msgId);
+    if (!targetMsg || !targetMsg.thinkingProcess) {
+      setMultiBubbleToast('该条消息暂无思考记录');
+      setTimeout(() => setMultiBubbleToast(null), 2000);
+      return;
+    }
     setShowCoTModal(msgId);
   };
 
@@ -1366,20 +1474,34 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                         </div>
                       )}
 
-                      {/* Rendered Messages with Search Highlight (Requirement 6) */}
-                      {displayedMessages.map((msg) => (
-                        <ChatMessageBubble
-                          key={msg.id}
-                          msg={msg}
-                          isUser={msg.sender === 'user'}
-                          avatar={msg.sender === 'user' ? userProfile.avatar : activeCharacter.avatar}
-                          name={msg.sender === 'user' ? userProfile.name : activeCharacter.name}
-                          quoteText={msg.quoteMessageId ? quotesMap.get(msg.quoteMessageId) : undefined}
-                          onOpenCoT={handleOpenCoT}
-                          onContextMenu={handleMessageContextMenu}
-                          isHighlighted={highlightedMsgId === msg.id}
-                        />
-                      ))}
+                      {/* Rendered Messages with Search Highlight & Dynamic Time Dividers */}
+                      {displayedMessages.map((msg, idx) => {
+                        const prevMsg = idx > 0 ? displayedMessages[idx - 1] : undefined;
+                        const showDivider = shouldShowTimeDivider(msg, prevMsg);
+                        const ts = getMessageTimestamp(msg);
+
+                        return (
+                          <React.Fragment key={msg.id}>
+                            {showDivider && ts && (
+                              <div className="flex justify-center my-3 select-none">
+                                <span className="px-2.5 py-0.5 rounded-md bg-zinc-800/60 text-[11px] font-medium text-zinc-400 shadow-2xs">
+                                  {formatMessageTimeDivider(ts)}
+                                </span>
+                              </div>
+                            )}
+                            <ChatMessageBubble
+                              msg={msg}
+                              isUser={msg.sender === 'user'}
+                              avatar={msg.sender === 'user' ? userProfile.avatar : activeCharacter.avatar}
+                              name={msg.sender === 'user' ? userProfile.name : activeCharacter.name}
+                              quoteText={msg.quoteMessageId ? quotesMap.get(msg.quoteMessageId) : undefined}
+                              onOpenCoT={handleOpenCoT}
+                              onContextMenu={handleMessageContextMenu}
+                              isHighlighted={highlightedMsgId === msg.id}
+                            />
+                          </React.Fragment>
+                        );
+                      })}
 
                       {isLoading && (
                         <div className="flex gap-2.5 items-center text-xs text-zinc-300 pt-1">
@@ -1512,12 +1634,15 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter' && !isComposingRef.current) {
                                   e.preventDefault();
-                                  const val = (inputRef.current?.value || inputText).trim();
+                                  const rawVal = inputRef.current?.value !== undefined ? inputRef.current.value : inputText;
+                                  const val = rawVal.trim();
                                   if (e.shiftKey) {
                                     handleTriggerAiReply();
                                   } else {
                                     if (val || selectedImage) {
                                       handleSendUserOnlyMessage(val, selectedImage);
+                                    } else {
+                                      handleTriggerAiReply();
                                     }
                                   }
                                 }
@@ -1529,6 +1654,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                             <button
                               onClick={handleSendButtonClick}
                               disabled={isLoading}
+                              style={{ touchAction: 'manipulation' }}
                               title="单击发送当前消息/图片（可连发多句）；快速双击直接召唤 AI 综合回复"
                               className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-40 text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0"
                             >
@@ -1568,6 +1694,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                         group.messages && group.messages.length > 0
                           ? group.messages[group.messages.length - 1]
                           : null;
+                      const unreadCount = unreadGroupCounts[group.id] || 0;
 
                       return (
                         <div
@@ -1584,6 +1711,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                             <span className="absolute -bottom-1 -right-1 px-1 rounded-full bg-emerald-600 text-white text-[8px] font-bold">
                               群
                             </span>
+                            {unreadCount > 0 && (
+                              <span className="absolute -top-1 -right-1 min-w-[18px] h-4 px-1 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center shadow-xs animate-pulse">
+                                {unreadCount > 99 ? '99+' : unreadCount}
+                              </span>
+                            )}
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between">
@@ -1617,9 +1749,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                                   group.notice || '群聊已创建，开启畅聊吧'
                                 )}
                               </p>
-                              {group.messages && group.messages.length > 0 && (
-                                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800/60 shrink-0 font-mono">
-                                  {group.messages.length}条
+                              {unreadCount > 0 && (
+                                <span className="text-[10px] min-w-[18px] h-4 px-1.5 rounded-full bg-emerald-500 text-white font-bold shrink-0 flex items-center justify-center animate-pulse">
+                                  {unreadCount > 99 ? '99+' : unreadCount}
                                 </span>
                               )}
                             </div>
@@ -1647,8 +1779,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                               className="w-12 h-12 rounded-2xl object-cover border border-zinc-700 shrink-0"
                             />
                             {unreadCount > 0 && (
-                              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 text-white text-[9px] font-bold flex items-center justify-center animate-pulse">
-                                {unreadCount}
+                              <span className="absolute -top-1 -right-1 min-w-[18px] h-4 px-1 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center shadow-xs animate-pulse">
+                                {unreadCount > 99 ? '99+' : unreadCount}
                               </span>
                             )}
                           </div>
@@ -1668,16 +1800,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                               <p className="text-xs text-zinc-400 truncate flex-1">
                                 {lastMsg ? lastMsg.text : char.greeting}
                               </p>
-                              {/* Requirement 9: Show "AI发来了几条消息" when unread, disappearing after view */}
-                              {unreadCount > 0 ? (
-                                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0 font-medium animate-pulse">
-                                  AI发来 {unreadCount} 条消息
+                              {unreadCount > 0 && (
+                                <span className="text-[10px] min-w-[18px] h-4 px-1.5 rounded-full bg-emerald-500 text-white font-bold shrink-0 flex items-center justify-center animate-pulse">
+                                  {unreadCount > 99 ? '99+' : unreadCount}
                                 </span>
-                              ) : meta.totalCount > 0 ? (
-                                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700 shrink-0 font-mono">
-                                  {meta.totalCount}条
-                                </span>
-                              ) : null}
+                              )}
                             </div>
                           </div>
                         </div>

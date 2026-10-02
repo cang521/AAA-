@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { getMessageTimestamp } from './timeUtils';
 import {
   AiCharacter,
   ChatMessage,
@@ -1412,12 +1413,13 @@ function normalizeTavernCharacter(rawCard: any): {
 
 function normalizeChatMessageSchema(raw: any): ChatMessage {
   const sender = raw.sender === 'ai' || raw.role === 'assistant' || raw.isAi ? 'ai' : 'user';
+  const ts = getMessageTimestamp(raw);
   return {
     id: raw.id || 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
     characterId: raw.characterId || 'char_1',
     sender,
     text: raw.text || raw.content || '',
-    timestamp: raw.timestamp || raw.time || Date.now(),
+    timestamp: ts !== undefined ? ts : Date.now(),
     thinkingProcess: raw.thinkingProcess || raw.reasoning || undefined,
     quoteMessageId: raw.quoteMessageId,
   };

@@ -108,17 +108,6 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
               <span className="block text-[9px] text-amber-300 font-mono mt-1 opacity-80">已刷新回答</span>
             )}
           </div>
-
-          {/* CoT Trigger Chip */}
-          {!isUser && onOpenCoT && msg.thinkingProcess && (
-            <button
-              onClick={() => onOpenCoT(msg.id)}
-              className="mt-1 self-start flex items-center gap-1 text-[10px] text-amber-400 hover:text-amber-300 bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20 transition cursor-pointer"
-            >
-              <Brain className="w-3 h-3" />
-              <span>点击查看 AI 思考链</span>
-            </button>
-          )}
         </div>
       </div>
     );
