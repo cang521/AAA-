@@ -34,6 +34,7 @@ interface AiCallParams {
   apiProtocol?: string;
   responseMimeType?: string;
   temperature?: number;
+  maxTokens?: number;
   timeoutMs?: number;
   customHeaders?: Record<string, string>;
 }
@@ -56,6 +57,7 @@ async function callAiService({
   apiProtocol,
   responseMimeType,
   temperature = 0.7,
+  maxTokens,
   timeoutMs = 35000,
   customHeaders = {},
 }: AiCallParams): Promise<string> {
@@ -133,6 +135,10 @@ async function callAiService({
         messages,
         temperature,
       };
+
+      if (maxTokens) {
+        payload.max_tokens = maxTokens;
+      }
 
       if (responseMimeType === 'application/json') {
         payload.response_format = { type: 'json_object' };
@@ -235,6 +241,9 @@ async function callAiService({
       }
       if (temperature !== undefined) {
         config.temperature = temperature;
+      }
+      if (maxTokens !== undefined) {
+        config.maxOutputTokens = maxTokens;
       }
       if (Object.keys(config).length > 0) {
         generateOptions.config = config;
@@ -2681,7 +2690,7 @@ app.post('/api/gemini/offline-chat', async (req, res) => {
     const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
 
     const systemInstruction = `你现在进入“线下模式 (Offline Scene Mode)”。
-你正在与用户在真实的物理/剧情场景中面对面共度一段时光。
+你正在与用户在真实的物理/剧情场景中面对面共度一段时光，进行深度沉浸式角色互动。
 
 【角色信息】:
 - 姓名: ${character?.name || 'AI'}
@@ -2712,34 +2721,42 @@ ${recalledMemories || '无特定调阅记忆'}
 - 肢体表现: ${previousState?.physicalState || '身体放松'}
 - 行为举止: ${previousState?.behavior || '眼神自然'}
 
+【沉浸式线下描写三大法则】:
+你的每一轮回复必须完整包含以下三类描写，融合成连贯自然的沉浸式叙述（回复目标篇幅约 300 ~ 800 中文字，根据当前情境起伏自然变化，切忌只给一两句话，也切忌机械式堆砌同义词）：
+1. 【环境与氛围描写】：描写当前空间、光线、声音、微风/天气、两者间的物理距离与现场氛围（作为场景叙述直接写入 reply）。
+2. 【动作神态描写】：描写角色的眼神变化、面部表情、微动作、姿态调整、靠近/后退或肢体接触。动作描写必须统一使用中文全角括号：（...） 包裹！
+3. 【语言描写】：角色真正说出来的台词对白，贴合角色人设与性格口吻，推进互动。
+
+【场景与互动连续性规则】:
+- 必须严格遵循上下文中的人物位置、当前姿势、周围环境、情绪起伏与正在发生的事件，保持剧情前后高度连贯（例如：若上一条已坐在沙发上，不要无故突兀变成站在门外）。
+- 提高角色主动性：主动推进动作、回应该环境或用户的微小的举动、提出关心或问题，展开生动的对话交互。
+- 严禁替用户决定用户的动作、台词、情绪或内心想法！
+- 严禁机械写出“环境：”、“动作：”、“语言：”等栏目标题！
+
 【输出格式严格要求】:
-必须只输出一个合法的 JSON 对象，不要包含 markdown 代码块外的其他说明文字！
-结构格式如下：
+必须只输出一个合法的 JSON 对象，格式如下：
 {
-  "reply": "你对用户说的话（只包含口头回复对白，不要包含动作括号）",
-  "action": "（你的肢体动作、眼神神态或微表情描写，必须使用中文全角括号）",
+  "reply": "完整沉浸式互动片段。将环境描写、肢体神态动作（统一用中文全角括号（...）包裹）与对白自然融合成一段连贯生动的沉浸式叙述，篇幅丰富（约300~800字）。",
+  "action": "（核心肢体微动作摘要，用全角括号）",
   "state": {
     "heartRate": 85,
     "breathing": "稍快",
     "blush": 25,
-    "emotion": ["害羞", "开心"],
+    "emotion": ["害羞", "期待"],
     "arousal": 20,
     "tension": 15,
-    "physicalState": "身体微绷，微微靠近",
-    "behavior": "眼神闪烁后注视着你",
-    "energy": 82
+    "physicalState": "身体微微靠拢，手指发紧",
+    "behavior": "眼神深邃注视着你",
+    "energy": 85
   }
 }
-
-注意：
-1. 动作描写必须使用中文全角括号：（...），不得使用 *动作*、[action]、旁白: 等格式！
-2. 状态数据 (state) 必须随着当前剧情对话和情绪起伏动态变化，心率、脸红、紧张程度必须平滑合理，不得突兀跳跃！`;
+`;
 
     const chatHistoryText = (recentMessages || [])
-      .map((m: any) => `${m.sender === 'user' ? '用户' : character?.name || 'AI'}: ${m.text} ${m.action || ''}`)
+      .map((m: any) => `${m.sender === 'user' ? '用户' : character?.name || 'AI'}: ${m.text}`)
       .join('\n');
 
-    const prompt = `【当前对话历史】:\n${chatHistoryText}\n\n用户刚刚对你说: "${userInput}"\n\n请根据上下文和场景，生成你的对白、动作描写与更新后的角色状态 JSON：`;
+    const prompt = `【当前对话历史】:\n${chatHistoryText}\n\n用户刚刚对你说: "${userInput}"\n\n请根据上下文和场景，生成你丰富生动的对白、环境与动作描写及更新后的角色状态 JSON：`;
 
     const responseText = await callAiService({
       prompt,
@@ -2747,7 +2764,12 @@ ${recalledMemories || '无特定调阅记忆'}
       model: selectedModel,
       apiKey: apiConfig?.textApiKey,
       baseUrl: apiConfig?.textBaseUrl,
+      providerType: apiConfig?.provider,
+      apiProtocol: apiConfig?.apiProtocol,
       responseMimeType: 'application/json',
+      temperature: 0.8,
+      maxTokens: 2500,
+      timeoutMs: 65000,
     });
 
     let cleanJson = (responseText || '').replace(/```json|```/g, '').trim();
@@ -2755,7 +2777,7 @@ ${recalledMemories || '无特定调阅记忆'}
     try {
       parsed = JSON.parse(cleanJson);
     } catch {
-      parsed = { reply: responseText, action: '（凝望着你）', state: previousState };
+      parsed = { reply: responseText, action: '', state: previousState };
     }
 
     res.json({ success: true, ...parsed });

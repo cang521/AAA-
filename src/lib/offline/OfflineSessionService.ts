@@ -159,7 +159,8 @@ export class OfflineSessionService {
       parsedReply = '（静静看着你，眼中泛起温柔的光）嗯... 我一直在这里听着呢。';
     }
 
-    const normalized = OfflineStateEngine.normalizeActionText(`${parsedReply} ${parsedAction}`);
+    const fullReplyText = parsedReply.trim() || parsedAction.trim();
+    const actionSummary = parsedAction.trim();
     const finalState = OfflineStateEngine.normalizeAndSmoothState(parsedStateRaw, lastState);
 
     // 5. Create AI OfflineMessage & Save
@@ -168,8 +169,8 @@ export class OfflineSessionService {
       id: `offmsg_${aiMsgTimestamp}_ai`,
       sessionId: session.id,
       sender: 'ai',
-      text: normalized.reply || '……',
-      action: normalized.action || '',
+      text: fullReplyText,
+      action: actionSummary && !fullReplyText.includes(actionSummary) ? actionSummary : '',
       timestamp: aiMsgTimestamp,
       state: finalState,
     };
@@ -184,6 +185,118 @@ export class OfflineSessionService {
     await saveOfflineSession(updatedSession);
 
     return { aiMessage: aiMsg, updatedSession };
+  }
+
+  /**
+   * Regenerate a specific AI message in an active Offline Session.
+   * Re-queries AI model using chat history PRIOR to targetAiMsg, and updates targetAiMsg in IndexedDB.
+   */
+  public static async regenerateAiMessage(
+    session: OfflineSession,
+    character: AiCharacter,
+    targetAiMsg: OfflineMessage,
+    userProfile: UserProfile,
+    apiConfig?: ApiConfig
+  ): Promise<{ updatedAiMsg: OfflineMessage; updatedSession: OfflineSession }> {
+    // 1. Fetch all messages in this session and locate target
+    const allMessages = await getAllSessionMessages(session.id);
+    const targetIndex = allMessages.findIndex((m) => m.id === targetAiMsg.id);
+    if (targetIndex === -1) {
+      throw new Error('未能在本地数据库中找到需要重新生成的AI消息');
+    }
+
+    // 2. Slice history prior to targetAiMsg
+    const priorMessages = allMessages.slice(0, targetIndex);
+    const recentMessagesWindow = priorMessages.slice(-12);
+
+    // 3. Find the user message immediately preceding targetAiMsg
+    const lastUserMsg = [...priorMessages].reverse().find((m) => m.sender === 'user');
+    const userInput = lastUserMsg ? lastUserMsg.text : '（静静与你相处）';
+
+    // 4. Find previous character state before targetAiMsg
+    const lastStateMsg = [...priorMessages].reverse().find((m) => m.state);
+    const previousState: CharacterState = lastStateMsg?.state || session.stateHistory[0]?.state || OfflineStateEngine.createInitialState();
+
+    // 5. Recall character memories based on prior userInput
+    const { recalledText } = await recallCharacterMemories(character.id, userInput, 3).catch(() => ({ recalledText: '' }));
+    const vaultRecall = await searchAiMemoryChunks(character.id, userInput, 3).catch(() => ({ recalledText: '' }));
+    const pastOfflineMemories = await OfflineMemoryBridge.searchSavedOfflineSessions(character.id, userInput, 2).catch(() => '');
+
+    // 6. Call Offline Chat API with prior context
+    const promptPayload = {
+      character,
+      userProfile,
+      sceneSnapshot: session.sceneSnapshot,
+      recentMessages: recentMessagesWindow,
+      recalledMemories: [recalledText, vaultRecall.recalledText, pastOfflineMemories].filter(Boolean).join('\n\n'),
+      previousState,
+      userInput,
+      currentTime: new Date().toLocaleString('zh-CN'),
+      apiConfig,
+    };
+
+    let aiRawResponse = '';
+    const res = await apiFetch('/api/gemini/offline-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(promptPayload),
+    });
+    const data = await res.json();
+    if (data.success && data.reply) {
+      aiRawResponse = typeof data.reply === 'string' ? data.reply : JSON.stringify(data.reply);
+    } else if (data.data) {
+      aiRawResponse = typeof data.data === 'string' ? data.data : JSON.stringify(data.data);
+    } else if (!data.success) {
+      throw new Error(data.error || '重新生成请求失败');
+    }
+
+    // 7. Parse AI Structured Output
+    let parsedReply = '';
+    let parsedAction = '';
+    let parsedStateRaw: any = null;
+
+    if (aiRawResponse) {
+      try {
+        const cleanJson = aiRawResponse.replace(/```json|```/g, '').trim();
+        const jsonObj = JSON.parse(cleanJson);
+        parsedReply = jsonObj.reply || '';
+        parsedAction = jsonObj.action || '';
+        parsedStateRaw = jsonObj.state || null;
+      } catch {
+        parsedReply = aiRawResponse;
+      }
+    }
+
+    if (!parsedReply && !parsedAction) {
+      throw new Error('模型未返回有效回复内容');
+    }
+
+    const fullReplyText = parsedReply.trim() || parsedAction.trim();
+    const actionSummary = parsedAction.trim();
+    const finalState = OfflineStateEngine.normalizeAndSmoothState(parsedStateRaw, previousState);
+
+    // 8. Create updated OfflineMessage keeping SAME id, sessionId, sender, and timestamp
+    const updatedAiMsg: OfflineMessage = {
+      ...targetAiMsg,
+      text: fullReplyText,
+      action: actionSummary && !fullReplyText.includes(actionSummary) ? actionSummary : '',
+      state: finalState,
+    };
+
+    // 9. Save updated message to IndexedDB in-place
+    await saveOfflineMessage(updatedAiMsg);
+
+    // 10. Update session state history
+    const updatedSession: OfflineSession = {
+      ...session,
+      updatedAt: Date.now(),
+      stateHistory: session.stateHistory.map((sh) =>
+        sh.timestamp === targetAiMsg.timestamp ? { timestamp: sh.timestamp, state: finalState } : sh
+      ),
+    };
+    await saveOfflineSession(updatedSession);
+
+    return { updatedAiMsg, updatedSession };
   }
 
   /**

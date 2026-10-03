@@ -86,7 +86,13 @@ export class OfflineStateEngine {
   public static normalizeActionText(text: string): { reply: string; action: string } {
     if (!text) return { reply: '', action: '' };
 
-    let reply = text;
+    const trimmed = text.trim();
+    // If text is already a full narrative containing both parentheses and other text, keep the complete narrative in reply
+    if (/[（\(].+?[）\)]/.test(trimmed) && (trimmed.length > 30 || /[“"」\u4e00-\u9fa5]/.test(trimmed.replace(/[（\(].+?[）\)]/g, '')))) {
+      return { reply: trimmed, action: '' };
+    }
+
+    let reply = trimmed;
     let extractedActions: string[] = [];
 
     // 1. Extract half-width or full-width parentheses actions: （...） or (...)
