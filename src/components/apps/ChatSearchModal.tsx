@@ -1,7 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { Search, X, MessageSquare, ArrowRight, Clock } from 'lucide-react';
-import { ChatMessage, AiCharacter, UserProfile } from '../../types';
-import { searchCharacterMessages } from '../../lib/chatDb';
+import React, { useState, useEffect, useRef } from 'react';
+import { Search, X, MessageSquare, ArrowRight, Clock, ChevronDown } from 'lucide-react';
+import { AiCharacter, UserProfile } from '../../types';
+import {
+  searchCharacterMessagesPaginated,
+  cancelActiveSearchTask,
+  LightSearchResult,
+} from '../../lib/chatSearchEngine';
 
 interface ChatSearchModalProps {
   isOpen: boolean;
@@ -19,38 +23,95 @@ export const ChatSearchModal: React.FC<ChatSearchModalProps> = ({
   onSelectMessage,
 }) => {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<ChatMessage[]>([]);
+  const [results, setResults] = useState<LightSearchResult[]>([]);
+  const [totalMatchCount, setTotalMatchCount] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [offset, setOffset] = useState(0);
+
+  const searchDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!isOpen) {
       setQuery('');
       setResults([]);
+      setOffset(0);
+      setHasMore(false);
+      setTotalMatchCount(0);
+      cancelActiveSearchTask();
       return;
     }
   }, [isOpen]);
 
   useEffect(() => {
+    if (searchDebounceTimerRef.current) {
+      clearTimeout(searchDebounceTimerRef.current);
+    }
+
     if (!query.trim()) {
       setResults([]);
+      setOffset(0);
+      setHasMore(false);
+      setTotalMatchCount(0);
       setIsSearching(false);
+      cancelActiveSearchTask();
       return;
     }
 
-    const timer = setTimeout(async () => {
-      setIsSearching(true);
+    setIsSearching(true);
+    cancelActiveSearchTask(); // Cancel previous in-flight task
+
+    searchDebounceTimerRef.current = setTimeout(async () => {
       try {
-        const found = await searchCharacterMessages(character.id, query.trim(), 50);
-        setResults(found);
+        const taskId = 'search_' + Date.now();
+        const res = await searchCharacterMessagesPaginated(
+          character.id,
+          query.trim(),
+          0,
+          20,
+          taskId
+        );
+
+        setResults(res.results);
+        setTotalMatchCount(res.totalMatchCount);
+        setHasMore(res.hasMore);
+        setOffset(res.results.length);
       } catch (e) {
         console.error('Search error:', e);
       } finally {
         setIsSearching(false);
       }
-    }, 150);
+    }, 300); // 300ms Debounce
 
-    return () => clearTimeout(timer);
+    return () => {
+      if (searchDebounceTimerRef.current) {
+        clearTimeout(searchDebounceTimerRef.current);
+      }
+    };
   }, [query, character.id]);
+
+  const handleLoadMore = async () => {
+    if (isLoadingMore || !hasMore || !query.trim()) return;
+
+    setIsLoadingMore(true);
+    try {
+      const res = await searchCharacterMessagesPaginated(
+        character.id,
+        query.trim(),
+        offset,
+        20
+      );
+
+      setResults((prev) => [...prev, ...res.results]);
+      setHasMore(res.hasMore);
+      setOffset((prev) => prev + res.results.length);
+    } catch (e) {
+      console.error('Load more search results error:', e);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -77,7 +138,7 @@ export const ChatSearchModal: React.FC<ChatSearchModalProps> = ({
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex flex-col justify-start animate-in fade-in duration-150 pl-safe pr-safe pb-safe">
       {/* Search Header Bar */}
       <div
-        className="w-full bg-zinc-900 border-b border-zinc-800 px-3 pb-3 flex items-center gap-3"
+        className="w-full bg-zinc-900 border-b border-zinc-800 px-3 pb-3 flex items-center gap-3 shrink-0"
         style={{
           paddingTop: 'calc(var(--safe-area-top, 0px) + 0.75rem)',
         }}
@@ -137,7 +198,7 @@ export const ChatSearchModal: React.FC<ChatSearchModalProps> = ({
         {!isSearching && results.length > 0 && (
           <div className="space-y-2">
             <div className="px-1 text-[11px] text-zinc-400 flex items-center justify-between">
-              <span>共找到 {results.length} 条包含 "{query}" 的消息记录</span>
+              <span>找到包含 "{query}" 的消息记录 ({results.length}{totalMatchCount > results.length ? `/${totalMatchCount}` : ''})</span>
               <span className="text-[10px] text-zinc-500 font-mono">点击跳转</span>
             </div>
 
@@ -183,6 +244,24 @@ export const ChatSearchModal: React.FC<ChatSearchModalProps> = ({
                 </div>
               );
             })}
+
+            {/* Load More Button */}
+            {hasMore && (
+              <div className="pt-2 text-center">
+                <button
+                  onClick={handleLoadMore}
+                  disabled={isLoadingMore}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 text-xs text-zinc-300 font-medium cursor-pointer transition flex items-center gap-1.5 mx-auto active:scale-95"
+                >
+                  {isLoadingMore ? (
+                    <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
+                  )}
+                  <span>{isLoadingMore ? '正在加载更多搜索结果...' : '加载更多搜索结果'}</span>
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

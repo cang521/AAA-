@@ -470,7 +470,7 @@ export async function updateChatMessage(msg: ChatMessage): Promise<void> {
 }
 
 /**
- * Fast Substring Search across a character's history
+ * Fast Substring Search across a character's history (Lightweight Memory-Safe Cursor Search)
  */
 export async function searchCharacterMessages(
   characterId: string,
@@ -493,9 +493,19 @@ export async function searchCharacterMessages(
     cursorReq.onsuccess = (e) => {
       const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
       if (cursor && matched.length < limit) {
-        const msg = cursor.value as ChatMessage;
-        if (msg.text && msg.text.toLowerCase().includes(lowerQuery)) {
-          matched.push(msg);
+        const rawMsg = cursor.value as ChatMessage;
+        const msgText = rawMsg.text || '';
+        if (msgText && msgText.toLowerCase().includes(lowerQuery)) {
+          // Strip heavy image Base64 URLs when building search result list
+          const lightMsg: ChatMessage = {
+            id: rawMsg.id,
+            characterId: rawMsg.characterId,
+            sender: rawMsg.sender,
+            text: msgText,
+            timestamp: rawMsg.timestamp,
+            imageUrl: rawMsg.imageUrl ? (rawMsg.imageUrl.length > 500 ? '[图片]' : rawMsg.imageUrl) : undefined,
+          };
+          matched.push(lightMsg);
         }
         cursor.continue();
       } else {
@@ -517,55 +527,74 @@ async function getOrBuildChatIndex(characterId: string, db: IDBDatabase): Promis
     const index = store.index('by_character_time');
     const keyRange = IDBKeyRange.bound([characterId, 0], [characterId, Number.MAX_SAFE_INTEGER]);
 
-    const req = index.getAll(keyRange);
+    const messages: ChatMessage[] = [];
+    const keywordToMsgIds = new Map<string, Set<string>>();
 
-    req.onsuccess = () => {
-      const messages = (req.result || []) as ChatMessage[];
-      const keywordToMsgIds = new Map<string, Set<string>>();
+    const cursorReq = index.openCursor(keyRange, 'prev');
 
-      for (const msg of messages) {
-        if (!msg.sourceType || !msg.importance) {
-          const classified = classifyMessage(msg);
-          msg.sourceType = msg.sourceType || classified.sourceType;
-          msg.importance = msg.importance || classified.importance;
+    cursorReq.onsuccess = (e) => {
+      const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+      if (cursor) {
+        const rawMsg = cursor.value as ChatMessage;
+        const msgText = rawMsg.text || '';
+
+        // Create light message structure without giant Base64 strings
+        const lightMsg: ChatMessage = {
+          id: rawMsg.id,
+          characterId: rawMsg.characterId,
+          sender: rawMsg.sender,
+          text: msgText,
+          timestamp: rawMsg.timestamp,
+          sourceType: rawMsg.sourceType,
+          importance: rawMsg.importance,
+        };
+
+        if (!lightMsg.sourceType || !lightMsg.importance) {
+          const classified = classifyMessage(lightMsg);
+          lightMsg.sourceType = lightMsg.sourceType || classified.sourceType;
+          lightMsg.importance = lightMsg.importance || classified.importance;
         }
 
         // Exclude P4 noise from inverted index completely
-        if (msg.importance === 'P4') continue;
+        if (lightMsg.importance !== 'P4') {
+          messages.push(lightMsg);
 
-        const lowerText = msg.text.toLowerCase();
-        const terms = lowerText
-          .replace(/[，。！？、~～…\n\r\t\(\)\[\]\{\}":;]/g, ' ')
-          .split(/\s+/)
-          .filter((t) => t.length >= 2);
+          const lowerText = msgText.toLowerCase();
+          const terms = lowerText
+            .replace(/[，。！？、~～…\n\r\t\(\)\[\]\{\}":;]/g, ' ')
+            .split(/\s+/)
+            .filter((t) => t.length >= 2);
 
-        // Add 2-grams for Chinese character matching
-        const chinese = lowerText.replace(/[^\u4e00-\u9fa5]/g, '');
-        if (chinese.length >= 2) {
-          for (let i = 0; i < chinese.length - 1; i++) {
-            terms.push(chinese.slice(i, i + 2));
+          // Add 2-grams for Chinese character matching
+          const chinese = lowerText.replace(/[^\u4e00-\u9fa5]/g, '');
+          if (chinese.length >= 2) {
+            for (let i = 0; i < chinese.length - 1; i++) {
+              terms.push(chinese.slice(i, i + 2));
+            }
+          }
+
+          const uniqueTerms = new Set(terms);
+          for (const term of uniqueTerms) {
+            if (!keywordToMsgIds.has(term)) {
+              keywordToMsgIds.set(term, new Set());
+            }
+            keywordToMsgIds.get(term)!.add(lightMsg.id);
           }
         }
 
-        const uniqueTerms = new Set(terms);
-        for (const term of uniqueTerms) {
-          if (!keywordToMsgIds.has(term)) {
-            keywordToMsgIds.set(term, new Set());
-          }
-          keywordToMsgIds.get(term)!.add(msg.id);
-        }
+        cursor.continue();
+      } else {
+        const cacheEntry: ChatInvertedIndexCache = {
+          messages,
+          keywordToMsgIds,
+          lastUpdated: Date.now(),
+        };
+        chatIndexCacheMap.set(characterId, cacheEntry);
+        resolve(cacheEntry);
       }
-
-      const cacheEntry: ChatInvertedIndexCache = {
-        messages,
-        keywordToMsgIds,
-        lastUpdated: Date.now(),
-      };
-      chatIndexCacheMap.set(characterId, cacheEntry);
-      resolve(cacheEntry);
     };
 
-    req.onerror = () => {
+    cursorReq.onerror = () => {
       resolve({ messages: [], keywordToMsgIds: new Map(), lastUpdated: Date.now() });
     };
   });

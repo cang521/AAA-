@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { compressImage, globalImageTaskQueue } from '../../lib/imageCompressor';
+import { getMessageWithSurroundingContext } from '../../lib/chatSearchEngine';
 import {
   shouldShowTimeDivider,
   formatMessageTimeDivider,
@@ -955,14 +957,27 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   };
 
   // Jump to specific message and highlight (Requirement 6)
-  const handleSelectSearchedMessage = (msgId: string) => {
+  const handleSelectSearchedMessage = async (msgId: string) => {
+    const exists = (latestMessagesRef.current || displayedMessages).some((m) => m.id === msgId);
+    if (!exists && activeCharacter) {
+      try {
+        const { messages: surrounding } = await getMessageWithSurroundingContext(activeCharacter.id, msgId, 25);
+        if (surrounding.length > 0) {
+          setDisplayedMessages(surrounding);
+          latestMessagesRef.current = surrounding;
+        }
+      } catch (e) {
+        console.error('Failed to load surrounding context for searched message:', e);
+      }
+    }
+
     setHighlightedMsgId(msgId);
     setTimeout(() => {
       const el = document.getElementById(`msg-bubble-${msgId}`);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
-    }, 150);
+    }, 200);
 
     setTimeout(() => {
       setHighlightedMsgId(null);
@@ -1591,16 +1606,18 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                               type="file"
                               accept="image/png, image/jpeg, image/jpg, image/webp"
                               className="hidden"
-                              onChange={(e) => {
+                              onChange={async (e) => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  const reader = new FileReader();
-                                  reader.onload = () => {
-                                    if (typeof reader.result === 'string') {
-                                      setSelectedImage(reader.result);
-                                    }
-                                  };
-                                  reader.readAsDataURL(file);
+                                  try {
+                                    const compressed = await globalImageTaskQueue.enqueue(() =>
+                                      compressImage(file, { maxWidth: 1280, maxHeight: 1280, quality: 0.8, maxFileSizeBytes: 300 * 1024 })
+                                    );
+                                    setSelectedImage(compressed.dataUrl);
+                                  } catch (err) {
+                                    console.error('Image compression failed:', err);
+                                    alert('图片处理失败，请选择其他图片重试');
+                                  }
                                 }
                                 e.target.value = '';
                               }}
