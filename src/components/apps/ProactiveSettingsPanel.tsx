@@ -28,7 +28,11 @@ import {
   saveProactiveSettings,
 } from '../../lib/proactive/proactiveStore';
 import { proactiveEngine } from '../../lib/proactive/proactiveEngine';
+import { chatMessageBridge } from '../../lib/agent/ChatMessageBridge';
+import { proactiveGate } from '../../lib/proactive/ProactiveGate';
+import { proactiveScheduler } from '../../lib/proactive/ProactiveScheduler';
 import { loadCharacters, loadUserProfile, loadApiConfig } from '../../lib/storage';
+import { LifeStatePanel } from './LifeStatePanel';
 
 interface ProactiveSettingsPanelProps {
   onBack: () => void;
@@ -37,7 +41,7 @@ interface ProactiveSettingsPanelProps {
 export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ onBack }) => {
   const [settings, setSettings] = useState<ProactiveSettings>(() => loadProactiveSettings());
   const [characters, setCharacters] = useState(() => loadCharacters());
-  const [activeTab, setActiveTab] = useState<'triggers' | 'characters' | 'anti_harassment' | 'test'>('triggers');
+  const [activeTab, setActiveTab] = useState<'triggers' | 'life_state' | 'characters' | 'anti_harassment' | 'test'>('triggers');
 
   // Test Simulation Modal State
   const [showTestModal, setShowTestModal] = useState(false);
@@ -63,8 +67,29 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
     saveProactiveSettings(settings);
   }, [settings]);
 
-  const handleToggleMaster = (val: boolean) => {
-    setSettings((prev) => ({ ...prev, enabled: val }));
+  const handleSetTemporaryPause = (type: '1h' | 'tonight' | 'tomorrow' | 'resume') => {
+    let targetTime: number | undefined;
+    const now = new Date();
+
+    if (type === '1h') {
+      targetTime = Date.now() + 3600000;
+    } else if (type === 'tonight') {
+      const tonight = new Date();
+      tonight.setHours(23, 0, 0, 0);
+      if (tonight.getTime() <= Date.now()) {
+        tonight.setDate(tonight.getDate() + 1);
+      }
+      targetTime = tonight.getTime();
+    } else if (type === 'tomorrow') {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(8, 0, 0, 0);
+      targetTime = tomorrow.getTime();
+    } else {
+      targetTime = undefined;
+    }
+
+    setSettings((prev) => ({ ...prev, pausedUntil: targetTime }));
   };
 
   const handleTogglePerAi = (charId: string, val: boolean) => {
@@ -180,7 +205,12 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
       setTestThinking(res.thinkingProcess || '结合角色人设生成试发主动消息。');
 
       if (testModeSendToChat && res.text) {
-        await proactiveEngine.checkAndTriggerProactiveMessages();
+        // Direct test send without re-evaluating real triggers or modifying event states
+        await chatMessageBridge.postProactiveMessage(
+          targetChar.id,
+          res.text,
+          `【试发测试模式】手动发送测试主动消息 (${testTriggerType})`
+        );
       }
     } catch (e: any) {
       setTestResultText('测试生成失败: ' + (e.message || '网络或API异常'));
@@ -217,7 +247,7 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
             {settings.enabled ? '已开启' : '已关闭'}
           </span>
           <button
-            onClick={() => handleToggleMaster(!settings.enabled)}
+            onClick={() => setSettings((prev) => ({ ...prev, enabled: !prev.enabled }))}
             className={`w-9 h-5 rounded-full transition-colors relative focus:outline-none ${
               settings.enabled ? 'bg-emerald-500' : 'bg-zinc-700'
             }`}
@@ -231,21 +261,78 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
         </div>
       </div>
 
+      {/* Temporary Pause Bar */}
+      <div className="px-3 py-1.5 bg-zinc-850 border-b border-zinc-800 flex items-center justify-between text-xs shrink-0 gap-1">
+        <div className="flex items-center gap-1.5 text-zinc-300 font-medium">
+          <Clock className="w-3.5 h-3.5 text-amber-400" />
+          <span>临时暂停:</span>
+          {settings.pausedUntil && settings.pausedUntil > Date.now() ? (
+            <span className="text-amber-400 font-bold">
+              暂停至 {new Date(settings.pausedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          ) : (
+            <span className="text-zinc-500 font-normal">正常运行中</span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1">
+          {settings.pausedUntil && settings.pausedUntil > Date.now() ? (
+            <button
+              onClick={() => handleSetTemporaryPause('resume')}
+              className="px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 text-[10px] font-semibold transition"
+            >
+              立即恢复
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={() => handleSetTemporaryPause('1h')}
+                className="px-2 py-0.5 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-zinc-300 text-[10px] transition"
+              >
+                暂停1小时
+              </button>
+              <button
+                onClick={() => handleSetTemporaryPause('tonight')}
+                className="px-2 py-0.5 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-zinc-300 text-[10px] transition"
+              >
+                至今晚
+              </button>
+              <button
+                onClick={() => handleSetTemporaryPause('tomorrow')}
+                className="px-2 py-0.5 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-zinc-300 text-[10px] transition"
+              >
+                至明早
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* Navigation Sub-Tabs */}
-      <div className="flex border-b border-zinc-800 bg-zinc-900/90 text-xs shrink-0 px-2 pt-1 gap-1">
+      <div className="flex border-b border-zinc-800 bg-zinc-900/90 text-xs shrink-0 px-2 pt-1 gap-1 overflow-x-auto no-scrollbar">
         <button
           onClick={() => setActiveTab('triggers')}
-          className={`flex-1 py-2 font-semibold text-center border-b-2 transition ${
+          className={`flex-1 min-w-[70px] py-2 font-semibold text-center border-b-2 transition ${
             activeTab === 'triggers'
               ? 'border-emerald-500 text-emerald-400'
               : 'border-transparent text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          触发条件 (7类)
+          触发条件
+        </button>
+        <button
+          onClick={() => setActiveTab('life_state')}
+          className={`flex-1 min-w-[75px] py-2 font-semibold text-center border-b-2 transition ${
+            activeTab === 'life_state'
+              ? 'border-purple-500 text-purple-400'
+              : 'border-transparent text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          生活状态
         </button>
         <button
           onClick={() => setActiveTab('characters')}
-          className={`flex-1 py-2 font-semibold text-center border-b-2 transition ${
+          className={`flex-1 min-w-[70px] py-2 font-semibold text-center border-b-2 transition ${
             activeTab === 'characters'
               ? 'border-emerald-500 text-emerald-400'
               : 'border-transparent text-zinc-400 hover:text-zinc-200'
@@ -255,17 +342,17 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
         </button>
         <button
           onClick={() => setActiveTab('anti_harassment')}
-          className={`flex-1 py-2 font-semibold text-center border-b-2 transition ${
+          className={`flex-1 min-w-[80px] py-2 font-semibold text-center border-b-2 transition ${
             activeTab === 'anti_harassment'
               ? 'border-emerald-500 text-emerald-400'
               : 'border-transparent text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          免打扰与频次
+          免打扰频次
         </button>
         <button
           onClick={() => setActiveTab('test')}
-          className={`flex-1 py-2 font-semibold text-center border-b-2 transition ${
+          className={`flex-1 min-w-[70px] py-2 font-semibold text-center border-b-2 transition ${
             activeTab === 'test'
               ? 'border-amber-400 text-amber-300'
               : 'border-transparent text-zinc-400 hover:text-zinc-200'
@@ -276,6 +363,11 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
       </div>
 
       {/* Main Panel Content Area */}
+      {activeTab === 'life_state' ? (
+        <div className="flex-1 overflow-hidden">
+          <LifeStatePanel />
+        </div>
+      ) : (
       <div className="flex-1 overflow-y-auto p-3 space-y-3.5">
         {!settings.enabled && (
           <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2">
@@ -763,6 +855,38 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
                 </div>
               )}
             </div>
+
+            {/* 8. App Usage Proactive Care */}
+            <div className="p-3.5 rounded-2xl bg-zinc-850 border border-zinc-800 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center">
+                    <Zap className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-zinc-100">8. App与小手机使用状态关心</h3>
+                    <p className="text-[10px] text-zinc-400">长时间看短视频、打游戏或连续玩手机防沉迷关怀</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() =>
+                    setSettings((p) => ({
+                      ...p,
+                      appUsage: { enabled: !(p.appUsage?.enabled ?? true) },
+                    }))
+                  }
+                  className={`w-8 h-4.5 rounded-full relative transition-colors ${
+                    (settings.appUsage?.enabled ?? true) ? 'bg-emerald-500' : 'bg-zinc-700'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full bg-white transition-transform ${
+                      (settings.appUsage?.enabled ?? true) ? 'translate-x-3.5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1013,6 +1137,7 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
                   className="w-full mt-1 px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white text-xs"
                 >
                   <option value="inactivity_timeout">12小时长时间未聊天问候</option>
+                  <option value="life_event_followup">生活连续性事项跟进 (Current Life State)</option>
                   <option value="weather_alert">突发暴雨与出行气象关怀</option>
                   <option value="menstrual_care">经期前2天健康保暖提示</option>
                   <option value="greeting">早安自然问候</option>
@@ -1061,9 +1186,62 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
                 </div>
               </div>
             )}
+
+            {/* System Diagnostics & Gate Debug Info */}
+            <div className="mt-4 pt-3 border-t border-zinc-800 space-y-2 text-[11px]">
+              <div className="flex items-center gap-1.5 font-bold text-zinc-200">
+                <Shield className="w-3.5 h-3.5 text-purple-400" />
+                <span>系统实时诊断与 ProactiveGate 状态</span>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 grid grid-cols-2 gap-2 text-zinc-300 font-mono">
+                <div>
+                  <span className="text-zinc-500 block text-[10px]">主动总开关：</span>
+                  <span className={settings.enabled ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                    {settings.enabled ? '🟢 ENABLED' : '🔴 DISABLED'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-zinc-500 block text-[10px]">临时暂停状态：</span>
+                  <span className={settings.pausedUntil && settings.pausedUntil > Date.now() ? 'text-amber-400 font-bold' : 'text-zinc-300'}>
+                    {settings.pausedUntil && settings.pausedUntil > Date.now() ? '⏸ PAUSED' : '🟢 RUNNING'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-zinc-500 block text-[10px]">Scheduler 状态：</span>
+                  <span className="text-emerald-400 font-bold">
+                    {proactiveScheduler.isSchedulerActive() ? '⚡ ACTIVE (12m)' : '⚪ IDLE'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-zinc-500 block text-[10px]">最近一次巡检：</span>
+                  <span>
+                    {proactiveScheduler.getLastCheckTime()
+                      ? new Date(proactiveScheduler.getLastCheckTime()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                      : '等待首检'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-[10px] space-y-1">
+                <span className="text-zinc-400 font-medium block">最近一次 ProactiveGate 网关判定：</span>
+                <p className="text-amber-300 font-mono bg-black/40 p-1.5 rounded-lg border border-zinc-800">
+                  {proactiveGate.getLastRejectReason()}
+                </p>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-blue-950/30 border border-blue-500/20 text-[10px] text-blue-300 space-y-1">
+                <span className="font-semibold block text-blue-200">📱 Android 运行边界与能力说明：</span>
+                <p className="leading-relaxed text-zinc-400">
+                  • 进程存活（前台/后台挂起）：Scheduler 12分钟周期与 Resume 触发正常运行。<br />
+                  • 进程被系统强杀（Process Killed）：受原生 Android WebView 限制，进程杀死后无法在离线状态下自动请求网络生成 AI 消息。下次打开 App 时自动补检触发。
+                </p>
+              </div>
+            </div>
           </div>
         )}
       </div>
+      )}
 
       {/* Add Custom Event Modal */}
       {showAddEventModal && (

@@ -41,7 +41,7 @@ export const DEFAULT_PROACTIVE_SETTINGS: ProactiveSettings = {
   menstrual: {
     enabled: true,
     daysBefore: 2,
-    allowedCharacterIds: ['char_1'], // Default permitted AI character
+    allowedCharacterIds: [], // Default empty array; women's health data must be explicitly granted
   },
   greetings: {
     enabled: true,
@@ -54,35 +54,26 @@ export const DEFAULT_PROACTIVE_SETTINGS: ProactiveSettings = {
     notifyBeforeDays: 1,
     notifyOnDay: true,
     allowFollowup: true,
-    customEvents: [
-      {
-        id: 'evt_default_1',
-        title: '我的生日',
-        date: '2026-10-15',
-        type: 'birthday',
-        remindBeforeDays: 1,
-        allowFollowup: true,
-      },
-    ],
+    customEvents: [], // Clean default; no fake demo events
   },
   followupTopics: {
     enabled: true,
-    items: [
-      {
-        id: 'fol_default_1',
-        title: '重要面试与汇报',
-        targetDateStr: '2026-10-05',
-        status: 'pending',
-        hasFollowedUp: false,
-        createdAt: Date.now() - 86400000,
-      },
-    ],
+    items: [], // Clean default
   },
   deviceEvents: {
     enabled: true,
     lowBattery: true,
     lateNightUsage: true,
     appUnopenedDays: true,
+  },
+  appUsage: {
+    enabled: true,
+  },
+  lifeState: {
+    enabled: true,
+    autoExtractFromChat: true,
+    allowProactiveFollowup: true,
+    sensitivity: 'medium',
   },
 
   quietHours: {
@@ -95,6 +86,7 @@ export const DEFAULT_PROACTIVE_SETTINGS: ProactiveSettings = {
   allowHighPriorityBypassQuiet: true,
 
   systemNotificationsEnabled: true,
+  pausedUntil: undefined,
 };
 
 export function loadProactiveSettings(): ProactiveSettings {

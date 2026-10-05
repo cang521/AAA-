@@ -2079,6 +2079,11 @@ ${devicesSummary}
 `;
     }
 
+    // Inject Current Life State Context if provided
+    if (req.body.lifeStateContext) {
+      contextPrompt += `\n${req.body.lifeStateContext}\n`;
+    }
+
     contextPrompt += `\n【📱 微信真人打字与分句连发习惯】：
 在真实微信聊天中，真人通常不会一次性堆砌长篇大论，而是习惯把一整段话切分成 2~4 条自然简短的话语连发（一句话发一条消息，随性口语化、亲近真实）。
 请在输出回复时，自然地使用换行（每行一两句话）分隔，让每条消息都简短精炼、生动日常，避免书面化大段独白。
@@ -2710,6 +2715,7 @@ app.post('/api/gemini/offline-chat', async (req, res) => {
 
 【已有回忆与背景】:
 ${recalledMemories || '无特定调阅记忆'}
+${req.body.lifeStateContext ? `\n${req.body.lifeStateContext}\n` : ''}
 
 【上一轮你的角色状态】:
 - 心率: ${previousState?.heartRate || 75} bpm
@@ -3235,6 +3241,8 @@ app.post('/api/gemini/proactive-generate', async (req, res) => {
       triggerDescription = `【触发场景: 重要日期提醒】用户有一个重要日程/事件：[${eventData?.eventTitle || '重要事件'}]，将在 ${eventData?.daysRemaining === 0 ? '今天' : eventData?.daysRemaining + '天后'} (${eventData?.eventDate || ''}) 到来。请主动向用户送上问候与关怀。`;
     } else if (triggerType === 'followup_topic') {
       triggerDescription = `【触发场景: 待跟进事项追问】用户之前提到过这件事：[${eventData?.topicTitle || '之前的计划'}]。现在时间到了，请主动微信询问事情的后续进展或结果。`;
+    } else if (triggerType === 'life_event_followup') {
+      triggerDescription = `【触发场景: 生活连续性跟进 / Current Life State】用户近期正在经历的事项：[${eventData?.title || '关注事项'}] (${eventData?.summary || ''}${eventData?.latestProgress ? `，最新进展: ${eventData?.latestProgress}` : ''})。请以你的角色人设和语气，自然关切地问起这件事的近况或表达关心。`;
     } else if (triggerType === 'device_life_event') {
       const sub = eventData?.deviceSubtype || 'low_battery';
       if (sub === 'low_battery') {
@@ -3294,6 +3302,92 @@ ${historyText || '(近期暂无聊天)'}
   } catch (error: any) {
     console.error('Proactive generate error:', error);
     res.status(500).json({ success: false, error: error.message || 'Proactive generation failed' });
+  }
+});
+
+// 11.1.5 Extract & Update Current Life State Events Endpoint
+app.post('/api/gemini/extract-life-events', async (req, res) => {
+  try {
+    const { messages = [], existingEvents = [], userProfile, apiConfig } = req.body;
+    if (!messages || messages.length === 0) {
+      return res.json({ success: true, events: [] });
+    }
+
+    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+
+    const conversationSnippet = messages
+      .slice(-10)
+      .map((m: any) => `${m.sender === 'user' ? userProfile?.name || '用户' : 'AI'}: ${m.text || ''}`)
+      .join('\n');
+
+    const eventsSnippet = (existingEvents || [])
+      .map((e: any) => `- ID: ${e.id} | 标题: ${e.title} | 类型: ${e.type} | 状态: ${e.status} | 摘要: ${e.summary}`)
+      .join('\n');
+
+    const prompt = `你是一个精准的“用户生活状态与近况提炼器 (Current Life State Extractor)”。
+分析以下用户近期发出的聊天记录，并结合用户已有的生活事件列表，判定是否有需要新增、更新或标记完成的【生活事件 / LifeEvent】。
+
+【已有生活事件列表】：
+${eventsSnippet || '(暂无已有生活事件)'}
+
+【近期聊天对话记录】：
+${conversationSnippet}
+
+【提炼规则】：
+1. 仅提炼用户“正在经历”、“正在等待”、“近期计划”、“困扰/情绪”或“身体健康/阶段目标”相关的【中短期生活事件】。不要把永久性格或固定身份提炼成事件。
+2. 支持的事件类型 (type)：
+   - future_plan: 未来计划 (例如“下午去见客户”、“周末去爬山”)
+   - waiting_result: 等待结果 (例如“等面试结果”、“等论文打分”)
+   - ongoing_issue: 持续事项/困扰 (例如“最近这几天很忙”、“项目遇到瓶颈”)
+   - recent_emotion: 近期情绪状态 (例如“今天感到特别累”、“非常兴奋”)
+   - health_status: 身体健康状况 (例如“感冒发烧”、“偏头疼”)
+   - temporary_goal: 阶段性目标 (例如“准备复习考证”)
+   - custom: 其他近况事件
+3. 如果聊天记录中用户提到了已有事件的最新进展（如“面试通过了”、“感冒好多了”、“客户见完了”）：
+   - 请设置 action 为 "update" 或 "resolve"，并在 resolutionSummary 或 latestProgress 中说明。
+4. 如果发现全新的中短期动态事件，设置 action 为 "create"。
+5. 如果没有任何新事件或变更，返回空数组 []。
+
+必须仅返回 JSON 格式，严格符合以下 Schema：
+{
+  "events": [
+    {
+      "action": "create" | "update" | "resolve",
+      "id": "如果是update/resolve，填写已有ID；如果是create，置空",
+      "type": "future_plan" | "waiting_result" | "ongoing_issue" | "recent_emotion" | "health_status" | "temporary_goal" | "custom",
+      "title": "简短清晰标题",
+      "summary": "1-2句事件内容摘要",
+      "status": "pending" | "ongoing" | "waiting" | "completed",
+      "importance": 1-5中的整数,
+      "latestProgress": "最新进展说明",
+      "resolutionSummary": "如果结案，填写结案原因/结果"
+    }
+  ]
+}`;
+
+    const rawResponse = await callAiService({
+      prompt,
+      model: selectedModel,
+      apiKey: apiConfig?.textApiKey,
+      baseUrl: apiConfig?.textBaseUrl,
+      providerType: apiConfig?.textProvider,
+      customHeaders: apiConfig?.customHeaders,
+      responseMimeType: 'application/json',
+      timeoutMs: apiConfig?.timeoutMs || 25000,
+    });
+
+    let jsonRes: any = { events: [] };
+    try {
+      const cleanJson = rawResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      jsonRes = JSON.parse(cleanJson);
+    } catch (e) {
+      console.warn('Failed to parse extract-life-events JSON:', e);
+    }
+
+    res.json({ success: true, events: jsonRes.events || [] });
+  } catch (err: any) {
+    console.error('extract-life-events error:', err);
+    res.status(500).json({ success: false, error: err.message || 'Extraction failed' });
   }
 });
 

@@ -105,6 +105,14 @@ export interface ChatMessage {
   thinkingProcess?: string;
   quoteMessageId?: string;
   isRefreshed?: boolean;
+  isProactive?: boolean;
+  proactiveMeta?: {
+    triggerType?: string;
+    eventId?: string;
+    sourceSystem?: 'proactiveEngine' | 'agent';
+    priority?: string;
+    generatedAt?: number;
+  };
   type?: 'text' | 'offline_share_card';
   offlineCardData?: {
     sessionId: string;
@@ -388,6 +396,44 @@ export interface FollowupTopicItem {
   createdAt: number;
 }
 
+export type LifeEventType =
+  | 'future_plan'      // 未来计划，例如“下午去见客户”
+  | 'waiting_result'   // 等待结果，例如“等面试结果”
+  | 'ongoing_issue'    // 持续中的问题，例如“这几天一直在纠结某件事”
+  | 'recent_emotion'   // 近期情绪状态，例如“今天特别累/很烦/很紧张”
+  | 'health_status'    // 健康身体，例如“感冒发烧”、“生理期不适”
+  | 'temporary_goal'   // 阶段目标，例如“这周末准备复习考证”
+  | 'custom';          // 自定义事件
+
+export type LifeEventStatus = 'pending' | 'ongoing' | 'waiting' | 'completed' | 'cancelled';
+export type LifeEventSourceType = 'chat_extraction' | 'user_manual' | 'memo_sync' | 'proactive_trigger';
+
+export interface LifeEvent {
+  id: string;
+  userId?: string;
+  type: LifeEventType;
+  title: string;
+  summary: string;
+  status: LifeEventStatus;
+  importance: number; // 1 - 5
+  sourceMessageIds?: string[];
+  createdAt: number;
+  updatedAt: number;
+  startAt?: number;
+  expectedEndAt?: number;
+  nextFollowUpAt?: number;
+  expiresAt?: number;
+  followUpReason?: string;
+  latestProgress?: string;
+  followUpCount: number;
+  lastFollowUpAt?: number;
+  resolvedAt?: number;
+  resolutionSummary?: string;
+  sourceType: LifeEventSourceType;
+  allowedCharacterIds?: string[];
+  metadata?: Record<string, any>;
+}
+
 export interface ProactiveSettings {
   enabled: boolean; // Master toggle
   allowAllCharacters: boolean;
@@ -435,6 +481,12 @@ export interface ProactiveSettings {
     lateNightUsage: boolean; // 23:30 - 04:00
     appUnopenedDays: boolean; // >= 3 days
   };
+  lifeState?: {
+    enabled: boolean;
+    autoExtractFromChat: boolean;
+    allowProactiveFollowup: boolean;
+    sensitivity: 'high' | 'medium' | 'low';
+  };
 
   // Anti-Harassment & Rate Limits
   quietHours: {
@@ -448,6 +500,14 @@ export interface ProactiveSettings {
 
   // System Notification
   systemNotificationsEnabled: boolean;
+
+  // Temporary Pause
+  pausedUntil?: number;
+
+  // App Usage Proactive Engagement
+  appUsage?: {
+    enabled: boolean;
+  };
 }
 
 // ==================== 外部设备与智能中心系统 ====================

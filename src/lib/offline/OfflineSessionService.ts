@@ -18,6 +18,8 @@ import { OfflineStateEngine, CharacterState } from './OfflineStateEngine';
 import { OfflineMemoryBridge, OfflineSessionSummary } from './OfflineMemoryBridge';
 import { recallCharacterMemories } from '../chatDb';
 import { searchAiMemoryChunks } from '../aiMemoryVaultDb';
+import { getLifeContextForPrompt } from '../lifeState/lifeStateStore';
+import { triggerLifeStateExtraction } from '../lifeState/lifeStateExtractor';
 
 export class OfflineSessionService {
   /**
@@ -107,12 +109,14 @@ export class OfflineSessionService {
     const pastOfflineMemories = await OfflineMemoryBridge.searchSavedOfflineSessions(character.id, userText, 2).catch(() => '');
 
     // 4. Construct AI System Prompt & Payload
+    const lifeStateContext = getLifeContextForPrompt(character.id);
     const promptPayload = {
       character,
       userProfile,
       sceneSnapshot: session.sceneSnapshot,
       recentMessages: recentMessagesWindow,
       recalledMemories: [recalledText, vaultRecall.recalledText, pastOfflineMemories].filter(Boolean).join('\n\n'),
+      lifeStateContext,
       previousState: lastState,
       userInput: userText,
       currentTime: new Date().toLocaleString('zh-CN'),
@@ -183,6 +187,12 @@ export class OfflineSessionService {
       stateHistory: [...session.stateHistory, { timestamp: aiMsgTimestamp, state: finalState }],
     };
     await saveOfflineSession(updatedSession);
+
+    // 7. Background trigger for Life State Event extraction
+    triggerLifeStateExtraction(
+      [userMsg, aiMsg].map((m) => ({ id: m.id, sender: m.sender, text: m.text, timestamp: m.timestamp } as any)),
+      character.id
+    ).catch(() => {});
 
     return { aiMessage: aiMsg, updatedSession };
   }

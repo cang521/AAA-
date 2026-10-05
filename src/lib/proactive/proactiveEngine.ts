@@ -10,11 +10,14 @@ import { loadCharacters, loadUserProfile, loadMenstrualData, loadApiConfig, load
 import { weatherService } from '../weatherService';
 import { systemNativeService } from '../systemNativeService';
 import { chatMessageBridge } from '../agent/ChatMessageBridge';
+import { proactiveGate } from './ProactiveGate';
 import { apiFetch } from '../localBackend';
+
+import { getLifeEventsSync, updateLifeEvent } from '../lifeState/lifeStateStore';
 
 export interface ProactiveTriggerCandidate {
   characterId: string;
-  triggerType: 'inactivity_timeout' | 'weather_alert' | 'menstrual_care' | 'greeting' | 'important_event' | 'followup_topic' | 'device_life_event';
+  triggerType: 'inactivity_timeout' | 'weather_alert' | 'menstrual_care' | 'greeting' | 'important_event' | 'followup_topic' | 'device_life_event' | 'life_event_followup';
   priority: 'high' | 'medium' | 'low';
   eventId: string; // Unique deduplication ID
   eventData: any;
@@ -304,6 +307,39 @@ class ProactiveEngine {
           }
         }
 
+        // 8. Life State Continuity Follow-up Candidate
+        if (settings.lifeState?.enabled !== false && settings.lifeState?.allowProactiveFollowup !== false) {
+          const activeEvents = getLifeEventsSync({
+            status: ['pending', 'ongoing', 'waiting'],
+            characterId: char.id,
+          });
+
+          const nowMs = Date.now();
+          for (const lifeEvt of activeEvents) {
+            if (lifeEvt.followUpCount >= 5) continue;
+            const dueTime = lifeEvt.nextFollowUpAt || (lifeEvt.createdAt + 3600000 * 4);
+            if (nowMs >= dueTime) {
+              const eventId = `life_evt_follow_${lifeEvt.id}_${todayStr}_${char.id}`;
+              if (!charRuntime.handledEventIds.includes(eventId)) {
+                candidates.push({
+                  characterId: char.id,
+                  triggerType: 'life_event_followup',
+                  priority: lifeEvt.importance >= 4 ? 'high' : 'medium',
+                  eventId,
+                  eventData: {
+                    id: lifeEvt.id,
+                    title: lifeEvt.title,
+                    summary: lifeEvt.summary,
+                    type: lifeEvt.type,
+                    latestProgress: lifeEvt.latestProgress,
+                  },
+                });
+                break; // Process top matching life event per AI
+              }
+            }
+          }
+        }
+
         if (candidates.length === 0) continue;
 
         // Sort candidates by priority (high > medium > low)
@@ -314,45 +350,53 @@ class ProactiveEngine {
 
         const selected = candidates[0];
 
-        // Filter out quiet hours (unless high priority bypass)
-        if (isQuietHours) {
-          if (selected.priority !== 'high' || !settings.allowHighPriorityBypassQuiet) {
-            continue;
-          }
-        }
+        // 1. Unified Gate Check
+        const gateCheck = proactiveGate.canSendProactiveMessage({
+          aiId: char.id,
+          triggerType: selected.triggerType,
+          priority: selected.priority,
+          eventId: selected.eventId,
+          sourceSystem: 'proactiveEngine',
+          eventData: selected.eventData,
+        });
 
-        // Filter out minimum cooldown
-        if (selected.priority !== 'high' && timeSinceLastProactiveMinutes < (settings.minCooldownMinutes || 120)) {
+        if (!gateCheck.allowed) {
           continue;
         }
 
-        // Generate proactive message via API
+        // 2. Generate proactive message via API
         const generated = await this.generateProactiveMessage(char, selected, userProfile, apiConfig);
 
         if (generated.text) {
-          // Post proactive message to chat DB and UI store
-          await chatMessageBridge.postProactiveMessage(
-            char.id,
-            generated.text,
-            generated.thinkingProcess || `【主动消息触发器: ${selected.triggerType}】`
-          );
+          // 3. Dispatch through Unified ProactiveGate
+          const dispatchRes = await proactiveGate.dispatchProactiveMessage({
+            aiId: char.id,
+            triggerType: selected.triggerType,
+            priority: selected.priority,
+            eventId: selected.eventId,
+            sourceSystem: 'proactiveEngine',
+            eventData: selected.eventData,
+            proposedText: generated.text,
+            contextSummary: generated.thinkingProcess || `【主动触发器: ${selected.triggerType}】`,
+          });
 
-          // Update runtime state
-          charRuntime.lastProactiveMsgAt = Date.now();
-          charRuntime.lastUnrepliedProactiveAt = Date.now();
-          charRuntime.dailyProactiveCount += 1;
-          charRuntime.handledEventIds.push(selected.eventId);
+          if (dispatchRes.sent) {
+            triggeredCount++;
 
-          if (charRuntime.handledEventIds.length > 50) {
-            charRuntime.handledEventIds = charRuntime.handledEventIds.slice(-40);
-          }
-
-          runtimeState.characterStates[char.id] = charRuntime;
-          triggeredCount++;
-
-          // Send System Notification if enabled
-          if (settings.systemNotificationsEnabled) {
-            this.showSystemNotification(char.name, generated.text, char.id);
+            // Update LifeEvent state if this was a life_event_followup
+            if (selected.triggerType === 'life_event_followup' && selected.eventData?.id) {
+              const lifeEvtId = selected.eventData.id;
+              const currentEvents = getLifeEventsSync();
+              const target = currentEvents.find((e) => e.id === lifeEvtId);
+              if (target) {
+                const count = (target.followUpCount || 0) + 1;
+                await updateLifeEvent(lifeEvtId, {
+                  followUpCount: count,
+                  lastFollowUpAt: Date.now(),
+                  nextFollowUpAt: Date.now() + 3600000 * 24 * Math.min(count, 3),
+                });
+              }
+            }
           }
         }
       }

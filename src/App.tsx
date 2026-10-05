@@ -69,6 +69,7 @@ import { checkAndRunScheduledArchives } from './lib/chatArchiveDb';
 import { InPhoneAskDialog } from './components/agent/InPhoneAskDialog';
 import { InPhoneNotificationBanner } from './components/agent/InPhoneNotificationBanner';
 import { agentOrchestrator } from './lib/agent/AgentOrchestrator';
+import { proactiveScheduler } from './lib/proactive/ProactiveScheduler';
 import { AgentAskPrompt, InPhoneNotification } from './lib/agent/types';
 import { getApiConfigForEngine } from './lib/apiConfigStore';
 import { autoPaginateLayout } from './lib/layoutPaginator';
@@ -102,8 +103,10 @@ export function App() {
   const [activeAskPrompt, setActiveAskPrompt] = useState<AgentAskPrompt | null>(null);
   const [activeNotification, setActiveNotification] = useState<InPhoneNotification | null>(null);
 
-  // Subscribe to Agent Orchestrator for ASK prompts and in-phone notifications
+  // Subscribe to Agent Orchestrator & Start Background Proactive Scheduler
   useEffect(() => {
+    proactiveScheduler.start();
+
     const unsubAsk = agentOrchestrator.subscribeAskPrompt((prompt) => {
       setActiveAskPrompt(prompt);
     });

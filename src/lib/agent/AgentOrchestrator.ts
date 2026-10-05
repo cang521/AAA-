@@ -14,6 +14,7 @@ import { systemCapabilityManager } from './SystemCapabilityManager';
 import { activityLogger } from './ActivityLogger';
 import { chatMessageBridge } from './ChatMessageBridge';
 import { deviceContextManager } from './DeviceContextManager';
+import { proactiveGate } from '../proactive/ProactiveGate';
 import { loadCharacters } from '../storage';
 
 type AskPromptListener = (prompt: AgentAskPrompt | null) => void;
@@ -278,7 +279,7 @@ class AgentOrchestrator {
       };
     }
 
-    // Stage 6: Execution (ActionExecutor)
+    // Stage 6: Execution (ActionExecutor through Unified ProactiveGate)
     try {
       let relatedMsgId: string | undefined;
 
@@ -287,25 +288,71 @@ class AgentOrchestrator {
           candidate.proposedMessageText ||
           `看你已经使用 ${context.currentApp} 一段时间了，要注意休息眼睛哦~`;
 
-        const { message, character } = await chatMessageBridge.postProactiveMessage(
-          candidate.targetAiId,
-          text,
-          `${event.summary} (场景: ${sceneRule.sceneName})`
-        );
-
-        relatedMsgId = message.id;
-
-        // Show in-phone notification banner
-        this.showInPhoneNotification({
-          id: 'notif_' + Date.now(),
-          aiId: character.id,
-          aiName: character.name,
-          aiAvatar: character.avatar,
-          title: `${character.name} 发来新消息`,
-          content: text,
-          timestamp: Date.now(),
-          category: 'proactive_chat',
+        const gateCheck = proactiveGate.canSendProactiveMessage({
+          aiId: candidate.targetAiId,
+          triggerType: event.type === 'APP_USAGE_TICK' ? 'app_usage' : event.type.toLowerCase(),
+          priority: candidate.urgency === 'high' ? 'high' : 'medium',
+          eventId: event.id,
+          sourceSystem: 'agent',
         });
+
+        stages.push({
+          stageName: '统一 Gate 网关校验 (ProactiveGate)',
+          passed: gateCheck.allowed,
+          statusText: gateCheck.allowed ? '网关通过' : '网关阻断',
+          detail: gateCheck.allowed ? '通过统一 Gate 网关策略校验' : gateCheck.reason || '被 ProactiveGate 网关拒绝',
+        });
+
+        if (!gateCheck.allowed) {
+          return this.finalizeTrace(
+            traceId,
+            candidate,
+            stages,
+            'DENY',
+            'REJECTED',
+            gateCheck.reason || 'ProactiveGate 统一网关拒绝发送',
+            event.summary
+          );
+        }
+
+        const dispatchRes = await proactiveGate.dispatchProactiveMessage({
+          aiId: candidate.targetAiId,
+          triggerType: event.type === 'APP_USAGE_TICK' ? 'app_usage' : event.type.toLowerCase(),
+          priority: candidate.urgency === 'high' ? 'high' : 'medium',
+          eventId: event.id,
+          sourceSystem: 'agent',
+          proposedText: text,
+          contextSummary: `${event.summary} (场景: ${sceneRule.sceneName})`,
+        });
+
+        if (!dispatchRes.sent) {
+          return this.finalizeTrace(
+            traceId,
+            candidate,
+            stages,
+            'DENY',
+            'FAILED',
+            dispatchRes.reason || '主动消息写库失败',
+            event.summary
+          );
+        }
+
+        relatedMsgId = dispatchRes.messageId;
+
+        // Show in-phone notification banner if in-phone notification is permitted
+        const targetChar = loadCharacters().find((c) => c.id === candidate.targetAiId);
+        if (targetChar) {
+          this.showInPhoneNotification({
+            id: 'notif_' + Date.now(),
+            aiId: targetChar.id,
+            aiName: targetChar.name,
+            aiAvatar: targetChar.avatar,
+            title: `${targetChar.name} 发来新消息`,
+            content: text,
+            timestamp: Date.now(),
+            category: 'proactive_chat',
+          });
+        }
       } else if (candidate.actionType === 'system_notification') {
         this.showInPhoneNotification({
           id: 'notif_' + Date.now(),

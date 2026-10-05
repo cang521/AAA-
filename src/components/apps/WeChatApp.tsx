@@ -8,6 +8,8 @@ import {
 } from '../../lib/timeUtils';
 import { apiFetch } from '../../lib/localBackend';
 import { sanitizeReplyText } from '../../lib/thinkCleaner';
+import { getLifeContextForPrompt } from '../../lib/lifeState/lifeStateStore';
+import { triggerLifeStateExtraction } from '../../lib/lifeState/lifeStateExtractor';
 import {
   Send,
   Heart,
@@ -780,6 +782,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           weatherInfo,
           devicesSummary,
           memosSummary: memos.map((m) => `- ${m.title}: ${m.content}`).join('\n'),
+          lifeStateContext: getLifeContextForPrompt(activeCharacter.id),
           associatedWorldBook:
             permissions?.appAccess?.worldBookData !== false && associatedWorldBook
               ? {
@@ -836,6 +839,15 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         console.log(`[ChatPerf] total=${totalPerf}ms`);
 
         if (data.apiLog) onAddApiLog(data.apiLog);
+
+        // Background Life State Extraction
+        triggerLifeStateExtraction(
+          [
+            { id: 'user_' + Date.now(), characterId: activeCharacter.id, sender: 'user', text: combinedUserText, timestamp: Date.now() },
+            { id: 'ai_' + Date.now(), characterId: activeCharacter.id, sender: 'ai', text: data.text || '', timestamp: Date.now() },
+          ],
+          activeCharacter.id
+        ).catch(() => {});
 
         // Auto Extract Memory
         if (autoExtractMemoryEnabled && combinedUserText.length > 5) {

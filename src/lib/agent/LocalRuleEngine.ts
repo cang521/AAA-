@@ -7,6 +7,7 @@ import {
 import { permissionManager } from './PermissionManager';
 import { deviceContextManager, DeviceContextState } from './DeviceContextManager';
 import { loadCharacters } from '../storage';
+import { loadProactiveSettings } from '../proactive/proactiveStore';
 import { AiCharacter } from '../../types';
 
 export interface RuleEvaluationResult {
@@ -70,6 +71,21 @@ class LocalRuleEngine {
     event: AgentEvent,
     targetAiIdOverride?: string
   ): Promise<RuleEvaluationResult> {
+    // 0. Check Proactive Master Switch & Temporary Pause
+    const proactiveSettings = loadProactiveSettings();
+    if (!proactiveSettings.enabled) {
+      return {
+        passed: false,
+        rejectReason: 'AI 主动消息总开关已关闭，阻断所有主动事件生成',
+      };
+    }
+    if (proactiveSettings.pausedUntil && proactiveSettings.pausedUntil > Date.now()) {
+      return {
+        passed: false,
+        rejectReason: `AI 主动消息处于临时暂停状态至 ${new Date(proactiveSettings.pausedUntil).toLocaleTimeString()}`,
+      };
+    }
+
     // 1. Check DND (Do Not Disturb) master switch
     if (permissionManager.isDoNotDisturbToday()) {
       return {
@@ -171,6 +187,14 @@ class LocalRuleEngine {
     context: DeviceContextState,
     targetChar: AiCharacter
   ): RuleEvaluationResult {
+    const pSettings = loadProactiveSettings();
+    if (pSettings.appUsage?.enabled === false) {
+      return {
+        passed: false,
+        rejectReason: '【App与小手机使用状态主动关心】规则开关已被用户关闭',
+      };
+    }
+
     const minutes = context.foregroundDurationMinutes;
     const scene = context.currentScene;
     const appName = context.currentApp;
