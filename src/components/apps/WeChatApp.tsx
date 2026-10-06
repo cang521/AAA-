@@ -247,9 +247,27 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const lastSendClickTimeRef = useRef<number>(0);
   const sendClickTimerRef = useRef<any>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement | null>(null);
   const isComposingRef = useRef<boolean>(false);
+
+  const adjustTextareaHeight = (textarea: HTMLTextAreaElement | null) => {
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    const minHeight = 36;
+    const maxHeight = 132; // ~5.5 lines
+    const newHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
+    textarea.style.height = `${newHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
+
+    // Auto-scroll caret into view if user is typing near the end
+    if (textarea.scrollHeight > maxHeight) {
+      const isAtEnd = textarea.selectionStart >= textarea.value.length - 2;
+      if (isAtEnd) {
+        textarea.scrollTop = textarea.scrollHeight;
+      }
+    }
+  };
 
   // Modals & Drawers
   const [showCoTModal, setShowCoTModal] = useState<string | null>(null);
@@ -488,6 +506,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       isMounted = false;
     };
   }, [activeChatId]);
+
+  // Adjust input textarea height on draft or chat change
+  useEffect(() => {
+    adjustTextareaHeight(inputRef.current);
+  }, [inputText, activeChatId]);
 
   // Load older messages on demand (Pagination / Scroll Up)
   const handleLoadOlderMessages = async () => {
@@ -1697,7 +1720,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                             </div>
                           )}
 
-                          <div className="p-2 bg-zinc-850/90 backdrop-blur-xs border-t border-zinc-800 flex items-center gap-1.5 shrink-0">
+                          <div className="p-2 bg-zinc-850/90 backdrop-blur-xs border-t border-zinc-800 flex items-end gap-1.5 shrink-0">
                             {/* Hidden Image File Input */}
                             <input
                               ref={imageFileInputRef}
@@ -1726,25 +1749,32 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                               type="button"
                               onClick={() => imageFileInputRef.current?.click()}
                               title="选择并发送图片"
-                              className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 active:scale-95 text-sky-400 hover:text-sky-300 border border-zinc-700 transition cursor-pointer shrink-0"
+                              className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 active:scale-95 text-sky-400 hover:text-sky-300 border border-zinc-700 transition cursor-pointer shrink-0 self-end mb-0.5"
                             >
                               <Plus className="w-4 h-4" />
                             </button>
 
-                            {/* Input Field */}
-                            <input
+                            {/* Auto-growing Multi-line Textarea */}
+                            <textarea
                               ref={inputRef}
-                              type="text"
+                              rows={1}
                               placeholder={`给 ${activeCharacter.name} 发送消息... (Enter发送)`}
                               value={inputText}
-                              onChange={(e) => setInputText(e.target.value)}
-                              onInput={(e) => setInputText(e.currentTarget.value)}
+                              onChange={(e) => {
+                                setInputText(e.target.value);
+                                adjustTextareaHeight(e.currentTarget);
+                              }}
+                              onInput={(e) => {
+                                setInputText(e.currentTarget.value);
+                                adjustTextareaHeight(e.currentTarget);
+                              }}
                               onCompositionStart={() => {
                                 isComposingRef.current = true;
                               }}
                               onCompositionEnd={(e) => {
                                 isComposingRef.current = false;
                                 setInputText(e.currentTarget.value);
+                                adjustTextareaHeight(e.currentTarget);
                               }}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter' && !isComposingRef.current) {
@@ -1762,7 +1792,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                                   }
                                 }
                               }}
-                              className="flex-1 px-3 py-2 text-xs rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                              className="flex-1 px-3 py-2 text-xs rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors resize-none overflow-y-auto leading-relaxed max-h-[132px] min-h-[36px]"
                             />
 
                             {/* Send Button */}
@@ -1771,7 +1801,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                               disabled={isLoading}
                               style={{ touchAction: 'manipulation' }}
                               title="单击发送当前消息/图片（可连发多句）；快速双击直接召唤 AI 综合回复"
-                              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-40 text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0"
+                              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-40 text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0 self-end mb-0.5"
                             >
                               <Send className="w-3.5 h-3.5" />
                               <span>发送</span>

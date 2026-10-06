@@ -52,8 +52,70 @@ export interface SplitOptions {
 }
 
 /**
+ * 检查字符串中是否存在未闭合的括号/引号配对结构
+ */
+function hasUnclosedPairs(str: string): boolean {
+  const pairs: [string, string][] = [
+    ['（', '）'],
+    ['(', ')'],
+    ['“', '”'],
+    ['「', '」'],
+    ['『', '』'],
+    ['【', '】'],
+    ['[', ']'],
+  ];
+
+  for (const [open, close] of pairs) {
+    const openCount = (str.match(new RegExp('\\' + open, 'g')) || []).length;
+    const closeCount = (str.match(new RegExp('\\' + close, 'g')) || []).length;
+    if (openCount > closeCount) {
+      return true;
+    }
+  }
+
+  const doubleQuotes = (str.match(/"/g) || []).length;
+  if (doubleQuotes % 2 !== 0) return true;
+
+  return false;
+}
+
+/**
+ * 检查片段是否以未完成的连字符/标点结尾（逗号、顿号、冒号、分号）
+ */
+function endsWithIncompletePunctuation(str: string): boolean {
+  const trimmed = str.trim();
+  return /[，,、：:；;]$/.test(trimmed);
+}
+
+/**
+ * 检查片段是否以闭合标点开头
+ */
+function startsWithClosingPunctuation(str: string): boolean {
+  const trimmed = str.trim();
+  return /^[）\)”"」』】\]，,；;]/.test(trimmed);
+}
+
+/**
+ * 检查片段是否属于明显半句或连词开头的未完成短片段
+ */
+function isIncompleteFragment(str: string): boolean {
+  const trimmed = str.trim();
+  if (!trimmed) return true;
+
+  if (endsWithIncompletePunctuation(trimmed)) return true;
+  if (hasUnclosedPairs(trimmed)) return true;
+  if (startsWithClosingPunctuation(trimmed)) return true;
+
+  if (/^(不过|但是|所以|而且|因[此为]|结果|如果是|虽然|假使|好啦|话说|另外|但是呢)[，,；;]?$/.test(trimmed)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * 智能分句算法：
- * 将一整段回复拆分成适合微信气泡的短句列表（一句话一条）
+ * 保证语义完整优先，避免割裂半句；当数量超过 maxBubbles 时采用相邻合并，保证气泡长度自然均衡
  */
 export function splitMessageIntoSentenceBubbles(
   rawText: string,
@@ -64,92 +126,120 @@ export function splitMessageIntoSentenceBubbles(
   if (!text) return [];
 
   const maxBubbles = options.maxBubbles ?? 5;
-  const minSentenceLength = options.minSentenceLength ?? 3;
   const targetMaxChars = options.targetMaxChars ?? 38;
 
-  // 1. 如果包含代码块，保持整体完整，避免切碎代码
+  // 1. 代码块保持完整
   if (text.includes('```')) {
     return [text];
   }
 
-  // 2. 如果包含显式换行且至少有2行
-  const rawLines = text
-    .split(/\r?\n+/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
+  // 2. 强断点分割 (句末强标点：。！？!?~…及后随引号/括号)
+  const strongRegex = /[^。！？!?~…\r\n]+([。！？!?~…]+["”'」』）)]*|$)/g;
 
+  const rawLines = text.split(/\r?\n+/).map((l) => l.trim()).filter(Boolean);
   let initialChunks: string[] = [];
 
-  if (rawLines.length >= 2) {
-    // 文本本身已经包含多行换行
-    initialChunks = rawLines;
-  } else {
-    // 3. 纯单行长段落，使用中文与常见标点进行自然断句
-    // 句末强断句标点：。！？!?~…以及连续感叹疑问号
-    const sentenceRegex = /[^。！？!?~…\n]+([。！？!?~…]+["”'」』）)]*|$)/g;
-    const matched = text.match(sentenceRegex);
-
-    if (matched && matched.length > 1) {
-      initialChunks = matched.map((s) => s.trim()).filter(Boolean);
+  for (const line of rawLines) {
+    const matches = line.match(strongRegex);
+    if (matches && matches.length > 0) {
+      initialChunks.push(...matches.map((m) => m.trim()).filter(Boolean));
     } else {
-      // 若没有强句末标点，尝试在逗号、分号（，；,;）处软切分（仅当文本较长时）
-      if (text.length > 25) {
-        const softRegex = /[^，；,;\n]+([，；,;]+|$)/g;
-        const softMatched = text.match(softRegex);
-        if (softMatched && softMatched.length > 1) {
-          initialChunks = softMatched.map((s) => s.trim()).filter(Boolean);
-        } else {
-          initialChunks = [text];
-        }
-      } else {
-        initialChunks = [text];
-      }
+      initialChunks.push(line);
     }
   }
 
-  // 4. 第二阶段：进一步处理过长子句（比如某一行内包含好几个句子）
-  const refinedChunks: string[] = [];
-  for (const chunk of initialChunks) {
-    if (chunk.length > targetMaxChars) {
-      // 内部尝试按标点再拆
-      const subMatches = chunk.match(/[^。！？!?~…，,；;]+([。！？!?~…，,；;]+["”'」』）)]*|$)/g);
-      if (subMatches && subMatches.length > 1) {
-        refinedChunks.push(...subMatches.map((s) => s.trim()).filter(Boolean));
-      } else {
-        refinedChunks.push(chunk);
-      }
-    } else {
-      refinedChunks.push(chunk);
-    }
-  }
-
-  // 5. 第三阶段：短碎片智能合并（防止出现仅一个字、一个标点或过碎的碎片）
+  // 3. 智能语义与保护成对结构合并Pass：修复半句、未闭合括号/引号
   const mergedChunks: string[] = [];
-  for (let i = 0; i < refinedChunks.length; i++) {
-    const current = refinedChunks[i];
-    // 如果当前片断太短（如仅为纯标点或单个字），且已有前置项，合并到前置项
-    if (current.length < minSentenceLength && mergedChunks.length > 0) {
-      mergedChunks[mergedChunks.length - 1] += current;
-    } else if (
-      current.length < minSentenceLength &&
-      i + 1 < refinedChunks.length
+  for (let i = 0; i < initialChunks.length; i++) {
+    let current = initialChunks[i];
+
+    while (i + 1 < initialChunks.length && (isIncompleteFragment(current) || hasUnclosedPairs(current))) {
+      i++;
+      current = current + initialChunks[i];
+    }
+
+    if (
+      mergedChunks.length > 0 &&
+      (startsWithClosingPunctuation(current) ||
+        endsWithIncompletePunctuation(mergedChunks[mergedChunks.length - 1]) ||
+        isIncompleteFragment(mergedChunks[mergedChunks.length - 1]))
     ) {
-      // 合并到后一项
-      refinedChunks[i + 1] = current + refinedChunks[i + 1];
+      mergedChunks[mergedChunks.length - 1] += current;
     } else {
       mergedChunks.push(current);
     }
   }
 
-  // 6. 第四阶段：连发总条数控制，限制在 maxBubbles 以内，超出的优雅合并到末尾
-  if (mergedChunks.length <= maxBubbles) {
-    return mergedChunks.filter((s) => s.trim().length > 0);
+  // 4. 清理极短断句碎片 (< 4字)
+  const refinedChunks: string[] = [];
+  for (let i = 0; i < mergedChunks.length; i++) {
+    const chunk = mergedChunks[i];
+    if (chunk.length < 4 && refinedChunks.length > 0) {
+      refinedChunks[refinedChunks.length - 1] += chunk;
+    } else if (chunk.length < 4 && i + 1 < mergedChunks.length) {
+      mergedChunks[i + 1] = chunk + mergedChunks[i + 1];
+    } else {
+      refinedChunks.push(chunk);
+    }
   }
 
-  const finalBubbles = mergedChunks.slice(0, maxBubbles - 1);
-  const remainingText = mergedChunks.slice(maxBubbles - 1).join('');
-  if (remainingText.trim()) {
-    finalBubbles.push(remainingText.trim());
+  // 5. 软切分超长无强标点子句 (仅当字数 > targetMaxChars + 15，且切分后绝不留尾随逗号/半句)
+  const softChunks: string[] = [];
+  for (const chunk of refinedChunks) {
+    if (chunk.length > targetMaxChars + 15 && !/[。！？!?~…]/.test(chunk.slice(0, -1))) {
+      const softMatches = chunk.match(/[^，,；;]+([，,；;]+|$)/g);
+      if (softMatches && softMatches.length > 1) {
+        let temp = '';
+        for (const sub of softMatches) {
+          temp += sub;
+          if (temp.length >= 18 && !hasUnclosedPairs(temp) && !endsWithIncompletePunctuation(temp)) {
+            softChunks.push(temp.trim());
+            temp = '';
+          }
+        }
+        if (temp.trim()) {
+          if (softChunks.length > 0) {
+            softChunks[softChunks.length - 1] += temp.trim();
+          } else {
+            softChunks.push(temp.trim());
+          }
+        }
+      } else {
+        softChunks.push(chunk);
+      }
+    } else {
+      softChunks.push(chunk);
+    }
+  }
+
+  // 二次清理软切分后可能留下的末尾未完成连字符
+  const cleanedChunks: string[] = [];
+  for (let i = 0; i < softChunks.length; i++) {
+    let current = softChunks[i];
+    while (i + 1 < softChunks.length && (endsWithIncompletePunctuation(current) || hasUnclosedPairs(current))) {
+      i++;
+      current = current + softChunks[i];
+    }
+    cleanedChunks.push(current);
+  }
+
+  // 6. 均衡合并算法：当气泡数量超过 maxBubbles 时，采用相邻短气泡贪心合并，保证气泡长度自然均衡
+  let finalBubbles = cleanedChunks.filter((s) => s.trim().length > 0);
+
+  while (finalBubbles.length > maxBubbles) {
+    let minSum = Infinity;
+    let minIndex = 0;
+
+    for (let i = 0; i < finalBubbles.length - 1; i++) {
+      const sum = finalBubbles[i].length + finalBubbles[i + 1].length;
+      if (sum < minSum) {
+        minSum = sum;
+        minIndex = i;
+      }
+    }
+
+    const mergedPair = finalBubbles[minIndex] + finalBubbles[minIndex + 1];
+    finalBubbles.splice(minIndex, 2, mergedPair);
   }
 
   return finalBubbles.filter((s) => s.trim().length > 0);
@@ -164,8 +254,8 @@ export function calculateTypingDelay(
 ): number {
   const charCount = text.length;
 
-  let base = 500;
-  let perChar = 30;
+  let base = 450;
+  let perChar = 32;
 
   if (speed === 'fast') {
     base = 300;
@@ -176,7 +266,6 @@ export function calculateTypingDelay(
     perChar = 45;
     return Math.min(1800, Math.max(750, base + charCount * perChar));
   } else {
-    // normal
     base = 450;
     perChar = 32;
     return Math.min(1250, Math.max(450, base + charCount * perChar));
