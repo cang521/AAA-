@@ -95,6 +95,7 @@ import {
   getCharacterMetaSync,
   subscribeChatDb,
   clearCharacterMessages,
+  getRecentChatMessages,
 } from '../../lib/chatDb';
 import {
   splitMessageIntoSentenceBubbles,
@@ -128,6 +129,68 @@ interface WeChatAppProps {
   onUpdateUserProfile: (profile: UserProfile) => void;
   onAddApiLog: (log: ApiLog) => void;
   onDataChanged?: () => void;
+}
+
+interface MemoryNeedsDecision {
+  shouldRecallChatHistory: boolean;
+  shouldRecallVault: boolean;
+}
+
+/**
+ * Evaluates whether chat history or AI memory vault retrieval is actually needed for this turn.
+ * Uses lightweight local rules to avoid extra LLM API latency.
+ */
+function evaluateMemoryNeeds(
+  userText: string,
+  searchMode: 'off' | 'auto' | 'deep',
+  recentMessages: ChatMessage[]
+): MemoryNeedsDecision {
+  const trimmed = userText.trim();
+  if (!trimmed) {
+    return { shouldRecallChatHistory: false, shouldRecallVault: false };
+  }
+
+  // 1. Check for casual short phrases & continuous chit-chat ("哈哈", "困了", "亲亲", "然后呢", "刚吃完饭")
+  const isShortGreeting = /^(在吗|早|早安|晚安|嗯|嗯嗯|好的|好|哈哈|哈哈哈|收到|对|是的|拜拜|再见|666|okk?|hi|hello|hey|yo|\?|？|！|!|我困了|好累|刚吃完|在干嘛|笑死|好吧|然后呢|去哪|好呀)$/i.test(trimmed);
+  if (trimmed.length <= 6 && isShortGreeting) {
+    return { shouldRecallChatHistory: false, shouldRecallVault: false };
+  }
+
+  // 2. Extract key topic tokens and check if they are ALREADY present in the recent context window
+  const keywords = trimmed
+    .replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 2);
+
+  const contextText = recentMessages.slice(-20).map((m) => m.text || '').join('\n');
+  const isCoveredInContext = keywords.length > 0 && keywords.some((kw) => kw.length >= 2 && contextText.includes(kw));
+
+  // 3. Independent Decision: Chat History Retrieval (Controlled by searchMode & context sufficiency)
+  let shouldRecallChatHistory = false;
+  if (searchMode !== 'off') {
+    const hasHistoryIntent = /[？\?怎么什么哪谁为何几干嘛回忆记得以前上次曾经那个之前当初过去那时那天那次想念那会儿记不记聊过说过提过]/i.test(trimmed);
+
+    if (searchMode === 'auto') {
+      if (hasHistoryIntent && !isCoveredInContext) {
+        shouldRecallChatHistory = true;
+      } else if (trimmed.length > 30 && !isCoveredInContext) {
+        shouldRecallChatHistory = true;
+      }
+    } else if (searchMode === 'deep') {
+      if (!isCoveredInContext && (hasHistoryIntent || trimmed.length > 12)) {
+        shouldRecallChatHistory = true;
+      }
+    }
+  }
+
+  // 4. Independent Decision: AI Memory Vault / Background Retrieval (Independent of searchMode === 'off')
+  let shouldRecallVault = false;
+  const hasVaultIntent = /(设定|背景|档案|记忆库|资料|文件|世界观|剧本|人设|故事|秘密|能力|职业|小说|大纲|自述|身世)/i.test(trimmed);
+  if (hasVaultIntent && !isCoveredInContext) {
+    shouldRecallVault = true;
+  }
+
+  return { shouldRecallChatHistory, shouldRecallVault };
 }
 
 const PAGE_SIZE = 40;
@@ -714,34 +777,53 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     setIsLoading(true);
 
     try {
-      // Fetch AI archive config to determine search mode ('off' | 'auto' | 'deep')
-      const archiveConfig = await getAiArchiveConfig(activeCharacter.id).catch(() => ({ searchMode: 'auto' as const }));
+      // Fetch AI archive config to determine search mode ('off' | 'auto' | 'deep') & context message limit
+      const archiveConfig = await getAiArchiveConfig(activeCharacter.id).catch(() => ({ searchMode: 'auto' as const, contextMessageCount: 100 }));
+      const searchMode = archiveConfig.searchMode || 'auto';
+      const contextLimit = typeof archiveConfig.contextMessageCount === 'number' && archiveConfig.contextMessageCount > 0
+        ? archiveConfig.contextMessageCount
+        : 100;
 
-      // Parallelize independent pre-tasks (History Recall, Archived History Recall, Vault Recall, Weather)
+      // 1. Fetch recent context window first to assess context sufficiency
+      const recentHistoryWindow = await getRecentChatMessages(activeCharacter.id, contextLimit).catch(() => currentDisplayed.slice(-contextLimit));
+
+      // 2. Evaluate memory needs independently per source using local rules (0ms API latency)
+      const { shouldRecallChatHistory, shouldRecallVault } = evaluateMemoryNeeds(
+        combinedUserText,
+        searchMode,
+        recentHistoryWindow
+      );
+
+      // 3. Parallelize independent pre-tasks (History Recall, Archived History Recall, Vault Recall, Weather)
       const [historyResult, archiveResult, vaultRecall, weatherInfo] = await Promise.all([
-        recallCharacterMemories(activeCharacter.id, combinedUserText, 4).catch(() => ({
-          recalledText: '',
-          matchedCount: 0,
-          durationMs: 0,
-        })),
-        recallArchivedHistory(activeCharacter.id, combinedUserText, archiveConfig.searchMode || 'auto').catch(() => ({
-          recalledText: '',
-          matchedCount: 0,
-          durationMs: 0,
-        })),
-        searchAiMemoryChunks(activeCharacter.id, combinedUserText, 4).catch((err) => {
-          console.warn('AI memory vault recall error:', err);
-          return { recalledText: '', matchedChunks: [], matchedFileNames: [], durationMs: 0 };
-        }),
+        shouldRecallChatHistory
+          ? recallCharacterMemories(activeCharacter.id, combinedUserText, 4).catch(() => ({
+              recalledText: '',
+              matchedCount: 0,
+              durationMs: 0,
+            }))
+          : Promise.resolve({ recalledText: '', matchedCount: 0, durationMs: 0 }),
+        shouldRecallChatHistory
+          ? recallArchivedHistory(activeCharacter.id, combinedUserText, searchMode).catch(() => ({
+              recalledText: '',
+              matchedCount: 0,
+              durationMs: 0,
+            }))
+          : Promise.resolve({ recalledText: '', matchedCount: 0, durationMs: 0 }),
+        shouldRecallVault
+          ? searchAiMemoryChunks(activeCharacter.id, combinedUserText, 4).catch((err) => {
+              console.warn('AI memory vault recall error:', err);
+              return { recalledText: '', matchedChunks: [], matchedFileNames: [], durationMs: 0 };
+            })
+          : Promise.resolve({ recalledText: '', matchedChunks: [], matchedFileNames: [], durationMs: 0 }),
         permissions?.appAccess?.weatherData !== false
           ? weatherService.getWeather(false).catch(() => null)
           : Promise.resolve(null),
       ]);
 
-      console.log(`[ChatPerf] historyRecall=${historyResult.durationMs ?? 0}ms`);
-      console.log(`[ChatPerf] archiveRecall=${archiveResult.durationMs ?? 0}ms`);
-      console.log(`[ChatPerf] vaultRecall=${vaultRecall.durationMs ?? 0}ms`);
-      console.log(`[ChatPerf] weather=0ms`);
+      console.log(`[ChatPerf] recallHistory=${shouldRecallChatHistory} recallVault=${shouldRecallVault}`);
+      console.log(`[ChatPerf] historyRecall=${historyResult.durationMs ?? 0}ms archiveRecall=${archiveResult.durationMs ?? 0}ms vaultRecall=${vaultRecall.durationMs ?? 0}ms`);
+      console.log(`[ChatPerf] contextCount=${recentHistoryWindow.length}/${contextLimit}`);
 
       let combinedRecalledMemories = historyResult.recalledText || '';
       if (archiveResult.recalledText) {
@@ -761,7 +843,6 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           ? deviceService.getSanitizedDevicesSummary(permissions)
           : undefined;
 
-      const recentHistoryWindow = currentDisplayed.slice(-16);
       const lastUserMsgWithImage = [...currentDisplayed].reverse().find((m) => m.sender === 'user' && m.imageAnalysis);
       const currentImageAnalysis = lastUserMsgWithImage?.imageAnalysis;
 

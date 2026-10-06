@@ -18,6 +18,7 @@ import { OfflineStateEngine, CharacterState } from './OfflineStateEngine';
 import { OfflineMemoryBridge, OfflineSessionSummary } from './OfflineMemoryBridge';
 import { recallCharacterMemories } from '../chatDb';
 import { searchAiMemoryChunks } from '../aiMemoryVaultDb';
+import { getAiArchiveConfig } from '../chatArchiveDb';
 import { getLifeContextForPrompt } from '../lifeState/lifeStateStore';
 import { triggerLifeStateExtraction } from '../lifeState/lifeStateExtractor';
 
@@ -103,10 +104,25 @@ export class OfflineSessionService {
       ? session.stateHistory[session.stateHistory.length - 1].state
       : OfflineStateEngine.createInitialState();
 
-    // 3. Recall character's WeChat memories & saved Offline Session memories
-    const { recalledText } = await recallCharacterMemories(character.id, userText, 3).catch(() => ({ recalledText: '' }));
-    const vaultRecall = await searchAiMemoryChunks(character.id, userText, 3).catch(() => ({ recalledText: '' }));
-    const pastOfflineMemories = await OfflineMemoryBridge.searchSavedOfflineSessions(character.id, userText, 2).catch(() => '');
+    // 3. Recall character's WeChat memories & saved Offline Session memories on demand
+    const archiveConfig = await getAiArchiveConfig(character.id).catch(() => ({ searchMode: 'auto' as const }));
+    const searchMode = archiveConfig.searchMode || 'auto';
+    const isShort = userText.trim().length <= 6 && /^(在吗|早|早安|晚安|嗯|嗯嗯|好的|好|哈哈|哈哈哈|收到|对|是的|拜拜|再见|666|okk?|hi|hello|hey|yo|\?|？|！|!|我困了|好累|刚吃完|在干嘛|笑死|好吧|然后呢|去哪|好呀)$/i.test(userText.trim());
+
+    const hasHistoryIntent = searchMode !== 'off' && !isShort && /[？\?怎么什么哪谁为何几干嘛回忆记得以前上次曾经那个之前当初过去那时那天那次想念那会儿记不记聊过说过提过]/i.test(userText);
+    const hasVaultIntent = !isShort && /(设定|背景|档案|记忆库|资料|文件|世界观|剧本|人设|故事|秘密|能力|职业|小说|大纲|自述|身世)/i.test(userText);
+
+    const [{ recalledText }, vaultRecall, pastOfflineMemories] = await Promise.all([
+      hasHistoryIntent
+        ? recallCharacterMemories(character.id, userText, 3).catch(() => ({ recalledText: '' }))
+        : Promise.resolve({ recalledText: '' }),
+      hasVaultIntent
+        ? searchAiMemoryChunks(character.id, userText, 3).catch(() => ({ recalledText: '' }))
+        : Promise.resolve({ recalledText: '' }),
+      hasHistoryIntent
+        ? OfflineMemoryBridge.searchSavedOfflineSessions(character.id, userText, 2).catch(() => '')
+        : Promise.resolve(''),
+    ]);
 
     // 4. Construct AI System Prompt & Payload
     const lifeStateContext = getLifeContextForPrompt(character.id);
@@ -227,10 +243,25 @@ export class OfflineSessionService {
     const lastStateMsg = [...priorMessages].reverse().find((m) => m.state);
     const previousState: CharacterState = lastStateMsg?.state || session.stateHistory[0]?.state || OfflineStateEngine.createInitialState();
 
-    // 5. Recall character memories based on prior userInput
-    const { recalledText } = await recallCharacterMemories(character.id, userInput, 3).catch(() => ({ recalledText: '' }));
-    const vaultRecall = await searchAiMemoryChunks(character.id, userInput, 3).catch(() => ({ recalledText: '' }));
-    const pastOfflineMemories = await OfflineMemoryBridge.searchSavedOfflineSessions(character.id, userInput, 2).catch(() => '');
+    // 5. Recall character memories based on prior userInput on demand
+    const archiveConfig = await getAiArchiveConfig(character.id).catch(() => ({ searchMode: 'auto' as const }));
+    const searchMode = archiveConfig.searchMode || 'auto';
+    const isShort = userInput.trim().length <= 6 && /^(在吗|早|早安|晚安|嗯|嗯嗯|好的|好|哈哈|哈哈哈|收到|对|是的|拜拜|再见|666|okk?|hi|hello|hey|yo|\?|？|！|!|我困了|好累|刚吃完|在干嘛|笑死|好吧|然后呢|去哪|好呀)$/i.test(userInput.trim());
+
+    const hasHistoryIntent = searchMode !== 'off' && !isShort && /[？\?怎么什么哪谁为何几干嘛回忆记得以前上次曾经那个之前当初过去那时那天那次想念那会儿记不记聊过说过提过]/i.test(userInput);
+    const hasVaultIntent = !isShort && /(设定|背景|档案|记忆库|资料|文件|世界观|剧本|人设|故事|秘密|能力|职业|小说|大纲|自述|身世)/i.test(userInput);
+
+    const [{ recalledText }, vaultRecall, pastOfflineMemories] = await Promise.all([
+      hasHistoryIntent
+        ? recallCharacterMemories(character.id, userInput, 3).catch(() => ({ recalledText: '' }))
+        : Promise.resolve({ recalledText: '' }),
+      hasVaultIntent
+        ? searchAiMemoryChunks(character.id, userInput, 3).catch(() => ({ recalledText: '' }))
+        : Promise.resolve({ recalledText: '' }),
+      hasHistoryIntent
+        ? OfflineMemoryBridge.searchSavedOfflineSessions(character.id, userInput, 2).catch(() => '')
+        : Promise.resolve(''),
+    ]);
 
     // 6. Call Offline Chat API with prior context
     const promptPayload = {

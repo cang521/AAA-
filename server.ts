@@ -2095,7 +2095,7 @@ ${devicesSummary}
 
     const contents = [];
     if (conversationHistory && conversationHistory.length > 0) {
-      conversationHistory.slice(-16).forEach((msg: any) => {
+      conversationHistory.forEach((msg: any) => {
         const msgTime = formatFullDateTime(msg.timestamp || msg.createdAt || msg.time);
         const senderLabel = msg.sender === 'user' ? (userProfile?.name || '用户') : character.name;
         let msgStr = `[${msgTime}] ${senderLabel}: ${msg.text || ''}`;

@@ -5,6 +5,7 @@ export interface AiArchiveConfig {
   characterId: string;
   autoArchiveFrequency: 'off' | 'daily' | 'weekly' | 'monthly';
   searchMode: 'off' | 'auto' | 'deep';
+  contextMessageCount?: number; // Custom normal chat context window limit (default 100)
   lastArchivedMessageId?: string;
   lastArchivedTimestamp?: number;
   lastArchivedAt?: number;
@@ -117,12 +118,17 @@ export async function getAiArchiveConfig(characterId: string): Promise<AiArchive
           pendingCount: 0,
           archivedTotalCount: 0,
           ...existing,
+          contextMessageCount:
+            typeof existing.contextMessageCount === 'number' && existing.contextMessageCount > 0
+              ? existing.contextMessageCount
+              : 100,
         });
       } else {
         const defaultConfig: AiArchiveConfig = {
           characterId,
           autoArchiveFrequency: 'weekly',
           searchMode: 'auto',
+          contextMessageCount: 100,
           archiveStatus: 'idle',
           archiveVersion: 1,
           pendingCount: 0,
@@ -137,6 +143,7 @@ export async function getAiArchiveConfig(characterId: string): Promise<AiArchive
         characterId,
         autoArchiveFrequency: 'weekly',
         searchMode: 'auto',
+        contextMessageCount: 100,
         archiveStatus: 'idle',
         archiveVersion: 1,
         pendingCount: 0,
@@ -144,6 +151,56 @@ export async function getAiArchiveConfig(characterId: string): Promise<AiArchive
       });
     };
   });
+}
+
+/**
+ * Lightweight local evaluator to determine if historical chat searching is necessary.
+ * 1. Mode 'off': Always returns false.
+ * 2. Mode 'auto': Returns false for short casual chatter or when the query keywords are ALREADY
+ *    present in the current conversationHistory window. Returns true when past info is referenced.
+ * 3. Mode 'deep': Always returns true.
+ */
+export function shouldSearchChatHistory(
+  userQuery: string,
+  conversationHistory: Array<{ text?: string }> = [],
+  mode: 'off' | 'auto' | 'deep' = 'auto'
+): boolean {
+  if (mode === 'off') return false;
+  if (!userQuery || userQuery.trim().length < 2) return false;
+  if (mode === 'deep') return true;
+
+  const q = userQuery.trim().toLowerCase();
+
+  // Filter out short casual chatter (<= 4 chars without explicit recall indicators)
+  if (q.length <= 4 && !/记得|上次|之前|以前|曾经|过去|过往|当时/i.test(q)) {
+    return false;
+  }
+
+  // Recall indicators regex
+  const recallTriggerRegex =
+    /(还记得|不记得|记不记得|记的|上次|之前|以前|曾经|去年|上个月|上周|前几天|说过的|提过的|讲过的|跟我说过|对我说过|是什么来着|叫什么来着|什么名字来着|那天|当时|那次|那件事|那个项目|那个客户|哪个)/i;
+
+  if (!recallTriggerRegex.test(q)) {
+    return false;
+  }
+
+  // Extract core search terms to check if current conversationHistory already covers them
+  const cleanTerms = q
+    .replace(/(还记得|不记得|记不记得|记的|上次|之前|以前|曾经|去年|上个月|上周|前几天|说过的|提过的|讲过的|跟我说过|对我说过|是什么来着|叫什么来着|什么名字来着|你|我|他|她|的|了|过|在|吗|呢|吧|啊|么|你还|回忆|记不起)/gi, ' ')
+    .replace(/[，。！？、~～…\n\r\t\(\)\[\]\{\}":;]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length >= 2);
+
+  if (cleanTerms.length > 0 && conversationHistory.length > 0) {
+    const historyText = conversationHistory.map((m) => m.text || '').join(' ').toLowerCase();
+    const allTermsCovered = cleanTerms.every((term) => historyText.includes(term));
+    if (allTermsCovered) {
+      // All search terms are already present in current conversation history! Skip past history search!
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**

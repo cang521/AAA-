@@ -34,6 +34,25 @@ export function clearChatIndexCache(characterId?: string) {
   }
 }
 
+export function appendChatMessageToIndexCache(msg: ChatMessage) {
+  const cache = chatIndexCacheMap.get(msg.characterId);
+  if (!cache) return;
+  cache.messages.push(msg);
+  cache.lastUpdated = Date.now();
+  if (cache.keywordToMsgIds && msg.text) {
+    const tokens = msg.text.toLowerCase().split(/\s+/);
+    for (const token of tokens) {
+      if (!token) continue;
+      let set = cache.keywordToMsgIds.get(token);
+      if (!set) {
+        set = new Set();
+        cache.keywordToMsgIds.set(token, set);
+      }
+      set.add(msg.id);
+    }
+  }
+}
+
 function notifyChange() {
   listeners.forEach((fn) => {
     try {
@@ -286,7 +305,9 @@ export async function getMessagesPaged(
 export async function saveChatMessage(msg: ChatMessage): Promise<void> {
   const db = await getDb();
   await addMessageToStore(db, msg);
-  clearChatIndexCache(msg.characterId);
+
+  // Incrementally update search index instead of clearing full cache
+  appendChatMessageToIndexCache(msg);
 
   // Update in-memory metadata cache immediately
   const meta = metaCache.get(msg.characterId) || {
@@ -301,6 +322,57 @@ export async function saveChatMessage(msg: ChatMessage): Promise<void> {
   metaCache.set(msg.characterId, meta);
 
   notifyChange();
+}
+
+/**
+ * Efficiently retrieve recent N chat messages for a character directly from IndexedDB.
+ * Uses reverse cursor on 'by_character_time' index and stops immediately when limit is reached.
+ * Strips heavy Base64 image payloads to ensure lightweight memory footprint.
+ */
+export async function getRecentChatMessages(
+  characterId: string,
+  limit = 100
+): Promise<ChatMessage[]> {
+  const db = await getDb();
+  return new Promise((resolve) => {
+    const tx = db.transaction([STORE_MESSAGES], 'readonly');
+    const store = tx.objectStore(STORE_MESSAGES);
+    const index = store.index('by_character_time');
+    const keyRange = IDBKeyRange.bound([characterId, 0], [characterId, Number.MAX_SAFE_INTEGER]);
+
+    const items: ChatMessage[] = [];
+    const cursorReq = index.openCursor(keyRange, 'prev');
+
+    cursorReq.onsuccess = (e) => {
+      const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+      if (cursor && items.length < limit) {
+        const rawMsg = cursor.value as ChatMessage;
+        // Construct lightweight ChatMessage object without giant Base64 strings
+        const lightMsg: ChatMessage = {
+          id: rawMsg.id,
+          characterId: rawMsg.characterId,
+          sender: rawMsg.sender,
+          text: rawMsg.text || '',
+          timestamp: rawMsg.timestamp,
+          quoteMessageId: rawMsg.quoteMessageId,
+          imageAnalysis: rawMsg.imageAnalysis,
+          sourceType: rawMsg.sourceType,
+          importance: rawMsg.importance,
+        };
+        items.push(lightMsg);
+        cursor.continue();
+      } else {
+        // Reverse back to chronological order (oldest to newest)
+        items.reverse();
+        resolve(items);
+      }
+    };
+
+    cursorReq.onerror = () => {
+      console.error('getRecentChatMessages error:', cursorReq.error);
+      resolve([]);
+    };
+  });
 }
 
 /**
