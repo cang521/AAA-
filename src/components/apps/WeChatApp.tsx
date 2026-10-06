@@ -749,7 +749,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       saveChatMessage(userMsg).catch((e) => console.error('Save user msg error', e));
     }
 
-    // Find all consecutive unreplied user messages
+    // Find all consecutive unreplied user messages waiting for AI response in this turn
     const pendingUserMsgs: ChatMessage[] = [];
     for (let i = currentDisplayed.length - 1; i >= 0; i--) {
       if (currentDisplayed[i].sender === 'user') {
@@ -758,6 +758,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         break;
       }
     }
+
+    const currentTurnMessageIds = pendingUserMsgs.map((m) => m.id).filter(Boolean);
+    const currentTurnMsgIdSet = new Set(currentTurnMessageIds);
 
     const combinedUserText =
       pendingUserMsgs.length > 1
@@ -784,14 +787,15 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         ? archiveConfig.contextMessageCount
         : 100;
 
-      // 1. Fetch recent context window first to assess context sufficiency
-      const recentHistoryWindow = await getRecentChatMessages(activeCharacter.id, contextLimit).catch(() => currentDisplayed.slice(-contextLimit));
+      // 1. Fetch recent raw history and exclude current turn pending user messages strictly by ID
+      const rawHistory = await getRecentChatMessages(activeCharacter.id, contextLimit).catch(() => currentDisplayed.slice(-contextLimit));
+      const conversationHistory = rawHistory.filter((msg) => !currentTurnMsgIdSet.has(msg.id));
 
-      // 2. Evaluate memory needs independently per source using local rules (0ms API latency)
+      // 2. Evaluate memory needs independently per source using prior history (0ms API latency)
       const { shouldRecallChatHistory, shouldRecallVault } = evaluateMemoryNeeds(
         combinedUserText,
         searchMode,
-        recentHistoryWindow
+        conversationHistory
       );
 
       // 3. Parallelize independent pre-tasks (History Recall, Archived History Recall, Vault Recall, Weather)
@@ -823,7 +827,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
       console.log(`[ChatPerf] recallHistory=${shouldRecallChatHistory} recallVault=${shouldRecallVault}`);
       console.log(`[ChatPerf] historyRecall=${historyResult.durationMs ?? 0}ms archiveRecall=${archiveResult.durationMs ?? 0}ms vaultRecall=${vaultRecall.durationMs ?? 0}ms`);
-      console.log(`[ChatPerf] contextCount=${recentHistoryWindow.length}/${contextLimit}`);
+      console.log(`[ChatPerf] historyCount=${conversationHistory.length}/${contextLimit}`);
 
       let combinedRecalledMemories = historyResult.recalledText || '';
       if (archiveResult.recalledText) {
@@ -853,8 +857,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         body: JSON.stringify({
           character: activeCharacter,
           userMessage: combinedUserText,
+          currentTurnMessageIds,
           currentImageAnalysis,
-          conversationHistory: recentHistoryWindow,
+          conversationHistory,
           recalledMemoriesSummary: combinedRecalledMemories || undefined,
           userProfile,
           systemTime: systemNativeService.getRealSystemTime().summaryString,

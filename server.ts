@@ -1943,6 +1943,7 @@ app.post('/api/gemini/chat', async (req, res) => {
   const {
     character,
     userMessage,
+    currentTurnMessageIds = [],
     conversationHistory = [],
     recalledMemoriesSummary,
     userProfile,
@@ -2093,9 +2094,17 @@ ${devicesSummary}
 在 </think> 标签之后，直接输出你给用户的微信回复文本（保持微信口语化、亲切自如，适合微信聊天，多句话之间换行隔开）。
 `;
 
+    // Defensive ID-based filtering: Ensure conversationHistory contains ONLY prior history messages and excludes current turn pending messages strictly by ID
+    const turnMsgIdSet = new Set(Array.isArray(currentTurnMessageIds) ? currentTurnMessageIds : []);
+    const cleanedHistory = (conversationHistory || []).filter((msg: any) => {
+      if (!msg) return false;
+      if (msg.id && turnMsgIdSet.has(msg.id)) return false;
+      return true;
+    });
+
     const contents = [];
-    if (conversationHistory && conversationHistory.length > 0) {
-      conversationHistory.forEach((msg: any) => {
+    if (cleanedHistory && cleanedHistory.length > 0) {
+      cleanedHistory.forEach((msg: any) => {
         const msgTime = formatFullDateTime(msg.timestamp || msg.createdAt || msg.time);
         const senderLabel = msg.sender === 'user' ? (userProfile?.name || '用户') : character.name;
         let msgStr = `[${msgTime}] ${senderLabel}: ${msg.text || ''}`;
