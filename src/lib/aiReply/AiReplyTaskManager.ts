@@ -17,6 +17,7 @@ export class AiReplyTaskManager {
   private static instance: AiReplyTaskManager;
   private listeners: Set<TaskChangeListener> = new Set();
   private activeExecutions: Set<string> = new Set(); // characterIds currently processing
+  private characterTaskStates: Map<string, AiReplyTaskStatus> = new Map();
   private isInitialized = false;
 
   private constructor() {}
@@ -39,11 +40,11 @@ export class AiReplyTaskManager {
       // Clear old completed/failed tasks
       await clearCompletedTasks().catch(() => {});
 
-      // Reset stuck 'running' tasks to 'pending' on app restart
+      // Reset stuck running tasks to queued on app restart
       const pendingOrRunning = await getPendingOrRunningTasks();
       for (const task of pendingOrRunning) {
-        if (task.status === 'running') {
-          await updateTaskStatus(task.id, 'pending');
+        if (task.status === 'running' || task.status === 'preparing' || task.status === 'generating' || task.status === 'delivering') {
+          await updateTaskStatus(task.id, 'queued');
         }
       }
 
@@ -72,7 +73,16 @@ export class AiReplyTaskManager {
   }
 
   public isCharacterThinking(characterId: string): boolean {
-    return this.activeExecutions.has(characterId);
+    const status = this.characterTaskStates.get(characterId);
+    return !!status && status !== 'completed' && status !== 'failed';
+  }
+
+  public getCharacterTaskState(characterId: string): AiReplyTaskStatus | null {
+    const status = this.characterTaskStates.get(characterId);
+    if (status && status !== 'completed' && status !== 'failed') {
+      return status;
+    }
+    return null;
   }
 
   public async enqueueTask(params: {
@@ -91,7 +101,7 @@ export class AiReplyTaskManager {
       combinedUserText: params.combinedUserText,
       currentTurnMessageIds: params.currentTurnMessageIds,
       currentImageAnalysis: params.currentImageAnalysis,
-      status: 'pending',
+      status: 'queued',
       retryCount: 0,
       maxRetries: 2,
       createdAt: Date.now(),
@@ -99,6 +109,7 @@ export class AiReplyTaskManager {
       options: params.options,
     };
 
+    this.characterTaskStates.set(params.characterId, 'queued');
     await saveReplyTask(newTask);
     this.notifyListeners();
     this.processQueue();
@@ -108,7 +119,7 @@ export class AiReplyTaskManager {
   private async processQueue(): Promise<void> {
     try {
       const pendingTasks = await getPendingOrRunningTasks();
-      const nextPending = pendingTasks.filter((t) => t.status === 'pending');
+      const nextPending = pendingTasks.filter((t) => t.status === 'queued' || t.status === 'pending');
 
       for (const task of nextPending) {
         if (this.activeExecutions.has(task.characterId)) {
@@ -126,14 +137,20 @@ export class AiReplyTaskManager {
   private async executeTaskInBackground(task: AiReplyTask): Promise<void> {
     const { characterId, id: taskId } = task;
     this.activeExecutions.add(characterId);
+    this.characterTaskStates.set(characterId, 'preparing');
     this.notifyListeners();
 
     try {
-      await updateTaskStatus(taskId, 'running');
+      await updateTaskStatus(taskId, 'preparing');
       this.notifyListeners();
 
-      await executeAiReplyTask(task);
+      await executeAiReplyTask(task, async (status) => {
+        this.characterTaskStates.set(characterId, status);
+        await updateTaskStatus(taskId, status);
+        this.notifyListeners();
+      });
 
+      this.characterTaskStates.set(characterId, 'completed');
       await updateTaskStatus(taskId, 'completed');
     } catch (err: any) {
       console.error(`[AiReplyTaskManager] Task ${taskId} failed:`, err);
@@ -142,9 +159,11 @@ export class AiReplyTaskManager {
       if (currentRetry < task.maxRetries) {
         const nextRetry = currentRetry + 1;
         console.warn(`[AiReplyTaskManager] Retrying task ${taskId} (attempt ${nextRetry}/${task.maxRetries})...`);
-        await updateTaskStatus(taskId, 'pending', { retryCount: nextRetry, error: err?.message });
+        this.characterTaskStates.set(characterId, 'queued');
+        await updateTaskStatus(taskId, 'queued', { retryCount: nextRetry, error: err?.message });
         setTimeout(() => this.processQueue(), 2000);
       } else {
+        this.characterTaskStates.set(characterId, 'failed');
         await updateTaskStatus(taskId, 'failed', { error: err?.message || 'Execution failed' });
 
         // Save fallback warm message to IndexedDB so conversation doesn't stall silently
@@ -164,6 +183,7 @@ export class AiReplyTaskManager {
       }
     } finally {
       this.activeExecutions.delete(characterId);
+      this.characterTaskStates.delete(characterId);
       this.notifyListeners();
       // Continue processing next pending task in queue
       this.processQueue();

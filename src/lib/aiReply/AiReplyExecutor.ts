@@ -13,7 +13,7 @@ import { sanitizeReplyText } from '../thinkCleaner';
 import { splitMessageIntoSentenceBubbles, calculateTypingDelay, getMultiBubbleConfig } from '../wechatMultiBubble';
 import { loadFromStorage, saveToStorage, loadApiConfig } from '../storage';
 import { evaluateWeatherContext, evaluateMenstrualContext } from './contextEvaluator';
-import { AiReplyTask } from './AiReplyTaskStore';
+import { AiReplyTask, AiReplyTaskStatus } from './AiReplyTaskStore';
 
 const nativeNotificationService = NativeNotificationService.getInstance();
 
@@ -70,7 +70,12 @@ export function evaluateMemoryNeeds(
   return { shouldRecallChatHistory, shouldRecallVault };
 }
 
-export async function executeAiReplyTask(task: AiReplyTask): Promise<void> {
+export async function executeAiReplyTask(
+  task: AiReplyTask,
+  onStatusChange?: (status: AiReplyTaskStatus) => Promise<void>
+): Promise<void> {
+  if (onStatusChange) await onStatusChange('preparing');
+
   const characters = loadFromStorage<AiCharacter[]>('phone_ai_characters', []);
   const activeCharacter = characters.find((c) => c.id === task.characterId);
   if (!activeCharacter) {
@@ -156,6 +161,7 @@ export async function executeAiReplyTask(task: AiReplyTask): Promise<void> {
       : undefined;
 
   // Send request to Gemini API
+  if (onStatusChange) await onStatusChange('generating');
   const res = await apiFetch('/api/gemini/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -229,6 +235,8 @@ export async function executeAiReplyTask(task: AiReplyTask): Promise<void> {
     : [cleanRawText];
 
   const bubbles = rawBubbles.map((b) => sanitizeReplyText(b)).filter((s) => s.trim().length > 0);
+
+  if (onStatusChange) await onStatusChange('delivering');
 
   for (let i = 0; i < bubbles.length; i++) {
     const bubbleText = bubbles[i];

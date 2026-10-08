@@ -16,7 +16,15 @@ interface CharacterMeta {
 // In-memory cache for fast O(1) sync UI rendering of contact/conversation list
 const metaCache = new Map<string, CharacterMeta>();
 let isMetaLoaded = false;
-const listeners = new Set<() => void>();
+export interface ChatDbSaveEvent {
+  type: 'message_saved';
+  characterId: string;
+  message: ChatMessage;
+}
+
+type ChatDbListener = (event?: ChatDbSaveEvent) => void;
+
+const listeners = new Set<ChatDbListener>();
 
 // In-memory Inverted Index Cache for Chat History Search (O(1) lookup without scanning DB)
 interface ChatInvertedIndexCache {
@@ -54,17 +62,17 @@ export function appendChatMessageToIndexCache(msg: ChatMessage) {
   }
 }
 
-function notifyChange() {
+function notifyChange(event?: ChatDbSaveEvent) {
   listeners.forEach((fn) => {
     try {
-      fn();
+      fn(event);
     } catch (e) {
       console.error('Listener error', e);
     }
   });
 }
 
-export function subscribeChatDb(callback: () => void) {
+export function subscribeChatDb(callback: ChatDbListener) {
   listeners.add(callback);
   return () => {
     listeners.delete(callback);
@@ -328,7 +336,11 @@ export async function saveChatMessage(msg: ChatMessage): Promise<void> {
   }
   metaCache.set(msg.characterId, meta);
 
-  notifyChange();
+  notifyChange({
+    type: 'message_saved',
+    characterId: msg.characterId,
+    message: msg,
+  });
 }
 
 /**

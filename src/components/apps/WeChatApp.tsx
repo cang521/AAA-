@@ -12,6 +12,7 @@ import { getLifeContextForPrompt } from '../../lib/lifeState/lifeStateStore';
 import { triggerLifeStateExtraction } from '../../lib/lifeState/lifeStateExtractor';
 import { cleanPseudoMemories, triggerSmartMemoryExtraction } from '../../lib/memoryExtractor';
 import { aiReplyTaskManager } from '../../lib/aiReply/AiReplyTaskManager';
+import { AiReplyTaskStatus } from '../../lib/aiReply/AiReplyTaskStore';
 import {
   Send,
   Heart,
@@ -254,6 +255,18 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const imageFileInputRef = useRef<HTMLInputElement | null>(null);
   const isComposingRef = useRef<boolean>(false);
 
+  // Scroll to bottom helper
+  const scrollToBottom = useCallback((smooth = false) => {
+    requestAnimationFrame(() => {
+      if (messageListRef.current) {
+        messageListRef.current.scrollTo({
+          top: messageListRef.current.scrollHeight,
+          behavior: smooth ? 'smooth' : 'auto',
+        });
+      }
+    });
+  }, []);
+
   const adjustTextareaHeight = (textarea: HTMLTextAreaElement | null) => {
     if (!textarea) return;
     textarea.style.height = 'auto';
@@ -286,6 +299,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
   // Human-like Multi-Bubble Messaging Engine States (一句话一条消息，一整段分割连发)
   const [multiBubbleConfig, setMultiBubbleConfig] = useState<MultiBubbleConfig>(() => getMultiBubbleConfig());
+  const [activeTaskStatus, setActiveTaskStatus] = useState<AiReplyTaskStatus | null>(null);
   const [isAiMultiTyping, setIsAiMultiTyping] = useState(false);
   const [multiTypingName, setMultiTypingName] = useState<string | null>(null);
   const [multiBubbleToast, setMultiBubbleToast] = useState<string | null>(null);
@@ -441,13 +455,45 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     handleUpdateGroup(updatedGroup);
   };
 
-  // Subscribe to DB updates for real-time contact list previews
+  const activeChatIdRef = useRef<string | null>(activeChatId);
   useEffect(() => {
-    const unsubscribe = subscribeChatDb(() => {
+    activeChatIdRef.current = activeChatId;
+    if (activeChatId) {
+      setUnreadAiCounts((prev) => ({
+        ...prev,
+        [activeChatId]: 0,
+      }));
+    }
+  }, [activeChatId]);
+
+  // Subscribe to DB updates for real-time contact list previews & incremental message additions
+  useEffect(() => {
+    const unsubscribe = subscribeChatDb((event) => {
       setDbVersionKey((k) => k + 1);
+
+      if (event && event.type === 'message_saved') {
+        const { characterId, message } = event;
+        if (activeChatIdRef.current === characterId) {
+          setDisplayedMessages((prev) => {
+            if (prev.some((m) => m.id === message.id)) {
+              return prev;
+            }
+            return [...prev, message];
+          });
+          setTotalHistoryCount((prev) => prev + 1);
+
+          const container = messageListRef.current;
+          const isNearBottom = container
+            ? container.scrollHeight - container.scrollTop - container.clientHeight < 150
+            : true;
+          if (isNearBottom) {
+            scrollToBottom(true);
+          }
+        }
+      }
     });
     return () => unsubscribe();
-  }, []);
+  }, [scrollToBottom]);
 
   // Sync AI character editing form values
   useEffect(() => {
@@ -473,17 +519,6 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       setSelfNameInput(userProfile.name || '');
     }
   }, [userProfile]);
-
-  const activeChatIdRef = useRef<string | null>(activeChatId);
-  useEffect(() => {
-    activeChatIdRef.current = activeChatId;
-    if (activeChatId) {
-      setUnreadAiCounts((prev) => ({
-        ...prev,
-        [activeChatId]: 0,
-      }));
-    }
-  }, [activeChatId]);
 
   const activeGroupChatIdRef = useRef<string | null>(activeGroupChatId);
   useEffect(() => {
@@ -540,13 +575,18 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
   // Sync AI typing / thinking state from background AiReplyTaskManager
   useEffect(() => {
-    const updateThinkingState = () => {
+    const updateTaskStatusState = () => {
       if (activeCharacter) {
-        setIsLoading(aiReplyTaskManager.isCharacterThinking(activeCharacter.id));
+        const state = aiReplyTaskManager.getCharacterTaskState(activeCharacter.id);
+        setActiveTaskStatus(state);
+        setIsLoading(!!state);
+      } else {
+        setActiveTaskStatus(null);
+        setIsLoading(false);
       }
     };
-    updateThinkingState();
-    const unsubscribe = aiReplyTaskManager.subscribe(updateThinkingState);
+    updateTaskStatusState();
+    const unsubscribe = aiReplyTaskManager.subscribe(updateTaskStatusState);
     return () => {
       unsubscribe();
     };
@@ -581,18 +621,6 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       setIsLoadingOlder(false);
     }
   };
-
-  // Scroll to bottom helper
-  const scrollToBottom = useCallback((smooth = false) => {
-    requestAnimationFrame(() => {
-      if (messageListRef.current) {
-        messageListRef.current.scrollTo({
-          top: messageListRef.current.scrollHeight,
-          behavior: smooth ? 'smooth' : 'auto',
-        });
-      }
-    });
-  }, []);
 
   // Map of quoted messages for quick lookup
   const quotesMap = new Map<string, string>();
@@ -1137,17 +1165,22 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
           <div className="flex flex-col items-center">
             <h2 className="text-sm font-semibold tracking-wide flex items-center gap-1.5">
-              {activeTab === 'chats' && (activeChatId ? (isAiMultiTyping ? `${activeCharacter.name} 正在输入...` : activeCharacter.name) : '微信')}
+              {activeTab === 'chats' && (activeChatId ? activeCharacter.name : '微信')}
               {activeTab === 'contacts' && '通讯录'}
               {activeTab === 'moments' && '朋友圈'}
               {activeTab === 'me' && '我'}
             </h2>
             {activeTab === 'chats' && activeChatId && (
               <span className="text-[9px] text-zinc-500 font-mono">
-                {isAiMultiTyping ? (
+                {activeTaskStatus === 'queued' || activeTaskStatus === 'preparing' || activeTaskStatus === 'generating' ? (
                   <span className="text-emerald-400 font-sans flex items-center gap-1 animate-pulse">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                    正在连发多条短消息...
+                    正在思考中…
+                  </span>
+                ) : activeTaskStatus === 'generated' || activeTaskStatus === 'delivering' ? (
+                  <span className="text-emerald-400 font-sans flex items-center gap-1 animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    正在输入中…
                   </span>
                 ) : totalHistoryCount > 0 ? (
                   `${totalHistoryCount} 条历史`
@@ -1506,34 +1539,6 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                           </React.Fragment>
                         );
                       })}
-
-                      {isLoading && (
-                        <div className="flex gap-2.5 items-center text-xs text-zinc-300 pt-1">
-                          <div className="w-8 h-8 rounded-xl bg-zinc-800/90 flex items-center justify-center animate-pulse">
-                            <Sparkles className="w-4 h-4 text-emerald-400" />
-                          </div>
-                          <span className="animate-pulse">{activeCharacter.name} 正在思考中...</span>
-                        </div>
-                      )}
-
-                      {/* Real-time typing bubble for multi-sentence sequential delivery */}
-                      {isAiMultiTyping && !isLoading && (
-                        <div className="flex gap-2.5 items-center text-xs text-zinc-300 pt-1 animate-in fade-in duration-200">
-                          <img
-                            src={activeCharacter.avatar}
-                            alt=""
-                            className="w-8 h-8 rounded-xl object-cover border border-zinc-750 shrink-0"
-                          />
-                          <div className="px-3 py-2 rounded-2xl bg-zinc-800/90 border border-zinc-750 text-zinc-300 flex items-center gap-2 shadow-xs">
-                            <span className="text-[11px] text-zinc-400">{activeCharacter.name} 正在输入</span>
-                            <span className="inline-flex gap-1 items-center">
-                              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-bounce [animation-delay:-0.3s]" />
-                              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-bounce [animation-delay:-0.15s]" />
-                              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-bounce" />
-                            </span>
-                          </div>
-                        </div>
-                      )}
                     </div>
 
                     {/* Multi-bubble toast notification */}

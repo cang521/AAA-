@@ -1,7 +1,16 @@
 import { ChatMessage } from '../../types';
 import { getDb, STORE_REPLY_TASKS } from '../chatDb';
 
-export type AiReplyTaskStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type AiReplyTaskStatus =
+  | 'queued'
+  | 'preparing'
+  | 'generating'
+  | 'generated'
+  | 'delivering'
+  | 'completed'
+  | 'failed'
+  | 'pending'
+  | 'running';
 
 export interface AiReplyTask {
   id: string;
@@ -71,8 +80,17 @@ export async function getAllTasks(): Promise<AiReplyTask[]> {
 export async function getPendingOrRunningTasks(): Promise<AiReplyTask[]> {
   try {
     const tasks = await getAllTasks();
+    const activeStatuses: AiReplyTaskStatus[] = [
+      'queued',
+      'preparing',
+      'generating',
+      'generated',
+      'delivering',
+      'pending',
+      'running',
+    ];
     return tasks
-      .filter((t) => t.status === 'pending' || t.status === 'running')
+      .filter((t) => activeStatuses.includes(t.status))
       .sort((a, b) => a.createdAt - b.createdAt);
   } catch (err) {
     console.error('[AiReplyTaskStore] getPendingOrRunningTasks error:', err);
