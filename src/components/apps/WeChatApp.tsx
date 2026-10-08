@@ -10,6 +10,8 @@ import { apiFetch } from '../../lib/localBackend';
 import { sanitizeReplyText } from '../../lib/thinkCleaner';
 import { getLifeContextForPrompt } from '../../lib/lifeState/lifeStateStore';
 import { triggerLifeStateExtraction } from '../../lib/lifeState/lifeStateExtractor';
+import { cleanPseudoMemories, triggerSmartMemoryExtraction } from '../../lib/memoryExtractor';
+import { aiReplyTaskManager } from '../../lib/aiReply/AiReplyTaskManager';
 import {
   Send,
   Heart,
@@ -291,7 +293,35 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   // Memory management collapsible folder (Requirement 5)
   const [isMemoryFolderOpen, setIsMemoryFolderOpen] = useState(false);
   const [newMemoryInput, setNewMemoryInput] = useState('');
-  const [autoExtractMemoryEnabled, setAutoExtractMemoryEnabled] = useState(true);
+
+  // Cleanup Pseudo Memories Modal State
+  const [showCleanupModal, setShowCleanupModal] = useState(false);
+  const [cleanupPseudoList, setCleanupPseudoList] = useState<string[]>([]);
+  const [cleanupValidList, setCleanupValidList] = useState<string[]>([]);
+  const [cleanupFeedback, setCleanupFeedback] = useState<string | null>(null);
+
+  const handleOpenCleanupModal = () => {
+    if (!activeCharacter) return;
+    const { validMemories, removedPseudoMemories } = cleanPseudoMemories(activeCharacter.memories || []);
+    setCleanupPseudoList(removedPseudoMemories);
+    setCleanupValidList(validMemories);
+    setCleanupFeedback(null);
+    setShowCleanupModal(true);
+  };
+
+  const handleConfirmCleanupMemories = () => {
+    if (!activeCharacter) return;
+    onUpdateCharacters(
+      characters.map((c) =>
+        c.id === activeCharacter.id ? { ...c, memories: cleanupValidList } : c
+      )
+    );
+    setCleanupFeedback(`已成功清理 ${cleanupPseudoList.length} 条历史伪记忆！`);
+    setTimeout(() => {
+      setShowCleanupModal(false);
+      setCleanupFeedback(null);
+    }, 1200);
+  };
 
   // Real user invite code adding state (Requirement 12)
   const [realUserInviteInput, setRealUserInviteInput] = useState('');
@@ -508,10 +538,19 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     };
   }, [activeChatId]);
 
-  // Adjust input textarea height on draft or chat change
+  // Sync AI typing / thinking state from background AiReplyTaskManager
   useEffect(() => {
-    adjustTextareaHeight(inputRef.current);
-  }, [inputText, activeChatId]);
+    const updateThinkingState = () => {
+      if (activeCharacter) {
+        setIsLoading(aiReplyTaskManager.isCharacterThinking(activeCharacter.id));
+      }
+    };
+    updateThinkingState();
+    const unsubscribe = aiReplyTaskManager.subscribe(updateThinkingState);
+    return () => {
+      unsubscribe();
+    };
+  }, [activeCharacter?.id]);
 
   // Load older messages on demand (Pagination / Scroll Up)
   const handleLoadOlderMessages = async () => {
@@ -748,11 +787,10 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     setMultiTypingName(null);
   };
 
-  // 2. Trigger AI Reply for all pending consecutive user messages
+  // 2. Trigger AI Reply for all pending consecutive user messages (Delegated to AiReplyTaskManager)
   const handleTriggerAiReply = async (optionalImmediateUserText?: string) => {
-    if (!activeCharacter || isLoading) return;
+    if (!activeCharacter) return;
 
-    const tTotalStart = Date.now();
     let currentDisplayed = [
       ...(latestMessagesRef.current.length > 0 ? latestMessagesRef.current : displayedMessages),
     ];
@@ -773,7 +811,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       setDisplayedMessages(currentDisplayed);
       setTotalHistoryCount((c) => c + 1);
       scrollToBottom(true);
-      saveChatMessage(userMsg).catch((e) => console.error('Save user msg error', e));
+      await saveChatMessage(userMsg).catch((e) => console.error('Save user msg error', e));
     }
 
     // Find all consecutive unreplied user messages waiting for AI response in this turn
@@ -787,7 +825,6 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     }
 
     const currentTurnMessageIds = pendingUserMsgs.map((m) => m.id).filter(Boolean);
-    const currentTurnMsgIdSet = new Set(currentTurnMessageIds);
 
     const combinedUserText =
       pendingUserMsgs.length > 1
@@ -796,193 +833,20 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         ? pendingUserMsgs[0].text
         : '你好呀！';
 
-    // Find associated WorldBook for this character
-    const associatedWorldBook = (worldBooks || []).find((wb) =>
-      wb.associatedCharacterIds?.includes(activeCharacter.id)
-    );
-
-    // Calculate menstrual stats
-    const cycleStats = calculateCycleStats(menstrualData);
+    const lastUserMsgWithImage = [...currentDisplayed].reverse().find((m) => m.sender === 'user' && m.imageAnalysis);
+    const currentImageAnalysis = lastUserMsgWithImage?.imageAnalysis;
 
     setIsLoading(true);
 
-    try {
-      // Fetch AI archive config to determine search mode ('off' | 'auto' | 'deep') & context message limit
-      const archiveConfig = await getAiArchiveConfig(activeCharacter.id).catch(() => ({ searchMode: 'auto' as const, contextMessageCount: 100 }));
-      const searchMode = archiveConfig.searchMode || 'auto';
-      const contextLimit = typeof archiveConfig.contextMessageCount === 'number' && archiveConfig.contextMessageCount > 0
-        ? archiveConfig.contextMessageCount
-        : 100;
-
-      // 1. Fetch recent raw history and exclude current turn pending user messages strictly by ID
-      const rawHistory = await getRecentChatMessages(activeCharacter.id, contextLimit).catch(() => currentDisplayed.slice(-contextLimit));
-      const conversationHistory = rawHistory.filter((msg) => !currentTurnMsgIdSet.has(msg.id));
-
-      // 2. Evaluate memory needs independently per source using prior history (0ms API latency)
-      const { shouldRecallChatHistory, shouldRecallVault } = evaluateMemoryNeeds(
-        combinedUserText,
-        searchMode,
-        conversationHistory
-      );
-
-      // 3. Parallelize independent pre-tasks (History Recall, Archived History Recall, Vault Recall, Weather)
-      const [historyResult, archiveResult, vaultRecall, weatherInfo] = await Promise.all([
-        shouldRecallChatHistory
-          ? recallCharacterMemories(activeCharacter.id, combinedUserText, 4).catch(() => ({
-              recalledText: '',
-              matchedCount: 0,
-              durationMs: 0,
-            }))
-          : Promise.resolve({ recalledText: '', matchedCount: 0, durationMs: 0 }),
-        shouldRecallChatHistory
-          ? recallArchivedHistory(activeCharacter.id, combinedUserText, searchMode).catch(() => ({
-              recalledText: '',
-              matchedCount: 0,
-              durationMs: 0,
-            }))
-          : Promise.resolve({ recalledText: '', matchedCount: 0, durationMs: 0 }),
-        shouldRecallVault
-          ? searchAiMemoryChunks(activeCharacter.id, combinedUserText, 4).catch((err) => {
-              console.warn('AI memory vault recall error:', err);
-              return { recalledText: '', matchedChunks: [], matchedFileNames: [], durationMs: 0 };
-            })
-          : Promise.resolve({ recalledText: '', matchedChunks: [], matchedFileNames: [], durationMs: 0 }),
-        permissions?.appAccess?.weatherData !== false
-          ? weatherService.getWeather(false).catch(() => null)
-          : Promise.resolve(null),
-      ]);
-
-      console.log(`[ChatPerf] recallHistory=${shouldRecallChatHistory} recallVault=${shouldRecallVault}`);
-      console.log(`[ChatPerf] historyRecall=${historyResult.durationMs ?? 0}ms archiveRecall=${archiveResult.durationMs ?? 0}ms vaultRecall=${vaultRecall.durationMs ?? 0}ms`);
-      console.log(`[ChatPerf] historyCount=${conversationHistory.length}/${contextLimit}`);
-
-      let combinedRecalledMemories = historyResult.recalledText || '';
-      if (archiveResult.recalledText) {
-        combinedRecalledMemories = combinedRecalledMemories
-          ? `${combinedRecalledMemories}\n\n${archiveResult.recalledText}`
-          : archiveResult.recalledText;
-      }
-      if (vaultRecall.recalledText) {
-        combinedRecalledMemories = combinedRecalledMemories
-          ? `${combinedRecalledMemories}\n\n${vaultRecall.recalledText}`
-          : vaultRecall.recalledText;
-      }
-
-      // Fetch External Devices Summary if permitted
-      const devicesSummary =
-        permissions?.deviceAccess?.viewStatus !== false
-          ? deviceService.getSanitizedDevicesSummary(permissions)
-          : undefined;
-
-      const lastUserMsgWithImage = [...currentDisplayed].reverse().find((m) => m.sender === 'user' && m.imageAnalysis);
-      const currentImageAnalysis = lastUserMsgWithImage?.imageAnalysis;
-
-      const tApiStart = Date.now();
-      const res = await apiFetch('/api/gemini/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          character: activeCharacter,
-          userMessage: combinedUserText,
-          currentTurnMessageIds,
-          currentImageAnalysis,
-          conversationHistory,
-          recalledMemoriesSummary: combinedRecalledMemories || undefined,
-          userProfile,
-          systemTime: systemNativeService.getRealSystemTime().summaryString,
-          locationCity: weatherInfo?.city,
-          menstrualInfo: cycleStats,
-          weatherInfo,
-          devicesSummary,
-          memosSummary: memos.map((m) => `- ${m.title}: ${m.content}`).join('\n'),
-          lifeStateContext: getLifeContextForPrompt(activeCharacter.id),
-          associatedWorldBook:
-            permissions?.appAccess?.worldBookData !== false && associatedWorldBook
-              ? {
-                  title: associatedWorldBook.title,
-                  description: associatedWorldBook.description,
-                  worldSetting: associatedWorldBook.worldSetting,
-                  entries: associatedWorldBook.entries,
-                }
-              : null,
-          permissions,
-          apiConfig,
-        }),
-      });
-
-      const tApiTTFB = Date.now() - tApiStart;
-      console.log(`[ChatPerf] apiTTFB=${tApiTTFB}ms`);
-
-      const data = await res.json();
-      const tApiTotal = Date.now() - tApiStart;
-      console.log(`[ChatPerf] apiTotal=${tApiTotal}ms`);
-
-      if (data.success) {
-        if (data.deviceActions && Array.isArray(data.deviceActions) && data.deviceActions.length > 0) {
-          for (const devAct of data.deviceActions) {
-            if (devAct.deviceId && devAct.actionId) {
-              deviceService.executeAction(devAct.deviceId, devAct.actionId, devAct.params || {}, {
-                source: 'ai',
-                aiCharacterName: activeCharacter.name,
-                permissions,
-              }).catch((err) => console.warn('AI device action execution error:', err));
-            }
-          }
-        }
-
-        const memoryRecallNote =
-          vaultRecall.matchedChunks.length > 0
-            ? `调阅专属记忆空间 (${vaultRecall.matchedChunks.length} 处匹配片段，来源: ${vaultRecall.matchedFileNames.join('、')})`
-            : `检索长期记忆 [${activeCharacter.memories?.slice(0, 3).join('; ') || '日常记忆'}]`;
-
-        const thinkingProcess =
-          data.thinkingProcess ||
-          `【推理分析】:\n1. 结合角色人设 [${activeCharacter.persona}]\n2. ${
-            associatedWorldBook ? `融入世界书设定 [《${associatedWorldBook.title}》]` : '无关联世界书，按日常设定回复'
-          }\n3. ${memoryRecallNote}\n4. 形成专属口吻回复。`;
-
-        const tBubbleStart = Date.now();
-        await deliverAiMessagesInSequence(data.text, thinkingProcess, activeCharacter, {
-          vibrationPattern: [60, 40, 60],
-        });
-        const bubbleDelivery = Date.now() - tBubbleStart;
-        console.log(`[ChatPerf] bubbleDelivery=${bubbleDelivery}ms`);
-
-        const totalPerf = Date.now() - tTotalStart;
-        console.log(`[ChatPerf] total=${totalPerf}ms`);
-
-        if (data.apiLog) onAddApiLog(data.apiLog);
-
-        // Background Life State Extraction
-        triggerLifeStateExtraction(
-          [
-            { id: 'user_' + Date.now(), characterId: activeCharacter.id, sender: 'user', text: combinedUserText, timestamp: Date.now() },
-            { id: 'ai_' + Date.now(), characterId: activeCharacter.id, sender: 'ai', text: data.text || '', timestamp: Date.now() },
-          ],
-          activeCharacter.id
-        ).catch(() => {});
-
-        // Auto Extract Memory
-        if (autoExtractMemoryEnabled && combinedUserText.length > 5) {
-          const autoMem = `对话提及: "${combinedUserText.slice(0, 20)}..."`;
-          if (!activeCharacter.memories?.includes(autoMem)) {
-            const updatedMem = [...(activeCharacter.memories || []), autoMem];
-            onUpdateCharacters(
-              characters.map((c) =>
-                c.id === activeCharacter.id ? { ...c, memories: updatedMem } : c
-              )
-            );
-          }
-        }
-      }
-    } catch (e) {
-      console.error('Chat error', e);
-      const fallbackText = `${activeCharacter.name}: 刚刚网络开小差了，不过我已经收到你的消息啦！随时跟我说说你的近况吧~`;
-      const fallbackThinking = `【离线本地思考模式】:\n网络异常，触发备用温情回复。`;
-      await deliverAiMessagesInSequence(fallbackText, fallbackThinking, activeCharacter);
-    } finally {
-      setIsLoading(false);
-    }
+    // Enqueue persistent AI task into background TaskManager
+    await aiReplyTaskManager.enqueueTask({
+      characterId: activeCharacter.id,
+      userMessages: pendingUserMsgs,
+      combinedUserText,
+      currentTurnMessageIds,
+      currentImageAnalysis,
+      options: { vibrationPattern: [60, 40, 60] },
+    });
   };
 
   // Trigger Proactive Care Message based on Menstrual Health Status (Requirement 7)
@@ -2589,15 +2453,33 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                 <div className="mt-2 p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2.5 animate-in fade-in duration-150">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] text-zinc-400 font-medium">记忆管理</span>
-                    <label className="flex items-center gap-1.5 text-[10px] text-zinc-300 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={autoExtractMemoryEnabled}
-                        onChange={(e) => setAutoExtractMemoryEnabled(e.target.checked)}
-                        className="rounded accent-emerald-500"
-                      />
-                      <span>允许 AI 自行提取记忆</span>
-                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleOpenCleanupModal}
+                        className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 text-[10px] cursor-pointer transition shrink-0"
+                        title="一键清理历史自动抓取的无意义伪记忆"
+                      >
+                        <Sparkles className="w-3 h-3 text-amber-400" />
+                        <span>清理伪记忆</span>
+                      </button>
+                      <label className="flex items-center gap-1.5 text-[10px] text-zinc-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={activeCharacter.autoExtractMemoryEnabled !== false}
+                          onChange={(e) => {
+                            const enabled = e.target.checked;
+                            onUpdateCharacters(
+                              characters.map((c) =>
+                                c.id === activeCharacter.id ? { ...c, autoExtractMemoryEnabled: enabled } : c
+                              )
+                            );
+                          }}
+                          className="rounded accent-emerald-500"
+                        />
+                        <span>允许 AI 自行提取记忆</span>
+                      </label>
+                    </div>
                   </div>
 
                   <div className="flex gap-2">
@@ -3182,6 +3064,111 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           allCharacters={characters}
           onSelectCharacter={(char) => setMemoryVaultTargetChar(char)}
         />
+      )}
+
+      {/* Pseudo Memory Cleanup Confirmation Modal */}
+      {showCleanupModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                  <Sparkles className="w-4.5 h-4.5" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-zinc-100 text-sm">清理无意义伪记忆</h3>
+                  <p className="text-[10px] text-zinc-400">过滤历史自动产生的截断式伪表达</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCleanupModal(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {cleanupFeedback ? (
+              <div className="py-6 text-center space-y-2">
+                <div className="w-10 h-10 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <p className="text-xs font-medium text-emerald-400">{cleanupFeedback}</p>
+              </div>
+            ) : cleanupPseudoList.length === 0 ? (
+              <div className="py-6 text-center space-y-2">
+                <div className="w-10 h-10 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <p className="text-xs text-zinc-200 font-medium">当前记忆库非常干净！</p>
+                <p className="text-[11px] text-zinc-400 px-4">
+                  未扫描到任何形如“对话提及: ...”或碎片段等旧版本伪记忆。
+                </p>
+                <button
+                  onClick={() => setShowCleanupModal(false)}
+                  className="mt-2 px-4 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs cursor-pointer"
+                >
+                  知道啦
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs text-zinc-300">
+                  扫描到以下 <span className="text-rose-400 font-semibold">{cleanupPseudoList.length} 条</span> 旧版无意义伪记忆，清理后将仅保留真实的优质记忆：
+                </p>
+
+                {/* Pseudo memories list to be deleted */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] text-rose-400 font-medium flex items-center gap-1">
+                    <Trash2 className="w-3 h-3" />
+                    将被清理的伪记忆 ({cleanupPseudoList.length}):
+                  </span>
+                  <div className="max-h-28 overflow-y-auto space-y-1 p-2 rounded-xl bg-rose-950/20 border border-rose-900/40 text-[11px]">
+                    {cleanupPseudoList.map((mem, idx) => (
+                      <div key={idx} className="p-1.5 rounded-lg bg-rose-900/30 text-rose-200 line-clamp-2">
+                        • {mem}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Valid memories list to be kept */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] text-emerald-400 font-medium flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" />
+                    将保留的优质记忆 ({cleanupValidList.length}):
+                  </span>
+                  <div className="max-h-24 overflow-y-auto space-y-1 p-2 rounded-xl bg-emerald-950/20 border border-emerald-900/40 text-[11px]">
+                    {cleanupValidList.length > 0 ? (
+                      cleanupValidList.map((mem, idx) => (
+                        <div key={idx} className="p-1 rounded bg-emerald-900/20 text-emerald-200 truncate">
+                          • {mem}
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-[10px] text-zinc-500 p-1 text-center">清理后无剩余长期记忆</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800">
+                  <button
+                    onClick={() => setShowCleanupModal(false)}
+                    className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs cursor-pointer"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleConfirmCleanupMemories}
+                    className="px-3.5 py-1.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-medium text-xs cursor-pointer shadow-lg shadow-rose-500/20"
+                  >
+                    确认清理 ({cleanupPseudoList.length} 条)
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Offline Mode Screen Modal Overlay */}

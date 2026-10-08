@@ -88,6 +88,7 @@ export interface AiCharacter {
   };
   unreadAiCount?: number;
   lastViewedTimestamp?: number;
+  autoExtractMemoryEnabled?: boolean;
 }
 
 export type HistorySourceType = 'live' | 'archived' | 'imported';

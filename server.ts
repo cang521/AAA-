@@ -3400,6 +3400,93 @@ ${conversationSnippet}
   }
 });
 
+// 11.1.6 Smart Long-term Memory Extraction Endpoint
+app.post('/api/gemini/extract-memories', async (req, res) => {
+  try {
+    const { character, userMessage, recentMessages = [], existingMemories = [], userProfile, apiConfig } = req.body;
+    if (!userMessage || !userMessage.trim()) {
+      return res.json({ success: true, extractedMemories: [] });
+    }
+
+    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+    const characterName = character?.name || 'AI';
+    const userName = userProfile?.name || '用户';
+
+    const conversationSnippet = (recentMessages || [])
+      .slice(-6)
+      .map((m: any) => `${m.sender === 'user' ? userName : characterName}: ${m.text || ''}`)
+      .join('\n');
+
+    const memoriesSnippet = (existingMemories || [])
+      .map((m: string, i: number) => `${i + 1}. ${m}`)
+      .join('\n');
+
+    const prompt = `你是一个高度智能的“AI 角色长期记忆提炼器 (Long-term Memory Extractor)”。
+你的任务是分析【${userName}】发给【${characterName}】的最新消息及上下文对话，判断其中是否包含【确实值得长期保存】的关键个人信息、偏好、约定或重大事项。
+
+【AI 角色已有长期记忆】：
+${memoriesSnippet || '(暂无已有长期记忆)'}
+
+【最新对话上下文】：
+${conversationSnippet}
+
+【当前最新输入消息】：
+${userMessage}
+
+【记忆提取与判断准则】：
+一、允许提炼的【高价值长期记忆】类别：
+1. 用户稳定的个人偏好与禁忌（如：“用户喜欢吃辣，受不了羊肉膻味”、“用户喜欢看悬疑电影”）
+2. 用户明确的沟通习惯与要求（如：“用户希望AI说话温柔自然，不要使用冰冷的官方语气”）
+3. 用户的重要经历（如：“用户曾在海外留学三年”、“用户曾担任过讲师”）
+4. 用户与当前AI的重要共同经历/专属约定（如：“双方约定每周六晚上聊天”、“约定以后一起去旅行”）
+5. 用户持续进行的长期项目/人生目标（如：“用户正在开发AI小手机App”、“用户正在准备考研”）
+6. 重要且具有持续价值的个人事实（如：“用户的生日是10月15日”、“用户养了一只叫布丁的猫”）
+7. 用户明确要求AI记住的事情（如：“记住我最喜欢的歌手是周杰伦”）
+
+二、【绝对不要提取】的内容（如符合则必须返回空数组）：
+- 普通日常闲聊、语气词、问候（如：“哈哈哈哈”、“早安”、“在干嘛”、“亲亲”、“我困了”）
+- 一次性的临时状态或随口问答（如：“今天中午吃了包子”、“天气真不错”、“我去洗澡了”）
+- 调侃、吐槽、情绪化宣泄或角色扮演戏谑（如：“你个笨蛋AI”、“少来这套”）
+- 与已有长期记忆重复、高度相似或已被涵盖的信息（即使表述略有不同）
+
+三、提炼格式要求：
+1. 记忆必须是以“用户”开头的干净、独立、概括性陈述句，如：“用户正在开发AI小手机App。”或“用户偏好温柔自然的交流方式。”
+2. 严禁带有“对话提及:”、“用户说了:”、“第1句:”等机械或元文本前缀。
+3. 如果没有任何符合要求的【高价值新信息】，必须返回空数组 []。
+
+请严格仅返回 JSON 格式，Schema 如下：
+{
+  "extractedMemories": [
+    "提炼出的记忆条目1"
+  ]
+}`;
+
+    const rawResponse = await callAiService({
+      prompt,
+      model: selectedModel,
+      apiKey: apiConfig?.textApiKey,
+      baseUrl: apiConfig?.textBaseUrl,
+      providerType: apiConfig?.textProvider,
+      customHeaders: apiConfig?.customHeaders,
+      responseMimeType: 'application/json',
+      timeoutMs: apiConfig?.timeoutMs || 25000,
+    });
+
+    let jsonRes: any = { extractedMemories: [] };
+    try {
+      const cleanJson = rawResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      jsonRes = JSON.parse(cleanJson);
+    } catch (e) {
+      console.warn('Failed to parse extract-memories JSON:', e);
+    }
+
+    res.json({ success: true, extractedMemories: jsonRes.extractedMemories || [] });
+  } catch (err: any) {
+    console.error('extract-memories error:', err);
+    res.status(500).json({ success: false, error: err.message || 'Extraction failed' });
+  }
+});
+
 // 11.2 Dedicated Proactive Period & Menstrual Health Care Endpoint (Strictly in-character, No OOC)
 app.post('/api/gemini/proactive-period', async (req, res) => {
   try {

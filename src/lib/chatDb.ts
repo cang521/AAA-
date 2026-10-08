@@ -2,9 +2,10 @@ import { ChatMessage, HistorySourceType, HistoryImportance } from '../types';
 import { classifyMessage, classifyImportance, determineSourceType } from './historyClassifier';
 
 const DB_NAME = 'PhoneSimChatDB_v2';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_MESSAGES = 'messages';
 const STORE_JOURNALS = 'import_journals';
+export const STORE_REPLY_TASKS = 'ai_reply_tasks';
 
 interface CharacterMeta {
   characterId: string;
@@ -94,6 +95,12 @@ export function getDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE_JOURNALS)) {
         const journalStore = db.createObjectStore(STORE_JOURNALS, { keyPath: 'id', autoIncrement: true });
         journalStore.createIndex('by_session', 'sessionId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORE_REPLY_TASKS)) {
+        const taskStore = db.createObjectStore(STORE_REPLY_TASKS, { keyPath: 'id' });
+        taskStore.createIndex('by_character', 'characterId', { unique: false });
+        taskStore.createIndex('by_status', 'status', { unique: false });
+        taskStore.createIndex('by_created', 'createdAt', { unique: false });
       }
     };
 

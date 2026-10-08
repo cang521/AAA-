@@ -70,6 +70,7 @@ import { InPhoneAskDialog } from './components/agent/InPhoneAskDialog';
 import { InPhoneNotificationBanner } from './components/agent/InPhoneNotificationBanner';
 import { agentOrchestrator } from './lib/agent/AgentOrchestrator';
 import { proactiveScheduler } from './lib/proactive/ProactiveScheduler';
+import { aiReplyTaskManager } from './lib/aiReply/AiReplyTaskManager';
 import { AgentAskPrompt, InPhoneNotification } from './lib/agent/types';
 import { getApiConfigForEngine } from './lib/apiConfigStore';
 import { autoPaginateLayout } from './lib/layoutPaginator';
@@ -126,6 +127,11 @@ export function App() {
       unsubNotif();
       window.removeEventListener('ai_proactive_message_received', handleProactiveMsg);
     };
+  }, []);
+
+  // Automatically initialize AI reply task manager for background execution & persistence
+  useEffect(() => {
+    aiReplyTaskManager.init().catch((err) => console.warn('aiReplyTaskManager init warning:', err));
   }, []);
 
   // Automatically ensure independent local memory vaults exist for each AI character
