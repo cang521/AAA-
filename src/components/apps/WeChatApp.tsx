@@ -269,19 +269,45 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
   const adjustTextareaHeight = (textarea: HTMLTextAreaElement | null) => {
     if (!textarea) return;
-    textarea.style.height = 'auto';
+
     const minHeight = 36;
     const maxHeight = 132; // ~5.5 lines
-    const newHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
-    textarea.style.height = `${newHeight}px`;
-    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
 
-    // Auto-scroll caret into view if user is typing near the end
-    if (textarea.scrollHeight > maxHeight) {
-      const isAtEnd = textarea.selectionStart >= textarea.value.length - 2;
+    // Reset immediately to minHeight when input is empty or whitespace
+    if (!textarea.value || textarea.value.trim() === '') {
+      textarea.style.height = `${minHeight}px`;
+      textarea.style.overflowY = 'hidden';
+      textarea.scrollTop = 0;
+      return;
+    }
+
+    // Save previous scroll position and caret selection before height recalculation
+    const savedScrollTop = textarea.scrollTop;
+    const selectionStart = textarea.selectionStart;
+    const totalLength = textarea.value.length;
+
+    // Temporarily reset height to auto to measure true scrollHeight
+    textarea.style.height = 'auto';
+    const scrollHeight = textarea.scrollHeight;
+    const newHeight = Math.min(Math.max(scrollHeight, minHeight), maxHeight);
+
+    textarea.style.height = `${newHeight}px`;
+    const isOverflowing = scrollHeight > maxHeight;
+    textarea.style.overflowY = isOverflowing ? 'auto' : 'hidden';
+
+    // Smart Cursor & Scroll Position Management:
+    // "光标在哪里，输入框就服务于哪里。"
+    if (isOverflowing) {
+      // Only scroll to bottom when user is actively typing/editing at the very end of text
+      const isAtEnd = selectionStart >= totalLength;
       if (isAtEnd) {
-        textarea.scrollTop = textarea.scrollHeight;
+        textarea.scrollTop = scrollHeight;
+      } else {
+        // Editing in the middle/start, selecting text, or fixing typos: preserve exact scroll position!
+        textarea.scrollTop = savedScrollTop;
       }
+    } else {
+      textarea.scrollTop = 0;
     }
   };
 
@@ -672,6 +698,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     setInputText('');
     if (inputRef.current) {
       inputRef.current.value = '';
+      adjustTextareaHeight(inputRef.current);
     }
     setSelectedImage(null);
     setQuoteMsgId(null);
@@ -941,6 +968,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       setInputText('');
       if (inputRef.current) {
         inputRef.current.value = '';
+        adjustTextareaHeight(inputRef.current);
       }
       setSelectedImage(null);
 
@@ -961,6 +989,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       // Immediately clear DOM and React state BEFORE dispatching to prevent stale closures or duplicate reads
       if (inputRef.current) {
         inputRef.current.value = '';
+        adjustTextareaHeight(inputRef.current);
       }
       setInputText('');
       setSelectedImage(null);
@@ -1637,10 +1666,6 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                                 setInputText(e.target.value);
                                 adjustTextareaHeight(e.currentTarget);
                               }}
-                              onInput={(e) => {
-                                setInputText(e.currentTarget.value);
-                                adjustTextareaHeight(e.currentTarget);
-                              }}
                               onCompositionStart={() => {
                                 isComposingRef.current = true;
                               }}
@@ -1651,12 +1676,18 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                               }}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter' && !isComposingRef.current) {
-                                  e.preventDefault();
-                                  const rawVal = inputRef.current?.value !== undefined ? inputRef.current.value : inputText;
-                                  const val = rawVal.trim();
                                   if (e.shiftKey) {
-                                    handleTriggerAiReply();
+                                    // Shift + Enter: allow native newline insertion and adjust height
+                                    setTimeout(() => {
+                                      if (inputRef.current) {
+                                        adjustTextareaHeight(inputRef.current);
+                                      }
+                                    }, 0);
                                   } else {
+                                    // Enter alone: send user message or trigger AI reply
+                                    e.preventDefault();
+                                    const rawVal = inputRef.current?.value !== undefined ? inputRef.current.value : inputText;
+                                    const val = rawVal.trim();
                                     if (val || selectedImage) {
                                       handleSendUserOnlyMessage(val, selectedImage);
                                     } else {
