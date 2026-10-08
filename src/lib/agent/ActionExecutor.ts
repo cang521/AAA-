@@ -13,6 +13,7 @@
 import { permissionManager, AI_PERMISSION_ITEMS } from './PermissionManager';
 import { systemCapabilityManager } from './SystemCapabilityManager';
 import { activityLogger } from './ActivityLogger';
+import { nativeNotificationService } from '../NativeNotificationService';
 
 export interface ActionRequest {
   aiId: string;
@@ -177,13 +178,11 @@ class ActionExecutor {
     // 5. Execution
     try {
       // Phase 1: Safe executions like notification or vibration
-      if (actionId === 'system_notification' && typeof window !== 'undefined' && 'Notification' in window) {
-        if (Notification.permission === 'granted') {
-          new Notification(`${aiName} 悄悄给你发来消息`, {
-            body: payload?.text || '点击进入小手机查看详情',
-            icon: payload?.avatar || '/favicon.ico',
-          });
-        }
+      if (actionId === 'system_notification' && typeof window !== 'undefined') {
+        nativeNotificationService.notifyAiMessage(
+          { id: aiId, name: aiName, avatar: payload?.avatar },
+          payload?.text || '点击进入小手机查看详情'
+        );
       }
 
       activityLogger.log({

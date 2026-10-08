@@ -104,6 +104,7 @@ import {
   saveMultiBubbleConfig,
   MultiBubbleConfig,
 } from '../../lib/wechatMultiBubble';
+import { nativeNotificationService } from '../../lib/NativeNotificationService';
 import { ChatMessageBubble } from './ChatMessageBubble';
 import { ContactSwipeRow } from './ContactSwipeRow';
 import { AiMemoryVaultModal } from './memory/AiMemoryVaultModal';
@@ -727,6 +728,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       setTotalHistoryCount((c) => c + 1);
       scrollToBottom(true);
       saveChatMessage(bubbleMsg).catch((e) => console.error('Save AI bubble msg error', e));
+
+      // Trigger Native Android System Notification IF app is in background (isAppActive === false)
+      nativeNotificationService.notifyAiMessage(character, bubbleText);
 
       if (permissions?.realDevice?.vibration && typeof navigator !== 'undefined' && navigator.vibrate) {
         navigator.vibrate([35]);

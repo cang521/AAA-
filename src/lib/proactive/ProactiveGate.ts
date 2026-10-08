@@ -23,6 +23,7 @@ import {
 import { chatMessageBridge } from '../agent/ChatMessageBridge';
 import { permissionManager } from '../agent/PermissionManager';
 import { loadCharacters } from '../storage';
+import { nativeNotificationService } from '../NativeNotificationService';
 
 export interface GateCheckParams {
   aiId: string;
@@ -304,9 +305,11 @@ class ProactiveGateService {
   private showSystemNotification(title: string, body: string, aiId: string) {
     if (typeof window === 'undefined') return;
     try {
-      if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification(title, { body, icon: '/favicon.ico' });
-      }
+      const characters = loadCharacters();
+      const char = characters.find((c: any) => c.id === aiId);
+      const name = char?.name || title;
+      const avatar = char?.avatar;
+      nativeNotificationService.notifyAiMessage({ id: aiId, name, avatar }, body);
     } catch (e) {
       console.warn('System Notification error:', e);
     }
