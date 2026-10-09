@@ -147,3 +147,64 @@ export function saveProactiveRuntimeState(state: ProactiveRuntimeState): void {
     console.error('Failed to save proactive runtime state', e);
   }
 }
+
+/**
+ * Get or initialize runtime state for a character without fake default timestamps.
+ * If never interacted before, lastUserMsgAt and lastConversationAt remain 0.
+ */
+export function getCharacterProactiveRuntime(
+  characterId: string,
+  state?: ProactiveRuntimeState
+): CharacterProactiveRuntime {
+  const runtime = state || loadProactiveRuntimeState();
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+  const charRuntime = runtime.characterStates[characterId] || {
+    lastUserMsgAt: 0,
+    lastConversationAt: 0,
+    lastProactiveMsgAt: 0,
+    dailyProactiveCount: 0,
+    lastCountResetDateStr: todayStr,
+    handledEventIds: [],
+  };
+
+  // Reset daily count if date changed
+  if (charRuntime.lastCountResetDateStr !== todayStr) {
+    charRuntime.dailyProactiveCount = 0;
+    charRuntime.lastCountResetDateStr = todayStr;
+  }
+
+  return charRuntime;
+}
+
+/**
+ * Synchronize proactive runtime timestamps whenever a message is confirmed saved in ChatDB.
+ * Updates lastUserMsgAt (if sender === 'user') and lastConversationAt (user or AI).
+ */
+export function syncProactiveRuntimeOnMessageSaved(
+  characterId: string,
+  sender: 'user' | 'ai',
+  timestamp: number
+): void {
+  if (!characterId || !timestamp) return;
+  try {
+    const runtimeState = loadProactiveRuntimeState();
+    const charRuntime = getCharacterProactiveRuntime(characterId, runtimeState);
+
+    if (sender === 'user') {
+      if (timestamp > (charRuntime.lastUserMsgAt || 0)) {
+        charRuntime.lastUserMsgAt = timestamp;
+      }
+    }
+
+    if (timestamp > (charRuntime.lastConversationAt || 0)) {
+      charRuntime.lastConversationAt = timestamp;
+    }
+
+    runtimeState.characterStates[characterId] = charRuntime;
+    saveProactiveRuntimeState(runtimeState);
+  } catch (e) {
+    console.error('[ProactiveStore] Failed to sync runtime on message saved:', e);
+  }
+}

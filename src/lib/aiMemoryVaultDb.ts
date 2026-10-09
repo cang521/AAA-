@@ -6,7 +6,18 @@ import {
   AiMemoryRecallResult,
   AiMemoryRecallMatch,
   MemoryFileType,
+  ChatMessage,
 } from '../types';
+import {
+  extractRawChatMessagesFromFileContent,
+  syncRecentChatMessagesToChatDb,
+  RecentChatSyncResult,
+} from './import/RecentChatSyncManager';
+
+export interface ImportAiMemoryResult {
+  importedFiles: AiMemoryFileMeta[];
+  chatSync?: RecentChatSyncResult;
+}
 
 const DB_NAME = 'PhoneSimAiMemoryDB_v1';
 const DB_VERSION = 1;
@@ -439,6 +450,40 @@ export async function importFileToAiMemory(
       lineCount: fileRecord.lineCount,
       previewSnippet: fileRecord.previewSnippet,
     });
+  }
+
+  // -------------------------------------------------------------
+  // Automatic Sync: Extract real chat history and restore the last 7 days to ChatDB
+  // -------------------------------------------------------------
+  try {
+    onProgress?.(85, '正在分析记忆文件中的历史对话记录...');
+    const allCandidateMsgs: ChatMessage[] = [];
+
+    // Extract raw chat messages across imported files
+    for (const fMeta of importedFiles) {
+      try {
+        const fullDoc = await getAiMemoryFileWithContent(fMeta.id);
+        if (fullDoc && fullDoc.rawContent) {
+          const msgs = extractRawChatMessagesFromFileContent(fullDoc.rawContent, fullDoc.fileName, characterId);
+          if (msgs.length > 0) {
+            allCandidateMsgs.push(...msgs);
+          }
+        }
+      } catch (docErr) {
+        console.warn('[importFileToAiMemory] Failed to extract chat from file', fMeta.fileName, docErr);
+      }
+    }
+
+    if (allCandidateMsgs.length > 0) {
+      onProgress?.(92, `检测到 ${allCandidateMsgs.length} 条原始对话记录，正在同步最近 7 天真实聊天...`);
+      const syncRes = await syncRecentChatMessagesToChatDb(characterId, allCandidateMsgs);
+      (importedFiles as any).chatSyncResult = syncRes;
+      if (syncRes.syncedCount > 0) {
+        console.log(`[importFileToAiMemory] Successfully restored ${syncRes.syncedCount} recent chat messages (${syncRes.formattedRange}) to WeChat ChatDB`);
+      }
+    }
+  } catch (chatSyncErr) {
+    console.warn('[importFileToAiMemory] 7-day chat sync encountered a non-fatal error:', chatSyncErr);
   }
 
   // Recalculate vault statistics

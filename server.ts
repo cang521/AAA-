@@ -3237,7 +3237,12 @@ app.post('/api/gemini/proactive-generate', async (req, res) => {
 
     let triggerDescription = '';
     if (triggerType === 'inactivity_timeout') {
-      triggerDescription = `【触发场景: 长时间未联系】你与用户已经有 ${eventData?.hoursInactive || 12} 小时没有发过消息了。请主动向用户发一条自然熟络的微信短消息，聊聊天、问候一下或接续近期话题。`;
+      const hours = typeof eventData?.hoursInactive === 'number' && eventData.hoursInactive > 0 ? eventData.hoursInactive : null;
+      if (hours) {
+        triggerDescription = `【触发场景: 长时间未联系】根据真实聊天记录，你与用户已经有约 ${hours} 小时没有发过消息了。请主动向用户发一条自然熟络的微信短消息，聊聊天、问候一下或接续近期话题。切勿指责用户。`;
+      } else {
+        triggerDescription = `【触发场景: 日常主动问候】你有一段时间没和用户聊天了。请主动向用户发一条自然、随和、有温度的微信短消息，打个招呼或分享日常，禁止随意编造具体的断联小时数。`;
+      }
     } else if (triggerType === 'weather_alert') {
       triggerDescription = `【触发场景: 真实气象提醒】最新气象感知显示：${eventData?.weatherEventTitle || '天气变化'} (${eventData?.weatherSummary || '气象预警'})。请依据此真实数据，以你的性格口吻提醒用户（例如提醒带伞、加衣或注意出行）。不要夸大事实。`;
     } else if (triggerType === 'menstrual_care') {

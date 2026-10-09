@@ -3,6 +3,7 @@ import {
   saveProactiveSettings,
   loadProactiveRuntimeState,
   saveProactiveRuntimeState,
+  getCharacterProactiveRuntime,
   CharacterProactiveRuntime,
   ProactiveSettings,
 } from './proactiveStore';
@@ -12,6 +13,7 @@ import { systemNativeService } from '../systemNativeService';
 import { chatMessageBridge } from '../agent/ChatMessageBridge';
 import { proactiveGate } from './ProactiveGate';
 import { apiFetch } from '../localBackend';
+import { getRecentChatMessages, getLatestInteractionTimestamps } from '../chatDb';
 
 import { getLifeEventsSync, updateLifeEvent } from '../lifeState/lifeStateStore';
 
@@ -83,20 +85,22 @@ class ProactiveEngine {
 
         if (!isCharAllowed) continue;
 
-        // Load or initialize character runtime
-        let charRuntime = runtimeState.characterStates[char.id] || {
-          lastUserMsgAt: Date.now() - 3600000 * 24, // default 1 day ago
-          lastConversationAt: Date.now() - 3600000 * 24,
-          lastProactiveMsgAt: 0,
-          dailyProactiveCount: 0,
-          lastCountResetDateStr: todayStr,
-          handledEventIds: [],
-        };
+        // Load or initialize character runtime (never using fake default 24h timestamps)
+        let charRuntime = getCharacterProactiveRuntime(char.id, runtimeState);
 
-        // Reset daily count if date changed
-        if (charRuntime.lastCountResetDateStr !== todayStr) {
-          charRuntime.dailyProactiveCount = 0;
-          charRuntime.lastCountResetDateStr = todayStr;
+        // If runtime has no interaction history recorded, check real ChatDB
+        if (!charRuntime.lastUserMsgAt || !charRuntime.lastConversationAt) {
+          try {
+            const realTimestamps = await getLatestInteractionTimestamps(char.id);
+            if (realTimestamps.lastUserMsgAt && realTimestamps.lastUserMsgAt > (charRuntime.lastUserMsgAt || 0)) {
+              charRuntime.lastUserMsgAt = realTimestamps.lastUserMsgAt;
+            }
+            if (realTimestamps.lastConversationAt && realTimestamps.lastConversationAt > (charRuntime.lastConversationAt || 0)) {
+              charRuntime.lastConversationAt = realTimestamps.lastConversationAt;
+            }
+          } catch (e) {
+            console.warn('[proactiveEngine] Failed to query latest interaction timestamps:', e);
+          }
         }
 
         // Check Daily Cap limit
@@ -220,8 +224,8 @@ class ProactiveEngine {
           }
         }
 
-        // 5. Inactivity Timeout Candidate
-        if (settings.inactivity.enabled) {
+        // 5. Inactivity Timeout Candidate (only triggers if there is a verified real user interaction history)
+        if (settings.inactivity.enabled && charRuntime.lastUserMsgAt && charRuntime.lastUserMsgAt > 0) {
           const hoursInactive = (Date.now() - charRuntime.lastUserMsgAt) / 3600000;
           const targetInactivity = perAiConfig?.inactivityHours || settings.inactivity.hours || 12;
 
@@ -242,7 +246,7 @@ class ProactiveEngine {
                   priority: 'low',
                   eventId,
                   eventData: {
-                    hoursInactive: Math.floor(hoursInactive),
+                    hoursInactive: Math.max(1, Math.floor(hoursInactive)),
                   },
                 });
               }
@@ -423,6 +427,20 @@ class ProactiveEngine {
     apiConfig: any
   ): Promise<{ text: string; thinkingProcess?: string }> {
     try {
+      // Query recent 10 real messages from ChatDB to provide genuine conversational context
+      let recentMessages: any[] = [];
+      try {
+        const rawHistory = await getRecentChatMessages(character.id, 10);
+        recentMessages = (rawHistory || []).map((m) => ({
+          id: m.id,
+          sender: m.sender,
+          text: m.text,
+          timestamp: m.timestamp,
+        }));
+      } catch (err) {
+        console.warn('[proactiveEngine] Failed to load recent chat messages for proactive prompt:', err);
+      }
+
       const res = await apiFetch('/api/gemini/proactive-generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -431,6 +449,7 @@ class ProactiveEngine {
           triggerType: candidate.triggerType,
           eventData: candidate.eventData,
           userProfile,
+          recentMessages,
           apiConfig,
         }),
       });

@@ -18,12 +18,14 @@ import {
   loadProactiveSettings,
   loadProactiveRuntimeState,
   saveProactiveRuntimeState,
+  getCharacterProactiveRuntime,
   ProactiveSettings,
 } from './proactiveStore';
 import { chatMessageBridge } from '../agent/ChatMessageBridge';
 import { permissionManager } from '../agent/PermissionManager';
 import { loadCharacters } from '../storage';
 import { nativeNotificationService } from '../NativeNotificationService';
+import { aiReplyTaskManager } from '../aiReply/AiReplyTaskManager';
 
 export interface GateCheckParams {
   aiId: string;
@@ -136,19 +138,13 @@ class ProactiveGateService {
     }
 
     // 6. Check Character Runtime State (Daily Cap & Cooldown)
-    let charRuntime = runtimeState.characterStates[params.aiId] || {
-      lastUserMsgAt: Date.now() - 3600000 * 24,
-      lastConversationAt: Date.now() - 3600000 * 24,
-      lastProactiveMsgAt: 0,
-      dailyProactiveCount: 0,
-      lastCountResetDateStr: todayStr,
-      handledEventIds: [],
-    };
+    const charRuntime = getCharacterProactiveRuntime(params.aiId, runtimeState);
 
-    // Reset daily count if date changed
-    if (charRuntime.lastCountResetDateStr !== todayStr) {
-      charRuntime.dailyProactiveCount = 0;
-      charRuntime.lastCountResetDateStr = todayStr;
+    // Guard: If AI is currently thinking, pending, or generating reply, do not interrupt with proactive messages
+    if (aiReplyTaskManager.isCharacterThinking(params.aiId)) {
+      const reason = `【Gate 拦截】角色 [${params.aiId}] 正在回复或生成对话中，禁止插入主动消息`;
+      this.lastGateRejectReason = reason;
+      return { allowed: false, reason };
     }
 
     if (charRuntime.dailyProactiveCount >= (settings.dailyCap || 3)) {
@@ -176,12 +172,21 @@ class ProactiveGateService {
       }
     }
 
-    // 8. Interruption Guard: Suppress casual greetings if user chatted recently (< 15 mins)
-    const minutesSinceLastUserMsg = (Date.now() - (charRuntime.lastUserMsgAt || 0)) / 60000;
-    if (['greeting', 'inactivity_timeout'].includes(params.triggerType) && minutesSinceLastUserMsg < 15) {
-      const reason = '【Gate 拦截】用户最近 15 分钟内刚进行过对话，抑制闲聊问候以防打扰';
+    // 8. Interruption Guard: Suppress casual greetings or inactivity if user chatted recently (< 15 mins)
+    // Also, if never interacted before (lastUserMsgAt === 0), inactivity_timeout cannot be triggered
+    if (params.triggerType === 'inactivity_timeout' && (!charRuntime.lastUserMsgAt || charRuntime.lastUserMsgAt === 0)) {
+      const reason = '【Gate 拦截】该角色从未发生过真实对话，严禁凭空触发不活跃超时提醒';
       this.lastGateRejectReason = reason;
       return { allowed: false, reason };
+    }
+
+    if (charRuntime.lastUserMsgAt > 0) {
+      const minutesSinceLastUserMsg = (Date.now() - charRuntime.lastUserMsgAt) / 60000;
+      if (['greeting', 'inactivity_timeout'].includes(params.triggerType) && minutesSinceLastUserMsg < 15) {
+        const reason = '【Gate 拦截】用户最近 15 分钟内刚进行过对话，抑制闲聊问候以防打扰';
+        this.lastGateRejectReason = reason;
+        return { allowed: false, reason };
+      }
     }
 
     // 9. Event Deduplication
@@ -218,16 +223,10 @@ class ProactiveGateService {
       );
 
       // 2. Update Runtime State
-      let charRuntime = runtimeState.characterStates[params.aiId] || {
-        lastUserMsgAt: Date.now() - 3600000 * 24,
-        lastConversationAt: Date.now() - 3600000 * 24,
-        lastProactiveMsgAt: 0,
-        dailyProactiveCount: 0,
-        lastCountResetDateStr: todayStr,
-        handledEventIds: [],
-      };
+      const charRuntime = getCharacterProactiveRuntime(params.aiId, runtimeState);
 
       charRuntime.lastProactiveMsgAt = Date.now();
+      charRuntime.lastConversationAt = Date.now();
       charRuntime.lastUnrepliedProactiveAt = Date.now();
       charRuntime.dailyProactiveCount += 1;
       if (params.eventId) {

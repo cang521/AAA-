@@ -1,5 +1,6 @@
 import { ChatMessage, HistorySourceType, HistoryImportance } from '../types';
 import { classifyMessage, classifyImportance, determineSourceType } from './historyClassifier';
+import { syncProactiveRuntimeOnMessageSaved } from './proactive/proactiveStore';
 
 const DB_NAME = 'PhoneSimChatDB_v2';
 const DB_VERSION = 3;
@@ -341,6 +342,63 @@ export async function saveChatMessage(msg: ChatMessage): Promise<void> {
     characterId: msg.characterId,
     message: msg,
   });
+
+  // Sync proactive engine timestamps accurately upon successful persistence
+  try {
+    syncProactiveRuntimeOnMessageSaved(
+      msg.characterId,
+      msg.sender === 'user' ? 'user' : 'ai',
+      msg.timestamp
+    );
+  } catch (e) {
+    console.warn('[chatDb] syncProactiveRuntimeOnMessageSaved error:', e);
+  }
+}
+
+/**
+ * Query the latest real user message and conversation timestamps for a character from IndexedDB.
+ * Returns { lastUserMsgAt: number, lastConversationAt: number }.
+ * Returns 0 if never interacted, ensuring no fake 24-hour assumptions.
+ */
+export async function getLatestInteractionTimestamps(
+  characterId: string
+): Promise<{ lastUserMsgAt: number; lastConversationAt: number }> {
+  const db = await getDb();
+  return new Promise((resolve) => {
+    const tx = db.transaction([STORE_MESSAGES], 'readonly');
+    const store = tx.objectStore(STORE_MESSAGES);
+    const index = store.index('by_character_time');
+    const keyRange = IDBKeyRange.bound([characterId, 0], [characterId, Number.MAX_SAFE_INTEGER]);
+
+    let lastUserMsgAt = 0;
+    let lastConversationAt = 0;
+
+    const cursorReq = index.openCursor(keyRange, 'prev');
+    cursorReq.onsuccess = (e) => {
+      const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+      if (cursor) {
+        const msg = cursor.value as ChatMessage;
+        if (!lastConversationAt && msg.timestamp) {
+          lastConversationAt = msg.timestamp;
+        }
+        if (!lastUserMsgAt && msg.sender === 'user' && msg.timestamp) {
+          lastUserMsgAt = msg.timestamp;
+        }
+        // If we found both, or cursor reaches far enough, we can exit early
+        if (lastUserMsgAt && lastConversationAt) {
+          resolve({ lastUserMsgAt, lastConversationAt });
+          return;
+        }
+        cursor.continue();
+      } else {
+        resolve({ lastUserMsgAt, lastConversationAt });
+      }
+    };
+
+    cursorReq.onerror = () => {
+      resolve({ lastUserMsgAt, lastConversationAt });
+    };
+  });
 }
 
 /**
@@ -428,6 +486,21 @@ export async function saveChatMessagesBulk(
   }
   if (!options?.skipNotify) {
     notifyChange();
+  }
+
+  // Sync proactive runtime with the latest timestamps in this bulk save
+  try {
+    for (const msg of msgs) {
+      if (msg.characterId && msg.timestamp) {
+        syncProactiveRuntimeOnMessageSaved(
+          msg.characterId,
+          msg.sender === 'user' ? 'user' : 'ai',
+          msg.timestamp
+        );
+      }
+    }
+  } catch (e) {
+    console.warn('[chatDb] syncProactiveRuntimeOnMessageSaved bulk error:', e);
   }
 }
 

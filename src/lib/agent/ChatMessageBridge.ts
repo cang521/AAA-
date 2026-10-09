@@ -1,5 +1,6 @@
 import { ChatMessage, AiCharacter } from '../../types';
 import { loadMessages, saveMessages, loadCharacters, saveCharacters } from '../storage';
+import { saveChatMessage } from '../chatDb';
 
 export interface ProactiveMessageResult {
   message: ChatMessage;
@@ -39,10 +40,17 @@ class ChatMessageBridge {
       thinkingProcess: `【AI主动手机代理决策链】\n• 触发上下文：${contextSummary}\n• 决策判定：四层权限全链路检测通过 (系统能力/AI独立权限/场景控制)\n• 目标动作：向用户发送主动关怀消息，写入持久化会话记录。`,
     };
 
-    // 1. Save to Messages store
+    // 1. Save to Messages store (localStorage legacy store + ChatDB IndexedDB)
     const existingMessages = loadMessages();
     const updatedMessages = [...existingMessages, newMessage];
     saveMessages(updatedMessages);
+
+    // Save to real ChatDB IndexedDB to ensure real-time push to WeChatApp displayedMessages
+    try {
+      await saveChatMessage(newMessage);
+    } catch (e) {
+      console.warn('[ChatMessageBridge] Failed to save to ChatDB IndexedDB:', e);
+    }
 
     // 2. Increment unread badge for the character
     const updatedCharacters = characters.map((c) => {

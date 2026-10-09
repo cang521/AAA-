@@ -166,6 +166,8 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
     setImportSuccessAlert(null);
 
     let totalImportedCount = 0;
+    let totalChatSyncedCount = 0;
+    let chatRangeInfo = '';
     try {
       for (let i = 0; i < selectedFiles.length; i++) {
         const file = selectedFiles[i];
@@ -177,10 +179,21 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
           }
         );
         totalImportedCount += res.length;
+        const syncMeta = (res as any).chatSyncResult;
+        if (syncMeta && syncMeta.syncedCount > 0) {
+          totalChatSyncedCount += syncMeta.syncedCount;
+          if (syncMeta.formattedRange) {
+            chatRangeInfo = syncMeta.formattedRange;
+          }
+        }
       }
-      setImportSuccessAlert(
-        `成功导入 ${totalImportedCount} 份记忆资料至「${activeChar.name}」专属记忆空间！`
-      );
+
+      let successMsg = `成功导入 ${totalImportedCount} 份记忆资料至「${activeChar.name}」专属记忆空间！`;
+      if (totalChatSyncedCount > 0) {
+        successMsg += ` 已自动无缝恢复最近 7 天的真实历史聊天记录 (${totalChatSyncedCount} 条${chatRangeInfo ? `，时间跨度: ${chatRangeInfo}` : ''})，可在微信中直接接着聊！`;
+      }
+
+      setImportSuccessAlert(successMsg);
       // Refresh list and switch to files tab
       await loadVaultData(activeChar.id, activeChar.name);
       setTimeout(() => {
