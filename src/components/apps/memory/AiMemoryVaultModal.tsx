@@ -33,6 +33,7 @@ import {
   getAiMemoryVault,
   listAiMemoryFiles,
   importFileToAiMemory,
+  importFilesToAiMemoryBulk,
   deleteAiMemoryFile,
   replaceAiMemoryFile,
   getAiMemoryFileWithContent,
@@ -40,6 +41,7 @@ import {
   searchAiMemoryChunks,
   subscribeAiMemoryVault,
 } from '../../../lib/aiMemoryVaultDb';
+import { RecentChatSyncResult } from '../../../lib/import/RecentChatSyncManager';
 
 interface AiMemoryVaultModalProps {
   isOpen: boolean;
@@ -76,6 +78,7 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
   });
   const [importSuccessAlert, setImportSuccessAlert] = useState<string | null>(null);
   const [importErrorAlert, setImportErrorAlert] = useState<string | null>(null);
+  const [chatAuditReport, setChatAuditReport] = useState<RecentChatSyncResult | null>(null);
 
   // File Preview Modal
   const [previewFileMeta, setPreviewFileMeta] = useState<AiMemoryFileMeta | null>(null);
@@ -164,41 +167,30 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
     setIsImporting(true);
     setImportErrorAlert(null);
     setImportSuccessAlert(null);
+    setChatAuditReport(null);
 
-    let totalImportedCount = 0;
-    let totalChatSyncedCount = 0;
-    let chatRangeInfo = '';
     try {
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i];
-        const res = await importFileToAiMemory(
-          activeChar.id,
-          file,
-          (percent, msg) => {
-            setImportProgress({ percent, msg });
-          }
-        );
-        totalImportedCount += res.length;
-        const syncMeta = (res as any).chatSyncResult;
-        if (syncMeta && syncMeta.syncedCount > 0) {
-          totalChatSyncedCount += syncMeta.syncedCount;
-          if (syncMeta.formattedRange) {
-            chatRangeInfo = syncMeta.formattedRange;
-          }
+      const fileArray = Array.from(selectedFiles);
+      const res = await importFilesToAiMemoryBulk(
+        activeChar.id,
+        fileArray,
+        (percent, msg) => {
+          setImportProgress({ percent, msg });
         }
-      }
+      );
 
-      let successMsg = `成功导入 ${totalImportedCount} 份记忆资料至「${activeChar.name}」专属记忆空间！`;
-      if (totalChatSyncedCount > 0) {
-        successMsg += ` 已自动无缝恢复最近 7 天的真实历史聊天记录 (${totalChatSyncedCount} 条${chatRangeInfo ? `，时间跨度: ${chatRangeInfo}` : ''})，可在微信中直接接着聊！`;
-      }
+      const totalFilesCount = res.importedFiles.length;
+      const syncMeta = res.chatSync;
+      setChatAuditReport(syncMeta || null);
 
+      let successMsg = `成功导入 ${totalFilesCount} 份记忆资料至「${activeChar.name}」专属记忆空间！`;
+      if (syncMeta && syncMeta.syncedCount > 0) {
+        successMsg += ` 真实历史聊天记录恢复：成功恢复 ${syncMeta.syncedCount} 条 (跨度: ${syncMeta.formattedRange || ''})。可在微信直接续聊！`;
+      }
       setImportSuccessAlert(successMsg);
-      // Refresh list and switch to files tab
+
+      // Refresh list
       await loadVaultData(activeChar.id, activeChar.name);
-      setTimeout(() => {
-        setActiveTab('files');
-      }, 900);
     } catch (err: any) {
       console.error('Import failed', err);
       setImportErrorAlert(err.message || '文件导入失败，请检查文件格式');
@@ -712,6 +704,75 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                 <div className="p-3 rounded-xl bg-emerald-900/40 border border-emerald-500/30 text-xs text-emerald-200 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                   <span>{importSuccessAlert}</span>
+                </div>
+              )}
+
+              {/* Chat Restoration Verification Audit Card */}
+              {chatAuditReport && (
+                <div className={`p-3.5 rounded-2xl border text-xs space-y-2.5 ${chatAuditReport.hasChatMessages ? 'bg-zinc-850/90 border-emerald-500/40' : 'bg-amber-950/20 border-amber-500/30'}`}>
+                  <div className="flex items-center justify-between border-b border-zinc-700/60 pb-2">
+                    <span className="font-semibold text-zinc-100 flex items-center gap-1.5">
+                      <Database className={`w-3.5 h-3.5 ${chatAuditReport.hasChatMessages ? 'text-emerald-400' : 'text-amber-400'}`} />
+                      <span>历史聊天恢复核对报告</span>
+                    </span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${chatAuditReport.syncedCount > 0 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-400'}`}>
+                      {chatAuditReport.syncedCount > 0 ? `已成功恢复 ${chatAuditReport.syncedCount} 条` : chatAuditReport.hasChatMessages ? '已同步/无需新增' : '未检测到原始聊天'}
+                    </span>
+                  </div>
+
+                  {chatAuditReport.hasChatMessages ? (
+                    <div className="space-y-2 text-[11px]">
+                      <div className="grid grid-cols-2 gap-2 text-zinc-300">
+                        <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
+                          <span className="text-zinc-400">原始聊天消息总数:</span>
+                          <span className="font-mono font-semibold text-zinc-100">{chatAuditReport.totalExtracted}</span>
+                        </div>
+                        <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
+                          <span className="text-zinc-400">处于最后七天窗口内:</span>
+                          <span className="font-mono font-semibold text-emerald-400">{chatAuditReport.windowTotalCount}</span>
+                        </div>
+                        <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
+                          <span className="text-zinc-400">实际新增恢复:</span>
+                          <span className="font-mono font-semibold text-teal-300">{chatAuditReport.syncedCount}</span>
+                        </div>
+                        <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
+                          <span className="text-zinc-400">已存在而跳过:</span>
+                          <span className="font-mono font-semibold text-zinc-400">{chatAuditReport.skippedCount}</span>
+                        </div>
+                      </div>
+
+                      {chatAuditReport.unrecognizedCount > 0 && (
+                        <div className="text-[10px] text-zinc-400 px-1">
+                          无法识别或无效时间行数: <span className="font-mono text-amber-300">{chatAuditReport.unrecognizedCount}</span>
+                        </div>
+                      )}
+
+                      <div className="p-2.5 rounded-xl bg-zinc-900/90 border border-zinc-800 text-zinc-300 space-y-1">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-zinc-400">原始对话结束时间:</span>
+                          <span className="font-mono text-zinc-200">{chatAuditReport.formattedEndTime || '无'}</span>
+                        </div>
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-zinc-400">恢复起始时间 (结束前7天):</span>
+                          <span className="font-mono text-zinc-200">{chatAuditReport.formattedStartTime || '无'}</span>
+                        </div>
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-zinc-400">恢复时间窗口:</span>
+                          <span className="font-mono text-emerald-300">{chatAuditReport.formattedRange || '无'}</span>
+                        </div>
+                      </div>
+
+                      {chatAuditReport.explanation && (
+                        <div className="text-[11px] text-zinc-400 italic px-1">
+                          ℹ️ {chatAuditReport.explanation}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="p-2.5 rounded-xl bg-amber-950/30 border border-amber-500/20 text-amber-200 text-[11px] leading-relaxed">
+                      ⚠️ {chatAuditReport.explanation || '该文件未包含可恢复的原始聊天记录，无法自动还原最近七天的真实对话。请导入包含原始消息的聊天记录文件。'}
+                    </div>
+                  )}
                 </div>
               )}
 
