@@ -3319,6 +3319,74 @@ ${historyText || '(近期暂无聊天)'}
   }
 });
 
+// 11.1.4.5 API-assisted Format & Field Structure Analyzer (Requires user consent)
+// Only analyzes field keys, nesting, and anonymized tiny sample to suggest mapping rules
+app.post('/api/import/analyze-structure', async (req, res) => {
+  try {
+    const { sampleSnippet, fieldKeys = [], fileName = '', apiConfig } = req.body;
+    if (!sampleSnippet && fieldKeys.length === 0) {
+      return res.status(400).json({ success: false, error: 'No structure sample provided' });
+    }
+
+    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+
+    const prompt = `你是一个专业的数据结构与聊天记录文件分析专家。
+用户正在导入一个特殊格式的文件「${fileName}」，需要你协助分析其数据结构，帮助本地解析器提取真实的历史聊天记录。
+注意：严禁凭空编造聊天内容，你的唯一任务是输出字段映射建议。
+
+【文件采样结构信息 (已脱敏)】：
+可用顶层/字段键名：${JSON.stringify(fieldKeys)}
+结构片段：
+${(sampleSnippet || '').slice(0, 1500)}
+
+请分析并以 JSON 格式输出最合理的字段映射规则：
+{
+  "roleField": "代表角色/发送者的字段名 (如 role, sender, author)",
+  "senderField": "备用发送者字段名",
+  "contentField": "代表消息正文内容的字段名 (如 content, text, message, mes)",
+  "timestampField": "代表消息时间戳或日期的字段名 (如 timestamp, create_time, time, date)",
+  "userRoleValues": ["用户角色的可能取值，如 user, human, 我"],
+  "assistantRoleValues": ["AI角色的可能取值，如 assistant, ai, bot, model"],
+  "formatDescription": "简短的一句话格式说明"
+}
+请严格只返回可被 JSON.parse 的 JSON 对象，不要附加额外说明。`;
+
+    const responseText = await callAiService({
+      prompt,
+      model: selectedModel,
+      apiKey: apiConfig?.textApiKey,
+      baseUrl: apiConfig?.textBaseUrl,
+      providerType: apiConfig?.textProvider,
+      customHeaders: apiConfig?.customHeaders,
+      timeoutMs: apiConfig?.timeoutMs || 25000,
+    });
+
+    let mappingRules = null;
+    try {
+      const cleanJson = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
+      mappingRules = JSON.parse(cleanJson);
+    } catch {
+      const match = responseText.match(/\{[\s\S]*\}/);
+      if (match) {
+        mappingRules = JSON.parse(match[0]);
+      }
+    }
+
+    if (!mappingRules) {
+      return res.json({ success: false, error: 'AI未能返回结构化映射规则' });
+    }
+
+    res.json({
+      success: true,
+      rules: mappingRules,
+      model: selectedModel,
+    });
+  } catch (error: any) {
+    console.error('API structure analyze error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Structure analysis failed' });
+  }
+});
+
 // 11.1.5 Extract & Update Current Life State Events Endpoint
 app.post('/api/gemini/extract-life-events', async (req, res) => {
   try {

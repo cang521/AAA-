@@ -13,69 +13,156 @@ import {
   syncRecentChatMessagesToChatDb,
   RecentChatSyncResult,
 } from './import/RecentChatSyncManager';
+import { FieldMappingRule } from './import/AdaptiveFileParser';
+import {
+  computeFileHash,
+  getImportRecord,
+  saveImportRecord,
+  FileImportRecord,
+} from './import/FileFingerprintStore';
+
+export interface ImportSyncOptions {
+  restoreRecentChat?: boolean; // User choice checkbox: whether to restore last 7 days of chat
+  customRules?: FieldMappingRule; // Rules from AI-assisted analysis if applicable
+  characterName?: string; // Target character's name to identify AI vs user
+}
 
 export interface ImportAiMemoryResult {
   importedFiles: AiMemoryFileMeta[];
   chatSync?: RecentChatSyncResult;
+  fingerprintRecords?: FileImportRecord[];
+  memoryStats: {
+    filesRecognized: number;
+    filesImported: number;
+    newChunksCount: number;
+    skippedCount: number;
+    failedCount: number;
+  };
 }
 
 /**
  * Bulk import multiple files (or single file) for an AI character.
  * Merges raw chats across all imported files, finds the global conversationEndTime,
- * and restores the exact 7-day window [conversationEndTime - 7 days, conversationEndTime].
+ * and restores the exact 7-day window [conversationEndTime - 7 days, conversationEndTime]
+ * ONLY IF restoreRecentChat is explicitly true!
  */
 export async function importFilesToAiMemoryBulk(
   characterId: string,
   files: File[],
-  onProgress?: (percent: number, stepMsg: string) => void
+  optionsOrProgress?: ImportSyncOptions | ((percent: number, stepMsg: string) => void),
+  maybeOnProgress?: (percent: number, stepMsg: string) => void,
+  characterName?: string
 ): Promise<ImportAiMemoryResult> {
+  const options: ImportSyncOptions =
+    typeof optionsOrProgress === 'object' && optionsOrProgress !== null
+      ? optionsOrProgress
+      : { restoreRecentChat: false };
+  const onProgress = typeof optionsOrProgress === 'function' ? optionsOrProgress : maybeOnProgress;
+  const effectiveCharName = options.characterName || characterName;
+
   const allImportedFiles: AiMemoryFileMeta[] = [];
   const allCandidateMsgs: ChatMessage[] = [];
+  const fingerprintRecords: FileImportRecord[] = [];
   let totalUnrecognized = 0;
+  let newChunksTotal = 0;
+  let skippedTotal = 0;
+  let failedTotal = 0;
 
   const totalFiles = files.length;
   for (let i = 0; i < totalFiles; i++) {
     const f = files[i];
-    const basePct = Math.round((i / totalFiles) * 75);
+    const basePct = Math.round((i / totalFiles) * 70);
     const stepMsg = `正在导入文件 (${i + 1}/${totalFiles}): ${f.name}`;
     onProgress?.(basePct, stepMsg);
 
-    // Call single import (which saves files & chunks to memory vault)
-    const res = await importFileToAiMemory(characterId, f, (p, m) => {
-      onProgress?.(Math.round(basePct + (p / 100) * (75 / totalFiles)), m);
-    });
-    allImportedFiles.push(...res);
-  }
-
-  // Now perform UNIFIED 7-day chat extraction & synchronization across ALL imported files
-  onProgress?.(80, '正在合并与分析所有导入文件中的历史对话记录...');
-  for (const fMeta of allImportedFiles) {
     try {
-      const fullDoc = await getAiMemoryFileWithContent(fMeta.id);
-      if (fullDoc && fullDoc.rawContent) {
-        const ext = extractRawChatMessagesFromFileContent(fullDoc.rawContent, fullDoc.fileName, characterId);
-        if (ext.messages && ext.messages.length > 0) {
-          allCandidateMsgs.push(...ext.messages);
-        }
-        totalUnrecognized += ext.unrecognizedCount || 0;
+      const fHash = await computeFileHash(f);
+
+      // Single file memory import (saves files & chunks to memory vault)
+      const res = await importFileToAiMemory(characterId, f, { restoreRecentChat: false }, (p, m) => {
+        onProgress?.(Math.round(basePct + (p / 100) * (70 / totalFiles)), m);
+      });
+      allImportedFiles.push(...res);
+      for (const meta of res) {
+        newChunksTotal += meta.chunkCount || 0;
       }
-    } catch (e) {
-      console.warn('[importFilesToAiMemoryBulk] Extraction failed for', fMeta.fileName, e);
+
+      // Check existing fingerprint
+      const existingFp = getImportRecord(characterId, fHash);
+      const fpRecord: FileImportRecord = {
+        characterId,
+        fileHash: fHash,
+        fileName: f.name,
+        fileSizeBytes: f.size,
+        importedAt: existingFp?.importedAt || Date.now(),
+        updatedAt: Date.now(),
+        chatRestored: existingFp?.chatRestored || false,
+        chatRestoredCount: existingFp?.chatRestoredCount || 0,
+        chatRestoredRange: existingFp?.chatRestoredRange,
+      };
+      fingerprintRecords.push(fpRecord);
+      saveImportRecord(fpRecord);
+    } catch (err) {
+      console.error('[importFilesToAiMemoryBulk] Failed to import file', f.name, err);
+      failedTotal++;
     }
   }
 
-  let chatSync: RecentChatSyncResult;
-  if (allCandidateMsgs.length > 0) {
-    onProgress?.(90, `共提取出 ${allCandidateMsgs.length} 条有效对话记录，正在计算统一的最后 7 天窗口并同步到微信...`);
-    chatSync = await syncRecentChatMessagesToChatDb(characterId, allCandidateMsgs, totalUnrecognized);
-  } else {
-    chatSync = await syncRecentChatMessagesToChatDb(characterId, [], totalUnrecognized);
+  let chatSync: RecentChatSyncResult | undefined;
+
+  // ONLY extract & restore recent chat if user explicitly checked the box!
+  if (options?.restoreRecentChat) {
+    onProgress?.(75, '正在合并与分析所有导入文件中的历史对话记录...');
+    for (const fMeta of allImportedFiles) {
+      try {
+        const fullDoc = await getAiMemoryFileWithContent(fMeta.id);
+        if (fullDoc && fullDoc.rawContent) {
+          const ext = extractRawChatMessagesFromFileContent(
+            fullDoc.rawContent,
+            fMeta.fileName,
+            characterId,
+            effectiveCharName,
+            options.customRules
+          );
+          if (ext.messages && ext.messages.length > 0) {
+            allCandidateMsgs.push(...ext.messages);
+          }
+          totalUnrecognized += ext.unrecognizedCount || 0;
+        }
+      } catch (e) {
+        console.warn('[importFilesToAiMemoryBulk] Extraction failed for', fMeta.fileName, e);
+      }
+    }
+
+    if (allCandidateMsgs.length > 0) {
+      onProgress?.(85, `共提取出 ${allCandidateMsgs.length} 条有效对话记录，正在计算统一的最后 7 天窗口并同步到微信...`);
+      chatSync = await syncRecentChatMessagesToChatDb(characterId, allCandidateMsgs, totalUnrecognized);
+      // Update fingerprint records with chat restoration info
+      for (const fp of fingerprintRecords) {
+        fp.chatRestored = true;
+        fp.chatRestoredCount = chatSync.syncedCount;
+        fp.chatRestoredRange = chatSync.formattedRange;
+        fp.chatRestoredEndTime = chatSync.latestMessageTime;
+        fp.chatRestoredStartTime = chatSync.windowStartTime;
+        saveImportRecord(fp);
+      }
+    } else {
+      chatSync = await syncRecentChatMessagesToChatDb(characterId, [], totalUnrecognized);
+    }
   }
 
-  onProgress?.(100, '全部文件导入与历史聊天还原完成！');
+  onProgress?.(100, '全部文件导入与处理完成！');
   return {
     importedFiles: allImportedFiles,
     chatSync,
+    fingerprintRecords,
+    memoryStats: {
+      filesRecognized: totalFiles,
+      filesImported: allImportedFiles.length,
+      newChunksCount: newChunksTotal,
+      skippedCount: skippedTotal,
+      failedCount: failedTotal,
+    },
   };
 }
 
@@ -382,8 +469,14 @@ function chunkText(text: string, chunkSize = 800, overlap = 150): string[] {
 export async function importFileToAiMemory(
   characterId: string,
   file: File,
-  onProgress?: (percent: number, stepMsg: string) => void
+  optionsOrProgress?: ImportSyncOptions | ((percent: number, stepMsg: string) => void),
+  maybeOnProgress?: (percent: number, stepMsg: string) => void
 ): Promise<AiMemoryFileMeta[]> {
+  const options: ImportSyncOptions = typeof optionsOrProgress === 'object' && optionsOrProgress !== null
+    ? optionsOrProgress
+    : { restoreRecentChat: false };
+  const onProgress = typeof optionsOrProgress === 'function' ? optionsOrProgress : maybeOnProgress;
+
   const db = await getMemoryDb();
   await ensureAiMemoryVault(characterId, '');
 
@@ -513,41 +606,49 @@ export async function importFileToAiMemory(
   }
 
   // -------------------------------------------------------------
-  // Automatic Sync: Extract real chat history and restore the last 7 days to ChatDB
+  // Optional Sync: Extract real chat history and restore the last 7 days to ChatDB (ONLY IF REQUESTED)
   // -------------------------------------------------------------
-  try {
-    onProgress?.(85, '正在分析记忆文件中的历史对话记录...');
-    const allCandidateMsgs: ChatMessage[] = [];
-    let totalUnrecognized = 0;
+  if (options.restoreRecentChat) {
+    try {
+      onProgress?.(85, '正在分析记忆文件中的历史对话记录...');
+      const allCandidateMsgs: ChatMessage[] = [];
+      let totalUnrecognized = 0;
 
-    // Extract raw chat messages across imported files
-    for (const fMeta of importedFiles) {
-      try {
-        const fullDoc = await getAiMemoryFileWithContent(fMeta.id);
-        if (fullDoc && fullDoc.rawContent) {
-          const res = extractRawChatMessagesFromFileContent(fullDoc.rawContent, fullDoc.fileName, characterId);
-          if (res.messages && res.messages.length > 0) {
-            allCandidateMsgs.push(...res.messages);
+      // Extract raw chat messages across imported files
+      for (const fMeta of importedFiles) {
+        try {
+          const fullDoc = await getAiMemoryFileWithContent(fMeta.id);
+          if (fullDoc && fullDoc.rawContent) {
+            const res = extractRawChatMessagesFromFileContent(
+              fullDoc.rawContent,
+              fMeta.fileName,
+              characterId,
+              options.characterName,
+              options.customRules
+            );
+            if (res.messages && res.messages.length > 0) {
+              allCandidateMsgs.push(...res.messages);
+            }
+            totalUnrecognized += res.unrecognizedCount || 0;
           }
-          totalUnrecognized += res.unrecognizedCount || 0;
+        } catch (docErr) {
+          console.warn('[importFileToAiMemory] Failed to extract chat from file', fMeta.fileName, docErr);
         }
-      } catch (docErr) {
-        console.warn('[importFileToAiMemory] Failed to extract chat from file', fMeta.fileName, docErr);
       }
-    }
 
-    if (allCandidateMsgs.length > 0) {
-      onProgress?.(92, `检测到 ${allCandidateMsgs.length} 条原始对话记录，正在同步最近 7 天真实聊天...`);
-      const syncRes = await syncRecentChatMessagesToChatDb(characterId, allCandidateMsgs, totalUnrecognized);
-      (importedFiles as any).chatSyncResult = syncRes;
-      if (syncRes.syncedCount > 0) {
-        console.log(`[importFileToAiMemory] Successfully restored ${syncRes.syncedCount} recent chat messages (${syncRes.formattedRange}) to WeChat ChatDB`);
+      if (allCandidateMsgs.length > 0) {
+        onProgress?.(92, `检测到 ${allCandidateMsgs.length} 条原始对话记录，正在同步最近 7 天真实聊天...`);
+        const syncRes = await syncRecentChatMessagesToChatDb(characterId, allCandidateMsgs, totalUnrecognized);
+        (importedFiles as any).chatSyncResult = syncRes;
+        if (syncRes.syncedCount > 0) {
+          console.log(`[importFileToAiMemory] Successfully restored ${syncRes.syncedCount} recent chat messages (${syncRes.formattedRange}) to WeChat ChatDB`);
+        }
+      } else {
+        (importedFiles as any).chatSyncResult = await syncRecentChatMessagesToChatDb(characterId, [], totalUnrecognized);
       }
-    } else {
-      (importedFiles as any).chatSyncResult = await syncRecentChatMessagesToChatDb(characterId, [], totalUnrecognized);
+    } catch (chatSyncErr) {
+      console.warn('[importFileToAiMemory] 7-day chat sync encountered a non-fatal error:', chatSyncErr);
     }
-  } catch (chatSyncErr) {
-    console.warn('[importFileToAiMemory] 7-day chat sync encountered a non-fatal error:', chatSyncErr);
   }
 
   // Recalculate vault statistics

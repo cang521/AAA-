@@ -13,6 +13,7 @@ import {
   Archive,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Database,
   Eye,
   Sliders,
@@ -41,7 +42,9 @@ import {
   searchAiMemoryChunks,
   subscribeAiMemoryVault,
 } from '../../../lib/aiMemoryVaultDb';
-import { RecentChatSyncResult } from '../../../lib/import/RecentChatSyncManager';
+import { RecentChatSyncResult, extractRawChatMessagesFromFileContent } from '../../../lib/import/RecentChatSyncManager';
+import { FieldMappingRule, extractSampleForAiAnalysis, analyzeFileStructureWithAi } from '../../../lib/import/AdaptiveFileParser';
+import { loadApiConfig } from '../../../lib/storage';
 
 interface AiMemoryVaultModalProps {
   isOpen: boolean;
@@ -79,6 +82,18 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
   const [importSuccessAlert, setImportSuccessAlert] = useState<string | null>(null);
   const [importErrorAlert, setImportErrorAlert] = useState<string | null>(null);
   const [chatAuditReport, setChatAuditReport] = useState<RecentChatSyncResult | null>(null);
+
+  // 7-day chat restore option (User autonomous choice, defaults to false)
+  const [restoreRecentChat, setRestoreRecentChat] = useState<boolean>(false);
+
+  // AI-assisted format analysis proposal state (requires explicit user consent)
+  const [pendingAiAssist, setPendingAiAssist] = useState<{
+    files: File[];
+    unrecognizedFileName: string;
+    sampleSnippet: string;
+    fieldKeys: string[];
+  } | null>(null);
+  const [isAnalyzingStructure, setIsAnalyzingStructure] = useState<boolean>(false);
 
   // File Preview Modal
   const [previewFileMeta, setPreviewFileMeta] = useState<AiMemoryFileMeta | null>(null);
@@ -159,21 +174,23 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
     }
   };
 
-  // Handle File Input Selection
-  const handleFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = e.target.files;
-    if (!selectedFiles || selectedFiles.length === 0 || !activeChar) return;
-
+  // Execute bulk import with custom options
+  const executeImportBulk = async (
+    files: File[],
+    options: { restoreRecentChat: boolean; customRules?: FieldMappingRule; characterName?: string }
+  ) => {
+    if (!activeChar) return;
     setIsImporting(true);
     setImportErrorAlert(null);
     setImportSuccessAlert(null);
     setChatAuditReport(null);
+    setPendingAiAssist(null);
 
     try {
-      const fileArray = Array.from(selectedFiles);
       const res = await importFilesToAiMemoryBulk(
         activeChar.id,
-        fileArray,
+        files,
+        options,
         (percent, msg) => {
           setImportProgress({ percent, msg });
         }
@@ -184,8 +201,16 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
       setChatAuditReport(syncMeta || null);
 
       let successMsg = `成功导入 ${totalFilesCount} 份记忆资料至「${activeChar.name}」专属记忆空间！`;
-      if (syncMeta && syncMeta.syncedCount > 0) {
-        successMsg += ` 真实历史聊天记录恢复：成功恢复 ${syncMeta.syncedCount} 条 (跨度: ${syncMeta.formattedRange || ''})。可在微信直接续聊！`;
+      if (options.restoreRecentChat) {
+        if (syncMeta && syncMeta.syncedCount > 0) {
+          successMsg += ` 真实历史聊天记录恢复：成功恢复 ${syncMeta.syncedCount} 条 (跨度: ${syncMeta.formattedRange || ''})。可在微信直接查看并继续对话！`;
+        } else if (syncMeta && syncMeta.hasChatMessages) {
+          successMsg += ` 真实历史聊天已核对：${syncMeta.explanation || '所有窗口内消息已同步'}`;
+        } else {
+          successMsg += ` 该文件未包含可恢复的原始聊天记录，无法自动还原最近七天的真实对话。`;
+        }
+      } else {
+        successMsg += `（未勾选恢复历史聊天，已仅作为独立记忆库资料存储，未改动聊天记录）`;
       }
       setImportSuccessAlert(successMsg);
 
@@ -197,6 +222,110 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
     } finally {
       setIsImporting(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  // Handle User Choice for AI-assisted Analysis
+  const handleConfirmAiAssist = async (useAi: boolean) => {
+    if (!pendingAiAssist || !activeChar) return;
+    const { files, unrecognizedFileName, sampleSnippet, fieldKeys } = pendingAiAssist;
+
+    if (!useAi) {
+      // User chose local parsing only
+      setPendingAiAssist(null);
+      await executeImportBulk(files, { restoreRecentChat: true, characterName: activeChar.name });
+      return;
+    }
+
+    // User explicitly authorized AI assistance
+    setIsAnalyzingStructure(true);
+    try {
+      const apiConfig = loadApiConfig();
+      const rules = await analyzeFileStructureWithAi(
+        sampleSnippet,
+        fieldKeys,
+        unrecognizedFileName,
+        apiConfig
+      );
+
+      setPendingAiAssist(null);
+      if (rules) {
+        await executeImportBulk(files, {
+          restoreRecentChat: true,
+          customRules: rules,
+          characterName: activeChar.name,
+        });
+      } else {
+        setImportErrorAlert('AI 分析未能确定有效字段映射规则，已转为纯本地解析');
+        await executeImportBulk(files, {
+          restoreRecentChat: true,
+          characterName: activeChar.name,
+        });
+      }
+    } catch (err: any) {
+      setPendingAiAssist(null);
+      setImportErrorAlert(`AI 分析失败: ${err.message || '网络或API异常'}，已转为纯本地解析`);
+      await executeImportBulk(files, {
+        restoreRecentChat: true,
+        characterName: activeChar.name,
+      });
+    } finally {
+      setIsAnalyzingStructure(false);
+    }
+  };
+
+  // Handle File Input Selection
+  const handleFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = e.target.files;
+    if (!selectedFiles || selectedFiles.length === 0 || !activeChar) return;
+
+    const fileArray = Array.from(selectedFiles);
+
+    // If restoreRecentChat is NOT checked: import pure memory files directly!
+    if (!restoreRecentChat) {
+      await executeImportBulk(fileArray, { restoreRecentChat: false, characterName: activeChar.name });
+      return;
+    }
+
+    // If restoreRecentChat IS checked: verify whether local parser recognizes raw chat
+    let hasLocalRecognizedChat = false;
+    let candidateForAiAnalysis: { file: File; sampleSnippet: string; fieldKeys: string[] } | null = null;
+
+    for (const f of fileArray) {
+      const lower = f.name.toLowerCase();
+      if (lower.endsWith('.zip')) {
+        // ZIP will be unpacked locally and parsed
+        hasLocalRecognizedChat = true;
+        break;
+      }
+      try {
+        const text = await f.text();
+        const extracted = extractRawChatMessagesFromFileContent(text, f.name, activeChar.id, activeChar.name);
+        if (extracted.messages.length > 0) {
+          hasLocalRecognizedChat = true;
+          break;
+        } else if (!candidateForAiAnalysis && (lower.endsWith('.json') || lower.endsWith('.jsonl') || lower.endsWith('.txt'))) {
+          const sample = extractSampleForAiAnalysis(text);
+          if (sample.fieldKeys.length > 0 || sample.sampleSnippet.length > 20) {
+            candidateForAiAnalysis = { file: f, ...sample };
+          }
+        }
+      } catch (err) {
+        console.warn('Pre-check file error:', err);
+      }
+    }
+
+    if (hasLocalRecognizedChat || !candidateForAiAnalysis) {
+      // Local parsing recognizes chat (or pure text/summary) -> Proceed locally without AI
+      await executeImportBulk(fileArray, { restoreRecentChat: true, characterName: activeChar.name });
+    } else {
+      // Structure unrecognized locally -> Prompt user for AI format analysis
+      setPendingAiAssist({
+        files: fileArray,
+        unrecognizedFileName: candidateForAiAnalysis.file.name,
+        sampleSnippet: candidateForAiAnalysis.sampleSnippet,
+        fieldKeys: candidateForAiAnalysis.fieldKeys,
+      });
     }
   };
 
@@ -645,6 +774,79 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                 </div>
               </div>
 
+              {/* Optional 7-Day History Chat Restoration Checkbox */}
+              <div className="p-3.5 rounded-2xl bg-zinc-850/90 border border-zinc-750 flex items-start gap-3 transition hover:border-zinc-700">
+                <input
+                  type="checkbox"
+                  id="restore-recent-chat-checkbox"
+                  checked={restoreRecentChat}
+                  onChange={(e) => setRestoreRecentChat(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded text-emerald-500 border-zinc-600 bg-zinc-900 focus:ring-emerald-500 cursor-pointer"
+                />
+                <div className="flex-1 cursor-pointer" onClick={() => setRestoreRecentChat(!restoreRecentChat)}>
+                  <label htmlFor="restore-recent-chat-checkbox" className="text-xs font-semibold text-zinc-200 cursor-pointer flex items-center gap-2">
+                    <span>同时恢复该文件最后一次真实对话结束前7天的聊天记录</span>
+                    {restoreRecentChat && (
+                      <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-500/20 text-emerald-300 font-normal">
+                        已开启
+                      </span>
+                    )}
+                  </label>
+                  <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">
+                    从原始文件中提取真实聊天，恢复到该 AI 的微信会话。不勾选则仅导入记忆资料。
+                  </p>
+                </div>
+              </div>
+
+              {/* AI-Assisted Format Analysis Confirmation Dialog */}
+              {pendingAiAssist && (
+                <div className="p-4 rounded-2xl bg-amber-950/40 border border-amber-500/40 space-y-3 animate-in fade-in duration-200">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                    <div className="space-y-1.5 flex-1">
+                      <h4 className="text-xs font-semibold text-amber-200">
+                        当前文件结构较特殊，是否使用 AI 辅助分析格式？
+                      </h4>
+                      <p className="text-[11px] text-zinc-300 leading-relaxed">
+                        文件「<span className="font-mono text-amber-300">{pendingAiAssist.unrecognizedFileName}</span>」本地多层级解析未识别到标准对话字段。您可以选择调用已配置的 AI API 协助推断字段结构与映射规则。
+                      </p>
+                      <div className="text-[10px] text-zinc-400 bg-zinc-900/90 p-2.5 rounded-xl border border-zinc-800 leading-relaxed space-y-1">
+                        <div className="text-zinc-300 font-medium">🔒 隐私与额度保护承诺：</div>
+                        <div>• 仅发送脱敏后的字段键名及极简骨架结构示例（&lt;1500字符），绝不上传完整原始文件。</div>
+                        <div>• 绝不上传无关图片或 Base64 内容。</div>
+                        <div>• API 仅分析字段结构并返回映射建议，由本地代码执行真实数据提取与保存，绝不凭空编造聊天内容。</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-2.5 pt-1">
+                    <button
+                      onClick={() => handleConfirmAiAssist(false)}
+                      disabled={isAnalyzingStructure}
+                      className="px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium cursor-pointer transition disabled:opacity-50"
+                    >
+                      【仅使用本地解析】
+                    </button>
+                    <button
+                      onClick={() => handleConfirmAiAssist(true)}
+                      disabled={isAnalyzingStructure}
+                      className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer transition flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      {isAnalyzingStructure ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>AI 分析结构中...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>【使用 AI 辅助解析】</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Upload Drop Zone */}
               <div
                 onClick={() => fileInputRef.current?.click()}
@@ -722,14 +924,18 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
 
                   {chatAuditReport.hasChatMessages ? (
                     <div className="space-y-2 text-[11px]">
-                      <div className="grid grid-cols-2 gap-2 text-zinc-300">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-zinc-300">
                         <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
                           <span className="text-zinc-400">原始聊天消息总数:</span>
-                          <span className="font-mono font-semibold text-zinc-100">{chatAuditReport.totalExtracted}</span>
+                          <span className="font-mono font-semibold text-zinc-100">{chatAuditReport.totalExtracted + chatAuditReport.unrecognizedCount}</span>
+                        </div>
+                        <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
+                          <span className="text-zinc-400">真实提取成功:</span>
+                          <span className="font-mono font-semibold text-emerald-400">{chatAuditReport.totalExtracted}</span>
                         </div>
                         <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
                           <span className="text-zinc-400">处于最后七天窗口内:</span>
-                          <span className="font-mono font-semibold text-emerald-400">{chatAuditReport.windowTotalCount}</span>
+                          <span className="font-mono font-semibold text-emerald-300">{chatAuditReport.windowTotalCount}</span>
                         </div>
                         <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
                           <span className="text-zinc-400">实际新增恢复:</span>
@@ -739,13 +945,11 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                           <span className="text-zinc-400">已存在而跳过:</span>
                           <span className="font-mono font-semibold text-zinc-400">{chatAuditReport.skippedCount}</span>
                         </div>
-                      </div>
-
-                      {chatAuditReport.unrecognizedCount > 0 && (
-                        <div className="text-[10px] text-zinc-400 px-1">
-                          无法识别或无效时间行数: <span className="font-mono text-amber-300">{chatAuditReport.unrecognizedCount}</span>
+                        <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
+                          <span className="text-zinc-400">无法识别:</span>
+                          <span className="font-mono font-semibold text-amber-300">{chatAuditReport.unrecognizedCount}</span>
                         </div>
-                      )}
+                      </div>
 
                       <div className="p-2.5 rounded-xl bg-zinc-900/90 border border-zinc-800 text-zinc-300 space-y-1">
                         <div className="flex justify-between text-[10px]">
@@ -757,8 +961,8 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                           <span className="font-mono text-zinc-200">{chatAuditReport.formattedStartTime || '无'}</span>
                         </div>
                         <div className="flex justify-between text-[10px]">
-                          <span className="text-zinc-400">恢复时间窗口:</span>
-                          <span className="font-mono text-emerald-300">{chatAuditReport.formattedRange || '无'}</span>
+                          <span className="text-zinc-400">恢复结束时间:</span>
+                          <span className="font-mono text-emerald-300">{chatAuditReport.formattedEndTime || '无'}</span>
                         </div>
                       </div>
 
