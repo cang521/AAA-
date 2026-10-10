@@ -3325,10 +3325,24 @@ app.post('/api/import/analyze-structure', async (req, res) => {
   try {
     const { sampleSnippet, fieldKeys = [], fileName = '', apiConfig } = req.body;
     if (!sampleSnippet && fieldKeys.length === 0) {
-      return res.status(400).json({ success: false, error: 'No structure sample provided' });
+      return res.status(400).json({ success: false, error: '未提供可用于分析的文件采样结构信息' });
     }
 
-    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+    // Support both ApiConfig.textApiConfig and flat engine properties
+    const textCfg = apiConfig?.textApiConfig;
+    const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || '';
+    const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || '';
+    const selectedModel = textCfg?.model || apiConfig?.textModel || 'gemini-3.6-flash';
+    const provider = textCfg?.provider || apiConfig?.textProvider || '';
+    const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || '';
+    const customHeaders = apiConfig?.customHeaders || {};
+
+    if (!apiKey && !baseUrl) {
+      return res.status(400).json({
+        success: false,
+        error: '未配置有效 API（请前往手机“设置”配置文本 API 密钥或代理地址）',
+      });
+    }
 
     const prompt = `你是一个专业的数据结构与聊天记录文件分析专家。
 用户正在导入一个特殊格式的文件「${fileName}」，需要你协助分析其数据结构，帮助本地解析器提取真实的历史聊天记录。
@@ -3354,26 +3368,41 @@ ${(sampleSnippet || '').slice(0, 1500)}
     const responseText = await callAiService({
       prompt,
       model: selectedModel,
-      apiKey: apiConfig?.textApiKey,
-      baseUrl: apiConfig?.textBaseUrl,
-      providerType: apiConfig?.textProvider,
-      customHeaders: apiConfig?.customHeaders,
+      apiKey,
+      baseUrl,
+      providerType: provider,
+      apiProtocol,
+      customHeaders,
       timeoutMs: apiConfig?.timeoutMs || 25000,
     });
 
-    let mappingRules = null;
+    let mappingRules: any = null;
     try {
       const cleanJson = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
       mappingRules = JSON.parse(cleanJson);
     } catch {
       const match = responseText.match(/\{[\s\S]*\}/);
       if (match) {
-        mappingRules = JSON.parse(match[0]);
+        try {
+          mappingRules = JSON.parse(match[0]);
+        } catch {
+          // ignore
+        }
       }
     }
 
-    if (!mappingRules) {
-      return res.json({ success: false, error: 'AI未能返回结构化映射规则' });
+    if (!mappingRules || typeof mappingRules !== 'object') {
+      return res.json({ success: false, error: 'AI 未能返回合法的结构化映射规则' });
+    }
+
+    // Validate that the mapping rules contain at least one meaningful mapping
+    const hasValidField =
+      (mappingRules.roleField && typeof mappingRules.roleField === 'string') ||
+      (mappingRules.contentField && typeof mappingRules.contentField === 'string') ||
+      (mappingRules.timestampField && typeof mappingRules.timestampField === 'string');
+
+    if (!hasValidField) {
+      return res.json({ success: false, error: 'AI 返回的映射规则未包含有效的消息正文或角色字段' });
     }
 
     res.json({

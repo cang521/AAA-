@@ -1,5 +1,6 @@
 import { ChatMessage } from '../../types';
 import { parseReliableTimestamp } from './RecentChatSyncManager';
+import { apiFetch } from '../localBackend';
 
 export interface FieldMappingRule {
   roleField?: string;
@@ -324,9 +325,11 @@ export function repairAndExtractCorruptedJson(
 
   // 2. Tokenize and extract JSON objects with balanced braces
   let i = 0;
+  let loopCount = 0;
   const len = clean.length;
 
   while (i < len) {
+    if (++loopCount > 30000) break;
     const openIdx = clean.indexOf('{', i);
     if (openIdx === -1) break;
 
@@ -345,7 +348,9 @@ export function repairAndExtractCorruptedJson(
     let isEscaped = false;
     let closeIdx = -1;
 
-    for (let j = openIdx; j < len; j++) {
+    // Scan for matching closing brace, with max span 500KB per candidate
+    const maxSpan = Math.min(len, openIdx + 500000);
+    for (let j = openIdx; j < maxSpan; j++) {
       const ch = clean[j];
       if (inString) {
         if (isEscaped) {
@@ -503,8 +508,14 @@ export function extractSampleForAiAnalysis(content: string): { sampleSnippet: st
   };
 }
 
+export interface AiStructureAnalysisResult {
+  success: boolean;
+  rules?: FieldMappingRule;
+  error?: string;
+}
+
 /**
- * Calls the existing backend endpoint `/api/import/analyze-structure` using user's configured API.
+ * Calls the existing backend endpoint `/api/import/analyze-structure` using user's configured API via apiFetch.
  * Purely asks for field mapping schema, never generates fake chat.
  */
 export async function analyzeFileStructureWithAi(
@@ -512,9 +523,20 @@ export async function analyzeFileStructureWithAi(
   fieldKeys: string[],
   fileName: string,
   apiConfig?: any
-): Promise<FieldMappingRule | null> {
+): Promise<AiStructureAnalysisResult> {
+  const textCfg = apiConfig?.textApiConfig;
+  const apiKey = textCfg?.apiKey || apiConfig?.textApiKey;
+  const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl;
+
+  if (!apiKey && !baseUrl) {
+    return {
+      success: false,
+      error: '当前未配置有效的文本 API（请前往手机“设置”配置 API 密钥或代理地址）',
+    };
+  }
+
   try {
-    const res = await fetch('/api/import/analyze-structure', {
+    const res = await apiFetch('/api/import/analyze-structure', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -524,12 +546,34 @@ export async function analyzeFileStructureWithAi(
         apiConfig,
       }),
     });
-    const data = await res.json();
+
+    const data = await res.json().catch(() => ({}));
     if (data.success && data.rules) {
-      return data.rules as FieldMappingRule;
+      const r = data.rules;
+      const validRule: FieldMappingRule = {
+        roleField: typeof r.roleField === 'string' ? r.roleField.trim() : undefined,
+        senderField: typeof r.senderField === 'string' ? r.senderField.trim() : undefined,
+        contentField: typeof r.contentField === 'string' ? r.contentField.trim() : undefined,
+        textField: typeof r.textField === 'string' ? r.textField.trim() : undefined,
+        timestampField: typeof r.timestampField === 'string' ? r.timestampField.trim() : undefined,
+        timeField: typeof r.timeField === 'string' ? r.timeField.trim() : undefined,
+        idField: typeof r.idField === 'string' ? r.idField.trim() : undefined,
+        userRoleValues: Array.isArray(r.userRoleValues) ? r.userRoleValues : undefined,
+        assistantRoleValues: Array.isArray(r.assistantRoleValues) ? r.assistantRoleValues : undefined,
+        formatDescription: typeof r.formatDescription === 'string' ? r.formatDescription : undefined,
+      };
+      return { success: true, rules: validRule };
     }
-  } catch (err) {
+
+    return {
+      success: false,
+      error: data.error || 'AI未能识别出可用的字段映射规则',
+    };
+  } catch (err: any) {
     console.error('Failed to analyze file structure with AI API:', err);
+    return {
+      success: false,
+      error: `API 网络请求异常: ${err.message || '连接失败'}`,
+    };
   }
-  return null;
 }

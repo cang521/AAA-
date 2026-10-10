@@ -172,26 +172,53 @@ export function extractRawChatMessagesFromFileContent(
   let unrecognizedCount = 0;
   const trimmed = content.trim();
 
-  // 1. Try parsing JSON format (Level 1: Standard & Level 2: Adaptive Field & Level 3: Corrupted Recovery)
-  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      // Run adaptive parser which handles top-level history, messages, chat, mapping, deep structures
-      const adaptiveMsgs = parseAdaptiveJsonStructure(parsed, characterId, characterName, customRules);
-      if (adaptiveMsgs && adaptiveMsgs.length > 0) {
-        return { messages: adaptiveMsgs, unrecognizedCount };
-      }
+  // 1. Try Standard JSON & Cleaned Substring JSON Parsing
+  let parsedJson: any = null;
+  try {
+    parsedJson = JSON.parse(trimmed);
+  } catch {
+    // If direct parse failed, check if valid JSON is embedded after junk headers / before trailers
+    const firstBrace = trimmed.indexOf('{');
+    const firstBracket = trimmed.indexOf('[');
+    let startIdx = -1;
+    if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+      startIdx = firstBrace;
+    } else if (firstBracket !== -1) {
+      startIdx = firstBracket;
+    }
 
-      extractFromJsonStructure(parsed, characterId, extracted);
-      if (extracted.length > 0) {
-        return { messages: extracted, unrecognizedCount };
+    const lastBrace = trimmed.lastIndexOf('}');
+    const lastBracket = trimmed.lastIndexOf(']');
+    const endIdx = Math.max(lastBrace, lastBracket);
+
+    if (startIdx !== -1 && endIdx > startIdx) {
+      const candidateSub = trimmed.slice(startIdx, endIdx + 1);
+      try {
+        parsedJson = JSON.parse(candidateSub);
+      } catch {
+        // Leave parsedJson as null to proceed with fault-tolerant recovery
       }
-    } catch {
-      // Level 3: Local fault-tolerant repair for corrupted / partial JSON
-      const repaired = repairAndExtractCorruptedJson(trimmed, characterId, characterName, customRules);
-      if (repaired.messages && repaired.messages.length > 0) {
-        return { messages: repaired.messages, unrecognizedCount: repaired.repairedCount > 0 ? 0 : 1 };
-      }
+    }
+  }
+
+  if (parsedJson) {
+    const adaptiveMsgs = parseAdaptiveJsonStructure(parsedJson, characterId, characterName, customRules);
+    if (adaptiveMsgs && adaptiveMsgs.length > 0) {
+      return { messages: adaptiveMsgs, unrecognizedCount };
+    }
+
+    extractFromJsonStructure(parsedJson, characterId, extracted);
+    if (extracted.length > 0) {
+      return { messages: extracted, unrecognizedCount };
+    }
+  }
+
+  // Level 3: Local fault-tolerant repair for corrupted / partial / truncated JSON
+  // Always execute if content contains JSON open braces
+  if (trimmed.includes('{')) {
+    const repaired = repairAndExtractCorruptedJson(trimmed, characterId, characterName, customRules);
+    if (repaired.messages && repaired.messages.length > 0) {
+      return { messages: repaired.messages, unrecognizedCount: repaired.repairedCount > 0 ? 0 : 1 };
     }
   }
 

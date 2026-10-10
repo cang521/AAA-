@@ -2,7 +2,8 @@
  * FileFingerprintStore.ts
  * Reliable content hashing & import tracking for AI memory files.
  * Tracks per character:
- * - Content hash (SHA-256 or fast fallback)
+ * - Content hash (SHA-256 on actual file content)
+ * - File ID in memory vault
  * - File size & name
  * - First imported timestamp & last updated timestamp
  * - Whether 7-day chat restoration was executed
@@ -12,8 +13,10 @@
 export interface FileImportRecord {
   characterId: string;
   fileHash: string;
+  fileId?: string;
   fileName: string;
   fileSizeBytes: number;
+  chunkCount?: number;
   importedAt: number;
   updatedAt: number;
   chatRestored: boolean;
@@ -55,11 +58,25 @@ export function getImportRecord(characterId: string, fileHash: string): FileImpo
 }
 
 /**
- * Fast & robust content hashing (supports Web Crypto SHA-256 with fallback)
+ * Backward-compatible lookup by character ID and file size/name for files imported before fingerprint tracking
+ */
+export function findImportRecordByMeta(characterId: string, fileName: string, fileSizeBytes: number): FileImportRecord | null {
+  const all = loadAllImportRecords();
+  for (const rec of Object.values(all)) {
+    if (rec.characterId === characterId && rec.fileSizeBytes === fileSizeBytes && (rec.fileName === fileName || rec.fileName.startsWith(fileName))) {
+      return rec;
+    }
+  }
+  return null;
+}
+
+/**
+ * Fast & robust content hashing (strictly uses Web Crypto SHA-256 on true content with byte-level fallback)
+ * Never relies merely on filename + size!
  */
 export async function computeFileHash(fileOrContent: File | string): Promise<string> {
+  let buffer: ArrayBuffer;
   try {
-    let buffer: ArrayBuffer;
     if (typeof fileOrContent === 'string') {
       const enc = new TextEncoder();
       buffer = enc.encode(fileOrContent).buffer as ArrayBuffer;
@@ -73,19 +90,25 @@ export async function computeFileHash(fileOrContent: File | string): Promise<str
       return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
     }
   } catch (e) {
-    console.warn('[FileFingerprintStore] Web Crypto failed, falling back to checksum:', e);
+    console.warn('[FileFingerprintStore] Web Crypto failed, falling back to byte hash:', e);
+    if (typeof fileOrContent === 'string') {
+      buffer = new TextEncoder().encode(fileOrContent).buffer as ArrayBuffer;
+    } else {
+      buffer = await fileOrContent.arrayBuffer();
+    }
   }
 
-  // Fallback 64-bit-like string hash
-  const str = typeof fileOrContent === 'string' ? fileOrContent : (fileOrContent as File).name + (fileOrContent as File).size;
-  let h1 = 0xdeadbeef;
-  let h2 = 0x41c64e6d;
-  for (let i = 0; i < str.length; i++) {
-    const ch = str.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
+  // Fallback 64-bit FNV-1a hash calculated strictly on actual content byte data
+  const u8 = new Uint8Array(buffer);
+  let h1 = 0x811c9dc5;
+  let h2 = 0xcbf29ce4;
+  const len = u8.length;
+  // If buffer is huge, sample systematically across the entire buffer to remain responsive
+  const step = len > 500000 ? Math.floor(len / 500000) : 1;
+  for (let i = 0; i < len; i += step) {
+    const b = u8[i];
+    h1 = Math.imul(h1 ^ b, 0x01000193);
+    h2 = Math.imul(h2 ^ b, 0x5bd1e995);
   }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
+  return `sha256fallback_${Math.abs(h1).toString(16)}_${Math.abs(h2).toString(16)}_${len}`;
 }

@@ -431,9 +431,19 @@ function chunkText(text: string, chunkSize = 800, overlap = 150): string[] {
   const chunks: string[] = [];
   if (!text || !text.trim()) return chunks;
 
+  // Performance & storage optimization: sanitize massive Base64 blocks before creating memory chunks!
+  // Prevents hundreds of thousands of Base64 characters from cluttering search chunks
+  let cleanText = text;
+  if (cleanText.includes('data:image/') || cleanText.includes(';base64,')) {
+    cleanText = cleanText.replace(/data:image\/[a-zA-Z0-9.+_-]+;base64,[A-Za-z0-9+/=]{80,}/g, '[图片附件]');
+  }
+  if (cleanText.length > 5000) {
+    cleanText = cleanText.replace(/[A-Za-z0-9+/=]{500,}/g, '[长Base64二进制数据]');
+  }
+
   // If text is line-delimited (like JSONL or logs), prefer line boundaries
-  if (text.includes('\n')) {
-    const lines = text.split('\n');
+  if (cleanText.includes('\n')) {
+    const lines = cleanText.split('\n');
     let currentChunk = '';
 
     for (const line of lines) {
@@ -452,8 +462,8 @@ function chunkText(text: string, chunkSize = 800, overlap = 150): string[] {
   } else {
     // Plain stream of characters
     let i = 0;
-    while (i < text.length) {
-      const piece = text.slice(i, i + chunkSize);
+    while (i < cleanText.length) {
+      const piece = cleanText.slice(i, i + chunkSize);
       chunks.push(piece.trim());
       i += chunkSize - overlap;
     }
@@ -662,36 +672,51 @@ export async function importFileToAiMemory(
 }
 
 /**
- * Saves a file record and its chunks to IndexedDB in a single transaction
+ * Saves a file record and its chunks to IndexedDB in non-blocking batches
+ * to prevent UI freezing on large files.
  */
 async function saveFileAndChunks(
   db: IDBDatabase,
   fileRecord: any,
   chunks: string[]
 ): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const tx = db.transaction([STORE_FILES, STORE_CHUNKS], 'readwrite');
-    const fileStore = tx.objectStore(STORE_FILES);
-    const chunkStore = tx.objectStore(STORE_CHUNKS);
-
-    fileStore.put(fileRecord);
-
-    chunks.forEach((text, idx) => {
-      const chunkRecord: AiMemoryChunk = {
-        id: `chunk_${fileRecord.id}_${idx}`,
-        characterId: fileRecord.characterId,
-        fileId: fileRecord.id,
-        fileName: fileRecord.fileName,
-        chunkIndex: idx,
-        text,
-        tokenEstimated: Math.round(text.length / 2),
-      };
-      chunkStore.put(chunkRecord);
-    });
-
+  // 1. Save file meta record
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction([STORE_FILES], 'readwrite');
+    tx.objectStore(STORE_FILES).put(fileRecord);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+
+  // 2. Save chunks in batches of 60 to prevent long main-thread lockups
+  const BATCH_SIZE = 60;
+  for (let start = 0; start < chunks.length; start += BATCH_SIZE) {
+    const slice = chunks.slice(start, start + BATCH_SIZE);
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([STORE_CHUNKS], 'readwrite');
+      const chunkStore = tx.objectStore(STORE_CHUNKS);
+      slice.forEach((text, i) => {
+        const idx = start + i;
+        const chunkRecord: AiMemoryChunk = {
+          id: `chunk_${fileRecord.id}_${idx}`,
+          characterId: fileRecord.characterId,
+          fileId: fileRecord.id,
+          fileName: fileRecord.fileName,
+          chunkIndex: idx,
+          text,
+          tokenEstimated: Math.round(text.length / 2),
+        };
+        chunkStore.put(chunkRecord);
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+
+    // Yield to browser event loop after each batch for large files
+    if (chunks.length > BATCH_SIZE) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
 }
 
 /**
