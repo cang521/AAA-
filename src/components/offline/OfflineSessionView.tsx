@@ -46,6 +46,7 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isComposingRef = useRef(false);
 
   useEffect(() => {
     loadMessages(0);
@@ -109,7 +110,7 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !isComposingRef.current) {
       e.preventDefault();
       handleSend();
     }
@@ -322,6 +323,12 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
                 textareaRef.current.style.height = 'auto';
                 textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
               }
+            }}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              isComposingRef.current = false;
             }}
             onKeyDown={handleKeyDown}
             disabled={isSending}

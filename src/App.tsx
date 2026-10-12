@@ -122,10 +122,18 @@ export function App() {
     };
     window.addEventListener('ai_proactive_message_received', handleProactiveMsg);
 
+    const handleRecordApiLog = (e: any) => {
+      if (e.detail) {
+        addApiLog(e.detail);
+      }
+    };
+    window.addEventListener('record_api_log', handleRecordApiLog);
+
     return () => {
       unsubAsk();
       unsubNotif();
       window.removeEventListener('ai_proactive_message_received', handleProactiveMsg);
+      window.removeEventListener('record_api_log', handleRecordApiLog);
     };
   }, []);
 
