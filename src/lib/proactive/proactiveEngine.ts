@@ -17,9 +17,11 @@ import { getRecentChatMessages, getLatestInteractionTimestamps } from '../chatDb
 
 import { getLifeEventsSync, updateLifeEvent } from '../lifeState/lifeStateStore';
 
+import { deviceContextManager } from '../agent/DeviceContextManager';
+
 export interface ProactiveTriggerCandidate {
   characterId: string;
-  triggerType: 'inactivity_timeout' | 'weather_alert' | 'menstrual_care' | 'greeting' | 'important_event' | 'followup_topic' | 'device_life_event' | 'life_event_followup';
+  triggerType: 'inactivity_timeout' | 'weather_alert' | 'menstrual_care' | 'greeting' | 'important_event' | 'followup_topic' | 'device_life_event' | 'life_event_followup' | 'app_usage';
   priority: 'high' | 'medium' | 'low';
   eventId: string; // Unique deduplication ID
   eventData: any;
@@ -69,6 +71,9 @@ class ProactiveEngine {
       const batteryData = settings.deviceEvents.enabled
         ? await systemNativeService.getBattery().catch(() => ({ level: 100, isCharging: false, isSupported: false }))
         : { level: 100, isCharging: false, isSupported: false };
+      const deviceContext = settings.appUsage?.enabled !== false
+        ? await deviceContextManager.getContext().catch(() => null)
+        : null;
       const menstrualData = settings.menstrual.enabled ? loadMenstrualData() : null;
       const userProfile = loadUserProfile();
       const apiConfig = loadApiConfig();
@@ -308,6 +313,23 @@ class ProactiveEngine {
                 },
               });
             }
+          }
+        }
+
+        // Screen Usage Duration Candidate (Continuous usage >= 120 minutes / 2 hours)
+        if (settings.appUsage?.enabled !== false && deviceContext && deviceContext.foregroundDurationMinutes >= 120) {
+          const screenUsageEventId = `app_usage_screen_${todayStr}_${Math.floor(Date.now() / (4 * 3600000))}`;
+          if (!charRuntime.handledEventIds.includes(screenUsageEventId)) {
+            candidates.push({
+              characterId: char.id,
+              triggerType: 'app_usage',
+              priority: 'medium',
+              eventId: screenUsageEventId,
+              eventData: {
+                durationMinutes: deviceContext.foregroundDurationMinutes,
+                currentApp: deviceContext.currentApp,
+              },
+            });
           }
         }
 

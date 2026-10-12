@@ -3266,6 +3266,8 @@ app.post('/api/gemini/proactive-generate', async (req, res) => {
       } else {
         triggerDescription = `【触发场景: App很久未打开问候】用户已经有好几天没打开 App 啦，请主动发一条消息问候并表达想念。`;
       }
+    } else if (triggerType === 'app_usage') {
+      triggerDescription = `【触发场景: 屏幕连续使用过久关怀】检测到用户连续盯着屏幕使用设备已有 ${eventData?.durationMinutes || 120} 分钟（当前应用: ${eventData?.currentApp || '手机'}）。请以你的角色人设和语气，像真正的朋友或恋人一样主动关心用户，建议用户闭眼休息、活动一下颈椎、喝杯水或吃点东西，或者温柔邀请用户聊天。切勿使用机械冰冷的系统提示模板，保持高度拟人、自然温情。`;
     } else {
       triggerDescription = `【触发场景: 模拟测试触发】测试场景：${eventData?.testScenario || '主动微信问候'}。请生成一条生动贴切的微信消息。`;
     }

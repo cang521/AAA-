@@ -211,16 +211,17 @@ class ProactiveGateService {
 
     const settings = loadProactiveSettings();
     const runtimeState = loadProactiveRuntimeState();
-    const now = new Date();
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
     try {
-      // 1. Post message via ChatMessageBridge with metadata
-      const { message, character } = await chatMessageBridge.postProactiveMessage(
+      // 1. Post multi-bubble message via ChatMessageBridge with metadata
+      const results = await chatMessageBridge.postProactiveMultiBubbleMessage(
         params.aiId,
         params.proposedText,
         params.contextSummary || `【触发类型: ${params.triggerType}】${params.eventId}`
       );
+
+      const firstMessage = results[0]?.message;
+      const character = results[0]?.character;
 
       // 2. Update Runtime State
       const charRuntime = getCharacterProactiveRuntime(params.aiId, runtimeState);
@@ -240,12 +241,13 @@ class ProactiveGateService {
       runtimeState.lastGlobalCheckAt = Date.now();
       saveProactiveRuntimeState(runtimeState);
 
-      // 3. System Notification (if systemNotificationsEnabled is true)
-      if (settings.systemNotificationsEnabled) {
-        this.showSystemNotification(character.name, params.proposedText, character.id);
+      // 3. System Notification (if systemNotificationsEnabled is true) - using final bubble text preview
+      if (settings.systemNotificationsEnabled && character && results.length > 0) {
+        const finalPreviewText = results[results.length - 1].message.text;
+        this.showSystemNotification(character.name, finalPreviewText, character.id);
       }
 
-      return { sent: true, messageId: message.id };
+      return { sent: true, messageId: firstMessage?.id };
     } catch (e: any) {
       console.error('[ProactiveGate] Dispatch error:', e);
       return { sent: false, reason: e.message || '发送主动消息失败' };

@@ -241,7 +241,7 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
     setIsAnalyzingStructure(true);
     try {
       const apiConfig = loadApiConfig();
-      const rules = await analyzeFileStructureWithAi(
+      const analysisResult = await analyzeFileStructureWithAi(
         sampleSnippet,
         fieldKeys,
         unrecognizedFileName,
@@ -249,14 +249,14 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
       );
 
       setPendingAiAssist(null);
-      if (rules) {
+      if (analysisResult.success && analysisResult.rules) {
         await executeImportBulk(files, {
           restoreRecentChat: true,
-          customRules: rules,
+          customRules: analysisResult.rules,
           characterName: activeChar.name,
         });
       } else {
-        setImportErrorAlert('AI 分析未能确定有效字段映射规则，已转为纯本地解析');
+        setImportErrorAlert(analysisResult.error || 'AI 分析未能确定有效字段映射规则，已转为纯本地解析');
         await executeImportBulk(files, {
           restoreRecentChat: true,
           characterName: activeChar.name,
