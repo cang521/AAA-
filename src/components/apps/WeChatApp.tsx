@@ -504,9 +504,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
             if (prev.some((m) => m.id === message.id)) {
               return prev;
             }
-            return [...prev, message];
+            const updated = [...prev, message];
+            latestMessagesRef.current = updated;
+            setTotalHistoryCount((count) => count + 1);
+            return updated;
           });
-          setTotalHistoryCount((prev) => prev + 1);
 
           const container = messageListRef.current;
           const isNearBottom = container
@@ -515,6 +517,24 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           if (isNearBottom) {
             scrollToBottom(true);
           }
+        } else if (message.sender === 'ai') {
+          // AI message delivered in background while user is viewing contact list or another chat
+          setUnreadAiCounts((prev) => ({
+            ...prev,
+            [characterId]: (prev[characterId] || 0) + 1,
+          }));
+        }
+      } else {
+        // Bulk save or DB restore / clear occurred: refresh active chat view if open
+        if (activeChatIdRef.current) {
+          getMessagesPaged(activeChatIdRef.current, PAGE_SIZE)
+            .then((result) => {
+              setDisplayedMessages(result.messages);
+              latestMessagesRef.current = result.messages;
+              setHasMoreOlder(result.hasMore);
+              setTotalHistoryCount(result.totalCount);
+            })
+            .catch((err) => console.error('Failed to reload messages on DB update:', err));
         }
       }
     });

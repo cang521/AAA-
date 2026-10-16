@@ -73,6 +73,7 @@ import { proactiveScheduler } from './lib/proactive/ProactiveScheduler';
 import { aiReplyTaskManager } from './lib/aiReply/AiReplyTaskManager';
 import { AgentAskPrompt, InPhoneNotification } from './lib/agent/types';
 import { getApiConfigForEngine } from './lib/apiConfigStore';
+import { clearAllChatMessages } from './lib/chatDb';
 import { autoPaginateLayout } from './lib/layoutPaginator';
 
 export function App() {
@@ -485,7 +486,10 @@ export function App() {
                 onBackToLauncher={() => setActiveAppId(null)}
                 aiControls={aiControls}
                 onSaveAiControls={updateAiControls}
-                onClearChats={() => updateMessages([])}
+                onClearChats={async () => {
+                  await clearAllChatMessages();
+                  updateMessages([]);
+                }}
                 onExportData={handleExportData}
                 onImportData={handleImportData}
                 onAddApiLog={addApiLog}

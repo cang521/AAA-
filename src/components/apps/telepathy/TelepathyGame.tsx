@@ -26,9 +26,9 @@ import {
   loadTelepathyCharStats,
   saveTelepathyCharStats,
   loadUserProfile,
-  loadMessages,
   saveCharacters,
 } from '../../../lib/storage';
+import { getRecentChatMessages } from '../../../lib/chatDb';
 import {
   ArrowLeft,
   Heart,
@@ -159,8 +159,9 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
   useEffect(() => {
     setAllRecords(loadTelepathyRecords());
     setCharStatsMap(loadTelepathyCharStats());
-    const allMsgs = loadMessages();
-    setChatMessages(allMsgs.filter((m) => m.characterId === selectedCharId));
+    getRecentChatMessages(selectedCharId, 100)
+      .then((msgs) => setChatMessages(msgs))
+      .catch(() => setChatMessages([]));
   }, [selectedCharId]);
 
   const activeCharStats = charStatsMap[selectedCharId] || {
