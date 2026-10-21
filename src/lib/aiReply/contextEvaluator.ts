@@ -61,12 +61,20 @@ export async function evaluateWeatherContext(
  * Menstrual & Health Perception Evaluator
  * Only returns menstrualInfo when user mentions health symptoms OR user is in period/PMS phase and cooldown expired (>12h)
  */
+import { permissionManager } from '../agent/PermissionManager';
+
 export async function evaluateMenstrualContext(
   characterId: string,
   combinedUserText: string,
   permissions?: any
 ): Promise<any | null> {
   if (permissions?.appAccess?.menstrualData === false) {
+    return null;
+  }
+
+  // Check character-level AI permission for menstrual health privacy
+  const aiPerm = permissionManager.checkAiPermission(characterId, 'menstrual_health');
+  if (aiPerm === 'DENY') {
     return null;
   }
 
@@ -101,4 +109,186 @@ export async function evaluateMenstrualContext(
     console.warn('[evaluateMenstrualContext] Error:', err);
     return null;
   }
+}
+
+/**
+ * WorldBook Multi-Book Perception & Smart Keyword Evaluator
+ */
+import { WorldBook } from '../../types';
+
+export interface EvaluatedWorldBookResult {
+  associatedBooksCount: number;
+  activeBooks: Array<{
+    id: string;
+    title: string;
+    description?: string;
+    worldSetting?: string;
+    priority?: number;
+  }>;
+  matchedEntries: Array<{
+    bookId: string;
+    bookTitle: string;
+    entryId: string;
+    keyword: string;
+    content: string;
+    isConstant: boolean;
+    priority: number;
+  }>;
+  promptText: string;
+  summaryTitle: string;
+}
+
+export function evaluateWorldBookContext(
+  characterId: string,
+  combinedUserText: string,
+  worldBooks: WorldBook[] = [],
+  permissions?: any
+): EvaluatedWorldBookResult | null {
+  if (permissions?.appAccess?.worldBookData === false) {
+    return null;
+  }
+
+  // 1. Find ALL enabled WorldBooks associated with this AI character
+  const associatedBooks = (worldBooks || []).filter(
+    (wb) =>
+      wb &&
+      wb.enabled !== false &&
+      Array.isArray(wb.associatedCharacterIds) &&
+      wb.associatedCharacterIds.includes(characterId)
+  );
+
+  if (associatedBooks.length === 0) {
+    return null;
+  }
+
+  // Sort books by priority (descending)
+  associatedBooks.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+  const lowerUserText = (combinedUserText || '').toLowerCase();
+  const matchedEntriesMap = new Map<
+    string,
+    {
+      bookId: string;
+      bookTitle: string;
+      entryId: string;
+      keyword: string;
+      content: string;
+      isConstant: boolean;
+      priority: number;
+      score: number;
+    }
+  >();
+
+  // 2. Iterate through ALL associated books
+  for (const book of associatedBooks) {
+    const bookPriority = book.priority || 0;
+    const entries = book.entries || [];
+
+    for (const entry of entries) {
+      if (entry.enabled === false) continue; // Skip disabled entry
+
+      const entryPriority = entry.priority || 0;
+      const score = bookPriority * 100 + entryPriority;
+      const rawKeyword = (entry.keyword || '').trim();
+
+      const isConstant =
+        entry.constant === true ||
+        rawKeyword === '*' ||
+        rawKeyword.toLowerCase() === '常驻' ||
+        rawKeyword === '';
+
+      let isMatched = isConstant;
+
+      if (!isMatched && rawKeyword) {
+        // Split keywords by comma, pipe, or whitespace
+        const tokens = rawKeyword
+          .split(/[,||\s\n，|]+/)
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean);
+
+        for (const token of tokens) {
+          if (token && lowerUserText.includes(token)) {
+            isMatched = true;
+            break;
+          }
+        }
+      }
+
+      if (isMatched) {
+        const key = `${entry.keyword.trim().toLowerCase()}_${entry.content.trim()}`;
+        const existing = matchedEntriesMap.get(key);
+        // Keep highest priority entry upon collision
+        if (!existing || existing.score < score) {
+          matchedEntriesMap.set(key, {
+            bookId: book.id,
+            bookTitle: book.title,
+            entryId: entry.id,
+            keyword: entry.keyword || '世界设定',
+            content: entry.content,
+            isConstant,
+            priority: entryPriority,
+            score,
+          });
+        }
+      }
+    }
+  }
+
+  // 3. Sort matched entries by priority score (descending)
+  const sortedEntries = Array.from(matchedEntriesMap.values()).sort((a, b) => b.score - a.score);
+
+  // 4. Apply Context Capacity Guard (Limit total content length <= 3000 chars)
+  const MAX_CHAR_CAPACITY = 3000;
+  let currentLength = 0;
+  const cappedEntries: typeof sortedEntries = [];
+
+  for (const entry of sortedEntries) {
+    if (currentLength + entry.content.length > MAX_CHAR_CAPACITY && cappedEntries.length > 0) {
+      break; // Capacity reached
+    }
+    cappedEntries.push(entry);
+    currentLength += entry.content.length;
+  }
+
+  // 5. Format prompt text for AI system context
+  const activeBooksSummary = associatedBooks
+    .map((b, idx) => {
+      let text = `${idx + 1}. 《${b.title}》`;
+      if (b.worldSetting) text += `\n   - 核心法则/背景: ${b.worldSetting}`;
+      return text;
+    })
+    .join('\n');
+
+  let entriesFormattedText = '';
+  if (cappedEntries.length > 0) {
+    entriesFormattedText =
+      '\n【专有名词与词条背景库】:\n' +
+      cappedEntries.map((e) => `* [《${e.bookTitle}》· ${e.keyword}]: ${e.content}`).join('\n');
+  }
+
+  const promptText = `【🌌 已绑定世界书（共 ${associatedBooks.length} 本）· 世界观法则与词条库】\n${activeBooksSummary}${entriesFormattedText}\n【演职法则】：你当前置身于上述世界观法则中。请自然融入上述所有世界观背景与词条规则进行沉浸式互动回复。`;
+
+  const summaryTitle = associatedBooks.map((b) => `《${b.title}》`).join(' + ');
+
+  return {
+    associatedBooksCount: associatedBooks.length,
+    activeBooks: associatedBooks.map((b) => ({
+      id: b.id,
+      title: b.title,
+      description: b.description,
+      worldSetting: b.worldSetting,
+      priority: b.priority,
+    })),
+    matchedEntries: cappedEntries.map((e) => ({
+      bookId: e.bookId,
+      bookTitle: e.bookTitle,
+      entryId: e.entryId,
+      keyword: e.keyword,
+      content: e.content,
+      isConstant: e.isConstant,
+      priority: e.priority,
+    })),
+    promptText,
+    summaryTitle,
+  };
 }

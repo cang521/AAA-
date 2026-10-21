@@ -62,6 +62,14 @@ export const AI_PERMISSION_ITEMS: AiPermissionItemDef[] = [
     requiredCapabilityId: 'usage_stats',
     isSensitive: true,
   },
+  {
+    id: 'menstrual_health',
+    category: 'basic_sense',
+    name: '读取生理期与健康隐私',
+    description: '允许 AI 读取经期记录与健康关怀数据（敏感隐私，默认禁止，需单独授权）',
+    defaultLevel: 'DENY',
+    isSensitive: true,
+  },
 
   // 2. 屏幕感知
   {
@@ -487,6 +495,19 @@ class PermissionManager {
   public getAiConfig(aiId: string): AiAgentPermissionConfig | null {
     this.syncWithExistingCharacters();
     return this.aiConfigs[aiId] || null;
+  }
+
+  /**
+   * Check permission level for a specific AI character and permission item ID.
+   * Returns 'ALLOW' | 'ASK' | 'DENY'.
+   */
+  public checkAiPermission(aiId: string, permissionId: string): AiPermissionLevel {
+    if (this.isDoNotDisturbToday()) {
+      return 'DENY';
+    }
+    const config = this.getAiConfig(aiId);
+    if (!config || !config.permissions) return 'DENY';
+    return config.permissions[permissionId] || 'DENY';
   }
 
   public getAllAiConfigs(): Record<string, AiAgentPermissionConfig> {

@@ -3,6 +3,7 @@ import {
   SystemCapabilityId,
   SystemCapabilityDef,
   CapabilityDiagnosticResult,
+  normalizeCapabilityId,
 } from './types';
 import { androidPermissionBridgeClient } from './AndroidPermissionBridgeClient';
 
@@ -275,8 +276,9 @@ class SystemCapabilityManager {
     return androidPermissionBridgeClient.isNativeAndroid();
   }
 
-  public getStatus(id: SystemCapabilityId): CapabilityStatus {
-    return this.statusMap[id] || (androidPermissionBridgeClient.isNativeAndroid() ? 'DENIED' : 'NEED_APK');
+  public getStatus(id: SystemCapabilityId | string): CapabilityStatus {
+    const normalized = normalizeCapabilityId(id);
+    return this.statusMap[normalized] || (androidPermissionBridgeClient.isNativeAndroid() ? 'DENIED' : 'NEED_APK');
   }
 
   public getAllStatuses(): Record<SystemCapabilityId, CapabilityStatus> {
@@ -464,17 +466,18 @@ class SystemCapabilityManager {
    * If on Android APK, executes native runtime request or navigates to exact Settings page.
    * If on Web Preview, triggers browser prompt for Web permissions, or informs user that APK installation is required.
    */
-  public async requestCapability(id: SystemCapabilityId): Promise<{ success: boolean; status: CapabilityStatus; error?: string }> {
-    const def = SYSTEM_CAPABILITIES_LIST.find((c) => c.id === id);
+  public async requestCapability(id: SystemCapabilityId | string): Promise<{ success: boolean; status: CapabilityStatus; error?: string }> {
+    const targetId = normalizeCapabilityId(id);
+    const def = SYSTEM_CAPABILITIES_LIST.find((c) => c.id === targetId);
     if (!def) {
       return { success: false, status: 'DENIED', error: '未知能力' };
     }
 
     // 1. If running on native Android APK:
     if (androidPermissionBridgeClient.isNativeAndroid()) {
-      const res = await androidPermissionBridgeClient.requestPermission(id);
+      const res = await androidPermissionBridgeClient.requestPermission(targetId);
       await this.recheckAll();
-      const newStatus = this.getStatus(id);
+      const newStatus = this.getStatus(targetId);
       return {
         success: newStatus === 'GRANTED' || newStatus === 'TEMPORARY',
         status: newStatus,

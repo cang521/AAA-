@@ -431,7 +431,6 @@ export async function getRecentChatMessages(
       const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
       if (cursor && items.length < limit) {
         const rawMsg = cursor.value as ChatMessage;
-        // Construct lightweight ChatMessage object without giant Base64 strings
         const lightMsg: ChatMessage = {
           id: rawMsg.id,
           characterId: rawMsg.characterId,
@@ -439,9 +438,19 @@ export async function getRecentChatMessages(
           text: rawMsg.text || '',
           timestamp: rawMsg.timestamp,
           quoteMessageId: rawMsg.quoteMessageId,
+          imageUrl: rawMsg.imageUrl,
           imageAnalysis: rawMsg.imageAnalysis,
+          imageAnalysisStatus: rawMsg.imageAnalysisStatus,
           sourceType: rawMsg.sourceType,
           importance: rawMsg.importance,
+          thinkingProcess: rawMsg.thinkingProcess,
+          turnId: rawMsg.turnId,
+          turnBubbleIndex: rawMsg.turnBubbleIndex,
+          turnTotalBubbles: rawMsg.turnTotalBubbles,
+          isRefreshed: rawMsg.isRefreshed,
+          isProactive: rawMsg.isProactive,
+          proactiveMeta: rawMsg.proactiveMeta,
+          type: rawMsg.type,
         };
         items.push(lightMsg);
         cursor.continue();

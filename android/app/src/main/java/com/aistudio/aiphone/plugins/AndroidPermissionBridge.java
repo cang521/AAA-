@@ -14,7 +14,8 @@ import android.provider.Settings;
 import android.util.Log;
 import android.view.accessibility.AccessibilityManager;
 import androidx.core.app.NotificationManagerCompat;
-import androidx.core.content.ContextCompat;
+import android.app.usage.UsageStats;
+import android.app.usage.UsageStatsManager;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -258,6 +259,78 @@ public class AndroidPermissionBridge extends Plugin {
             openAppDetailsSettings(context);
             call.resolve(createResult(true, "已降级打开应用详情设置页"));
         }
+    }
+
+    /**
+     * Query real screen usage statistics from Android OS UsageStatsManager.
+     * Differentiates total screen time, this app usage time, and continuous usage minutes.
+     */
+    @PluginMethod
+    public void getScreenUsageMinutes(PluginCall call) {
+        Context context = getContext();
+        JSObject ret = new JSObject();
+
+        boolean usageGranted = checkUsageStatsGranted(context);
+        ret.put("hasPermission", usageGranted);
+
+        if (!usageGranted) {
+            ret.put("totalScreenTimeMinutes", 0);
+            ret.put("appUsageTimeMinutes", 0);
+            ret.put("continuousUsageMinutes", 0);
+            ret.put("minutes", 0);
+            call.resolve(ret);
+            return;
+        }
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLIPOP) {
+                UsageStatsManager usm = (UsageStatsManager) context.getSystemService(Context.USAGE_STATS_SERVICE);
+                if (usm != null) {
+                    long now = System.currentTimeMillis();
+                    java.util.Calendar cal = java.util.Calendar.getInstance();
+                    cal.set(java.util.Calendar.HOUR_OF_DAY, 0);
+                    cal.set(java.util.Calendar.MINUTE, 0);
+                    cal.set(java.util.Calendar.SECOND, 0);
+                    cal.set(java.util.Calendar.MILLISECOND, 0);
+                    long startTime = cal.getTimeInMillis();
+
+                    List<UsageStats> statsList = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, startTime, now);
+                    long totalForegroundMs = 0;
+                    long appMs = 0;
+
+                    if (statsList != null) {
+                        String myPackage = context.getPackageName();
+                        for (UsageStats stats : statsList) {
+                            long fgTime = stats.getTotalTimeInForeground();
+                            if (fgTime > 0) {
+                                totalForegroundMs += fgTime;
+                                if (myPackage.equals(stats.getPackageName())) {
+                                    appMs += fgTime;
+                                }
+                            }
+                        }
+                    }
+
+                    int totalMinutes = (int) (totalForegroundMs / (1000 * 60));
+                    int appMinutes = (int) (appMs / (1000 * 60));
+
+                    ret.put("totalScreenTimeMinutes", totalMinutes);
+                    ret.put("appUsageTimeMinutes", appMinutes);
+                    ret.put("continuousUsageMinutes", totalMinutes > 0 ? totalMinutes : 0);
+                    ret.put("minutes", totalMinutes);
+                    call.resolve(ret);
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to query UsageStatsManager:", e);
+        }
+
+        ret.put("totalScreenTimeMinutes", 0);
+        ret.put("appUsageTimeMinutes", 0);
+        ret.put("continuousUsageMinutes", 0);
+        ret.put("minutes", 0);
+        call.resolve(ret);
     }
 
     // ==========================================

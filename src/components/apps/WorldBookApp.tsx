@@ -187,6 +187,49 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
     onUpdateWorldBooks(updated);
   };
 
+  // Toggle WorldBook enabled state
+  const handleToggleBookEnabled = (bookId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = worldBooks.map((b) =>
+      b.id === bookId ? { ...b, enabled: b.enabled === false ? true : false, updatedAt: Date.now() } : b
+    );
+    onUpdateWorldBooks(updated);
+  };
+
+  // Toggle WorldBookEntry enabled state
+  const handleToggleEntryEnabled = (entryId: string) => {
+    if (!activeBook) return;
+    const updated = worldBooks.map((b) =>
+      b.id === activeBook.id
+        ? {
+            ...b,
+            entries: (b.entries || []).map((entry) =>
+              entry.id === entryId ? { ...entry, enabled: entry.enabled === false ? true : false } : entry
+            ),
+            updatedAt: Date.now(),
+          }
+        : b
+    );
+    onUpdateWorldBooks(updated);
+  };
+
+  // Toggle WorldBookEntry constant state
+  const handleToggleEntryConstant = (entryId: string) => {
+    if (!activeBook) return;
+    const updated = worldBooks.map((b) =>
+      b.id === activeBook.id
+        ? {
+            ...b,
+            entries: (b.entries || []).map((entry) =>
+              entry.id === entryId ? { ...entry, constant: !entry.constant } : entry
+            ),
+            updatedAt: Date.now(),
+          }
+        : b
+    );
+    onUpdateWorldBooks(updated);
+  };
+
   // Add Entry to active book
   const handleAddEntry = () => {
     if (!entryKeyword.trim() || !activeBook) return;
@@ -340,7 +383,18 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={(e) => handleToggleBookEnabled(book.id, e)}
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition ${
+                              book.enabled !== false
+                                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/25'
+                                : 'bg-zinc-800 text-zinc-500 border-zinc-700 hover:bg-zinc-750'
+                            }`}
+                            title={book.enabled !== false ? '点击停用该世界书' : '点击启用该世界书'}
+                          >
+                            {book.enabled !== false ? '🟢 已开启' : '⚪ 已停用'}
+                          </button>
                           <button
                             onClick={() => {
                               setFormTitle(book.title);
@@ -521,12 +575,33 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
                   activeBook.entries.map((entry) => (
                     <div
                       key={entry.id}
-                      className="p-3 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-start justify-between gap-3 text-xs"
+                      className={`p-3 rounded-2xl bg-zinc-900 border transition flex items-start justify-between gap-3 text-xs ${
+                        entry.enabled !== false ? 'border-zinc-800' : 'border-zinc-800/50 opacity-50'
+                      }`}
                     >
-                      <div className="space-y-1">
-                        <span className="font-semibold text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
-                          【{entry.keyword}】
-                        </span>
+                      <div className="space-y-1 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-semibold text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
+                            【{entry.keyword}】
+                          </span>
+                          <button
+                            onClick={() => handleToggleEntryConstant(entry.id)}
+                            className={`text-[9px] px-1.5 py-0.2 rounded font-medium border transition ${
+                              entry.constant ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                            }`}
+                            title={entry.constant ? '当前为常驻条目（必定引入）' : '当前为关键词触发条目'}
+                          >
+                            {entry.constant ? '📌 常驻' : '🔍 触发'}
+                          </button>
+                          <button
+                            onClick={() => handleToggleEntryEnabled(entry.id)}
+                            className={`text-[9px] px-1.5 py-0.2 rounded font-medium border transition ${
+                              entry.enabled !== false ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-zinc-800 text-zinc-500 border-zinc-700'
+                            }`}
+                          >
+                            {entry.enabled !== false ? '启用' : '禁用'}
+                          </button>
+                        </div>
                         <p className="text-zinc-300 leading-relaxed mt-1 text-[11px]">
                           {entry.content}
                         </p>

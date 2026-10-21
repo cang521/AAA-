@@ -79,12 +79,16 @@ class NativeNotificationService {
     if (typeof window !== 'undefined' && 'Notification' in window) {
       if (Notification.permission === 'granted') {
         try {
-          new Notification(title, {
+          const notif = new Notification(title, {
             body,
             icon: avatarUrl,
             badge: avatarUrl,
             data: { aiId: character.id },
           });
+          notif.onclick = () => {
+            window.focus();
+            window.dispatchEvent(new CustomEvent('open_ai_chat', { detail: { charId: character.id } }));
+          };
         } catch (e) {
           console.warn('[NativeNotificationService] Failed to create Web Notification:', e);
         }

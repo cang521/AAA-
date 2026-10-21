@@ -23,7 +23,7 @@ import {
 } from './proactiveStore';
 import { chatMessageBridge } from '../agent/ChatMessageBridge';
 import { permissionManager } from '../agent/PermissionManager';
-import { loadCharacters } from '../storage';
+import { loadCharacters, loadPermissions, loadMenstrualData } from '../storage';
 import { nativeNotificationService } from '../NativeNotificationService';
 import { aiReplyTaskManager } from '../aiReply/AiReplyTaskManager';
 
@@ -292,8 +292,14 @@ class ProactiveGateService {
         break;
       case 'menstrual_care':
         if (!settings.menstrual.enabled) return { allowed: false, reason: '经期关怀触发器已关闭' };
-        if (!settings.menstrual.allowedCharacterIds.includes(aiId)) {
-          return { allowed: false, reason: `角色 [${aiId}] 未获得经期健康数据授权` };
+        const globalPerms = loadPermissions();
+        const menstrualDataObj = loadMenstrualData();
+        const menstrualAiPerm = permissionManager.checkAiPermission(aiId, 'menstrual_health');
+        if (!globalPerms?.appAccess?.menstrualData || menstrualDataObj?.aiAccessEnabled === false || menstrualAiPerm === 'DENY') {
+          return { allowed: false, reason: '经期健康数据访问权限 (menstrual_health) 未开启或已禁用，禁止读取敏感健康数据' };
+        }
+        if (!settings.menstrual.allowedCharacterIds.includes(aiId) && !settings.allowAllCharacters) {
+          return { allowed: false, reason: `角色 [${aiId}] 未获得经期健康数据专属授权` };
         }
         break;
       case 'greeting':

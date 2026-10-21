@@ -75,6 +75,18 @@ export async function triggerLifeStateExtraction(
             summary: item.summary || undefined,
           });
         } else if (item.action === 'create' && item.title) {
+          const nowMs = Date.now();
+          let followUpDelayMs = 3600000 * 12; // Default 12 hours
+          if (typeof item.dueHours === 'number' && item.dueHours > 0) {
+            followUpDelayMs = 3600000 * Math.min(item.dueHours, 72);
+          } else if (item.type === 'recent_emotion') {
+            followUpDelayMs = 3600000 * 4; // e.g. "今天特别累" -> 4h
+          } else if (item.type === 'future_plan') {
+            followUpDelayMs = 3600000 * 5; // e.g. "下午去见客户" -> 5h
+          } else if (item.type === 'health_status') {
+            followUpDelayMs = 3600000 * 6;
+          }
+
           await saveLifeEvent({
             title: item.title,
             type: (item.type as LifeEventType) || 'custom',
@@ -82,6 +94,7 @@ export async function triggerLifeStateExtraction(
             status: (item.status as LifeEventStatus) || 'ongoing',
             importance: item.importance || 3,
             latestProgress: item.latestProgress,
+            nextFollowUpAt: nowMs + followUpDelayMs,
             sourceType: 'chat_extraction',
             allowedCharacterIds: characterId ? [characterId] : undefined,
             sourceMessageIds: userMsgs.map((m) => m.id),

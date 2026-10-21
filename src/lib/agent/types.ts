@@ -38,6 +38,11 @@ export type SystemCapabilityId =
   | 'battery_optimization'     // 13. 电池优化白名单 (REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
   | 'vendor_autostart';        // 14. 厂商自启动 / 后台弹出界面 (Vendor OEM Settings)
 
+export function normalizeCapabilityId(id: string): SystemCapabilityId {
+  if (id === 'app_usage' || id === 'app_awareness') return 'usage_stats';
+  return id as SystemCapabilityId;
+}
+
 export interface SystemCapabilityDef {
   id: SystemCapabilityId;
   name: string;

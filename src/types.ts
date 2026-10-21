@@ -21,7 +21,9 @@ export interface WorldBookEntry {
   id: string;
   keyword: string;
   content: string;
-  enabled?: boolean;
+  enabled?: boolean;  // 是否开启该词条 (默认 true)
+  constant?: boolean; // 是否常驻入 Context (无需触发词，默认 false)
+  priority?: number;  // 词条优先级 (数字越大越优先，默认 0)
 }
 
 export interface WorldBook {
@@ -32,6 +34,8 @@ export interface WorldBook {
   worldSetting: string; // 核心世界观背景、法则设定、时代历史等
   entries: WorldBookEntry[]; // 专有名词与词条设定
   associatedCharacterIds: string[]; // 关联的 AI 角色 ID
+  enabled?: boolean;  // 是否开启该本世界书 (默认 true)
+  priority?: number; // 世界书优先级/权重 (默认 0)
   createdAt: number;
   updatedAt: number;
 }
@@ -251,9 +255,17 @@ export interface ApiLog {
   timestamp: number;
   modelName: string;
   interfaceType: string;
-  promptTokens: number;
-  completionTokens: number;
-  estimatedCost: number;
+  category?: 'text' | 'image' | 'voice';
+  status?: 'success' | 'failed';
+  durationMs?: number;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  isRealTokens?: boolean;
+  estimatedCost?: number | null;
+  costDisplay?: string;
+  errorType?: string;
+  errorMessage?: string;
   purpose: string;
 }
 
@@ -843,6 +855,7 @@ export interface WeatherDataSourceInfo {
   responseTimestamp: number; // API 响应接收时间戳
   networkLatencyMs: number; // 网络传输耗时 (ms)
   isFromCache: boolean; // 是否是离线/网络失败回退缓存
+  isSimulated?: boolean; // 是否是测试/沙盒模拟数据
   cacheTimestamp?: number; // 缓存生成时间
   timezone: string; // 气象站时区 (e.g. "Asia/Shanghai")
   elevation?: number; // 海拔高度 (米)
@@ -880,6 +893,8 @@ export interface WeatherData {
   alerts: WeatherAlert[];
   updatedAt: number;
   isAutoLocation: boolean;
+  isSimulated?: boolean; // 明确标注是否为测试模拟数据
+  dataStatus?: 'realtime' | 'cached' | 'simulated' | 'error'; // 明确区分实时 / 缓存 / 测试模拟 / 错误
   rainForecastSummary?: string; // e.g. "未来2小时无雨" 或 "预计17:00开始降雨，概率85%"
   locationStatus?: 'gps_active' | 'manual_city' | 'permission_denied' | 'pending' | 'error';
   locationError?: string;

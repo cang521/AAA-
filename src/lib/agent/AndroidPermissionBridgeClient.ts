@@ -19,11 +19,20 @@ export interface AndroidNativeInfo {
   packageName: string;
 }
 
+export interface ScreenUsageStatsResult {
+  hasPermission: boolean;
+  totalScreenTimeMinutes: number;
+  appUsageTimeMinutes: number;
+  continuousUsageMinutes: number;
+  minutes: number;
+}
+
 export interface AndroidPermissionBridgePlugin {
   getEnvironmentInfo(): Promise<AndroidNativeInfo>;
   checkAllPermissions(): Promise<Record<string, CapabilityStatus>>;
   requestPermission(options: { id: string }): Promise<{ success: boolean; message?: string }>;
   openSystemSettings(options: { target: string }): Promise<{ success: boolean; message?: string }>;
+  getScreenUsageMinutes(): Promise<ScreenUsageStatsResult>;
 }
 
 export class AndroidPermissionBridgeWeb extends WebPlugin implements AndroidPermissionBridgePlugin {
@@ -52,6 +61,16 @@ export class AndroidPermissionBridgeWeb extends WebPlugin implements AndroidPerm
     return {
       success: false,
       message: '当前运行于 Web Preview 浏览器环境，无法直接唤起宿主设备系统设置。',
+    };
+  }
+
+  async getScreenUsageMinutes(): Promise<ScreenUsageStatsResult> {
+    return {
+      hasPermission: false,
+      totalScreenTimeMinutes: 0,
+      appUsageTimeMinutes: 0,
+      continuousUsageMinutes: 0,
+      minutes: 0,
     };
   }
 }
@@ -167,6 +186,38 @@ export class AndroidPermissionBridgeClient {
         message: e?.message || '打开系统设置失败',
       };
     }
+  }
+
+  /**
+   * Query screen usage statistics from Android OS UsageStatsManager
+   */
+  public async getScreenUsageMinutes(): Promise<ScreenUsageStatsResult> {
+    if (!this.isNativeAndroid()) {
+      return {
+        hasPermission: false,
+        totalScreenTimeMinutes: 0,
+        appUsageTimeMinutes: 0,
+        continuousUsageMinutes: 0,
+        minutes: 0,
+      };
+    }
+
+    try {
+      return await AndroidPermissionBridge.getScreenUsageMinutes();
+    } catch (e) {
+      console.warn('[AndroidPermissionBridgeClient] getScreenUsageMinutes error:', e);
+      return {
+        hasPermission: false,
+        totalScreenTimeMinutes: 0,
+        appUsageTimeMinutes: 0,
+        continuousUsageMinutes: 0,
+        minutes: 0,
+      };
+    }
+  }
+
+  public get AndroidPermissionBridge() {
+    return AndroidPermissionBridge;
   }
 }
 

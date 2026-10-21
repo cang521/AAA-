@@ -47,45 +47,77 @@ interface AiCallParams {
  * 3. Anthropic Messages API compatible endpoints
  * 4. Full Timeout, Error Extraction, and HTTP status diagnostics
  */
-async function callAiService({
-  prompt,
-  systemInstruction,
-  model = 'gemini-3.6-flash',
-  apiKey,
-  baseUrl,
-  providerType,
-  apiProtocol,
-  responseMimeType,
-  temperature = 0.7,
-  maxTokens,
-  timeoutMs = 35000,
-  customHeaders = {},
-}: AiCallParams): Promise<string> {
-  const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, '') : '';
-  const cleanKey = (apiKey && apiKey.trim()) || '';
-  // Only use server environment key in dev/preview if user has NOT specified a custom key AND has NOT specified a custom baseUrl
-  const activeKey = cleanKey || (!cleanBaseUrl && (!providerType || providerType === 'google_gemini') && process.env.NODE_ENV !== 'production' ? (process.env.GEMINI_API_KEY || '') : '');
-  const targetModel = model?.trim() || 'gemini-3.6-flash';
+export interface AiCallDetailedResult {
+  text: string;
+  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+  isRealTokens?: boolean;
+  modelUsed: string;
+}
 
-  // Determine whether this request is OpenAI-compatible / Non-Google
-  // CRITICAL RULE: If apiProtocol is explicitly specified as 'openai_compatible', always route to OpenAI-compatible
+function buildApiLogObject(params: {
+  appName: string;
+  modelName: string;
+  interfaceType: string;
+  category?: 'text' | 'image' | 'voice';
+  status?: 'success' | 'failed';
+  durationMs: number;
+  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+  isRealTokens?: boolean;
+  purpose: string;
+  error?: string;
+  isOfficial?: boolean;
+}) {
+  const isFailed = params.status === 'failed' || Boolean(params.error);
+  const isOfficial = params.isOfficial !== false && (params.modelName.includes('gemini') || !params.modelName.includes('gpt'));
+  const defaultCostDisplay = isOfficial ? '免费/内置' : '未提供';
+
+  return {
+    id: 'log_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+    appName: params.appName,
+    timestamp: Date.now(),
+    modelName: params.modelName,
+    interfaceType: params.interfaceType,
+    category: params.category || 'text',
+    status: isFailed ? 'failed' : 'success',
+    durationMs: params.durationMs,
+    promptTokens: typeof params.usage?.promptTokens === 'number' ? params.usage.promptTokens : null,
+    completionTokens: typeof params.usage?.completionTokens === 'number' ? params.usage.completionTokens : null,
+    totalTokens: typeof params.usage?.totalTokens === 'number'
+      ? params.usage.totalTokens
+      : (typeof params.usage?.promptTokens === 'number' && typeof params.usage?.completionTokens === 'number')
+      ? params.usage.promptTokens + params.usage.completionTokens
+      : null,
+    isRealTokens: Boolean(params.isRealTokens),
+    estimatedCost: null, // NO fake 0.0001 calculations!
+    costDisplay: defaultCostDisplay,
+    errorType: isFailed ? 'ModelError' : undefined,
+    errorMessage: params.error,
+    purpose: params.purpose,
+  };
+}
+
+async function callAiServiceDetailed(params: AiCallParams): Promise<AiCallDetailedResult> {
+  const cleanBaseUrl = params.baseUrl ? params.baseUrl.trim().replace(/\/+$/, '') : '';
+  const cleanKey = (params.apiKey && params.apiKey.trim()) || '';
+  const activeKey = cleanKey || (!cleanBaseUrl && (!params.providerType || params.providerType === 'google_gemini') && process.env.NODE_ENV !== 'production' ? (process.env.GEMINI_API_KEY || '') : '');
+  const targetModel = params.model?.trim() || 'gemini-3.6-flash';
+
   let isOpenAiCompatible = false;
-  let activeProtocol = apiProtocol;
+  let activeProtocol = params.apiProtocol;
 
   if (activeProtocol === 'openai_compatible') {
     isOpenAiCompatible = true;
   } else if (activeProtocol === 'gemini_native') {
     isOpenAiCompatible = false;
   } else {
-    // Legacy / fallback heuristic if apiProtocol is not explicitly provided
     isOpenAiCompatible =
-      providerType === 'openai_compatible' ||
-      providerType === 'deepseek' ||
-      providerType === 'openrouter' ||
-      providerType === 'groq' ||
-      providerType === 'siliconflow' ||
-      providerType === 'ollama' ||
-      providerType === 'custom' ||
+      params.providerType === 'openai_compatible' ||
+      params.providerType === 'deepseek' ||
+      params.providerType === 'openrouter' ||
+      params.providerType === 'groq' ||
+      params.providerType === 'siliconflow' ||
+      params.providerType === 'ollama' ||
+      params.providerType === 'custom' ||
       (cleanBaseUrl &&
         (cleanBaseUrl.includes('/v1') ||
           cleanBaseUrl.includes('openai') ||
@@ -109,51 +141,43 @@ async function callAiService({
     }
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(), params.timeoutMs || 35000);
 
     try {
       let endpoint = cleanBaseUrl;
-      if (!endpoint) {
-        endpoint = 'https://api.openai.com/v1';
-      }
+      if (!endpoint) endpoint = 'https://api.openai.com/v1';
       if (!endpoint.endsWith('/chat/completions')) {
-        if (endpoint.endsWith('/v1')) {
-          endpoint = `${endpoint}/chat/completions`;
-        } else {
-          endpoint = `${endpoint}/v1/chat/completions`;
-        }
+        endpoint = endpoint.endsWith('/v1') ? `${endpoint}/chat/completions` : `${endpoint}/v1/chat/completions`;
       }
 
       const messages: Array<{ role: string; content: string }> = [];
-      if (systemInstruction) {
-        messages.push({ role: 'system', content: systemInstruction });
+      if (params.systemInstruction) {
+        messages.push({ role: 'system', content: params.systemInstruction });
       }
-      messages.push({ role: 'user', content: prompt });
+      messages.push({ role: 'user', content: params.prompt });
 
       const payload: any = {
         model: targetModel,
         messages,
-        temperature,
+        temperature: params.temperature ?? 0.7,
       };
 
-      if (maxTokens) {
-        payload.max_tokens = maxTokens;
+      if (params.maxTokens) {
+        payload.max_tokens = params.maxTokens;
       }
-
-      if (responseMimeType === 'application/json') {
+      if (params.responseMimeType === 'application/json') {
         payload.response_format = { type: 'json_object' };
       }
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        ...customHeaders,
+        ...(params.customHeaders || {}),
       };
 
       if (activeKey) {
         headers['Authorization'] = `Bearer ${activeKey}`;
       }
 
-      // Special provider header additions
       if (endpoint.includes('openrouter.ai')) {
         headers['HTTP-Referer'] = 'https://ai.studio.simulated.phone';
         headers['X-Title'] = 'Simulated Android Phone';
@@ -174,9 +198,7 @@ async function callAiService({
         try {
           const parsed = JSON.parse(errorText);
           parsedErrorMsg = parsed.error?.message || parsed.message || errorText;
-        } catch {
-          // ignore
-        }
+        } catch {}
 
         if (response.status === 401) {
           throw new Error(`[401 鉴权失败] API Key 无效或未授权: ${parsedErrorMsg}`);
@@ -196,15 +218,30 @@ async function callAiService({
       const messageObj = choice?.message;
       const reasoning = messageObj?.reasoning_content || messageObj?.reasoning || messageObj?.thinking;
       const content = typeof messageObj?.content === 'string' ? messageObj.content : '';
+      const fullText = reasoning && typeof reasoning === 'string' && reasoning.trim() ? `<think>${reasoning.trim()}</think>${content}` : content;
 
-      if (reasoning && typeof reasoning === 'string' && reasoning.trim()) {
-        return `<think>${reasoning.trim()}</think>${content}`;
+      const usageMeta = resJson.usage;
+      let usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined = undefined;
+      let isRealTokens = false;
+      if (usageMeta && typeof usageMeta === 'object') {
+        isRealTokens = true;
+        usage = {
+          promptTokens: typeof usageMeta.prompt_tokens === 'number' ? usageMeta.prompt_tokens : undefined,
+          completionTokens: typeof usageMeta.completion_tokens === 'number' ? usageMeta.completion_tokens : undefined,
+          totalTokens: typeof usageMeta.total_tokens === 'number' ? usageMeta.total_tokens : undefined,
+        };
       }
-      return content;
+
+      return {
+        text: fullText,
+        usage,
+        isRealTokens,
+        modelUsed: targetModel,
+      };
     } catch (err: any) {
       clearTimeout(timer);
       if (err.name === 'AbortError') {
-        throw new Error(`请求超时 (${timeoutMs / 1000}秒)，上游 API 未能在限定时间内返回。`);
+        throw new Error(`请求超时 (${(params.timeoutMs || 35000) / 1000}秒)，上游 API 未能在限定时间内返回。`);
       }
       throw err;
     }
@@ -217,7 +254,7 @@ async function callAiService({
       httpOptions: {
         headers: {
           'User-Agent': 'aistudio-build-phone',
-          ...customHeaders,
+          ...(params.customHeaders || {}),
         },
       },
     };
@@ -229,27 +266,28 @@ async function callAiService({
       const aiClient = new GoogleGenAI(clientOptions);
       const generateOptions: any = {
         model: targetModel,
-        contents: prompt,
+        contents: params.prompt,
       };
 
       const config: any = {};
-      if (systemInstruction) {
-        config.systemInstruction = systemInstruction;
+      if (params.systemInstruction) {
+        config.systemInstruction = params.systemInstruction;
       }
-      if (responseMimeType) {
-        config.responseMimeType = responseMimeType;
+      if (params.responseMimeType) {
+        config.responseMimeType = params.responseMimeType;
       }
-      if (temperature !== undefined) {
-        config.temperature = temperature;
+      if (params.temperature !== undefined) {
+        config.temperature = params.temperature;
       }
-      if (maxTokens !== undefined) {
-        config.maxOutputTokens = maxTokens;
+      if (params.maxTokens !== undefined) {
+        config.maxOutputTokens = params.maxTokens;
       }
       if (Object.keys(config).length > 0) {
         generateOptions.config = config;
       }
 
-      let result;
+      let result: any;
+      let usedModel = targetModel;
       try {
         result = await aiClient.models.generateContent(generateOptions);
       } catch (geminiPrimaryErr: any) {
@@ -260,8 +298,6 @@ async function callAiService({
           primaryMsg.includes('Quota exceeded') ||
           primaryMsg.includes('quota');
 
-        // If official Gemini hits quota limit (e.g. 20/day on preview model like gemini-3.6-flash),
-        // gracefully attempt fallback to high-capacity stable flash models
         if (isQuotaExceeded && (!cleanBaseUrl || cleanBaseUrl.includes('googleapis.com'))) {
           const fallbackCandidates = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'].filter((m) => m !== targetModel);
           let recovered = false;
@@ -270,6 +306,7 @@ async function callAiService({
               console.warn(`[Gemini Fallback] 模型 ${targetModel} 额度受限 (429/Quota)，尝试备用模型: ${fallbackModel}`);
               const fbOptions = { ...generateOptions, model: fallbackModel };
               result = await aiClient.models.generateContent(fbOptions);
+              usedModel = fallbackModel;
               recovered = true;
               break;
             } catch (fbErr: any) {
@@ -284,11 +321,27 @@ async function callAiService({
         }
       }
 
-      return result?.text || '';
+      const usageMeta = result?.usageMetadata;
+      let usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined = undefined;
+      let isRealTokens = false;
+      if (usageMeta && typeof usageMeta === 'object') {
+        isRealTokens = true;
+        usage = {
+          promptTokens: typeof usageMeta.promptTokenCount === 'number' ? usageMeta.promptTokenCount : undefined,
+          completionTokens: typeof usageMeta.candidatesTokenCount === 'number' ? usageMeta.candidatesTokenCount : undefined,
+          totalTokens: typeof usageMeta.totalTokenCount === 'number' ? usageMeta.totalTokenCount : undefined,
+        };
+      }
+
+      return {
+        text: result?.text || '',
+        usage,
+        isRealTokens,
+        modelUsed: usedModel,
+      };
     } catch (geminiErr: any) {
       const errMsg = geminiErr.message || '';
 
-      // If custom Base URL returned 404 (endpoint not found in Gemini format), try OpenAI chat/completions on that proxy
       if (cleanBaseUrl && (errMsg.includes('404') || errMsg.includes('NOT_FOUND') || errMsg.includes('Cannot POST') || errMsg.includes('not found'))) {
         try {
           let fallbackEndpoint = cleanBaseUrl;
@@ -300,25 +353,33 @@ async function callAiService({
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${activeKey}`,
-              ...customHeaders,
+              ...(params.customHeaders || {}),
             },
             body: JSON.stringify({
               model: targetModel,
               messages: [
-                ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
-                { role: 'user', content: prompt },
+                ...(params.systemInstruction ? [{ role: 'system', content: params.systemInstruction }] : []),
+                { role: 'user', content: params.prompt },
               ],
-              temperature,
+              temperature: params.temperature,
             }),
-            signal: AbortSignal.timeout(timeoutMs),
+            signal: AbortSignal.timeout(params.timeoutMs || 35000),
           });
           if (altRes.ok) {
             const j = await altRes.json();
             const text = j.choices?.[0]?.message?.content;
-            if (typeof text === 'string') return text;
+            if (typeof text === 'string') {
+              const uMeta = j.usage;
+              return {
+                text,
+                usage: uMeta ? { promptTokens: uMeta.prompt_tokens, completionTokens: uMeta.completion_tokens, totalTokens: uMeta.total_tokens } : undefined,
+                isRealTokens: Boolean(uMeta),
+                modelUsed: targetModel,
+              };
+            }
           }
         } catch {
-          // ignore and proceed to standard error formatting
+          // proceed to standard throw
         }
       }
 
@@ -343,11 +404,11 @@ async function callAiService({
   throw new Error('未配置有效的 API 密钥，且系统环境变量中无默认密钥。请先在系统设置中配置 API Provider。');
 }
 
-/**
- * Universal helper for responding to API endpoints when errors occur.
- * Automatically detects 429 / quota exhaustion / rate limiting, logs with console.warn (preventing fatal crash alarms),
- * and responds with HTTP 429 and structured quota metadata.
- */
+async function callAiService(params: AiCallParams): Promise<string> {
+  const result = await callAiServiceDetailed(params);
+  return result.text;
+}
+
 function handleAiEndpointError(res: express.Response, error: any, contextName: string) {
   const isQuota =
     error?.statusCode === 429 ||
@@ -358,6 +419,8 @@ function handleAiEndpointError(res: express.Response, error: any, contextName: s
     error?.message?.includes('配额用尽') ||
     error?.message?.includes('quota');
 
+  const statusMsg = isQuota ? '429 配额超限/请求频率过高' : error?.message || `${contextName} 执行异常`;
+
   if (isQuota) {
     console.warn(`[${contextName}] AI Provider 配额超限/限流保护触发 (429/RESOURCE_EXHAUSTED):`, error.message || error);
     return res.status(429).json({
@@ -365,6 +428,15 @@ function handleAiEndpointError(res: express.Response, error: any, contextName: s
       statusCode: 429,
       isQuotaExceeded: true,
       error: error.message || 'API quota exceeded or rate limited',
+      apiLog: buildApiLogObject({
+        appName: contextName || 'AI接口',
+        modelName: 'gemini-3.6-flash',
+        interfaceType: 'AiEndpoint',
+        status: 'failed',
+        durationMs: 0,
+        error: statusMsg,
+        purpose: `${contextName} (请求失败 429)`,
+      }),
     });
   }
 
@@ -372,6 +444,15 @@ function handleAiEndpointError(res: express.Response, error: any, contextName: s
   return res.status(500).json({
     success: false,
     error: error.message || `${contextName} failed`,
+    apiLog: buildApiLogObject({
+      appName: contextName || 'AI接口',
+      modelName: 'gemini-3.6-flash',
+      interfaceType: 'AiEndpoint',
+      status: 'failed',
+      durationMs: 0,
+      error: statusMsg,
+      purpose: `${contextName} (请求失败 500)`,
+    }),
   });
 }
 
@@ -1790,14 +1871,16 @@ ${memosSummary}
     let responseText = '';
     let thinkingProcess = `分析天气事件 [${weatherEvent.title}]，结合 ${character.name} 的人设口吻生成微信关怀。`;
     let replyContent = '';
+    let detailedRes: AiCallDetailedResult | null = null;
 
     try {
-      responseText = await callAiService({
+      detailedRes = await callAiServiceDetailed({
         prompt,
         model: selectedModel,
         apiKey: apiConfig?.textApiKey,
         baseUrl: apiConfig?.textBaseUrl,
       });
+      responseText = detailedRes.text;
     } catch (e: any) {
       console.warn('Weather care AI call failed, using fallback:', e.message);
     }
@@ -1827,24 +1910,21 @@ ${memosSummary}
     }
 
     const duration = Date.now() - startTime;
-    const promptTokens = Math.round(prompt.length / 2);
-    const completionTokens = Math.round(responseText.length / 2);
 
     res.json({
       success: true,
       text: replyContent,
       thinkingProcess,
-      apiLog: {
-        id: 'log_' + Date.now(),
+      apiLog: buildApiLogObject({
         appName: '天气-AI主动关怀',
-        timestamp: Date.now(),
-        modelName: selectedModel,
+        modelName: detailedRes?.modelUsed || selectedModel,
         interfaceType: 'ProactiveWeatherCare',
-        promptTokens,
-        completionTokens,
-        estimatedCost: Number(((promptTokens + completionTokens) * 0.0000005).toFixed(5)),
+        category: 'text',
+        durationMs: duration,
+        usage: detailedRes?.usage,
+        isRealTokens: detailedRes?.isRealTokens,
         purpose: `AI [${character.name}] 针对 [${weatherEvent.title}] 发送微信天气关怀 (耗时 ${duration}ms)`,
-      },
+      }),
     });
   } catch (error: any) {
     return handleAiEndpointError(res, error, 'Weather proactive care');
@@ -1859,7 +1939,12 @@ app.post('/api/gemini/analyze-image', async (req, res) => {
   }
 
   const startTime = Date.now();
-  const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+  // Support independent image API config if provided, falling back to text API config
+  const imageKey = (apiConfig?.imageApiKey && apiConfig.imageApiKey.trim()) || apiConfig?.textApiKey || '';
+  const imageBaseUrl = apiConfig?.imageBaseUrl || apiConfig?.textBaseUrl || '';
+  const imageProvider = apiConfig?.imageProvider || apiConfig?.textProvider || 'google_gemini';
+  const imageProtocol = apiConfig?.imageApiProtocol || apiConfig?.textApiProtocol;
+  const selectedModel = apiConfig?.imageModel || apiConfig?.textModel || 'gemini-3.6-flash';
   const customPrompt = prompt || '请用中文详细总结识别这张图片中的核心事物、文字、场景以及主要细节。';
 
   try {
@@ -1879,32 +1964,45 @@ app.post('/api/gemini/analyze-image', async (req, res) => {
     }
 
     const isOpenAi =
-      apiConfig?.textApiProtocol === 'openai_compatible' ||
-      apiConfig?.textProvider === 'openai_compatible' ||
-      apiConfig?.textProvider === 'deepseek' ||
-      apiConfig?.textProvider === 'openrouter' ||
-      (apiConfig?.textBaseUrl &&
-        (apiConfig.textBaseUrl.includes('/v1') || apiConfig.textBaseUrl.includes('openai')));
+      imageProtocol === 'openai_compatible' ||
+      imageProvider === 'openai_compatible' ||
+      imageProvider === 'deepseek' ||
+      imageProvider === 'openrouter' ||
+      (imageBaseUrl &&
+        (imageBaseUrl.includes('/v1') || imageBaseUrl.includes('openai')));
 
     if (isOpenAi) {
-      const endpoint = apiConfig?.textBaseUrl
-        ? apiConfig.textBaseUrl.endsWith('/chat/completions')
-          ? apiConfig.textBaseUrl
-          : `${apiConfig.textBaseUrl.replace(/\/+$/, '')}/chat/completions`
+      const endpoint = imageBaseUrl
+        ? imageBaseUrl.endsWith('/chat/completions')
+          ? imageBaseUrl
+          : `${imageBaseUrl.replace(/\/+$/, '')}/chat/completions`
         : 'https://api.openai.com/v1/chat/completions';
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
-      if (apiConfig?.textApiKey) {
-        headers['Authorization'] = `Bearer ${apiConfig.textApiKey}`;
+      if (imageKey) {
+        headers['Authorization'] = `Bearer ${imageKey}`;
       }
+
+      // Detect known text-only models
+      const lowerModel = selectedModel.toLowerCase();
+      const isKnownTextOnly = lowerModel.includes('reasoner') || lowerModel.includes('o1-mini') || lowerModel.includes('text-only');
+      if (isKnownTextOnly) {
+        return res.json({
+          success: false,
+          error: `当前配置的模型 (${selectedModel}) 为纯文本模型，不支持图像识别。请在系统设置中切换为视觉模型 (如 gpt-4o, gemini-3.6-flash)。`,
+          description: '当前模型不支持图片识别',
+        });
+      }
+
+      const visionModel = selectedModel.includes('gemini') ? 'gpt-4o-mini' : selectedModel;
 
       const response = await fetch(endpoint, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          model: selectedModel.includes('gemini') ? 'gpt-4o-mini' : selectedModel,
+          model: visionModel,
           messages: [
             {
               role: 'user',
@@ -1920,7 +2018,16 @@ app.post('/api/gemini/analyze-image', async (req, res) => {
 
       if (!response.ok) {
         const errText = await response.text();
-        throw new Error(`OpenAI Vision API 返回错误 ${response.status}: ${errText.slice(0, 200)}`);
+        let parsedMsg = errText.slice(0, 200);
+        try {
+          const j = JSON.parse(errText);
+          parsedMsg = j.error?.message || j.message || parsedMsg;
+        } catch {}
+        return res.json({
+          success: false,
+          error: `图像 API 请求失败 (${response.status}): ${parsedMsg}`,
+          description: '图像识别调用失败',
+        });
       }
 
       const resJson = await response.json();
@@ -1928,11 +2035,15 @@ app.post('/api/gemini/analyze-image', async (req, res) => {
     } else {
       // Default: Google Gemini Vision Call via @google/genai SDK
       const activeKey =
-        apiConfig?.textApiKey ||
-        (!apiConfig?.textBaseUrl && process.env.NODE_ENV !== 'production' ? process.env.GEMINI_API_KEY || '' : '');
+        imageKey ||
+        (!imageBaseUrl && process.env.NODE_ENV !== 'production' ? process.env.GEMINI_API_KEY || '' : '');
 
       if (!activeKey) {
-        throw new Error('未配置 Gemini API Key，无法调用图片识别服务');
+        return res.json({
+          success: false,
+          error: '未配置图像 API 密钥，请在系统设置中配置图像 API Key。',
+          description: '未配置图像 API Key',
+        });
       }
 
       const clientOptions: any = {
@@ -1941,8 +2052,8 @@ app.post('/api/gemini/analyze-image', async (req, res) => {
           headers: { 'User-Agent': 'aistudio-build-phone' },
         },
       };
-      if (apiConfig?.textBaseUrl) {
-        clientOptions.httpOptions.baseUrl = apiConfig.textBaseUrl;
+      if (imageBaseUrl) {
+        clientOptions.httpOptions.baseUrl = imageBaseUrl;
       }
 
       const aiClient = new GoogleGenAI(clientOptions);
@@ -1958,26 +2069,51 @@ app.post('/api/gemini/analyze-image', async (req, res) => {
       }
 
       const visionModel = selectedModel.includes('gemini') ? selectedModel : 'gemini-3.6-flash';
-      const aiResponse = await aiClient.models.generateContent({
-        model: visionModel,
-        contents: [{ role: 'user', parts }],
-      });
+      let aiResponse: any;
+      try {
+        aiResponse = await aiClient.models.generateContent({
+          model: visionModel,
+          contents: [{ role: 'user', parts }],
+        });
+      } catch (geminiErr: any) {
+        return res.json({
+          success: false,
+          error: `Gemini 视觉接口调用异常: ${geminiErr.message || '网络或配额受限'}`,
+          description: '图片识别调用失败',
+        });
+      }
 
-      description = aiResponse.text || '';
+      description = aiResponse?.text || '';
     }
 
     const duration = Date.now() - startTime;
+    if (!description.trim()) {
+      return res.json({
+        success: false,
+        error: '图像 API 未能分析出有效画面描述',
+        description: '图片识别未能生成有效描述',
+      });
+    }
+
     return res.json({
       success: true,
-      description: description.trim() || '分析完成，未能提取有效视觉文字。',
+      description: description.trim(),
       duration,
+      apiLog: buildApiLogObject({
+        appName: '图像识别与多模态分析',
+        modelName: selectedModel,
+        interfaceType: 'VisionAnalysis',
+        category: 'image',
+        durationMs: duration,
+        purpose: 'AI 识别并分析微信聊天发送的图片',
+      }),
     });
   } catch (err: any) {
     console.error('Analyze image error:', err);
     return res.json({
       success: false,
       error: err.message || '图片视觉识别失败',
-      description: '图片识别调用失败或未配置',
+      description: '图片识别调用失败',
     });
   }
 });
@@ -2023,6 +2159,8 @@ app.post('/api/gemini/chat', async (req, res) => {
     locationCity,
     menstrualInfo,
     memosSummary,
+    worldBookContext,
+    associatedWorldBooks,
     associatedWorldBook,
     realDeviceContext,
     weatherInfo,
@@ -2064,18 +2202,29 @@ ${recalledMemoriesSummary ? `\n${recalledMemoriesSummary}\n` : ''}
 `;
 
     // Inject WorldBook if character is associated and permission is enabled
-    if (permissions?.appAccess?.worldBookData !== false && associatedWorldBook && associatedWorldBook.title) {
-      contextPrompt += `\n【🌌 已绑定世界书·世界观法则与背景设定】
-- 世界书名称：《${associatedWorldBook.title}》
-- 核心世界法则与背景：${associatedWorldBook.worldSetting || '无特定背景'}
-${
-  associatedWorldBook.entries && associatedWorldBook.entries.length > 0
-    ? '【专有名词与词条设定库】：\n' +
-      associatedWorldBook.entries.map((e: any) => `* [${e.keyword}]: ${e.content}`).join('\n')
-    : ''
-}
-【演职关键法则】：你当前处于该世界观背景中。你的言谈举止、世界常识、用词习惯必须自然融入该世界观法则与词条设定，同时保持你自身的人设性格。
-`;
+    if (permissions?.appAccess?.worldBookData !== false) {
+      if (worldBookContext && typeof worldBookContext === 'string' && worldBookContext.trim()) {
+        contextPrompt += `\n${worldBookContext.trim()}\n`;
+      } else if (associatedWorldBooks && Array.isArray(associatedWorldBooks) && associatedWorldBooks.length > 0) {
+        contextPrompt += `\n【🌌 已绑定世界书（共 ${associatedWorldBooks.length} 本）· 世界观法则与词条库】\n`;
+        associatedWorldBooks.forEach((wb: any, idx: number) => {
+          contextPrompt += `${idx + 1}. 《${wb.title}》: ${wb.worldSetting || '无特定背景'}\n`;
+          if (wb.entries && Array.isArray(wb.entries) && wb.entries.length > 0) {
+            wb.entries.forEach((e: any) => {
+              if (e.enabled !== false) {
+                contextPrompt += `   * [${e.keyword}]: ${e.content}\n`;
+              }
+            });
+          }
+        });
+        contextPrompt += `【演职法则】：你当前置身于上述所有世界观法则中。请自然融入上述世界观法则与词条规则进行沉浸式互动回复。\n`;
+      } else if (associatedWorldBook && associatedWorldBook.title) {
+        contextPrompt += `\n【🌌 已绑定世界书·世界观法则与背景设定】\n- 世界书名称：《${associatedWorldBook.title}》\n- 核心世界法则与背景：${associatedWorldBook.worldSetting || '无特定背景'}\n`;
+        if (associatedWorldBook.entries && associatedWorldBook.entries.length > 0) {
+          contextPrompt += '【专有名词与词条设定库】：\n' + associatedWorldBook.entries.map((e: any) => `* [${e.keyword}]: ${e.content}`).join('\n') + '\n';
+        }
+        contextPrompt += `【演职法则】：你当前处于该世界观背景中。你的言谈举止、世界常识、用词习惯必须自然融入该世界观法则与词条设定。\n`;
+      }
     }
 
     // Inject Menstrual Data if permissions allow
@@ -2201,8 +2350,9 @@ ${devicesSummary}
     const extractedDeviceActions: any[] = [];
 
     let aiErrorMessage = '';
+    let aiDetailedResult: AiCallDetailedResult | null = null;
     try {
-      responseText = await callAiService({
+      aiDetailedResult = await callAiServiceDetailed({
         prompt: promptText,
         model: selectedModel,
         apiKey: apiConfig?.textApiKey,
@@ -2211,6 +2361,7 @@ ${devicesSummary}
         customHeaders: apiConfig?.customHeaders,
         timeoutMs: apiConfig?.timeoutMs || 35000,
       });
+      responseText = aiDetailedResult.text;
     } catch (e: any) {
       aiErrorMessage = e.message || 'API 调用异常';
       console.warn('AI call threw error:', e.message);
@@ -2244,25 +2395,24 @@ ${devicesSummary}
     replyContent = sanitizeReplyText(replyContent.replace(/<device_action>[\s\S]*?<\/device_action>/gi, '').trim());
 
     const duration = Date.now() - startTime;
-    const promptTokens = Math.round(promptText.length / 2);
-    const completionTokens = Math.round(responseText.length / 2);
 
     res.json({
       success: true,
       text: replyContent,
       thinkingProcess,
       deviceActions: extractedDeviceActions,
-      apiLog: {
-        id: 'log_' + Date.now(),
+      apiLog: buildApiLogObject({
         appName: '微信-AI聊天',
-        timestamp: Date.now(),
-        modelName: selectedModel,
+        modelName: aiDetailedResult?.modelUsed || selectedModel,
         interfaceType: 'ChatGeneration',
-        promptTokens,
-        completionTokens,
-        estimatedCost: Number(((promptTokens + completionTokens) * 0.0000005).toFixed(5)),
+        category: 'text',
+        status: aiErrorMessage ? 'failed' : 'success',
+        durationMs: duration,
+        usage: aiDetailedResult?.usage,
+        isRealTokens: aiDetailedResult?.isRealTokens,
+        error: aiErrorMessage || undefined,
         purpose: `与 ${character.name} 对话交互 (耗时 ${duration}ms)`,
-      },
+      }),
     });
   } catch (error: any) {
     return handleAiEndpointError(res, error, 'Gemini Chat');
@@ -2770,8 +2920,15 @@ app.post('/api/gemini/worldbook-ai', async (req, res) => {
 // 6b. Offline Scene Mode Roleplay & State Engine Endpoint
 app.post('/api/gemini/offline-chat', async (req, res) => {
   try {
-    const { character, userProfile, sceneSnapshot, recentMessages, recalledMemories, previousState, userInput, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+    const { character, userProfile, sceneSnapshot, recentMessages, recalledMemories, previousState, userInput, worldBookContext, apiConfig } = req.body;
+
+    const textCfg = apiConfig?.textApiConfig;
+    const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || '';
+    const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || '';
+    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || 'gemini-3.6-flash';
+    const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || '';
+    const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || '';
+    const customHeaders = apiConfig?.customHeaders || {};
 
     const systemInstruction = `你现在进入“线下模式 (Offline Scene Mode)”。
 你正在与用户在真实的物理/剧情场景中面对面共度一段时光，进行深度沉浸式角色互动。
@@ -2781,6 +2938,7 @@ app.post('/api/gemini/offline-chat', async (req, res) => {
 - 人设: ${character?.persona || '温柔贴心'}
 - 性格: ${character?.personality || '随和'}
 - 关系: ${character?.relationship || '好友'}
+${character?.memories && Array.isArray(character.memories) && character.memories.length > 0 ? `- 长期记忆: ${character.memories.join('；')}\n` : ''}
 
 【用户资料】:
 - 用户姓名/昵称: ${userProfile?.name || '用户'}
@@ -2792,9 +2950,10 @@ app.post('/api/gemini/offline-chat', async (req, res) => {
 - 氛围基调: ${sceneSnapshot?.atmosphere || '温馨、亲密'}
 - 详细环境背景: ${sceneSnapshot?.background || '两人待在一起'}
 
-【已有回忆与背景】:
+【调阅记忆、设定与世界书】:
 ${recalledMemories || '无特定调阅记忆'}
 ${req.body.lifeStateContext ? `\n${req.body.lifeStateContext}\n` : ''}
+${worldBookContext ? `\n${worldBookContext}\n` : ''}
 
 【上一轮你的角色状态】:
 - 心率: ${previousState?.heartRate || 75} bpm
@@ -2807,10 +2966,10 @@ ${req.body.lifeStateContext ? `\n${req.body.lifeStateContext}\n` : ''}
 - 行为举止: ${previousState?.behavior || '眼神自然'}
 
 【沉浸式线下描写三大法则】:
-你的每一轮回复必须完整包含以下三类描写，融合成连贯自然的沉浸式叙述（回复目标篇幅约 300 ~ 800 中文字，根据当前情境起伏自然变化，切忌只给一两句话，也切忌机械式堆砌同义词）：
+你的每一轮回复必须完整包含以下三类描写，融合成连贯自然的沉浸式叙述（回复目标篇幅约 200 ~ 600 中文字，根据当前情境起伏自然变化，切忌只给一两句话，也切忌机械式堆砌同义词）：
 1. 【环境与氛围描写】：描写当前空间、光线、声音、微风/天气、两者间的物理距离与现场氛围（作为场景叙述直接写入 reply）。
 2. 【动作神态描写】：描写角色的眼神变化、面部表情、微动作、姿态调整、靠近/后退或肢体接触。动作描写必须统一使用中文全角括号：（...） 包裹！
-3. 【语言描写】：角色真正说出来的台词对白，贴合角色人设与性格口吻，推进互动。
+3. 【语言描写】：角色真正说出来的台词对局对白，贴合角色人设与性格口吻，推进互动。
 
 【场景与互动连续性规则】:
 - 必须严格遵循上下文中的人物位置、当前姿势、周围环境、情绪起伏与正在发生的事件，保持剧情前后高度连贯（例如：若上一条已坐在沙发上，不要无故突兀变成站在门外）。
@@ -2821,7 +2980,7 @@ ${req.body.lifeStateContext ? `\n${req.body.lifeStateContext}\n` : ''}
 【输出格式严格要求】:
 必须只输出一个合法的 JSON 对象，格式如下：
 {
-  "reply": "完整沉浸式互动片段。将环境描写、肢体神态动作（统一用中文全角括号（...）包裹）与对白自然融合成一段连贯生动的沉浸式叙述，篇幅丰富（约300~800字）。",
+  "reply": "完整沉浸式互动片段。将环境描写、肢体神态动作（统一用中文全角括号（...）包裹）与对白自然融合成一段连贯生动的沉浸式叙述，篇幅丰富完整（约200~600字）。",
   "action": "（核心肢体微动作摘要，用全角括号）",
   "state": {
     "heartRate": 85,
@@ -2838,7 +2997,7 @@ ${req.body.lifeStateContext ? `\n${req.body.lifeStateContext}\n` : ''}
 `;
 
     const chatHistoryText = (recentMessages || [])
-      .map((m: any) => `${m.sender === 'user' ? '用户' : character?.name || 'AI'}: ${m.text}`)
+      .map((m: any) => `${m.sender === 'user' ? userProfile?.name || '用户' : character?.name || 'AI'}: ${m.text}`)
       .join('\n');
 
     const prompt = `【当前对话历史】:\n${chatHistoryText}\n\n用户刚刚对你说: "${userInput}"\n\n请根据上下文和场景，生成你丰富生动的对白、环境与动作描写及更新后的角色状态 JSON：`;
@@ -2847,27 +3006,70 @@ ${req.body.lifeStateContext ? `\n${req.body.lifeStateContext}\n` : ''}
       prompt,
       systemInstruction,
       model: selectedModel,
-      apiKey: apiConfig?.textApiKey,
-      baseUrl: apiConfig?.textBaseUrl,
-      providerType: apiConfig?.provider,
-      apiProtocol: apiConfig?.apiProtocol,
+      apiKey,
+      baseUrl,
+      providerType: provider,
+      apiProtocol,
+      customHeaders,
       responseMimeType: 'application/json',
       temperature: 0.8,
-      maxTokens: 2500,
+      maxTokens: 3500,
       timeoutMs: 65000,
     });
 
-    let cleanJson = (responseText || '').replace(/```json|```/g, '').trim();
-    let parsed: any = null;
+    const extracted = extractThinkingAndContent(responseText);
+    let cleanJson = (extracted.cleanText || '').replace(/```json\n?|```\n?/g, '').trim();
+
+    let parsedReply = '';
+    let parsedAction = '';
+    let parsedState = previousState || {};
+
     try {
-      parsed = JSON.parse(cleanJson);
+      const parsed = JSON.parse(cleanJson);
+      parsedReply = typeof parsed.reply === 'string' ? parsed.reply : '';
+      parsedAction = typeof parsed.action === 'string' ? parsed.action : '';
+      parsedState = parsed.state || previousState;
     } catch {
-      parsed = { reply: responseText, action: '', state: previousState };
+      // Key-delimited extraction for unescaped characters in JSON string
+      const replyMatch = cleanJson.match(/"reply"\s*:\s*"([\s\S]*?)"\s*,\s*"(?:action|state)"/);
+      if (replyMatch && replyMatch[1]) {
+        parsedReply = replyMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+      } else {
+        const altMatch = cleanJson.match(/"reply"\s*:\s*"([\s\S]*?)"\s*}/);
+        if (altMatch && altMatch[1]) {
+          parsedReply = altMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+        }
+      }
+
+      const actionMatch = cleanJson.match(/"action"\s*:\s*"([\s\S]*?)"\s*,\s*"(?:state|reply)"/);
+      if (actionMatch && actionMatch[1]) {
+        parsedAction = actionMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+      }
+
+      const stateMatch = cleanJson.match(/"state"\s*:\s*(\{[\s\S]*?\})/);
+      if (stateMatch && stateMatch[1]) {
+        try {
+          parsedState = JSON.parse(stateMatch[1]);
+        } catch {}
+      }
+
+      if (!parsedReply) {
+        parsedReply = cleanJson.replace(/^\s*\{?\s*"reply"\s*:\s*"?/, '').replace(/["}\s]+$/, '');
+      }
     }
 
-    res.json({ success: true, ...parsed });
+    if (!parsedReply && !parsedAction) {
+      return res.status(500).json({ success: false, error: 'AI 模型未能输出有效回复内容' });
+    }
+
+    res.json({
+      success: true,
+      reply: parsedReply.trim(),
+      action: parsedAction.trim(),
+      state: parsedState,
+    });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err?.message || 'Offline chat error' });
+    return handleAiEndpointError(res, err, 'Offline chat error');
   }
 });
 
@@ -2875,7 +3077,14 @@ ${req.body.lifeStateContext ? `\n${req.body.lifeStateContext}\n` : ''}
 app.post('/api/gemini/offline-summary', async (req, res) => {
   try {
     const { character, userProfile, sceneSnapshot, sessionMessages, stateHistory, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+
+    const textCfg = apiConfig?.textApiConfig;
+    const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || '';
+    const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || '';
+    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || 'gemini-3.6-flash';
+    const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || '';
+    const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || '';
+    const customHeaders = apiConfig?.customHeaders || {};
 
     const systemInstruction = `系统事件：[OFFLINE_SESSION_ENDED]
 本次与 ${character?.name} 的线下场景模式已经正式结束。
@@ -2901,7 +3110,7 @@ app.post('/api/gemini/offline-summary', async (req, res) => {
 }`;
 
     const transcript = (sessionMessages || [])
-      .map((m: any) => `${m.sender === 'user' ? '用户' : character?.name}: ${m.text} ${m.action || ''}`)
+      .map((m: any) => `${m.sender === 'user' ? userProfile?.name || '用户' : character?.name || 'AI'}: ${m.text} ${m.action || ''}`)
       .join('\n');
 
     const prompt = `【线下模式完整对话记录】:\n${transcript}\n\n请生成本次线下经历的总结与候选长期记忆 JSON：`;
@@ -2910,12 +3119,19 @@ app.post('/api/gemini/offline-summary', async (req, res) => {
       prompt,
       systemInstruction,
       model: selectedModel,
-      apiKey: apiConfig?.textApiKey,
-      baseUrl: apiConfig?.textBaseUrl,
+      apiKey,
+      baseUrl,
+      providerType: provider,
+      apiProtocol,
+      customHeaders,
       responseMimeType: 'application/json',
+      temperature: 0.7,
+      maxTokens: 2500,
+      timeoutMs: 65000,
     });
 
-    let cleanJson = (responseText || '').replace(/```json|```/g, '').trim();
+    const extracted = extractThinkingAndContent(responseText);
+    let cleanJson = (extracted.cleanText || '').replace(/```json\n?|```\n?/g, '').trim();
     let parsed: any = null;
     try {
       parsed = JSON.parse(cleanJson);
@@ -2932,7 +3148,7 @@ app.post('/api/gemini/offline-summary', async (req, res) => {
 
     res.json({ success: true, summary: parsed });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err?.message || 'Offline summary error' });
+    return handleAiEndpointError(res, err, 'Offline summary error');
   }
 });
 
@@ -3379,9 +3595,11 @@ ${historyText || '(近期暂无聊天)'}
 
     const extracted = extractThinkingAndContent(responseText);
 
+    const hasText = Boolean(extracted.cleanText && extracted.cleanText.trim());
+
     res.json({
-      success: true,
-      text: extracted.cleanText || `${character.name}: 嗨，想起你啦，今天过得怎么样？`,
+      success: hasText,
+      text: extracted.cleanText || '',
       thinkingProcess: extracted.thinkingProcess,
       triggerType,
     });
@@ -4045,6 +4263,14 @@ app.post('/api/provider/generate-image', async (req, res) => {
         model,
         imageUrl: `data:image/png;base64,${item.b64_json}`,
         revisedPrompt: item.revised_prompt || prompt,
+        apiLog: buildApiLogObject({
+          appName: 'AI生图绘制',
+          modelName: model,
+          interfaceType: 'ImageGeneration',
+          category: 'image',
+          durationMs: latencyMs,
+          purpose: `生成图像: ${(prompt || '自定义图像').slice(0, 30)}...`,
+        }),
       });
     } else if (item?.url) {
       return res.json({
@@ -4053,6 +4279,14 @@ app.post('/api/provider/generate-image', async (req, res) => {
         model,
         imageUrl: item.url,
         revisedPrompt: item.revised_prompt || prompt,
+        apiLog: buildApiLogObject({
+          appName: 'AI生图绘制',
+          modelName: model,
+          interfaceType: 'ImageGeneration',
+          category: 'image',
+          durationMs: latencyMs,
+          purpose: `生成图像: ${(prompt || '自定义图像').slice(0, 30)}...`,
+        }),
       });
     }
 
@@ -4067,6 +4301,7 @@ app.post('/api/provider/generate-speech', async (req, res) => {
   const { providerType, baseUrl, apiKey, model = 'tts-1', text, voice = 'alloy', speed = 1.0 } = req.body;
   const cleanKey = (apiKey && apiKey.trim()) || '';
   const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, '') : '';
+  const startTime = Date.now();
 
   if (!cleanKey) {
     return res.status(400).json({ success: false, error: '未配置语音 API 密钥 (API Key)' });
@@ -4102,11 +4337,20 @@ app.post('/api/provider/generate-speech', async (req, res) => {
 
     const arrayBuffer = await resp.arrayBuffer();
     const base64Audio = Buffer.from(arrayBuffer).toString('base64');
+    const latencyMs = Date.now() - startTime;
 
     return res.json({
       success: true,
       audioUrl: `data:audio/mp3;base64,${base64Audio}`,
       format: 'mp3',
+      apiLog: buildApiLogObject({
+        appName: 'AI语音TTS生成',
+        modelName: model,
+        interfaceType: 'SpeechGeneration',
+        category: 'voice',
+        durationMs: latencyMs,
+        purpose: `合成语音: ${(text || '语音回复').slice(0, 30)}...`,
+      }),
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message || '语音合成网络异常' });

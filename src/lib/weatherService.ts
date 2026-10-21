@@ -192,6 +192,8 @@ class WeatherService {
             locationStatus: locationErrorMsg ? locationStatus : (isAuto ? 'gps_active' : 'manual_city'),
             locationError: locationErrorMsg || undefined,
             isAutoLocation: isAuto,
+            isSimulated: false,
+            dataStatus: 'realtime',
           };
           this.cachedWeather = freshWeather;
           try {
@@ -211,13 +213,32 @@ class WeatherService {
 
     this.isFetching = false;
     if (this.cachedWeather && this.cachedWeather.city) {
-      return this.cachedWeather;
+      const cachedResult: WeatherData = {
+        ...this.cachedWeather,
+        dataStatus: 'cached',
+        dataSourceInfo: {
+          ...(this.cachedWeather.dataSourceInfo || {
+            serviceName: 'Open-Meteo WMO Forecast API',
+            geocodingService: 'Open-Meteo & BigDataCloud',
+            requestTimestamp: Date.now(),
+            responseTimestamp: Date.now(),
+            networkLatencyMs: 0,
+            timezone: 'Asia/Shanghai',
+            coordinates: { latitude: this.cachedWeather.latitude, longitude: this.cachedWeather.longitude },
+          }),
+          isFromCache: true,
+          cacheTimestamp: this.cachedWeather.updatedAt || Date.now(),
+        },
+      };
+      return cachedResult;
     }
 
     const fallback: WeatherData = {
       ...INITIAL_EMPTY_WEATHER_DATA,
+      dataStatus: 'error',
+      isSimulated: false,
       locationStatus: locationStatus,
-      locationError: locationErrorMsg || undefined,
+      locationError: locationErrorMsg || '网络连接异常且无历史天气缓存',
     };
     return fallback;
   }
@@ -357,6 +378,9 @@ class WeatherService {
   ): WeatherEvent[] {
     const config = careConfig || this.getWeatherCareConfig();
     if (!config.enabled || !weather || !weather.city) return [];
+
+    // Strictly ignore simulated test weather data to prevent polluting background proactive care triggers
+    if (weather.isSimulated || weather.dataStatus === 'simulated') return [];
 
     const events: WeatherEvent[] = [];
     const hourly = weather.hourly || [];

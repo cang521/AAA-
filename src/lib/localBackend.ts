@@ -129,6 +129,113 @@ export function createBackendUnavailableResponse(detailMessage?: string): Respon
   });
 }
 
+import { recordApiLog } from './apiLogger';
+
+function deriveAppName(path: string): string {
+  if (path.includes('chat')) return '微信-AI聊天';
+  if (path.includes('weather') || path.includes('proactive')) return '主动关怀提醒';
+  if (path.includes('moments')) return '朋友圈AI互动';
+  if (path.includes('analyze-image')) return '图像识别与多模态分析';
+  if (path.includes('generate-image')) return 'AI生图绘制';
+  if (path.includes('generate-speech')) return 'AI语音TTS生成';
+  if (path.includes('fix-css')) return '美化-CSS优化';
+  if (path.includes('url-parse')) return '外端接入-链接解析';
+  if (path.includes('adapter-json')) return '设置-JSON格式适配';
+  if (path.includes('worldbook')) return '世界书-AI架构';
+  if (path.includes('gomoku') || path.includes('tictactoe') || path.includes('rps') || path.includes('telepathy')) return '游戏中心-AI互动';
+  if (path.includes('test-connection') || path.includes('test-model')) return 'API设置-连接测试';
+  return '系统-模型API';
+}
+
+function deriveInterfaceType(path: string): string {
+  const parts = path.split('/').filter(Boolean);
+  return parts[parts.length - 1] || 'ModelCall';
+}
+
+function deriveCategory(path: string): 'text' | 'image' | 'voice' {
+  if (path.includes('image')) return 'image';
+  if (path.includes('speech') || path.includes('audio') || path.includes('voice')) return 'voice';
+  return 'text';
+}
+
+function derivePurpose(path: string, init?: RequestInit): string {
+  if (init?.body && typeof init.body === 'string') {
+    try {
+      const parsed = JSON.parse(init.body);
+      if (parsed.character?.name) return `与 ${parsed.character.name} 对话交互`;
+      if (parsed.prompt) return `执行 AI 指令: ${String(parsed.prompt).slice(0, 30)}`;
+      if (parsed.text) return `处理 AI 文本: ${String(parsed.text).slice(0, 30)}`;
+    } catch {}
+  }
+  return '系统模型接口交互';
+}
+
+async function logModelApiResponse(
+  apiPath: string,
+  init: RequestInit | undefined,
+  resp: Response,
+  startTime: number
+) {
+  try {
+    const durationMs = Date.now() - startTime;
+    const isModelEndpoint = apiPath.startsWith('/api/gemini/') || apiPath.startsWith('/api/provider/');
+    if (!isModelEndpoint) return;
+
+    if (resp.ok) {
+      const clone = resp.clone();
+      const data = await clone.json().catch(() => null);
+      if (data) {
+        if (data.apiLog) {
+          recordApiLog(data.apiLog);
+        } else if (data.log) {
+          recordApiLog(data.log);
+        } else if (data.success === false) {
+          recordApiLog({
+            appName: deriveAppName(apiPath),
+            interfaceType: deriveInterfaceType(apiPath),
+            category: deriveCategory(apiPath),
+            status: 'failed',
+            durationMs,
+            errorMessage: data.error || data.message || '模型响应失败',
+            purpose: derivePurpose(apiPath, init),
+          });
+        } else {
+          // Automatic success log fallback if backend didn't attach apiLog object
+          recordApiLog({
+            appName: deriveAppName(apiPath),
+            interfaceType: deriveInterfaceType(apiPath),
+            category: deriveCategory(apiPath),
+            status: 'success',
+            durationMs,
+            purpose: derivePurpose(apiPath, init),
+          });
+        }
+      }
+    } else {
+      const clone = resp.clone();
+      const text = await clone.text().catch(() => '');
+      let errorMsg = `HTTP ${resp.status} ${resp.statusText}`;
+      try {
+        const j = JSON.parse(text);
+        errorMsg = j.error || j.message || errorMsg;
+      } catch {}
+
+      recordApiLog({
+        appName: deriveAppName(apiPath),
+        interfaceType: deriveInterfaceType(apiPath),
+        category: deriveCategory(apiPath),
+        status: 'failed',
+        durationMs,
+        errorType: `HTTP ${resp.status}`,
+        errorMessage: errorMsg,
+        purpose: `${derivePurpose(apiPath, init)} (请求异常 ${resp.status})`,
+      });
+    }
+  } catch {
+    // Interceptor catch: Never disrupt primary app flow
+  }
+}
+
 /**
  * Unified internal API request wrapper.
  * - In standard Web / AI Studio preview environment: requests /api/... directly.
@@ -140,15 +247,39 @@ export async function apiFetch(
   init?: RequestInit
 ): Promise<Response> {
   const apiPath = extractApiPath(input);
+  const startTime = Date.now();
 
   // Non-internal /api/ request (e.g. user custom external Base URL) or not Native Android
   if (!Capacitor.isNativePlatform() || !apiPath) {
-    return fetch(input, init);
+    let resp: Response;
+    try {
+      resp = await fetch(input, init);
+      if (apiPath) {
+        logModelApiResponse(apiPath, init, resp, startTime);
+      }
+      return resp;
+    } catch (netErr: any) {
+      if (apiPath) {
+        recordApiLog({
+          appName: deriveAppName(apiPath),
+          interfaceType: deriveInterfaceType(apiPath),
+          category: deriveCategory(apiPath),
+          status: 'failed',
+          durationMs: Date.now() - startTime,
+          errorType: 'NetworkError',
+          errorMessage: netErr?.message || '网络连接拒绝或未响应',
+          purpose: `${derivePurpose(apiPath, init)} (网络失败)`,
+        });
+      }
+      throw netErr;
+    }
   }
 
   const isReady = await waitForNodeBackend();
   if (!isReady) {
-    return createBackendUnavailableResponse(failureReason || 'Android 内置后端未启动');
+    const errResp = createBackendUnavailableResponse(failureReason || 'Android 内置后端未启动');
+    logModelApiResponse(apiPath, init, errResp, startTime);
+    return errResp;
   }
 
   const targetUrl = `${LOCAL_BACKEND}${apiPath}`;
@@ -168,14 +299,19 @@ export async function apiFetch(
       const text = await cloned.text().catch(() => '');
       if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html') || text.trim().startsWith('<!doctype')) {
         console.warn('[小手机本地后端] 拦截到 HTML 响应，转换为明确后端未就绪错误');
-        return createBackendUnavailableResponse('Android 内置后端未启动（收到前端静态页面响应，非 API 数据）');
+        const errResp = createBackendUnavailableResponse('Android 内置后端未启动（收到前端静态页面响应，非 API 数据）');
+        logModelApiResponse(apiPath, init, errResp, startTime);
+        return errResp;
       }
     }
 
+    logModelApiResponse(apiPath, init, resp, startTime);
     return resp;
   } catch (netErr: any) {
     console.error('[小手机本地后端] 连接 127.0.0.1:3000 失败:', netErr);
-    return createBackendUnavailableResponse(`Android 内置后端未启动 (127.0.0.1:3000 连接失败: ${netErr.message || '网络连接拒绝'})`);
+    const errResp = createBackendUnavailableResponse(`Android 内置后端未启动 (127.0.0.1:3000 连接失败: ${netErr.message || '网络连接拒绝'})`);
+    logModelApiResponse(apiPath, init, errResp, startTime);
+    return errResp;
   }
 }
 

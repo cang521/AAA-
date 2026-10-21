@@ -49,7 +49,7 @@ class ChatMessageBridge {
     const multiBubbleConfig = getMultiBubbleConfig();
     const shouldSplit = multiBubbleConfig.enabled;
     const rawBubbles = shouldSplit
-      ? splitMessageIntoSentenceBubbles(cleanRawText, { maxBubbles: multiBubbleConfig.maxBubbles })
+      ? splitMessageIntoSentenceBubbles(cleanRawText, { maxBubbles: Math.min(3, multiBubbleConfig.maxBubbles || 3) })
       : [cleanRawText];
 
     const bubbles = rawBubbles.map((b) => sanitizeReplyText(b)).filter((s) => s.trim().length > 0);

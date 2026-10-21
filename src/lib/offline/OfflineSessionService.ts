@@ -22,6 +22,9 @@ import { getAiArchiveConfig } from '../chatArchiveDb';
 import { getLifeContextForPrompt } from '../lifeState/lifeStateStore';
 import { triggerLifeStateExtraction } from '../lifeState/lifeStateExtractor';
 
+import { loadWorldBooks, loadPermissions } from '../storage';
+import { evaluateWorldBookContext } from '../aiReply/contextEvaluator';
+
 export class OfflineSessionService {
   /**
    * Start a new active Offline Session for a character and scene
@@ -104,13 +107,17 @@ export class OfflineSessionService {
       ? session.stateHistory[session.stateHistory.length - 1].state
       : OfflineStateEngine.createInitialState();
 
-    // 3. Recall character's WeChat memories & saved Offline Session memories on demand
+    // 3. Recall character's WeChat memories, WorldBooks & saved Offline Session memories on demand
     const archiveConfig = await getAiArchiveConfig(character.id).catch(() => ({ searchMode: 'auto' as const }));
     const searchMode = archiveConfig.searchMode || 'auto';
     const isShort = userText.trim().length <= 6 && /^(在吗|早|早安|晚安|嗯|嗯嗯|好的|好|哈哈|哈哈哈|收到|对|是的|拜拜|再见|666|okk?|hi|hello|hey|yo|\?|？|！|!|我困了|好累|刚吃完|在干嘛|笑死|好吧|然后呢|去哪|好呀)$/i.test(userText.trim());
 
     const hasHistoryIntent = searchMode !== 'off' && !isShort && /[？\?怎么什么哪谁为何几干嘛回忆记得以前上次曾经那个之前当初过去那时那天那次想念那会儿记不记聊过说过提过]/i.test(userText);
     const hasVaultIntent = !isShort && /(设定|背景|档案|记忆库|资料|文件|世界观|剧本|人设|故事|秘密|能力|职业|小说|大纲|自述|身世)/i.test(userText);
+
+    const worldBooks = loadWorldBooks();
+    const globalPerms = loadPermissions();
+    const worldBookEval = evaluateWorldBookContext(character.id, userText, worldBooks, globalPerms);
 
     const [{ recalledText }, vaultRecall, pastOfflineMemories] = await Promise.all([
       hasHistoryIntent
@@ -133,50 +140,29 @@ export class OfflineSessionService {
       recentMessages: recentMessagesWindow,
       recalledMemories: [recalledText, vaultRecall.recalledText, pastOfflineMemories].filter(Boolean).join('\n\n'),
       lifeStateContext,
+      worldBookContext: worldBookEval?.promptText,
       previousState: lastState,
       userInput: userText,
       currentTime: new Date().toLocaleString('zh-CN'),
       apiConfig,
     };
 
-    let aiRawResponse = '';
-    try {
-      const res = await apiFetch('/api/gemini/offline-chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(promptPayload),
-      });
-      const data = await res.json();
-      if (data.success && data.reply) {
-        aiRawResponse = typeof data.reply === 'string' ? data.reply : JSON.stringify(data.reply);
-      } else if (data.data) {
-        aiRawResponse = typeof data.data === 'string' ? data.data : JSON.stringify(data.data);
-      }
-    } catch (e) {
-      console.warn('Offline chat API error, falling back to local engine:', e);
-    }
-
-    // Parse AI Structured Output
     let parsedReply = '';
     let parsedAction = '';
     let parsedStateRaw: any = null;
 
-    if (aiRawResponse) {
-      try {
-        const cleanJson = aiRawResponse.replace(/```json|```/g, '').trim();
-        const jsonObj = JSON.parse(cleanJson);
-        parsedReply = jsonObj.reply || '';
-        parsedAction = jsonObj.action || '';
-        parsedStateRaw = jsonObj.state || null;
-      } catch {
-        // Plain text fallback
-        parsedReply = aiRawResponse;
-      }
-    }
-
-    // Normalization & Fallbacks
-    if (!parsedReply && !parsedAction) {
-      parsedReply = '（静静看着你，眼中泛起温柔的光）嗯... 我一直在这里听着呢。';
+    const res = await apiFetch('/api/gemini/offline-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(promptPayload),
+    });
+    const data = await res.json();
+    if (data.success && (data.reply || data.action)) {
+      parsedReply = typeof data.reply === 'string' ? data.reply : '';
+      parsedAction = typeof data.action === 'string' ? data.action : '';
+      parsedStateRaw = data.state || null;
+    } else {
+      throw new Error(data.error || 'AI 线下生成服务异常，请重试');
     }
 
     const fullReplyText = parsedReply.trim() || parsedAction.trim();
@@ -251,6 +237,10 @@ export class OfflineSessionService {
     const hasHistoryIntent = searchMode !== 'off' && !isShort && /[？\?怎么什么哪谁为何几干嘛回忆记得以前上次曾经那个之前当初过去那时那天那次想念那会儿记不记聊过说过提过]/i.test(userInput);
     const hasVaultIntent = !isShort && /(设定|背景|档案|记忆库|资料|文件|世界观|剧本|人设|故事|秘密|能力|职业|小说|大纲|自述|身世)/i.test(userInput);
 
+    const worldBooks = loadWorldBooks();
+    const globalPerms = loadPermissions();
+    const worldBookEval = evaluateWorldBookContext(character.id, userInput, worldBooks, globalPerms);
+
     const [{ recalledText }, vaultRecall, pastOfflineMemories] = await Promise.all([
       hasHistoryIntent
         ? recallCharacterMemories(character.id, userInput, 3).catch(() => ({ recalledText: '' }))
@@ -270,44 +260,30 @@ export class OfflineSessionService {
       sceneSnapshot: session.sceneSnapshot,
       recentMessages: recentMessagesWindow,
       recalledMemories: [recalledText, vaultRecall.recalledText, pastOfflineMemories].filter(Boolean).join('\n\n'),
+      worldBookContext: worldBookEval?.promptText,
       previousState,
       userInput,
       currentTime: new Date().toLocaleString('zh-CN'),
       apiConfig,
     };
 
-    let aiRawResponse = '';
+    let parsedReply = '';
+    let parsedAction = '';
+    let parsedStateRaw: any = null;
+
     const res = await apiFetch('/api/gemini/offline-chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(promptPayload),
     });
     const data = await res.json();
-    if (data.success && data.reply) {
-      aiRawResponse = typeof data.reply === 'string' ? data.reply : JSON.stringify(data.reply);
-    } else if (data.data) {
-      aiRawResponse = typeof data.data === 'string' ? data.data : JSON.stringify(data.data);
-    } else if (!data.success) {
+    if (data.success && (data.reply || data.action)) {
+      parsedReply = typeof data.reply === 'string' ? data.reply : '';
+      parsedAction = typeof data.action === 'string' ? data.action : '';
+      parsedStateRaw = data.state || null;
+    } else {
       throw new Error(data.error || '重新生成请求失败');
     }
-
-    // 7. Parse AI Structured Output
-    let parsedReply = '';
-    let parsedAction = '';
-    let parsedStateRaw: any = null;
-
-    if (aiRawResponse) {
-      try {
-        const cleanJson = aiRawResponse.replace(/```json|```/g, '').trim();
-        const jsonObj = JSON.parse(cleanJson);
-        parsedReply = jsonObj.reply || '';
-        parsedAction = jsonObj.action || '';
-        parsedStateRaw = jsonObj.state || null;
-      } catch {
-        parsedReply = aiRawResponse;
-      }
-    }
-
     if (!parsedReply && !parsedAction) {
       throw new Error('模型未返回有效回复内容');
     }

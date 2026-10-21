@@ -243,7 +243,7 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
         };
 
         await saveChatMessage(careMsg);
-        weatherService.markCareTriggered(eventType);
+        // Sandbox test mode does NOT call markCareTriggered to avoid polluting production care cooldowns
 
         setTestCareStatus(`✅ 关怀消息已成功送达！【${targetChar.name}】发来一条微信消息：“${data.text}”`);
       } else {
@@ -353,9 +353,27 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
           <Clock className="w-3 h-3 text-sky-400 shrink-0" />
           <span>{currentTimeInfo.formattedDate} {currentTimeInfo.dayOfWeek} {currentTimeInfo.formattedTime}</span>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
+          {weather?.isSimulated || weather?.dataStatus === 'simulated' ? (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-semibold border border-purple-500/30">
+              🧪 [测试数据/模拟模式]
+            </span>
+          ) : weather?.dataStatus === 'cached' || weather?.dataSourceInfo?.isFromCache ? (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-medium border border-amber-500/30">
+              🟡 离线缓存数据
+            </span>
+          ) : weather?.dataStatus === 'error' ? (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-medium border border-rose-500/30">
+              🔴 请求/定位失败
+            </span>
+          ) : (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-medium border border-emerald-500/30 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              🟢 实时直连
+            </span>
+          )}
           <span className="text-[10px] text-slate-500">
-            {isAutoGps ? '📡 手机 GPS 实时感知' : '📍 手动城市模式'}
+            {isAutoGps ? '📡 GPS定位' : '📍 手动城市'}
           </span>
         </div>
       </div>
@@ -369,7 +387,7 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
             <div className="flex-1">
               <div className="text-xs font-semibold text-amber-200">手机 GPS 定位未授权</div>
               <div className="text-[11px] text-amber-300/80 mt-0.5 leading-relaxed">
-                当前未能获取到您的经纬度。您可以点击右上角授权定位，或直接在城市列表中手动搜索您所在的城市。
+                当前未能获取到您的经纬度。已为您保留手动城市切换，点击右侧可手动搜索您所在的城市。
               </div>
             </div>
             <button

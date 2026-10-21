@@ -32,6 +32,7 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
   const [totalCount, setTotalCount] = useState(0);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState<{ message: string; lastUserText: string } | null>(null);
 
   // Ending Flow States
   const [isEnding, setIsEnding] = useState(false);
@@ -116,15 +117,18 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
     }
   };
 
-  const handleSend = async (e?: React.FormEvent) => {
+  const handleSend = async (e?: React.FormEvent, overrideText?: string) => {
     if (e) e.preventDefault();
-    if (!inputText.trim() || isSending) return;
+    const userText = (overrideText || inputText).trim();
+    if (!userText || isSending) return;
 
-    const userText = inputText.trim();
-    setInputText('');
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
+    if (!overrideText) {
+      setInputText('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
     }
+    setSendError(null);
     setIsSending(true);
 
     // Optimistic UI insert for user message
@@ -135,7 +139,7 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
       text: userText,
       timestamp: Date.now(),
     };
-    setMessages((prev) => [...prev, tempUserMsg]);
+    setMessages((prev) => [...prev.filter((m) => !m.id.startsWith('temp_')), tempUserMsg]);
     setTimeout(() => scrollToBottom(), 50);
 
     try {
@@ -148,11 +152,15 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
       );
 
       setCurrentSession(updatedSession);
-      setMessages((prev) => [...prev.filter((m) => !m.id.startsWith('temp_')), tempUserMsg, aiMessage]);
+      setMessages((prev) => [...prev.filter((m) => !m.id.startsWith('temp_')), aiMessage]);
+      setSendError(null);
       setTimeout(() => scrollToBottom(), 50);
     } catch (e: any) {
       console.error('Failed to send offline message', e);
-      alert(`回复失败: ${e?.message || '网络或模型异常'}`);
+      setSendError({
+        message: e?.message || '网络连接或模型响应异常，回复生成失败',
+        lastUserText: userText,
+      });
     } finally {
       setIsSending(false);
     }
@@ -295,6 +303,24 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
           <div className="flex items-center gap-2 text-xs text-indigo-300/80 p-2">
             <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
             <span>{character.name} 正在体会当下氛围并思索对白...</span>
+          </div>
+        )}
+
+        {/* Error Banner with Retry */}
+        {sendError && (
+          <div className="p-3 rounded-2xl bg-rose-950/60 border border-rose-500/40 text-xs flex items-center justify-between gap-2 shadow-lg">
+            <div className="flex items-center gap-2 min-w-0">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span className="text-rose-200 truncate">{sendError.message}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleSend(undefined, sendError.lastUserText)}
+              className="px-2.5 py-1 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] shrink-0 transition flex items-center gap-1 active:scale-95 cursor-pointer shadow-md"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>重试</span>
+            </button>
           </div>
         )}
 

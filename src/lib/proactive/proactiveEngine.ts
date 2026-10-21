@@ -7,7 +7,7 @@ import {
   CharacterProactiveRuntime,
   ProactiveSettings,
 } from './proactiveStore';
-import { loadCharacters, loadUserProfile, loadMenstrualData, loadApiConfig, loadMemos } from '../storage';
+import { loadCharacters, loadUserProfile, loadMenstrualData, loadPermissions, loadApiConfig, loadMemos } from '../storage';
 import { weatherService } from '../weatherService';
 import { systemNativeService } from '../systemNativeService';
 import { chatMessageBridge } from '../agent/ChatMessageBridge';
@@ -18,6 +18,7 @@ import { getRecentChatMessages, getLatestInteractionTimestamps } from '../chatDb
 import { getLifeEventsSync, updateLifeEvent } from '../lifeState/lifeStateStore';
 
 import { deviceContextManager } from '../agent/DeviceContextManager';
+import { permissionManager } from '../agent/PermissionManager';
 
 export interface ProactiveTriggerCandidate {
   characterId: string;
@@ -78,7 +79,9 @@ class ProactiveEngine {
       const deviceContext = settings.appUsage?.enabled !== false
         ? await deviceContextManager.getContext().catch(() => null)
         : null;
-      const menstrualData = settings.menstrual.enabled ? loadMenstrualData() : null;
+      const perms = loadPermissions();
+      const isMenstrualPermittedGlobal = Boolean(perms?.appAccess?.menstrualData);
+      const menstrualData = settings.menstrual.enabled && isMenstrualPermittedGlobal ? loadMenstrualData() : null;
       const userProfile = loadUserProfile();
       const apiConfig = loadApiConfig();
 
@@ -163,8 +166,12 @@ class ProactiveEngine {
         }
 
         // 2. Menstrual Care Candidate (Checks explicit AI authorization)
+        const menstrualAiPermLevel = permissionManager.checkAiPermission(char.id, 'menstrual_health');
         const isMenstrualAuthorized =
+          isMenstrualPermittedGlobal &&
           settings.menstrual.enabled &&
+          menstrualAiPermLevel !== 'DENY' &&
+          (menstrualData?.aiAccessEnabled !== false) &&
           (settings.menstrual.allowedCharacterIds.includes(char.id) || settings.allowAllCharacters);
 
         const lastPeriodStart = (menstrualData as any)?.lastPeriodStartDate || (menstrualData?.records && menstrualData.records.length > 0 ? menstrualData.records[menstrualData.records.length - 1].startDate : undefined);
@@ -331,6 +338,8 @@ class ProactiveEngine {
               eventId: screenUsageEventId,
               eventData: {
                 durationMinutes: deviceContext.foregroundDurationMinutes,
+                totalScreenTimeMinutes: deviceContext.totalScreenTimeMinutes,
+                appUsageTimeMinutes: deviceContext.appUsageTimeMinutes,
                 currentApp: deviceContext.currentApp,
               },
             });
@@ -494,19 +503,19 @@ class ProactiveEngine {
         proactiveGate.markQuotaExhausted(30 * 60 * 1000);
       }
 
-      if (data && data.success && data.text) {
+      if (data && data.success && data.text && data.text.trim()) {
         return {
-          text: data.text,
+          text: data.text.trim(),
           thinkingProcess: data.thinkingProcess,
         };
       }
     } catch (e) {
-      console.warn('API call failed for proactive generation:', e);
+      console.warn('[proactiveEngine] API call failed for proactive generation:', e);
     }
 
-    // Fallback text if API offline
-    const fallbackText = this.getFallbackProactiveText(character.name, candidate);
-    return { text: fallbackText };
+    // Model failed -> Do NOT fake message with hardcoded canned text. Return empty text.
+    console.warn(`[proactiveEngine] AI 模型生成主动消息失败或为空 (${candidate.triggerType})，严格遵守“禁止死套话与伪造生成成功”要求`);
+    return { text: '' };
   }
 
   /**

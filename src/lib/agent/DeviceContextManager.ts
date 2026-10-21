@@ -17,7 +17,9 @@ import { androidPermissionBridgeClient } from './AndroidPermissionBridgeClient';
 export interface DeviceContextState {
   currentApp: string;
   appCategory: string;
-  foregroundDurationMinutes: number;
+  foregroundDurationMinutes: number; // 连续使用时间
+  totalScreenTimeMinutes?: number;    // 累计屏幕使用时间 (今日总亮屏)
+  appUsageTimeMinutes?: number;      // 应用自身使用时间
   currentScene: SceneId;
   batteryLevel: number;
   isCharging: boolean;
@@ -32,6 +34,8 @@ class DeviceContextManager {
   private simulatedForegroundApp: string = '小手机桌面';
   private foregroundStartTime: number = Date.now();
   private nativeUsageMinutesCache: number = 0;
+  private nativeTotalScreenTimeCache: number = 0;
+  private nativeAppUsageTimeCache: number = 0;
   private lastUsageQueryAt: number = 0;
 
   private constructor() {}
@@ -53,15 +57,15 @@ class DeviceContextManager {
    */
   public async checkAndRequestUsageStatsPermission(): Promise<boolean> {
     if (!androidPermissionBridgeClient.isNativeAndroid()) {
-      return true; // Web preview mode
+      return false; // Web preview mode
     }
     try {
       const perms = await androidPermissionBridgeClient.checkAllPermissions();
-      if (perms && perms['app_usage'] === 'GRANTED') {
+      if (perms && perms['usage_stats'] === 'GRANTED') {
         return true;
       }
       // Request permission via Android permission bridge
-      const res = await androidPermissionBridgeClient.requestPermission('app_usage' as any);
+      const res = await androidPermissionBridgeClient.requestPermission('usage_stats');
       return res.success;
     } catch (e) {
       console.warn('[DeviceContextManager] UsageStats permission check error:', e);
@@ -74,8 +78,8 @@ class DeviceContextManager {
     const network = systemNativeService.getNetworkState();
     const currentScene = permissionManager.getCurrentScene();
 
-    let elapsedMinutes = Math.max(0, Math.floor((Date.now() - this.foregroundStartTime) / (1000 * 60)));
-    let permissionGranted = true;
+    let continuousMinutes = Math.max(0, Math.floor((Date.now() - this.foregroundStartTime) / (1000 * 60)));
+    let permissionGranted = false;
 
     // If running on native Android, attempt to fetch real UsageStatsManager duration if permitted
     if (androidPermissionBridgeClient.isNativeAndroid()) {
@@ -83,21 +87,22 @@ class DeviceContextManager {
         const now = Date.now();
         if (now - this.lastUsageQueryAt > 30000) { // Throttle native queries to every 30s
           const perms = await androidPermissionBridgeClient.checkAllPermissions();
-          permissionGranted = perms?.['app_usage'] === 'GRANTED';
+          permissionGranted = perms?.['usage_stats'] === 'GRANTED';
           if (permissionGranted) {
-            // Query native usage stats bridge if available
-            const plugin = (window as any).Capacitor?.Plugins?.AndroidPermissionBridge;
-            if (plugin && plugin.getScreenUsageMinutes) {
-              const res = await plugin.getScreenUsageMinutes();
-              if (res && typeof res.minutes === 'number') {
-                this.nativeUsageMinutesCache = res.minutes;
+            // Query native usage stats bridge
+            const res = await androidPermissionBridgeClient.getScreenUsageMinutes();
+            if (res && res.hasPermission) {
+              this.nativeTotalScreenTimeCache = res.totalScreenTimeMinutes || 0;
+              this.nativeAppUsageTimeCache = res.appUsageTimeMinutes || 0;
+              if (typeof res.continuousUsageMinutes === 'number' && res.continuousUsageMinutes > 0) {
+                this.nativeUsageMinutesCache = res.continuousUsageMinutes;
               }
             }
           }
           this.lastUsageQueryAt = now;
         }
         if (permissionGranted && this.nativeUsageMinutesCache > 0) {
-          elapsedMinutes = Math.max(elapsedMinutes, this.nativeUsageMinutesCache);
+          continuousMinutes = Math.max(continuousMinutes, this.nativeUsageMinutesCache);
         }
       } catch (e) {
         console.warn('[DeviceContextManager] Failed to query Android UsageStatsManager:', e);
@@ -107,7 +112,9 @@ class DeviceContextManager {
     return {
       currentApp: this.simulatedForegroundApp,
       appCategory: currentScene,
-      foregroundDurationMinutes: elapsedMinutes,
+      foregroundDurationMinutes: continuousMinutes,
+      totalScreenTimeMinutes: this.nativeTotalScreenTimeCache,
+      appUsageTimeMinutes: this.nativeAppUsageTimeCache,
       currentScene,
       batteryLevel: battery.level,
       isCharging: battery.isCharging,

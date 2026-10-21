@@ -12,7 +12,7 @@ import { NativeNotificationService } from '../NativeNotificationService';
 import { sanitizeReplyText } from '../thinkCleaner';
 import { splitMessageIntoSentenceBubbles, calculateTypingDelay, getMultiBubbleConfig } from '../wechatMultiBubble';
 import { loadFromStorage, saveToStorage, loadApiConfig } from '../storage';
-import { evaluateWeatherContext, evaluateMenstrualContext } from './contextEvaluator';
+import { evaluateWeatherContext, evaluateMenstrualContext, evaluateWorldBookContext } from './contextEvaluator';
 import { AiReplyTask, AiReplyTaskStatus } from './AiReplyTaskStore';
 
 const nativeNotificationService = NativeNotificationService.getInstance();
@@ -162,8 +162,11 @@ export async function executeAiReplyTask(
       : vaultRecall.recalledText;
   }
 
-  const associatedWorldBook = (worldBooks || []).find((wb) =>
-    wb.associatedCharacterIds?.includes(activeCharacter.id)
+  const worldBookEval = evaluateWorldBookContext(
+    activeCharacter.id,
+    task.combinedUserText,
+    worldBooks,
+    permissions
   );
 
   const devicesSummary =
@@ -191,15 +194,9 @@ export async function executeAiReplyTask(
       devicesSummary,
       memosSummary: memos.map((m) => `- ${m.title}: ${m.content}`).join('\n'),
       lifeStateContext: getLifeContextForPrompt(activeCharacter.id),
-      associatedWorldBook:
-        permissions?.appAccess?.worldBookData !== false && associatedWorldBook
-          ? {
-              title: associatedWorldBook.title,
-              description: associatedWorldBook.description,
-              worldSetting: associatedWorldBook.worldSetting,
-              entries: associatedWorldBook.entries,
-            }
-          : null,
+      worldBookContext: worldBookEval ? worldBookEval.promptText : undefined,
+      associatedWorldBooks: worldBookEval ? worldBookEval.activeBooks : undefined,
+      associatedWorldBook: worldBookEval && worldBookEval.activeBooks[0] ? worldBookEval.activeBooks[0] : null,
       permissions,
       apiConfig,
     }),
@@ -233,7 +230,9 @@ export async function executeAiReplyTask(
   const thinkingProcess =
     data.thinkingProcess ||
     `【推理分析】:\n1. 结合角色人设 [${activeCharacter.persona}]\n2. ${
-      associatedWorldBook ? `融入世界书设定 [《${associatedWorldBook.title}》]` : '无关联世界书，按日常设定回复'
+      worldBookEval
+        ? `融入世界书合集 [${worldBookEval.summaryTitle}，包含 ${worldBookEval.associatedBooksCount} 本世界书，激活 ${worldBookEval.matchedEntries.length} 条词条]`
+        : '无关联世界书，按日常设定回复'
     }\n3. ${memoryRecallNote}\n4. 形成专属口吻回复。`;
 
   // Multi-bubble delivery & save to IndexedDB
