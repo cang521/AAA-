@@ -57,6 +57,7 @@ class ProactiveGateService {
   private static instance: ProactiveGateService;
   private lastGateRejectReason: string = '初始化完成';
   private lastCheckTimestamp: number = 0;
+  private quotaExhaustedUntil: number = 0;
 
   private constructor() {}
 
@@ -65,6 +66,25 @@ class ProactiveGateService {
       ProactiveGateService.instance = new ProactiveGateService();
     }
     return ProactiveGateService.instance;
+  }
+
+  public markQuotaExhausted(cooldownMs: number = 30 * 60 * 1000): void {
+    this.quotaExhaustedUntil = Date.now() + cooldownMs;
+    this.lastGateRejectReason = `【Gate 熔断】AI 模型配额超限(429)，已开启 ${Math.ceil(cooldownMs / 60000)} 分钟避让保护`;
+    console.warn(`[ProactiveGate] API 额度超限熔断已开启，静默避让 ${Math.ceil(cooldownMs / 60000)} 分钟`);
+  }
+
+  public isQuotaExhausted(): boolean {
+    return Date.now() < this.quotaExhaustedUntil;
+  }
+
+  public clearQuotaExhaustion(): void {
+    this.quotaExhaustedUntil = 0;
+  }
+
+  public getQuotaRemainingMinutes(): number {
+    if (!this.isQuotaExhausted()) return 0;
+    return Math.ceil((this.quotaExhaustedUntil - Date.now()) / 60000);
   }
 
   public getLastRejectReason(): string {
@@ -76,7 +96,7 @@ class ProactiveGateService {
   }
 
   /**
-   * Evaluates all 10 unified security & policy checks before sending ANY proactive chat message
+   * Evaluates all unified security & policy checks before sending ANY proactive chat message
    */
   public canSendProactiveMessage(params: GateCheckParams): GateCheckResult {
     this.lastCheckTimestamp = Date.now();
@@ -85,6 +105,14 @@ class ProactiveGateService {
     const now = new Date();
     const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const priority = params.priority || 'medium';
+
+    // 0. Check API Quota Circuit Breaker (Auto-backoff on 429 RESOURCE_EXHAUSTED)
+    if (this.isQuotaExhausted()) {
+      const minutesLeft = this.getQuotaRemainingMinutes();
+      const reason = `【Gate 拦截】AI 模型配额暂时耗尽 (429/限流)，已进入熔断避让保护 (剩余约 ${minutesLeft} 分钟)`;
+      this.lastGateRejectReason = reason;
+      return { allowed: false, reason };
+    }
 
     // 1. Check Master Switch
     if (!settings.enabled) {

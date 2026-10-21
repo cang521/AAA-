@@ -17,11 +17,18 @@ interface CharacterMeta {
 // In-memory cache for fast O(1) sync UI rendering of contact/conversation list
 const metaCache = new Map<string, CharacterMeta>();
 let isMetaLoaded = false;
-export interface ChatDbSaveEvent {
-  type: 'message_saved';
-  characterId: string;
-  message: ChatMessage;
-}
+export type ChatDbSaveEvent =
+  | {
+      type: 'message_saved';
+      characterId: string;
+      message: ChatMessage;
+    }
+  | {
+      type: 'turn_replaced';
+      characterId: string;
+      oldMessageIds: string[];
+      newMessages: ChatMessage[];
+    };
 
 type ChatDbListener = (event?: ChatDbSaveEvent) => void;
 
@@ -631,6 +638,50 @@ export async function updateChatMessage(msg: ChatMessage): Promise<void> {
   clearChatIndexCache(msg.characterId);
   await reloadMetaCache(db);
   notifyChange();
+}
+
+/**
+ * Atomically replaces an AI reply turn's messages in IndexedDB and notifies listeners.
+ * Ensures data integrity: old messages are only deleted as new messages are stored.
+ */
+export async function replaceChatMessagesTurn(
+  characterId: string,
+  oldMessageIds: string[],
+  newMessages: ChatMessage[]
+): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction([STORE_MESSAGES], 'readwrite');
+  const store = tx.objectStore(STORE_MESSAGES);
+
+  // 1. Delete old messages
+  for (const id of oldMessageIds) {
+    store.delete(id);
+  }
+
+  // 2. Add all new messages
+  for (const msg of newMessages) {
+    if (!msg.sourceType || !msg.importance) {
+      const classified = classifyMessage(msg);
+      msg.sourceType = msg.sourceType || classified.sourceType;
+      msg.importance = msg.importance || classified.importance;
+    }
+    store.put(msg);
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+
+  clearChatIndexCache(characterId);
+  await reloadMetaCache(db);
+
+  notifyChange({
+    type: 'turn_replaced',
+    characterId,
+    oldMessageIds,
+    newMessages,
+  });
 }
 
 /**

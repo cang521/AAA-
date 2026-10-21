@@ -25,6 +25,11 @@ export interface AiReplyTask {
   createdAt: number;
   updatedAt: number;
   error?: string;
+  turnId?: string;
+  isReroll?: boolean;
+  replaceTurnId?: string;
+  replaceMessageIds?: string[];
+  conversationHistoryOverride?: ChatMessage[];
   options?: {
     vibrationPattern?: number[];
   };

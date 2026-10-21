@@ -1224,7 +1224,21 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
               </div>
 
               <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-[10px] space-y-1">
-                <span className="text-zinc-400 font-medium block">最近一次 ProactiveGate 网关判定：</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-400 font-medium block">最近一次 ProactiveGate 网关判定：</span>
+                  {proactiveGate.isQuotaExhausted() && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        proactiveGate.clearQuotaExhaustion();
+                        setSettings({ ...settings });
+                      }}
+                      className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 font-medium border border-amber-500/30"
+                    >
+                      清除熔断并重试
+                    </button>
+                  )}
+                </div>
                 <p className="text-amber-300 font-mono bg-black/40 p-1.5 rounded-lg border border-zinc-800">
                   {proactiveGate.getLastRejectReason()}
                 </p>

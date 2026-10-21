@@ -18,7 +18,7 @@ export const DEFAULT_TEXT_CONNECTION: ApiConnectionConfig = {
   provider: 'google_gemini',
   baseUrl: '',
   apiKey: '',
-  model: 'gemini-3.6-flash',
+  model: 'gemini-3.8-flash',
 };
 
 export const DEFAULT_IMAGE_CONNECTION: ApiConnectionConfig = {
@@ -78,7 +78,31 @@ export function loadApiSettings(): ApiSettings {
 
 export function saveApiSettings(settings: ApiSettings): void {
   try {
-    localStorage.setItem(STORAGE_KEY_API_SETTINGS_V1, JSON.stringify(settings));
+    if (!settings || typeof settings !== 'object') return;
+    const sanitized: ApiSettings = {
+      text: {
+        provider: settings.text?.provider || DEFAULT_TEXT_CONNECTION.provider,
+        baseUrl: typeof settings.text?.baseUrl === 'string' ? settings.text.baseUrl : DEFAULT_TEXT_CONNECTION.baseUrl,
+        apiKey: typeof settings.text?.apiKey === 'string' ? settings.text.apiKey : DEFAULT_TEXT_CONNECTION.apiKey,
+        model: settings.text?.model || DEFAULT_TEXT_CONNECTION.model,
+        apiProtocol: settings.text?.apiProtocol,
+      },
+      image: {
+        provider: settings.image?.provider || DEFAULT_IMAGE_CONNECTION.provider,
+        baseUrl: typeof settings.image?.baseUrl === 'string' ? settings.image.baseUrl : DEFAULT_IMAGE_CONNECTION.baseUrl,
+        apiKey: typeof settings.image?.apiKey === 'string' ? settings.image.apiKey : DEFAULT_IMAGE_CONNECTION.apiKey,
+        model: settings.image?.model || DEFAULT_IMAGE_CONNECTION.model,
+        apiProtocol: settings.image?.apiProtocol,
+      },
+      voice: {
+        provider: settings.voice?.provider || DEFAULT_VOICE_CONNECTION.provider,
+        baseUrl: typeof settings.voice?.baseUrl === 'string' ? settings.voice.baseUrl : DEFAULT_VOICE_CONNECTION.baseUrl,
+        apiKey: typeof settings.voice?.apiKey === 'string' ? settings.voice.apiKey : DEFAULT_VOICE_CONNECTION.apiKey,
+        model: settings.voice?.model || DEFAULT_VOICE_CONNECTION.model,
+        apiProtocol: settings.voice?.apiProtocol,
+      },
+    };
+    localStorage.setItem(STORAGE_KEY_API_SETTINGS_V1, JSON.stringify(sanitized));
   } catch (e) {
     console.error('Failed to save api settings', e);
   }

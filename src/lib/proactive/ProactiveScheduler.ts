@@ -12,6 +12,7 @@
  */
 
 import { proactiveEngine } from './proactiveEngine';
+import { proactiveGate } from './ProactiveGate';
 import { eventManager } from '../agent/EventManager';
 import { deviceContextManager } from '../agent/DeviceContextManager';
 
@@ -127,8 +128,10 @@ class ProactiveSchedulerService {
         });
       }
 
-      // 2. Execute ProactiveEngine Evaluation
-      await proactiveEngine.checkAndTriggerProactiveMessages();
+      // 2. Execute ProactiveEngine Evaluation (skipped gracefully if quota is exhausted)
+      if (!proactiveGate.isQuotaExhausted()) {
+        await proactiveEngine.checkAndTriggerProactiveMessages();
+      }
     } catch (e) {
       console.error('[ProactiveScheduler] Evaluation error:', e);
     } finally {

@@ -53,6 +53,10 @@ class ProactiveEngine {
         return { triggeredCount: 0 };
       }
 
+      if (proactiveGate.isQuotaExhausted()) {
+        return { triggeredCount: 0 };
+      }
+
       const runtimeState = loadProactiveRuntimeState();
       const now = new Date();
       const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -476,8 +480,21 @@ class ProactiveEngine {
         }),
       });
 
-      const data = await res.json();
-      if (data.success && data.text) {
+      const data = await res.json().catch(() => null);
+
+      if (
+        res.status === 429 ||
+        data?.isQuotaExceeded ||
+        data?.error?.includes('429') ||
+        data?.error?.includes('RESOURCE_EXHAUSTED') ||
+        data?.error?.includes('Quota exceeded') ||
+        data?.error?.includes('配额用尽')
+      ) {
+        console.warn('[proactiveEngine] 检测到 AI 模型配额超限(429 RESOURCE_EXHAUSTED)，开启 30 分钟避让保护');
+        proactiveGate.markQuotaExhausted(30 * 60 * 1000);
+      }
+
+      if (data && data.success && data.text) {
         return {
           text: data.text,
           thinkingProcess: data.thinkingProcess,

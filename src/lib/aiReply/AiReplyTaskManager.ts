@@ -18,6 +18,8 @@ export class AiReplyTaskManager {
   private listeners: Set<TaskChangeListener> = new Set();
   private activeExecutions: Set<string> = new Set(); // characterIds currently processing
   private characterTaskStates: Map<string, AiReplyTaskStatus> = new Map();
+  private enqueuedMessageIds: Set<string> = new Set(); // Prevent duplicate tasks for same user messages
+  private failedTasks: Map<string, { task: AiReplyTask; error: string }> = new Map();
   private isInitialized = false;
 
   private constructor() {}
@@ -85,6 +87,31 @@ export class AiReplyTaskManager {
     return null;
   }
 
+  public getCharacterFailedTask(characterId: string): { task: AiReplyTask; error: string } | null {
+    return this.failedTasks.get(characterId) || null;
+  }
+
+  public clearFailedTask(characterId: string): void {
+    this.failedTasks.delete(characterId);
+    this.notifyListeners();
+  }
+
+  public async retryFailedTask(characterId: string): Promise<boolean> {
+    const failedInfo = this.failedTasks.get(characterId);
+    if (!failedInfo) return false;
+    this.failedTasks.delete(characterId);
+
+    const task = failedInfo.task;
+    task.retryCount = 0;
+    task.status = 'queued';
+    task.updatedAt = Date.now();
+    await updateTaskStatus(task.id, 'queued');
+    this.characterTaskStates.set(characterId, 'queued');
+    this.notifyListeners();
+    this.processQueue();
+    return true;
+  }
+
   public async enqueueTask(params: {
     characterId: string;
     userMessages: ChatMessage[];
@@ -92,8 +119,20 @@ export class AiReplyTaskManager {
     currentTurnMessageIds: string[];
     currentImageAnalysis?: any;
     options?: { vibrationPattern?: number[] };
-  }): Promise<AiReplyTask> {
+  }): Promise<AiReplyTask | null> {
+    // Defense-in-depth: Deduplicate tasks for the same user messages
+    const newTurnMsgIds = (params.currentTurnMessageIds || []).filter((id) => !this.enqueuedMessageIds.has(id));
+    if (newTurnMsgIds.length === 0 && params.userMessages.length > 0) {
+      console.warn('[AiReplyTaskManager] 消息已在回复队列中，忽略重复创建任务');
+      return null;
+    }
+    newTurnMsgIds.forEach((id) => this.enqueuedMessageIds.add(id));
+
+    // Clear previous failed task when new task is created
+    this.failedTasks.delete(params.characterId);
+
     const taskId = 'task_' + params.characterId + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+    const turnId = 'turn_ai_' + params.characterId + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
     const newTask: AiReplyTask = {
       id: taskId,
       characterId: params.characterId,
@@ -106,6 +145,55 @@ export class AiReplyTaskManager {
       maxRetries: 2,
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      turnId,
+      options: params.options,
+    };
+
+    this.characterTaskStates.set(params.characterId, 'queued');
+    await saveReplyTask(newTask);
+    this.notifyListeners();
+    this.processQueue();
+    return newTask;
+  }
+
+  public async enqueueRerollTask(params: {
+    characterId: string;
+    userMessages: ChatMessage[];
+    combinedUserText: string;
+    currentTurnMessageIds: string[];
+    currentImageAnalysis?: any;
+    replaceTurnId?: string;
+    replaceMessageIds: string[];
+    conversationHistoryOverride?: ChatMessage[];
+    options?: { vibrationPattern?: number[] };
+  }): Promise<AiReplyTask | null> {
+    if (this.activeExecutions.has(params.characterId) || this.characterTaskStates.get(params.characterId)) {
+      console.warn('[AiReplyTaskManager] 角色当前正处于生成/回复中，请勿重复发起重Roll');
+      return null;
+    }
+
+    this.failedTasks.delete(params.characterId);
+
+    const taskId = 'task_reroll_' + params.characterId + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+    const turnId = 'turn_ai_' + params.characterId + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+
+    const newTask: AiReplyTask = {
+      id: taskId,
+      characterId: params.characterId,
+      userMessages: params.userMessages,
+      combinedUserText: params.combinedUserText,
+      currentTurnMessageIds: params.currentTurnMessageIds,
+      currentImageAnalysis: params.currentImageAnalysis,
+      status: 'queued',
+      retryCount: 0,
+      maxRetries: 1,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      turnId,
+      isReroll: true,
+      replaceTurnId: params.replaceTurnId,
+      replaceMessageIds: params.replaceMessageIds,
+      conversationHistoryOverride: params.conversationHistoryOverride,
       options: params.options,
     };
 
@@ -151,6 +239,7 @@ export class AiReplyTaskManager {
       });
 
       this.characterTaskStates.set(characterId, 'completed');
+      this.failedTasks.delete(characterId);
       await updateTaskStatus(taskId, 'completed');
     } catch (err: any) {
       console.error(`[AiReplyTaskManager] Task ${taskId} failed:`, err);
@@ -166,20 +255,15 @@ export class AiReplyTaskManager {
         this.characterTaskStates.set(characterId, 'failed');
         await updateTaskStatus(taskId, 'failed', { error: err?.message || 'Execution failed' });
 
-        // Save fallback warm message to IndexedDB so conversation doesn't stall silently
-        const characters = loadFromStorage<AiCharacter[]>('phone_ai_characters', []);
-        const character = characters.find((c) => c.id === characterId);
-        const charName = character?.name || 'AI';
-
-        const fallbackMsg: ChatMessage = {
-          id: 'msg_' + Date.now() + '_fallback',
-          characterId,
-          sender: 'ai',
-          text: `${charName}: 刚刚网络开小差了，不过我已经收到你的消息啦！随时跟我说说你的近况吧~`,
-          timestamp: Date.now(),
-          thinkingProcess: '【网络与系统连接偏离离线恢复预案】',
-        };
-        await saveChatMessage(fallbackMsg).catch(() => {});
+        // Record failed task so UI can show real error and allow user to retry.
+        // DO NOT write a fake warm message pretending the model succeeded!
+        // The original user message is already securely saved in IndexedDB.
+        this.failedTasks.set(characterId, {
+          task,
+          error: task.isReroll
+            ? `重新生成回复失败 (${err?.message || '网络或模型异常'})，原回复已完整保留`
+            : err?.message || '模型回复请求失败或超时',
+        });
       }
     } finally {
       this.activeExecutions.delete(characterId);

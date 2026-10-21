@@ -57,6 +57,8 @@ import {
   Download,
   Upload,
   History,
+  AlertCircle,
+  RotateCcw,
 } from 'lucide-react';
 import {
   AiCharacter,
@@ -247,13 +249,17 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [showWorldBookModal, setShowWorldBookModal] = useState<WorldBook | null>(null);
 
-  // Double click detection on Send Button & refs
-  const lastSendClickTimeRef = useRef<number>(0);
-  const sendClickTimerRef = useRef<any>(null);
+  // In-flight send guard & rapid click debounce refs
+  const isSubmittingRef = useRef<boolean>(false);
+  const lastSendTimestampRef = useRef<number>(0);
+  const lastRerollTimestampRef = useRef<number>(0);
+  const [failedTaskInfo, setFailedTaskInfo] = useState<{ task: any; error: string } | null>(null);
+  const [, setTaskUpdateTick] = useState<number>(0);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement | null>(null);
   const isComposingRef = useRef<boolean>(false);
+  const lastCompositionEndTimestampRef = useRef<number>(0);
 
   // Scroll to bottom helper
   const scrollToBottom = useCallback((smooth = false) => {
@@ -296,7 +302,14 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     textarea.style.overflowY = isOverflowing ? 'auto' : 'hidden';
 
     // Smart Cursor & Scroll Position Management:
-    // "光标在哪里，输入框就服务于哪里。"
+    // Restore selection range to guarantee cursor does not jump to end when editing in the middle
+    // ONLY restore selection range when NOT composing to avoid corrupting Chinese/IME candidate cursor!
+    if (!isComposingRef.current) {
+      try {
+        textarea.setSelectionRange(selectionStart, textarea.selectionEnd);
+      } catch {}
+    }
+
     if (isOverflowing) {
       // Only scroll to bottom when user is actively typing/editing at the very end of text
       const isAtEnd = selectionStart >= totalLength;
@@ -524,6 +537,26 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
             [characterId]: (prev[characterId] || 0) + 1,
           }));
         }
+      } else if (event && event.type === 'turn_replaced') {
+        const { characterId, oldMessageIds, newMessages } = event;
+        if (activeChatIdRef.current === characterId) {
+          const oldSet = new Set(oldMessageIds);
+          setDisplayedMessages((prev) => {
+            const firstOldIdx = prev.findIndex((m) => oldSet.has(m.id));
+            if (firstOldIdx === -1) {
+              return prev;
+            }
+            const withoutOld = prev.filter((m) => !oldSet.has(m.id));
+            const updated = [
+              ...withoutOld.slice(0, firstOldIdx),
+              ...newMessages,
+              ...withoutOld.slice(firstOldIdx),
+            ];
+            latestMessagesRef.current = updated;
+            return updated;
+          });
+          setTotalHistoryCount((count) => Math.max(0, count - oldMessageIds.length + newMessages.length));
+        }
       } else {
         // Bulk save or DB restore / clear occurred: refresh active chat view if open
         if (activeChatIdRef.current) {
@@ -622,13 +655,16 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   // Sync AI typing / thinking state from background AiReplyTaskManager
   useEffect(() => {
     const updateTaskStatusState = () => {
+      setTaskUpdateTick((t) => t + 1);
       if (activeCharacter) {
         const state = aiReplyTaskManager.getCharacterTaskState(activeCharacter.id);
         setActiveTaskStatus(state);
         setIsLoading(!!state);
+        setFailedTaskInfo(aiReplyTaskManager.getCharacterFailedTask(activeCharacter.id));
       } else {
         setActiveTaskStatus(null);
         setIsLoading(false);
+        setFailedTaskInfo(null);
       }
     };
     updateTaskStatusState();
@@ -680,65 +716,86 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     latestMessagesRef.current = displayedMessages;
   }, [displayedMessages]);
 
-  const lastUserMsgSubmitRef = useRef<{ text: string; image?: string | null; time: number }>({
-    text: '',
-    image: null,
-    time: 0,
-  });
+  // Unified Single-Click Message Send (Saves user message and immediately enqueues AI reply)
+  const handleSendMessage = async () => {
+    if (isSubmittingRef.current) return;
+    const now = Date.now();
+    // Prevent duplicate user messages from rapid double-clicks
+    if (now - lastSendTimestampRef.current < 400) return;
 
-  // 1. Single User Message Send (Queues without immediate AI reply)
-  const handleSendUserOnlyMessage = async (text: string, imageToSendArg?: string | null) => {
-    const cleanText = text.trim();
-    const imageToSend = imageToSendArg !== undefined ? imageToSendArg : selectedImage;
+    const rawVal = inputRef.current?.value !== undefined ? inputRef.current.value : inputText;
+    const cleanText = rawVal.trim();
+    const imageToSend = selectedImage;
     if (!cleanText && !imageToSend) return;
     if (!activeCharacter) return;
 
-    // Defense-in-depth: Prevent duplicate user message submission within 1200ms window
-    const now = Date.now();
-    if (
-      lastUserMsgSubmitRef.current.text === cleanText &&
-      lastUserMsgSubmitRef.current.image === (imageToSend || null) &&
-      now - lastUserMsgSubmitRef.current.time < 1200
-    ) {
-      console.warn('[Chat] Blocked duplicate user message creation within 1200ms window');
-      return;
-    }
-    lastUserMsgSubmitRef.current = { text: cleanText, image: imageToSend || null, time: now };
+    isSubmittingRef.current = true;
+    lastSendTimestampRef.current = now;
 
-    const userMsg: ChatMessage = {
-      id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-      characterId: activeCharacter.id,
-      sender: 'user',
-      text: cleanText,
-      imageUrl: imageToSend || undefined,
-      timestamp: Date.now(),
-      quoteMessageId: quoteMsgId || undefined,
-    };
-
+    // Immediately clear input DOM and React state to prevent duplicate read or ghost typing
     setInputText('');
     if (inputRef.current) {
       inputRef.current.value = '';
       adjustTextareaHeight(inputRef.current);
     }
     setSelectedImage(null);
+    const quoteId = quoteMsgId;
     setQuoteMsgId(null);
 
+    const userMsg: ChatMessage = {
+      id: 'msg_user_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      characterId: activeCharacter.id,
+      sender: 'user',
+      text: cleanText,
+      imageUrl: imageToSend || undefined,
+      timestamp: Date.now(),
+      quoteMessageId: quoteId || undefined,
+    };
+
     // Synchronously update latest messages ref before React state re-renders
-    latestMessagesRef.current = [...latestMessagesRef.current, userMsg];
-    setDisplayedMessages((prev) => [...prev, userMsg]);
+    const currentList = latestMessagesRef.current.length > 0 ? latestMessagesRef.current : displayedMessages;
+    const updatedMessages = [...currentList, userMsg];
+    latestMessagesRef.current = updatedMessages;
+    setDisplayedMessages(updatedMessages);
     setTotalHistoryCount((c) => c + 1);
     scrollToBottom(true);
 
     try {
+      // 1. Authoritative write to IndexedDB first
       await saveChatMessage(userMsg);
-    } catch (e) {
-      console.error('Save chat message error', e);
-    }
 
-    // Call Vision API asynchronously if an image was attached
-    if (imageToSend) {
-      try {
-        const visionRes = await apiFetch('/api/gemini/analyze-image', {
+      // 2. Clear any prior failure state for this character
+      aiReplyTaskManager.clearFailedTask(activeCharacter.id);
+
+      // 3. Find all consecutive unreplied user messages waiting for AI response
+      const pendingUserMsgs: ChatMessage[] = [];
+      for (let i = updatedMessages.length - 1; i >= 0; i--) {
+        if (updatedMessages[i].sender === 'user') {
+          pendingUserMsgs.unshift(updatedMessages[i]);
+        } else {
+          break;
+        }
+      }
+
+      const currentTurnMessageIds = pendingUserMsgs.map((m) => m.id).filter(Boolean);
+      const combinedUserText =
+        pendingUserMsgs.length > 1
+          ? pendingUserMsgs.map((m, idx) => `[第 ${idx + 1} 句] ${m.text}`).join('\n')
+          : cleanText;
+
+      // 4. Enqueue background AI task with unique task ID
+      setIsLoading(true);
+      await aiReplyTaskManager.enqueueTask({
+        characterId: activeCharacter.id,
+        userMessages: pendingUserMsgs,
+        combinedUserText,
+        currentTurnMessageIds,
+        options: { vibrationPattern: [60, 40, 60] },
+      });
+
+      // 5. Asynchronous vision analysis if an image was attached
+      if (imageToSend) {
+        apiFetch('/api/gemini/analyze-image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -746,27 +803,24 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
             prompt: '请用中文详细识别并总结描述这张图片中的事物、文字、场景以及主要细节。',
             apiConfig,
           }),
-        });
-        const visionData = await visionRes.json();
-        if (visionData.success && visionData.description) {
-          userMsg.imageAnalysis = visionData.description;
-          userMsg.imageAnalysisStatus = 'success';
-        } else {
-          userMsg.imageAnalysisStatus = 'failed';
-        }
-      } catch (e) {
-        console.warn('Vision API call error:', e);
-        userMsg.imageAnalysisStatus = 'failed';
+        })
+          .then((res) => res.json())
+          .then(async (visionData) => {
+            if (visionData.success && visionData.description) {
+              userMsg.imageAnalysis = visionData.description;
+              userMsg.imageAnalysisStatus = 'success';
+              await saveChatMessage(userMsg);
+              setDisplayedMessages((prev) =>
+                prev.map((m) => (m.id === userMsg.id ? { ...userMsg } : m))
+              );
+            }
+          })
+          .catch((err) => console.warn('Vision API call error:', err));
       }
-
-      try {
-        await saveChatMessage(userMsg);
-        setDisplayedMessages((prev) =>
-          prev.map((m) => (m.id === userMsg.id ? { ...userMsg } : m))
-        );
-      } catch (e) {
-        console.warn('Failed to save image analysis to DB:', e);
-      }
+    } catch (e) {
+      console.error('Failed to save message and enqueue AI task:', e);
+    } finally {
+      isSubmittingRef.current = false;
     }
   };
 
@@ -862,68 +916,6 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     setMultiTypingName(null);
   };
 
-  // 2. Trigger AI Reply for all pending consecutive user messages (Delegated to AiReplyTaskManager)
-  const handleTriggerAiReply = async (optionalImmediateUserText?: string) => {
-    if (!activeCharacter) return;
-
-    let currentDisplayed = [
-      ...(latestMessagesRef.current.length > 0 ? latestMessagesRef.current : displayedMessages),
-    ];
-
-    // If there's pending input in text box, send it first
-    if (optionalImmediateUserText && optionalImmediateUserText.trim()) {
-      const userMsg: ChatMessage = {
-        id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-        characterId: activeCharacter.id,
-        sender: 'user',
-        text: optionalImmediateUserText.trim(),
-        timestamp: Date.now(),
-        quoteMessageId: quoteMsgId || undefined,
-      };
-      setInputText('');
-      setQuoteMsgId(null);
-      currentDisplayed.push(userMsg);
-      setDisplayedMessages(currentDisplayed);
-      setTotalHistoryCount((c) => c + 1);
-      scrollToBottom(true);
-      await saveChatMessage(userMsg).catch((e) => console.error('Save user msg error', e));
-    }
-
-    // Find all consecutive unreplied user messages waiting for AI response in this turn
-    const pendingUserMsgs: ChatMessage[] = [];
-    for (let i = currentDisplayed.length - 1; i >= 0; i--) {
-      if (currentDisplayed[i].sender === 'user') {
-        pendingUserMsgs.unshift(currentDisplayed[i]);
-      } else {
-        break;
-      }
-    }
-
-    const currentTurnMessageIds = pendingUserMsgs.map((m) => m.id).filter(Boolean);
-
-    const combinedUserText =
-      pendingUserMsgs.length > 1
-        ? pendingUserMsgs.map((m, idx) => `[第 ${idx + 1} 句] ${m.text}`).join('\n')
-        : pendingUserMsgs.length === 1
-        ? pendingUserMsgs[0].text
-        : '你好呀！';
-
-    const lastUserMsgWithImage = [...currentDisplayed].reverse().find((m) => m.sender === 'user' && m.imageAnalysis);
-    const currentImageAnalysis = lastUserMsgWithImage?.imageAnalysis;
-
-    setIsLoading(true);
-
-    // Enqueue persistent AI task into background TaskManager
-    await aiReplyTaskManager.enqueueTask({
-      characterId: activeCharacter.id,
-      userMessages: pendingUserMsgs,
-      combinedUserText,
-      currentTurnMessageIds,
-      currentImageAnalysis,
-      options: { vibrationPattern: [60, 40, 60] },
-    });
-  };
-
   // Trigger Proactive Care Message based on Menstrual Health Status (Requirement 7)
   const handleTriggerProactiveCare = async () => {
     if (!activeCharacter) return;
@@ -969,56 +961,6 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       await deliverAiMessagesInSequence(fallbackText, fallbackThinking, activeCharacter);
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  // Send Button Single Click (Send User Msg) & Double Click (Trigger AI Reply) Router
-  const handleSendButtonClick = () => {
-    const now = Date.now();
-    const lastTime = lastSendClickTimeRef.current;
-    const timeSinceLast = lastTime > 0 ? now - lastTime : Infinity;
-
-    const doubleClickWindow = 350; // ms
-
-    if (timeSinceLast < doubleClickWindow) {
-      // Rapid second click detected: Trigger AI reply ONLY (Do NOT send duplicate user message)
-      lastSendClickTimeRef.current = 0;
-
-      // Force-clear input DOM and state so no draft can be re-consumed
-      setInputText('');
-      if (inputRef.current) {
-        inputRef.current.value = '';
-        adjustTextareaHeight(inputRef.current);
-      }
-      setSelectedImage(null);
-
-      if (!isLoading) {
-        handleTriggerAiReply();
-      }
-      return;
-    }
-
-    // Single click (or 1st click of a double click)
-    lastSendClickTimeRef.current = now;
-
-    const rawVal = inputRef.current?.value !== undefined ? inputRef.current.value : inputText;
-    const textToSend = rawVal.trim();
-    const imageToSend = selectedImage;
-
-    if (textToSend || imageToSend) {
-      // Immediately clear DOM and React state BEFORE dispatching to prevent stale closures or duplicate reads
-      if (inputRef.current) {
-        inputRef.current.value = '';
-        adjustTextareaHeight(inputRef.current);
-      }
-      setInputText('');
-      setSelectedImage(null);
-
-      handleSendUserOnlyMessage(textToSend, imageToSend);
-    } else {
-      if (!isLoading) {
-        handleTriggerAiReply();
-      }
     }
   };
 
@@ -1140,14 +1082,96 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     setMsgLongPressMenu(null);
   };
 
-  // Refresh / Regenerate AI response
+  // Refresh / Regenerate AI response (Whole turn re-roll with data integrity)
   const handleRefreshAiResponse = async (aiMsg: ChatMessage) => {
     if (!activeCharacter) return;
     setMsgLongPressMenu(null);
-    setDisplayedMessages((prev) => prev.filter((m) => m.id !== aiMsg.id));
-    setTotalHistoryCount((c) => Math.max(0, c - 1));
-    await deleteChatMessage(aiMsg.id, activeCharacter.id);
-    handleTriggerAiReply();
+
+    const now = Date.now();
+    // 1. Prevent duplicate rapid clicks on re-roll
+    if (now - lastRerollTimestampRef.current < 800) {
+      return;
+    }
+    lastRerollTimestampRef.current = now;
+
+    // 2. Prevent concurrent task conflicts for this character
+    if (aiReplyTaskManager.isCharacterThinking(activeCharacter.id)) {
+      setMultiBubbleToast('AI 正在思考回复中，请稍候再重试');
+      setTimeout(() => setMultiBubbleToast(null), 2000);
+      return;
+    }
+
+    const currentList = latestMessagesRef.current.length > 0 ? latestMessagesRef.current : displayedMessages;
+
+    // 3. Identify all AI messages belonging to this entire response turn (Multi-bubble turn detection)
+    let turnAiMessages: ChatMessage[] = [];
+    if (aiMsg.turnId) {
+      turnAiMessages = currentList.filter(
+        (m) => m.sender === 'ai' && m.characterId === activeCharacter.id && m.turnId === aiMsg.turnId
+      );
+    }
+
+    // Fallback if legacy message or turnId was not tagged: find contiguous AI block
+    if (turnAiMessages.length === 0) {
+      const targetIdx = currentList.findIndex((m) => m.id === aiMsg.id);
+      if (targetIdx !== -1) {
+        let start = targetIdx;
+        while (start > 0 && currentList[start - 1].sender === 'ai' && currentList[start - 1].characterId === activeCharacter.id) {
+          start--;
+        }
+        let end = targetIdx;
+        while (end < currentList.length - 1 && currentList[end + 1].sender === 'ai' && currentList[end + 1].characterId === activeCharacter.id) {
+          end++;
+        }
+        turnAiMessages = currentList.slice(start, end + 1);
+      } else {
+        turnAiMessages = [aiMsg];
+      }
+    }
+
+    // 4. Find the original user messages that prompted this turn and preceding history context
+    const firstAiMsg = turnAiMessages[0];
+    const firstAiIdx = currentList.findIndex((m) => m.id === firstAiMsg.id);
+
+    const promptUserMsgs: ChatMessage[] = [];
+    let userScanIdx = firstAiIdx !== -1 ? firstAiIdx - 1 : currentList.length - 1;
+    while (userScanIdx >= 0 && currentList[userScanIdx].sender === 'user') {
+      promptUserMsgs.unshift(currentList[userScanIdx]);
+      userScanIdx--;
+    }
+
+    const combinedUserText =
+      promptUserMsgs.length > 1
+        ? promptUserMsgs.map((m, idx) => `[第 ${idx + 1} 句] ${m.text}`).join('\n')
+        : promptUserMsgs.length === 1
+        ? promptUserMsgs[0].text
+        : activeCharacter.greeting || '你好呀！';
+
+    const lastImgMsg = [...promptUserMsgs].reverse().find((m) => m.imageAnalysis);
+    const currentImageAnalysis = lastImgMsg?.imageAnalysis;
+
+    // Sliced conversation history preceding this turn (excluding this turn's user messages and everything after)
+    const conversationHistoryOverride = currentList.slice(0, userScanIdx + 1);
+
+    // 5. DO NOT delete old messages before new generation succeeds!
+    // Enqueue candidate reroll task in background TaskManager
+    setIsLoading(true);
+    setMultiBubbleToast(`正在重新生成${turnAiMessages.length > 1 ? `整轮(${turnAiMessages.length}条气泡)` : ''}回复...`);
+    setTimeout(() => setMultiBubbleToast(null), 2500);
+
+    const replaceMessageIds = turnAiMessages.map((m) => m.id);
+
+    await aiReplyTaskManager.enqueueRerollTask({
+      characterId: activeCharacter.id,
+      userMessages: promptUserMsgs,
+      combinedUserText,
+      currentTurnMessageIds: promptUserMsgs.map((m) => m.id),
+      currentImageAnalysis,
+      replaceTurnId: aiMsg.turnId || undefined,
+      replaceMessageIds,
+      conversationHistoryOverride,
+      options: { vibrationPattern: [60, 40, 60] },
+    });
   };
 
   // Context Menu handlers
@@ -1588,6 +1612,65 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                           </React.Fragment>
                         );
                       })}
+
+                      {/* Real-time Typing Bubble when AI is thinking / generating / delivering */}
+                      {activeTaskStatus && (
+                        <div className="flex items-start gap-2.5 my-2 animate-in fade-in duration-150">
+                          <img
+                            src={activeCharacter.avatar}
+                            alt={activeCharacter.name}
+                            className="w-9 h-9 rounded-xl object-cover border border-zinc-750 shrink-0"
+                          />
+                          <div className="p-3 rounded-2xl rounded-tl-xs bg-zinc-850 border border-zinc-750/80 text-zinc-300 text-xs flex items-center gap-2 shadow-xs">
+                            <span className="flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce [animation-delay:-0.3s]" />
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce [animation-delay:-0.15s]" />
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce" />
+                            </span>
+                            <span className="text-zinc-400 text-[11px]">
+                              {activeTaskStatus === 'delivering' ? '正在输入…' : '正在思考回复…'}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* AI Reply Failure & Retry Alert */}
+                      {failedTaskInfo && (
+                        <div className="my-2 p-3 rounded-2xl bg-rose-950/40 border border-rose-500/30 flex items-center justify-between gap-3 text-xs text-rose-200 animate-in fade-in duration-200">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                            <div className="min-w-0">
+                              <p className="font-semibold text-rose-300">回复生成失败</p>
+                              <p className="text-[11px] text-rose-300/80 truncate">
+                                {failedTaskInfo.error || '模型生成失败或响应超时'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                aiReplyTaskManager.clearFailedTask(activeCharacter.id);
+                              }}
+                              className="px-2 py-1 rounded-lg text-[11px] text-zinc-400 hover:text-zinc-200 transition cursor-pointer"
+                            >
+                              忽略
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (activeCharacter) {
+                                  await aiReplyTaskManager.retryFailedTask(activeCharacter.id);
+                                }
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-medium text-[11px] flex items-center gap-1 transition cursor-pointer shadow-xs"
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                              <span>重试</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Multi-bubble toast notification */}
@@ -1691,28 +1774,33 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                               }}
                               onCompositionEnd={(e) => {
                                 isComposingRef.current = false;
+                                lastCompositionEndTimestampRef.current = Date.now();
                                 setInputText(e.currentTarget.value);
                                 adjustTextareaHeight(e.currentTarget);
                               }}
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter' && !isComposingRef.current) {
+                                const isComposing =
+                                  isComposingRef.current ||
+                                  (e.nativeEvent as any).isComposing ||
+                                  e.keyCode === 229 ||
+                                  Date.now() - lastCompositionEndTimestampRef.current < 60;
+
+                                if (e.key === 'Enter') {
+                                  if (isComposing) {
+                                    // In Chinese/Japanese IME candidate selection: do NOT send
+                                    return;
+                                  }
                                   if (e.shiftKey) {
-                                    // Shift + Enter: allow native newline insertion and adjust height
+                                    // Shift + Enter: native newline, adjust height
                                     setTimeout(() => {
                                       if (inputRef.current) {
                                         adjustTextareaHeight(inputRef.current);
                                       }
                                     }, 0);
                                   } else {
-                                    // Enter alone: send user message or trigger AI reply
+                                    // Enter alone: single-click send message
                                     e.preventDefault();
-                                    const rawVal = inputRef.current?.value !== undefined ? inputRef.current.value : inputText;
-                                    const val = rawVal.trim();
-                                    if (val || selectedImage) {
-                                      handleSendUserOnlyMessage(val, selectedImage);
-                                    } else {
-                                      handleTriggerAiReply();
-                                    }
+                                    handleSendMessage();
                                   }
                                 }
                               }}
@@ -1721,11 +1809,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
                             {/* Send Button */}
                             <button
-                              onClick={handleSendButtonClick}
-                              disabled={isLoading}
+                              onClick={handleSendMessage}
+                              disabled={(!inputText.trim() && !selectedImage) || isSubmittingRef.current}
                               style={{ touchAction: 'manipulation' }}
-                              title="单击发送当前消息/图片（可连发多句）；快速双击直接召唤 AI 综合回复"
-                              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-40 text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0 self-end mb-0.5"
+                              title="发送消息"
+                              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-40 disabled:pointer-events-none text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0 self-end mb-0.5"
                             >
                               <Send className="w-3.5 h-3.5" />
                               <span>发送</span>
@@ -1867,7 +1955,16 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                             </div>
                             <div className="flex items-center justify-between gap-2 mt-0.5">
                               <p className="text-xs text-zinc-400 truncate flex-1">
-                                {lastMsg ? lastMsg.text : char.greeting}
+                                {aiReplyTaskManager.isCharacterThinking(char.id) ? (
+                                  <span className="text-emerald-400 font-medium flex items-center gap-1 animate-pulse">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
+                                    正在输入中…
+                                  </span>
+                                ) : lastMsg ? (
+                                  lastMsg.text
+                                ) : (
+                                  char.greeting
+                                )}
                               </p>
                               {unreadCount > 0 && (
                                 <span className="text-[10px] min-w-[18px] h-4 px-1.5 rounded-full bg-emerald-500 text-white font-bold shrink-0 flex items-center justify-center animate-pulse">

@@ -1,5 +1,5 @@
 import { AiCharacter, ChatMessage, UserProfile, AiPermissions, WorldBook, Memo } from '../../types';
-import { getRecentChatMessages, saveChatMessage, recallCharacterMemories } from '../chatDb';
+import { getRecentChatMessages, saveChatMessage, recallCharacterMemories, replaceChatMessagesTurn } from '../chatDb';
 import { getAiArchiveConfig, recallArchivedHistory } from '../chatArchiveDb';
 import { searchAiMemoryChunks } from '../aiMemoryVaultDb';
 import { systemNativeService } from '../systemNativeService';
@@ -101,8 +101,19 @@ export async function executeAiReplyTask(
 
   // Recent History excluding current turn
   const currentTurnMsgIdSet = new Set(task.currentTurnMessageIds || []);
-  const rawHistory = await getRecentChatMessages(activeCharacter.id, contextLimit).catch(() => []);
-  const conversationHistory = rawHistory.filter((msg) => !currentTurnMsgIdSet.has(msg.id));
+  let conversationHistory: ChatMessage[];
+  if (task.conversationHistoryOverride && Array.isArray(task.conversationHistoryOverride)) {
+    conversationHistory = task.conversationHistoryOverride;
+  } else {
+    const rawHistory = await getRecentChatMessages(activeCharacter.id, contextLimit).catch(() => []);
+    conversationHistory = rawHistory.filter((msg) => !currentTurnMsgIdSet.has(msg.id));
+  }
+
+  // If this is a reroll task, make sure the old AI messages being replaced are also excluded from prompt context
+  if (task.replaceMessageIds && task.replaceMessageIds.length > 0) {
+    const replaceIdSet = new Set(task.replaceMessageIds);
+    conversationHistory = conversationHistory.filter((msg) => !replaceIdSet.has(msg.id));
+  }
 
   // Evaluate memory needs
   const { shouldRecallChatHistory, shouldRecallVault } = evaluateMemoryNeeds(
@@ -196,7 +207,7 @@ export async function executeAiReplyTask(
 
   const data = await res.json();
   if (!data.success) {
-    throw new Error(data.error || 'Gemini API response failed');
+    throw new Error(data.error || '模型生成请求失败');
   }
 
   // Device actions
@@ -229,38 +240,76 @@ export async function executeAiReplyTask(
   const multiBubbleConfig = getMultiBubbleConfig();
 
   const cleanRawText = sanitizeReplyText(data.text || '');
+  if (!cleanRawText.trim()) {
+    throw new Error('模型返回空内容，无法生成有效回复');
+  }
+
   const shouldSplit = multiBubbleConfig.enabled;
   const rawBubbles = shouldSplit
     ? splitMessageIntoSentenceBubbles(cleanRawText, { maxBubbles: multiBubbleConfig.maxBubbles })
     : [cleanRawText];
 
   const bubbles = rawBubbles.map((b) => sanitizeReplyText(b)).filter((s) => s.trim().length > 0);
+  if (bubbles.length === 0) {
+    throw new Error('模型未生成有效文本气泡');
+  }
+
+  const assignedTurnId =
+    task.turnId ||
+    'turn_ai_' + activeCharacter.id + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
 
   if (onStatusChange) await onStatusChange('delivering');
 
-  for (let i = 0; i < bubbles.length; i++) {
-    const bubbleText = bubbles[i];
-    if (i > 0) {
-      const delay = calculateTypingDelay(bubbleText, multiBubbleConfig.speed);
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-
-    const bubbleMsg: ChatMessage = {
+  if (task.isReroll && task.replaceMessageIds && task.replaceMessageIds.length > 0) {
+    // Reroll turn replacement: All bubbles have passed validation and non-empty check.
+    // Atomically replace old turn in IndexedDB so old messages are never prematurely lost if generation failed,
+    // and neither old nor new duplicate on screen.
+    const newBubbleMessages: ChatMessage[] = bubbles.map((bubbleText, i) => ({
       id: 'msg_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2, 6),
       characterId: activeCharacter.id,
       sender: 'ai',
       text: bubbleText,
       timestamp: Date.now() + i * 15,
+      turnId: assignedTurnId,
+      turnBubbleIndex: i,
+      turnTotalBubbles: bubbles.length,
+      isRefreshed: true,
       thinkingProcess:
         i === 0
           ? thinkingProcess
           : `${thinkingProcess}\n\n[连发第 ${i + 1}/${bubbles.length} 条消息]`,
-    };
+    }));
 
-    await saveChatMessage(bubbleMsg);
+    await replaceChatMessagesTurn(activeCharacter.id, task.replaceMessageIds, newBubbleMessages);
+    nativeNotificationService.notifyAiMessage(activeCharacter, newBubbleMessages[0].text);
+  } else {
+    for (let i = 0; i < bubbles.length; i++) {
+      const bubbleText = bubbles[i];
+      if (i > 0) {
+        const delay = calculateTypingDelay(bubbleText, multiBubbleConfig.speed);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
 
-    // Trigger Native Notification if app is in background
-    nativeNotificationService.notifyAiMessage(activeCharacter, bubbleText);
+      const bubbleMsg: ChatMessage = {
+        id: 'msg_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2, 6),
+        characterId: activeCharacter.id,
+        sender: 'ai',
+        text: bubbleText,
+        timestamp: Date.now() + i * 15,
+        turnId: assignedTurnId,
+        turnBubbleIndex: i,
+        turnTotalBubbles: bubbles.length,
+        thinkingProcess:
+          i === 0
+            ? thinkingProcess
+            : `${thinkingProcess}\n\n[连发第 ${i + 1}/${bubbles.length} 条消息]`,
+      };
+
+      await saveChatMessage(bubbleMsg);
+
+      // Trigger Native Notification if app is in background
+      nativeNotificationService.notifyAiMessage(activeCharacter, bubbleText);
+    }
   }
 
   // Background Life State Extraction

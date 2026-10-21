@@ -913,30 +913,6 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
               </div>
             </div>
 
-            {/* 对话上下文消息数 */}
-            <div className="space-y-1.5 border-t border-zinc-850 pt-3">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-zinc-200">对话上下文消息数</span>
-                <span className="text-[11px] text-zinc-500">发送给 AI 的历史消息条数</span>
-              </div>
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="number"
-                  min="1"
-                  value={contextCountInput}
-                  onChange={(e) => setContextCountInput(e.target.value)}
-                  placeholder="100"
-                  className="flex-1 bg-zinc-900 border border-zinc-850 rounded-xl px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-sky-500"
-                />
-                <button
-                  type="button"
-                  onClick={handleSaveContextCount}
-                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs rounded-xl transition"
-                >
-                  确认
-                </button>
-              </div>
-            </div>
 
             {/* 历史回忆检索模式 */}
             <div className="space-y-1.5 border-t border-zinc-850 pt-3">

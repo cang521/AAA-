@@ -120,6 +120,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
       prev.msg.imageAnalysisStatus === next.msg.imageAnalysisStatus &&
       prev.msg.thinkingProcess === next.msg.thinkingProcess &&
       prev.msg.isRefreshed === next.msg.isRefreshed &&
+      prev.msg.turnId === next.msg.turnId &&
       prev.quoteText === next.quoteText &&
       prev.isHighlighted === next.isHighlighted &&
       prev.avatar === next.avatar

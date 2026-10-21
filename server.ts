@@ -249,8 +249,42 @@ async function callAiService({
         generateOptions.config = config;
       }
 
-      const result = await aiClient.models.generateContent(generateOptions);
-      return result.text || '';
+      let result;
+      try {
+        result = await aiClient.models.generateContent(generateOptions);
+      } catch (geminiPrimaryErr: any) {
+        const primaryMsg = geminiPrimaryErr.message || '';
+        const isQuotaExceeded =
+          primaryMsg.includes('429') ||
+          primaryMsg.includes('RESOURCE_EXHAUSTED') ||
+          primaryMsg.includes('Quota exceeded') ||
+          primaryMsg.includes('quota');
+
+        // If official Gemini hits quota limit (e.g. 20/day on preview model like gemini-3.6-flash),
+        // gracefully attempt fallback to high-capacity stable flash models
+        if (isQuotaExceeded && (!cleanBaseUrl || cleanBaseUrl.includes('googleapis.com'))) {
+          const fallbackCandidates = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'].filter((m) => m !== targetModel);
+          let recovered = false;
+          for (const fallbackModel of fallbackCandidates) {
+            try {
+              console.warn(`[Gemini Fallback] 模型 ${targetModel} 额度受限 (429/Quota)，尝试备用模型: ${fallbackModel}`);
+              const fbOptions = { ...generateOptions, model: fallbackModel };
+              result = await aiClient.models.generateContent(fbOptions);
+              recovered = true;
+              break;
+            } catch (fbErr: any) {
+              console.warn(`[Gemini Fallback] 备用模型 ${fallbackModel} 亦失败:`, fbErr.message || fbErr);
+            }
+          }
+          if (!recovered) {
+            throw geminiPrimaryErr;
+          }
+        } else {
+          throw geminiPrimaryErr;
+        }
+      }
+
+      return result?.text || '';
     } catch (geminiErr: any) {
       const errMsg = geminiErr.message || '';
 
@@ -289,17 +323,56 @@ async function callAiService({
       }
 
       if (errMsg.includes('401') || errMsg.includes('API_KEY_INVALID')) {
-        throw new Error(`[Gemini 401 鉴权失败] Gemini API Key 无效: ${errMsg}`);
+        const err: any = new Error(`[Gemini 401 鉴权失败] Gemini API Key 无效: ${errMsg}`);
+        err.statusCode = 401;
+        throw err;
       } else if (errMsg.includes('404') || errMsg.includes('NOT_FOUND')) {
-        throw new Error(`[Gemini 404 模型不存在] 模型 ${targetModel} 在此端点不可用: ${errMsg}`);
-      } else if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED')) {
-        throw new Error(`[Gemini 429 配额用尽] API 额度超限或受限: ${errMsg}`);
+        const err: any = new Error(`[Gemini 404 模型不存在] 模型 ${targetModel} 在此端点不可用: ${errMsg}`);
+        err.statusCode = 404;
+        throw err;
+      } else if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('Quota exceeded') || errMsg.includes('quota')) {
+        const err: any = new Error(`[Gemini 429 配额用尽] API 额度超限或受限: ${errMsg}`);
+        err.statusCode = 429;
+        err.isQuotaExceeded = true;
+        throw err;
       }
       throw geminiErr;
     }
   }
 
   throw new Error('未配置有效的 API 密钥，且系统环境变量中无默认密钥。请先在系统设置中配置 API Provider。');
+}
+
+/**
+ * Universal helper for responding to API endpoints when errors occur.
+ * Automatically detects 429 / quota exhaustion / rate limiting, logs with console.warn (preventing fatal crash alarms),
+ * and responds with HTTP 429 and structured quota metadata.
+ */
+function handleAiEndpointError(res: express.Response, error: any, contextName: string) {
+  const isQuota =
+    error?.statusCode === 429 ||
+    error?.isQuotaExceeded ||
+    error?.message?.includes('429') ||
+    error?.message?.includes('RESOURCE_EXHAUSTED') ||
+    error?.message?.includes('Quota exceeded') ||
+    error?.message?.includes('配额用尽') ||
+    error?.message?.includes('quota');
+
+  if (isQuota) {
+    console.warn(`[${contextName}] AI Provider 配额超限/限流保护触发 (429/RESOURCE_EXHAUSTED):`, error.message || error);
+    return res.status(429).json({
+      success: false,
+      statusCode: 429,
+      isQuotaExceeded: true,
+      error: error.message || 'API quota exceeded or rate limited',
+    });
+  }
+
+  console.error(`${contextName} error:`, error);
+  return res.status(500).json({
+    success: false,
+    error: error.message || `${contextName} failed`,
+  });
 }
 
 // =========================================================================
@@ -1774,8 +1847,7 @@ ${memosSummary}
       },
     });
   } catch (error: any) {
-    console.error('Weather proactive care error:', error);
-    res.status(500).json({ success: false, error: error.message || 'Weather proactive care failed' });
+    return handleAiEndpointError(res, error, 'Weather proactive care');
   }
 });
 
@@ -2193,8 +2265,7 @@ ${devicesSummary}
       },
     });
   } catch (error: any) {
-    console.error('Gemini Chat error:', error);
-    res.status(500).json({ success: false, error: error.message || 'Chat generation failed' });
+    return handleAiEndpointError(res, error, 'Gemini Chat');
   }
 });
 
@@ -2341,8 +2412,7 @@ ${historyText || '(群内暂无更多历史)'}
       },
     });
   } catch (error: any) {
-    console.error('Gemini Group Chat error:', error);
-    res.status(500).json({ success: false, error: error.message || 'Group chat generation failed' });
+    return handleAiEndpointError(res, error, 'Gemini Group Chat');
   }
 });
 
@@ -3316,8 +3386,7 @@ ${historyText || '(近期暂无聊天)'}
       triggerType,
     });
   } catch (error: any) {
-    console.error('Proactive generate error:', error);
-    res.status(500).json({ success: false, error: error.message || 'Proactive generation failed' });
+    return handleAiEndpointError(res, error, 'Proactive generate');
   }
 });
 
@@ -3499,8 +3568,7 @@ ${conversationSnippet}
 
     res.json({ success: true, events: jsonRes.events || [] });
   } catch (err: any) {
-    console.error('extract-life-events error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Extraction failed' });
+    return handleAiEndpointError(res, err, 'extract-life-events');
   }
 });
 
@@ -3586,8 +3654,7 @@ ${userMessage}
 
     res.json({ success: true, extractedMemories: jsonRes.extractedMemories || [] });
   } catch (err: any) {
-    console.error('extract-memories error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Extraction failed' });
+    return handleAiEndpointError(res, err, 'extract-memories');
   }
 });
 
@@ -3706,8 +3773,7 @@ ${stageInstruction}
       },
     });
   } catch (error: any) {
-    console.error('Proactive period care error:', error);
-    res.status(500).json({ success: false, error: error.message || 'Period care failed' });
+    return handleAiEndpointError(res, error, 'Proactive period care');
   }
 });
 

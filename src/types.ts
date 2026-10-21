@@ -106,6 +106,9 @@ export interface ChatMessage {
   thinkingProcess?: string;
   quoteMessageId?: string;
   isRefreshed?: boolean;
+  turnId?: string;
+  turnBubbleIndex?: number;
+  turnTotalBubbles?: number;
   isProactive?: boolean;
   proactiveMeta?: {
     triggerType?: string;
@@ -364,6 +367,21 @@ export interface ApiConfig {
   imageApiConfig: SingleApiConfig;
   voiceApiConfig: SingleApiConfig;
   customHeaders?: Record<string, string>;
+  textProvider?: string;
+  textBaseUrl?: string;
+  textApiKey?: string;
+  textModel?: string;
+  textApiProtocol?: string;
+  imageProvider?: string;
+  imageBaseUrl?: string;
+  imageApiKey?: string;
+  imageModel?: string;
+  imageApiProtocol?: string;
+  voiceProvider?: string;
+  voiceBaseUrl?: string;
+  voiceApiKey?: string;
+  voiceModel?: string;
+  voiceApiProtocol?: string;
 }
 
 export interface AiControls {

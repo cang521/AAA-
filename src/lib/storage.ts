@@ -228,7 +228,7 @@ export const DEFAULT_TEXT_API_CONFIG: SingleApiConfig = {
   provider: 'google_gemini',
   baseUrl: '',
   apiKey: '',
-  model: 'gemini-3.6-flash',
+  model: 'gemini-3.8-flash',
 };
 
 export const DEFAULT_IMAGE_API_CONFIG: SingleApiConfig = {
@@ -470,27 +470,35 @@ export function loadApiConfig(): ApiConfig {
 
 export function saveApiConfig(c: ApiConfig): void {
   const current = loadApiSettings();
+  const pickVal = (nestedVal?: string, flatVal?: string, currentVal?: string) => {
+    if (typeof nestedVal === 'string' && nestedVal.trim().length > 0) return nestedVal;
+    if (typeof flatVal === 'string' && flatVal.trim().length > 0) return flatVal;
+    if (typeof nestedVal === 'string') return nestedVal;
+    if (typeof flatVal === 'string') return flatVal;
+    return currentVal || '';
+  };
+
   saveApiSettings({
     text: {
-      provider: c.textApiConfig?.provider || current.text.provider,
-      baseUrl: c.textApiConfig?.baseUrl ?? current.text.baseUrl,
-      apiKey: c.textApiConfig?.apiKey ?? current.text.apiKey,
-      model: c.textApiConfig?.model || current.text.model,
-      apiProtocol: c.textApiConfig?.apiProtocol ?? current.text.apiProtocol,
+      provider: c.textApiConfig?.provider || c.textProvider || current.text.provider,
+      baseUrl: pickVal(c.textApiConfig?.baseUrl, c.textBaseUrl, current.text.baseUrl),
+      apiKey: pickVal(c.textApiConfig?.apiKey, c.textApiKey, current.text.apiKey),
+      model: c.textApiConfig?.model || c.textModel || current.text.model,
+      apiProtocol: c.textApiConfig?.apiProtocol || c.textApiProtocol || current.text.apiProtocol,
     },
     image: {
-      provider: c.imageApiConfig?.provider || current.image.provider,
-      baseUrl: c.imageApiConfig?.baseUrl ?? current.image.baseUrl,
-      apiKey: c.imageApiConfig?.apiKey ?? current.image.apiKey,
-      model: c.imageApiConfig?.model || current.image.model,
-      apiProtocol: c.imageApiConfig?.apiProtocol ?? current.image.apiProtocol,
+      provider: c.imageApiConfig?.provider || c.imageProvider || current.image.provider,
+      baseUrl: pickVal(c.imageApiConfig?.baseUrl, c.imageBaseUrl, current.image.baseUrl),
+      apiKey: pickVal(c.imageApiConfig?.apiKey, c.imageApiKey, current.image.apiKey),
+      model: c.imageApiConfig?.model || c.imageModel || current.image.model,
+      apiProtocol: c.imageApiConfig?.apiProtocol || c.imageApiProtocol || current.image.apiProtocol,
     },
     voice: {
-      provider: c.voiceApiConfig?.provider || current.voice.provider,
-      baseUrl: c.voiceApiConfig?.baseUrl ?? current.voice.baseUrl,
-      apiKey: c.voiceApiConfig?.apiKey ?? current.voice.apiKey,
-      model: c.voiceApiConfig?.model || current.voice.model,
-      apiProtocol: c.voiceApiConfig?.apiProtocol ?? current.voice.apiProtocol,
+      provider: c.voiceApiConfig?.provider || c.voiceProvider || current.voice.provider,
+      baseUrl: pickVal(c.voiceApiConfig?.baseUrl, c.voiceBaseUrl, current.voice.baseUrl),
+      apiKey: pickVal(c.voiceApiConfig?.apiKey, c.voiceApiKey, current.voice.apiKey),
+      model: c.voiceApiConfig?.model || c.voiceModel || current.voice.model,
+      apiProtocol: c.voiceApiConfig?.apiProtocol || c.voiceApiProtocol || current.voice.apiProtocol,
     },
   });
 }

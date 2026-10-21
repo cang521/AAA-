@@ -67,6 +67,8 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const isComposingRef = useRef(false);
+  const lastCompositionEndTimestampRef = useRef<number>(0);
+  const lastSendTimestampRef = useRef<number>(0);
   const aiChainCountRef = useRef<number>(0);
 
   // Sync messages from group prop if changed externally
@@ -222,8 +224,12 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
 
   // Send message
   const handleSendMessage = () => {
+    const now = Date.now();
+    if (now - lastSendTimestampRef.current < 400) return;
+
     const text = inputText.trim();
     if (!text) return;
+    lastSendTimestampRef.current = now;
 
     const mentioned = extractMentionedIds(text);
 
@@ -579,6 +585,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
           }}
           onCompositionEnd={(e) => {
             isComposingRef.current = false;
+            lastCompositionEndTimestampRef.current = Date.now();
             const val = e.currentTarget.value;
             setInputText(val);
             if (val.endsWith('@')) {
@@ -586,19 +593,26 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
             }
           }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !isComposingRef.current) {
+            const isComposing =
+              isComposingRef.current ||
+              (e.nativeEvent as any).isComposing ||
+              e.keyCode === 229 ||
+              Date.now() - lastCompositionEndTimestampRef.current < 60;
+
+            if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
               e.preventDefault();
               handleSendMessage();
             }
           }}
           placeholder="发送群消息，输入 @ 提及成员..."
-          className="flex-1 px-3.5 py-2 text-xs rounded-xl bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-300/70 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          className="flex-1 px-3.5 py-2 text-xs rounded-xl bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-300/70 dark:border-zinc-700 focus:outline-none focus:border-emerald-500"
         />
 
         <button
           onClick={handleSendMessage}
+          disabled={!inputText.trim()}
           title="发送群消息"
-          className="px-3.5 py-2 rounded-xl bg-[#07C160] hover:bg-[#06ad56] text-white font-bold text-xs shadow-sm transition flex items-center justify-center shrink-0 cursor-pointer"
+          className="px-3.5 py-2 rounded-xl bg-[#07C160] hover:bg-[#06ad56] disabled:opacity-40 disabled:pointer-events-none text-white font-bold text-xs shadow-sm transition flex items-center justify-center shrink-0 cursor-pointer"
         >
           <Send className="w-4 h-4" />
         </button>
