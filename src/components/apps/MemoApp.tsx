@@ -45,6 +45,9 @@ export const MemoApp: React.FC<MemoAppProps> = ({
   const [swipedMemoId, setSwipedMemoId] = useState<string | null>(null);
   const [dragStartX, setDragStartX] = useState<number | null>(null);
 
+  const titleRef = React.useRef<HTMLInputElement | null>(null);
+  const contentRef = React.useRef<HTMLTextAreaElement | null>(null);
+
   const handleStart = (clientX: number) => {
     setDragStartX(clientX);
   };
@@ -90,7 +93,10 @@ export const MemoApp: React.FC<MemoAppProps> = ({
   };
 
   const handleSave = () => {
-    if (!memoTitle.trim() && !memoContent.trim()) return;
+    const finalTitle = (titleRef.current?.value !== undefined ? titleRef.current.value : memoTitle).trim();
+    const finalContent = (contentRef.current?.value !== undefined ? contentRef.current.value : memoContent).trim();
+
+    if (!finalTitle && !finalContent) return;
 
     if (editingMemo) {
       // Update existing
@@ -98,8 +104,8 @@ export const MemoApp: React.FC<MemoAppProps> = ({
         m.id === editingMemo.id
           ? {
               ...m,
-              title: memoTitle.trim() || '无标题便签',
-              content: memoContent.trim(),
+              title: finalTitle || '无标题便签',
+              content: finalContent,
               tags: memoTags,
               updatedAt: Date.now(),
             }
@@ -110,8 +116,8 @@ export const MemoApp: React.FC<MemoAppProps> = ({
       // Create new
       const newMemo: Memo = {
         id: 'memo_' + Date.now(),
-        title: memoTitle.trim() || '无标题便签',
-        content: memoContent.trim(),
+        title: finalTitle || '无标题便签',
+        content: finalContent,
         tags: memoTags,
         updatedAt: Date.now(),
       };
@@ -359,10 +365,13 @@ export const MemoApp: React.FC<MemoAppProps> = ({
 
             {/* Title Input */}
             <input
+              ref={titleRef}
               type="text"
               placeholder="便签标题..."
               value={memoTitle}
               onChange={(e) => setMemoTitle(e.target.value)}
+              onInput={(e) => setMemoTitle(e.currentTarget.value)}
+              onCompositionEnd={(e) => setMemoTitle(e.currentTarget.value)}
               className="w-full px-3 py-2 text-xs font-semibold rounded-xl bg-zinc-800 border border-zinc-700 text-amber-200 placeholder-zinc-500 focus:outline-none focus:border-amber-400"
             />
 
@@ -386,10 +395,13 @@ export const MemoApp: React.FC<MemoAppProps> = ({
 
             {/* Content Textarea */}
             <textarea
+              ref={contentRef}
               rows={8}
               placeholder="在此输入便签备忘细节..."
               value={memoContent}
               onChange={(e) => setMemoContent(e.target.value)}
+              onInput={(e) => setMemoContent(e.currentTarget.value)}
+              onCompositionEnd={(e) => setMemoContent(e.currentTarget.value)}
               className="w-full px-3 py-2.5 text-xs rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400 leading-relaxed resize-none"
             />
 

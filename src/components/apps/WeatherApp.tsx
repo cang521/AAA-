@@ -65,6 +65,7 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
   const [showCityModal, setShowCityModal] = useState(false);
   const [showCareSettingsModal, setShowCareSettingsModal] = useState(false);
   const [citySearchQuery, setCitySearchQuery] = useState('');
+  const citySearchRef = React.useRef<HTMLInputElement | null>(null);
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearchingCities, setIsSearchingCities] = useState(false);
   const [testSelectedCharId, setTestSelectedCharId] = useState(characters[0]?.id || 'char_1');
@@ -775,12 +776,16 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
             <div className="mt-4 relative">
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
               <input
+                ref={citySearchRef}
                 type="text"
                 value={citySearchQuery}
                 onChange={(e) => setCitySearchQuery(e.target.value)}
+                onInput={(e) => setCitySearchQuery(e.currentTarget.value)}
+                onCompositionEnd={(e) => setCitySearchQuery(e.currentTarget.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && citySearchQuery.trim()) {
-                    handleSelectCityItem({ name: citySearchQuery.trim() });
+                  const query = (citySearchRef.current?.value || citySearchQuery).trim();
+                  if (e.key === 'Enter' && query) {
+                    handleSelectCityItem({ name: query });
                   }
                 }}
                 placeholder="搜索任意城市/区县 (如: 顺德 / 海淀 / 昆明 / 巴黎)"

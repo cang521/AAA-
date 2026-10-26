@@ -716,18 +716,16 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     latestMessagesRef.current = displayedMessages;
   }, [displayedMessages]);
 
-  // Unified Single-Click Message Send (Saves user message and immediately enqueues AI reply)
-  const handleSendMessage = async () => {
-    if (isSubmittingRef.current) return;
+  // 1. Single-Click: Send user message ONLY and persist to DB (Does NOT trigger AI reply)
+  const handleSendUserOnlyMessage = async (): Promise<ChatMessage | null> => {
+    if (isSubmittingRef.current) return null;
     const now = Date.now();
-    // Prevent duplicate user messages from rapid double-clicks
-    if (now - lastSendTimestampRef.current < 400) return;
 
-    const rawVal = inputRef.current?.value !== undefined ? inputRef.current.value : inputText;
+    const rawVal = inputRef.current ? inputRef.current.value : inputText;
     const cleanText = rawVal.trim();
     const imageToSend = selectedImage;
-    if (!cleanText && !imageToSend) return;
-    if (!activeCharacter) return;
+    if (!cleanText && !imageToSend) return null;
+    if (!activeCharacter) return null;
 
     isSubmittingRef.current = true;
     lastSendTimestampRef.current = now;
@@ -761,39 +759,13 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     scrollToBottom(true);
 
     try {
-      // 1. Authoritative write to IndexedDB first
+      // Authoritative write to IndexedDB first
       await saveChatMessage(userMsg);
 
-      // 2. Clear any prior failure state for this character
+      // Clear any prior failure state for this character
       aiReplyTaskManager.clearFailedTask(activeCharacter.id);
 
-      // 3. Find all consecutive unreplied user messages waiting for AI response
-      const pendingUserMsgs: ChatMessage[] = [];
-      for (let i = updatedMessages.length - 1; i >= 0; i--) {
-        if (updatedMessages[i].sender === 'user') {
-          pendingUserMsgs.unshift(updatedMessages[i]);
-        } else {
-          break;
-        }
-      }
-
-      const currentTurnMessageIds = pendingUserMsgs.map((m) => m.id).filter(Boolean);
-      const combinedUserText =
-        pendingUserMsgs.length > 1
-          ? pendingUserMsgs.map((m, idx) => `[第 ${idx + 1} 句] ${m.text}`).join('\n')
-          : cleanText;
-
-      // 4. Enqueue background AI task with unique task ID
-      setIsLoading(true);
-      await aiReplyTaskManager.enqueueTask({
-        characterId: activeCharacter.id,
-        userMessages: pendingUserMsgs,
-        combinedUserText,
-        currentTurnMessageIds,
-        options: { vibrationPattern: [60, 40, 60] },
-      });
-
-      // 5. Asynchronous vision analysis if an image was attached
+      // Asynchronous vision analysis if an image was attached
       if (imageToSend) {
         apiFetch('/api/gemini/analyze-image', {
           method: 'POST',
@@ -817,10 +789,90 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           })
           .catch((err) => console.warn('Vision API call error:', err));
       }
+
+      return userMsg;
     } catch (e) {
-      console.error('Failed to save message and enqueue AI task:', e);
+      console.error('Failed to save user message to DB:', e);
+      return null;
     } finally {
       isSubmittingRef.current = false;
+    }
+  };
+
+  // 2. Double-Click Handler: Trigger AI reply for all unreplied user messages in the turn
+  const handleTriggerAiReply = async () => {
+    if (!activeCharacter) return;
+
+    // Prevent duplicate AI tasks if AI is already thinking or generating for this character
+    if (aiReplyTaskManager.isCharacterThinking(activeCharacter.id) || isLoading) {
+      setMultiBubbleToast('AI 正在思考回复中，请稍候...');
+      setTimeout(() => setMultiBubbleToast(null), 2000);
+      return;
+    }
+
+    const currentList = latestMessagesRef.current.length > 0 ? latestMessagesRef.current : displayedMessages;
+
+    // Find all consecutive unreplied user messages waiting for AI response
+    const pendingUserMsgs: ChatMessage[] = [];
+    for (let i = currentList.length - 1; i >= 0; i--) {
+      if (currentList[i].sender === 'user') {
+        pendingUserMsgs.unshift(currentList[i]);
+      } else {
+        break;
+      }
+    }
+
+    if (pendingUserMsgs.length === 0) {
+      setMultiBubbleToast('当前没有等待 AI 回复的用户消息');
+      setTimeout(() => setMultiBubbleToast(null), 2000);
+      return;
+    }
+
+    const currentTurnMessageIds = pendingUserMsgs.map((m) => m.id).filter(Boolean);
+    const combinedUserText =
+      pendingUserMsgs.length > 1
+        ? pendingUserMsgs.map((m, idx) => `[第 ${idx + 1} 句] ${m.text}`).join('\n')
+        : pendingUserMsgs[0].text;
+
+    try {
+      setIsLoading(true);
+      await aiReplyTaskManager.enqueueTask({
+        characterId: activeCharacter.id,
+        userMessages: pendingUserMsgs,
+        combinedUserText,
+        currentTurnMessageIds,
+        options: { vibrationPattern: [60, 40, 60] },
+      });
+    } catch (e) {
+      console.error('Failed to enqueue AI reply task:', e);
+    }
+  };
+
+  // 3. Send Button Click Router: Single-click sends user message only; Double-click triggers AI reply
+  const lastSendBtnClickTimeRef = useRef<number>(0);
+
+  const handleSendButtonClick = async () => {
+    const now = Date.now();
+    const timeDelta = now - lastSendBtnClickTimeRef.current;
+    lastSendBtnClickTimeRef.current = now;
+
+    if (timeDelta < 450) {
+      // === DOUBLE CLICK DETECTED ===
+      // 1. If user typed text right before this 2nd click, send that message first
+      const rawText = inputRef.current ? inputRef.current.value : inputText;
+      if (rawText.trim() || selectedImage) {
+        await handleSendUserOnlyMessage();
+      }
+      // 2. Trigger AI to reply to all unreplied user messages in the turn
+      await handleTriggerAiReply();
+    } else {
+      // === SINGLE CLICK ===
+      const rawText = inputRef.current ? inputRef.current.value : inputText;
+      if (rawText.trim() || selectedImage) {
+        await handleSendUserOnlyMessage();
+      } else {
+        // Empty input single-click: do nothing (Requirement 9: "输入框为空时，单击不能直接触发 AI。")
+      }
     }
   };
 
@@ -1798,22 +1850,27 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                                       }
                                     }, 0);
                                   } else {
-                                    // Enter alone: single-click send message
+                                    // Enter alone: single-click send user message ONLY (does NOT trigger AI)
                                     e.preventDefault();
-                                    handleSendMessage();
+                                    handleSendUserOnlyMessage();
                                   }
                                 }
                               }}
                               className="flex-1 px-3 py-2 text-xs rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors resize-none overflow-y-auto leading-relaxed max-h-[132px] min-h-[36px]"
                             />
 
-                            {/* Send Button */}
+                            {/* Send Button: Single-click sends message, Double-click triggers AI reply */}
                             <button
-                              onClick={handleSendMessage}
-                              disabled={(!inputText.trim() && !selectedImage) || isSubmittingRef.current}
+                              type="button"
+                              onClick={handleSendButtonClick}
+                              disabled={isSubmittingRef.current || (!!activeCharacter && aiReplyTaskManager.isCharacterThinking(activeCharacter.id))}
                               style={{ touchAction: 'manipulation' }}
-                              title="发送消息"
-                              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-40 disabled:pointer-events-none text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0 self-end mb-0.5"
+                              title="单击发送消息 | 快速双击触发AI回复"
+                              className={`px-3.5 py-2 rounded-xl text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0 self-end mb-0.5 active:scale-95 disabled:opacity-40 disabled:pointer-events-none ${
+                                inputText.trim() || selectedImage
+                                  ? 'bg-emerald-600 hover:bg-emerald-500'
+                                  : 'bg-zinc-700 hover:bg-zinc-600 opacity-90'
+                              }`}
                             >
                               <Send className="w-3.5 h-3.5" />
                               <span>发送</span>

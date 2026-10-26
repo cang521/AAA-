@@ -64,6 +64,13 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
   const [entryKeyword, setEntryKeyword] = useState('');
   const [entryContent, setEntryContent] = useState('');
 
+  const formTitleRef = React.useRef<HTMLInputElement | null>(null);
+  const formDescriptionRef = React.useRef<HTMLInputElement | null>(null);
+  const formWorldSettingRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const formTagsRef = React.useRef<HTMLInputElement | null>(null);
+  const entryKeywordRef = React.useRef<HTMLInputElement | null>(null);
+  const entryContentRef = React.useRef<HTMLTextAreaElement | null>(null);
+
   const activeBook = worldBooks.find((b) => b.id === activeBookId) || null;
 
   // Filter books by search query
@@ -77,22 +84,26 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
   // AI Architect Generate/Expand World Book
   const handleAiGenerate = async () => {
     setIsAiGenerating(true);
+    const titleVal = formTitleRef.current?.value || formTitle;
+    const descVal = formDescriptionRef.current?.value || formDescription;
+    const settingVal = formWorldSettingRef.current?.value || formWorldSetting;
+    const tagsVal = formTagsRef.current?.value || formTags;
     try {
       const res = await apiFetch('/api/gemini/worldbook-ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: formTitle || '新幻想世界',
-          genre: formTags || '奇幻/科幻/都市',
-          brief: formDescription || formWorldSetting || '自动构想一套宏大严谨的世界观法则',
+          title: titleVal || '新幻想世界',
+          genre: tagsVal || '奇幻/科幻/都市',
+          brief: descVal || settingVal || '自动构想一套宏大严谨的世界观法则',
           apiConfig,
         }),
       });
       const data = await res.json();
       if (data.success && data.data) {
-        setFormTitle(data.data.title || formTitle);
-        setFormDescription(data.data.description || formDescription);
-        setFormWorldSetting(data.data.worldSetting || formWorldSetting);
+        setFormTitle(data.data.title || titleVal);
+        setFormDescription(data.data.description || descVal);
+        setFormWorldSetting(data.data.worldSetting || settingVal);
         if (data.data.tags && Array.isArray(data.data.tags)) {
           setFormTags(data.data.tags.join(', '));
         }
@@ -107,12 +118,17 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
 
   // Save or Create World Book
   const handleSaveBook = () => {
-    if (!formTitle.trim()) {
+    const finalTitle = (formTitleRef.current?.value !== undefined ? formTitleRef.current.value : formTitle).trim();
+    const finalDescription = (formDescriptionRef.current?.value !== undefined ? formDescriptionRef.current.value : formDescription).trim();
+    const finalWorldSetting = (formWorldSettingRef.current?.value !== undefined ? formWorldSettingRef.current.value : formWorldSetting).trim();
+    const rawTags = formTagsRef.current?.value !== undefined ? formTagsRef.current.value : formTags;
+
+    if (!finalTitle) {
       alert('请输入世界书标题');
       return;
     }
 
-    const tagArray = formTags
+    const tagArray = rawTags
       .split(/[,，\s]+/)
       .map((t) => t.trim())
       .filter(Boolean);
@@ -123,9 +139,9 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
         b.id === editingBook.id
           ? {
               ...b,
-              title: formTitle.trim(),
-              description: formDescription.trim(),
-              worldSetting: formWorldSetting.trim(),
+              title: finalTitle,
+              description: finalDescription,
+              worldSetting: finalWorldSetting,
               tags: tagArray,
               updatedAt: Date.now(),
             }
@@ -136,10 +152,10 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
       // Create new
       const newBook: WorldBook = {
         id: 'wb_' + Date.now(),
-        title: formTitle.trim(),
-        description: formDescription.trim() || '自定义世界观',
+        title: finalTitle,
+        description: finalDescription || '自定义世界观',
         worldSetting:
-          formWorldSetting.trim() ||
+          finalWorldSetting ||
           '世界观核心法则：在此世界中，一切运转均遵循专属规律。',
         tags: tagArray.length > 0 ? tagArray : ['自定义'],
         entries: [
@@ -232,11 +248,14 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
 
   // Add Entry to active book
   const handleAddEntry = () => {
-    if (!entryKeyword.trim() || !activeBook) return;
+    const kw = (entryKeywordRef.current?.value !== undefined ? entryKeywordRef.current.value : entryKeyword).trim();
+    const ct = (entryContentRef.current?.value !== undefined ? entryContentRef.current.value : entryContent).trim();
+
+    if (!kw || !activeBook) return;
     const newEntry: WorldBookEntry = {
       id: 'entry_' + Date.now(),
-      keyword: entryKeyword.trim(),
-      content: entryContent.trim() || '专有名词详细设定说明',
+      keyword: kw,
+      content: ct || '专有名词详细设定说明',
       enabled: true,
     };
     const updated = worldBooks.map((b) =>
@@ -247,6 +266,8 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
     onUpdateWorldBooks(updated);
     setEntryKeyword('');
     setEntryContent('');
+    if (entryKeywordRef.current) entryKeywordRef.current.value = '';
+    if (entryContentRef.current) entryContentRef.current.value = '';
     setShowAddEntryModal(false);
   };
 
@@ -650,10 +671,13 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
               <div>
                 <label className="block text-zinc-400 mb-1">世界书标题 / 名称</label>
                 <input
+                  ref={formTitleRef}
                   type="text"
                   placeholder="例如: 赛博夜城·纪元2088 / 修真长生界"
                   value={formTitle}
                   onChange={(e) => setFormTitle(e.target.value)}
+                  onInput={(e) => setFormTitle(e.currentTarget.value)}
+                  onCompositionEnd={(e) => setFormTitle(e.currentTarget.value)}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -661,10 +685,13 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
               <div>
                 <label className="block text-zinc-400 mb-1">类型标签 (以逗号分隔)</label>
                 <input
+                  ref={formTagsRef}
                   type="text"
                   placeholder="例如: 赛博朋克, 科幻, 义体科技"
                   value={formTags}
                   onChange={(e) => setFormTags(e.target.value)}
+                  onInput={(e) => setFormTags(e.currentTarget.value)}
+                  onCompositionEnd={(e) => setFormTags(e.currentTarget.value)}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -672,10 +699,13 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
               <div>
                 <label className="block text-zinc-400 mb-1">一句话世界简介</label>
                 <input
+                  ref={formDescriptionRef}
                   type="text"
                   placeholder="例如: 霓虹闪烁的巨型都会，大企业掌控一切的阴暗未来。"
                   value={formDescription}
                   onChange={(e) => setFormDescription(e.target.value)}
+                  onInput={(e) => setFormDescription(e.currentTarget.value)}
+                  onCompositionEnd={(e) => setFormDescription(e.currentTarget.value)}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -693,10 +723,13 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
                   </button>
                 </div>
                 <textarea
+                  ref={formWorldSettingRef}
                   rows={5}
                   placeholder="详细描述该世界观的历史背景、阶级阵营、超自然规则、科技水平与日常用语规范..."
                   value={formWorldSetting}
                   onChange={(e) => setFormWorldSetting(e.target.value)}
+                  onInput={(e) => setFormWorldSetting(e.currentTarget.value)}
+                  onCompositionEnd={(e) => setFormWorldSetting(e.currentTarget.value)}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-indigo-500 leading-relaxed font-sans"
                 />
               </div>
@@ -803,10 +836,13 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
               <div>
                 <label className="block text-zinc-400 mb-1">专有名词 / 关键词</label>
                 <input
+                  ref={entryKeywordRef}
                   type="text"
                   placeholder="例如: 灵力结晶 / 义体过载 / 浮空城"
                   value={entryKeyword}
                   onChange={(e) => setEntryKeyword(e.target.value)}
+                  onInput={(e) => setEntryKeyword(e.currentTarget.value)}
+                  onCompositionEnd={(e) => setEntryKeyword(e.currentTarget.value)}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -814,10 +850,13 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
               <div>
                 <label className="block text-zinc-400 mb-1">词条详细设定内容</label>
                 <textarea
+                  ref={entryContentRef}
                   rows={4}
                   placeholder="解释此名词在世界观中的定义、来源、作用以及对人物的影响..."
                   value={entryContent}
                   onChange={(e) => setEntryContent(e.target.value)}
+                  onInput={(e) => setEntryContent(e.currentTarget.value)}
+                  onCompositionEnd={(e) => setEntryContent(e.currentTarget.value)}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-indigo-500 leading-relaxed font-sans"
                 />
               </div>

@@ -45,6 +45,15 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [activeAvatarTab, setActiveAvatarTab] = useState<'upload' | 'url'>('upload');
 
+  const nameRef = React.useRef<HTMLInputElement | null>(null);
+  const wxidRef = React.useRef<HTMLInputElement | null>(null);
+  const personaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const personalityRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const greetingRef = React.useRef<HTMLInputElement | null>(null);
+  const relationshipRef = React.useRef<HTMLInputElement | null>(null);
+  const tagsRef = React.useRef<HTMLInputElement | null>(null);
+  const newMemoryRef = React.useRef<HTMLInputElement | null>(null);
+
   if (!isOpen) return null;
 
   // Handle local photo file upload
@@ -63,18 +72,21 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
 
   // Generate random wxid based on name
   const handleGenerateWxid = () => {
+    const currentName = nameRef.current?.value || name;
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-    const cleanPrefix = name.trim()
-      ? name.trim().toLowerCase().replace(/[^a-zA-Z0-9]/g, '') || 'ai_friend'
+    const cleanPrefix = currentName.trim()
+      ? currentName.trim().toLowerCase().replace(/[^a-zA-Z0-9]/g, '') || 'ai_friend'
       : 'ai_char';
     setWxid(`${cleanPrefix}_${randomSuffix}`);
   };
 
   // Add memory entry
   const handleAddMemory = () => {
-    if (newMemory.trim()) {
-      setMemories([...memories, newMemory.trim()]);
+    const val = (newMemoryRef.current?.value !== undefined ? newMemoryRef.current.value : newMemory).trim();
+    if (val) {
+      setMemories([...memories, val]);
       setNewMemory('');
+      if (newMemoryRef.current) newMemoryRef.current.value = '';
     }
   };
 
@@ -85,11 +97,15 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
 
   // Handle final submission
   const handleSave = () => {
-    const finalName = name.trim() || '自定义 AI';
-    const finalWxid = wxid.trim() || `ai_${Date.now().toString().slice(-6)}`;
+    const finalName = (nameRef.current?.value !== undefined ? nameRef.current.value : name).trim() || '自定义 AI';
+    const finalWxid = (wxidRef.current?.value !== undefined ? wxidRef.current.value : wxid).trim() || `ai_${Date.now().toString().slice(-6)}`;
     const finalAvatar = avatar || DEFAULT_AI_AVATAR;
-    const finalGreeting = greeting.trim();
-    const finalTags = tagsInput
+    const finalPersona = (personaRef.current?.value !== undefined ? personaRef.current.value : persona).trim();
+    const finalPersonality = (personalityRef.current?.value !== undefined ? personalityRef.current.value : personality).trim();
+    const finalGreeting = (greetingRef.current?.value !== undefined ? greetingRef.current.value : greeting).trim();
+    const finalRelationship = (relationshipRef.current?.value !== undefined ? relationshipRef.current.value : relationship).trim() || '好友';
+    const rawTags = (tagsRef.current?.value !== undefined ? tagsRef.current.value : tagsInput);
+    const finalTags = rawTags
       .split(/[,，、\s]+/)
       .map((t) => t.trim())
       .filter(Boolean);
@@ -99,9 +115,9 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
       name: finalName,
       wxid: finalWxid,
       avatar: finalAvatar,
-      persona: persona.trim(),
-      personality: personality.trim(),
-      relationship: relationship.trim() || '好友',
+      persona: finalPersona,
+      personality: finalPersonality,
+      relationship: finalRelationship,
       greeting: finalGreeting,
       memories: memories,
       isLocked: false,
@@ -229,10 +245,13 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
                 2. AI 昵称 / 姓名 <span className="text-rose-400">*</span>
               </label>
               <input
+                ref={nameRef}
                 type="text"
                 placeholder="输入 AI 昵称"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                onInput={(e) => setName(e.currentTarget.value)}
+                onCompositionEnd={(e) => setName(e.currentTarget.value)}
                 className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 text-xs"
               />
             </div>
@@ -249,10 +268,13 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
                 </button>
               </div>
               <input
+                ref={wxidRef}
                 type="text"
                 placeholder="输入微信号"
                 value={wxid}
                 onChange={(e) => setWxid(e.target.value)}
+                onInput={(e) => setWxid(e.currentTarget.value)}
+                onCompositionEnd={(e) => setWxid(e.currentTarget.value)}
                 className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 text-xs font-mono"
               />
             </div>
@@ -263,10 +285,13 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
             <div>
               <label className="block text-[11px] font-semibold text-zinc-300 mb-1">与用户的关系</label>
               <input
+                ref={relationshipRef}
                 type="text"
                 placeholder="例如: 好友 / 导师 / 伙伴"
                 value={relationship}
                 onChange={(e) => setRelationship(e.target.value)}
+                onInput={(e) => setRelationship(e.currentTarget.value)}
+                onCompositionEnd={(e) => setRelationship(e.currentTarget.value)}
                 className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 text-xs"
               />
             </div>
@@ -274,10 +299,13 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
             <div>
               <label className="block text-[11px] font-semibold text-zinc-300 mb-1">分类标签 (逗号分隔)</label>
               <input
+                ref={tagsRef}
                 type="text"
                 placeholder="例如: 自定义, 治愈, 学霸"
                 value={tagsInput}
                 onChange={(e) => setTagsInput(e.target.value)}
+                onInput={(e) => setTagsInput(e.currentTarget.value)}
+                onCompositionEnd={(e) => setTagsInput(e.currentTarget.value)}
                 className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 text-xs"
               />
             </div>
@@ -293,10 +321,13 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
               <span className="text-[10px] text-zinc-500">{persona.length} 字</span>
             </div>
             <textarea
+              ref={personaRef}
               rows={3}
               placeholder="自由输入身份、经历、家庭背景、社会关系、过往经历以及与用户的故事背景……支持较长设定内容。"
               value={persona}
               onChange={(e) => setPersona(e.target.value)}
+              onInput={(e) => setPersona(e.currentTarget.value)}
+              onCompositionEnd={(e) => setPersona(e.currentTarget.value)}
               className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 leading-relaxed text-xs placeholder-zinc-500"
             />
           </div>
@@ -311,10 +342,13 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
               <span className="text-[10px] text-zinc-500">{personality.length} 字</span>
             </div>
             <textarea
+              ref={personalityRef}
               rows={3}
               placeholder="描述性格（傲娇/温柔/冷静/活泼）、说话语气习惯（爱用波浪号~、口头禅、严肃理性）、喜好与禁忌等……"
               value={personality}
               onChange={(e) => setPersonality(e.target.value)}
+              onInput={(e) => setPersonality(e.currentTarget.value)}
+              onCompositionEnd={(e) => setPersonality(e.currentTarget.value)}
               className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 leading-relaxed text-xs placeholder-zinc-500"
             />
           </div>
@@ -326,10 +360,13 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
               <span>5. 开场白 / 打招呼消息 (首条微信消息)</span>
             </label>
             <input
+              ref={greetingRef}
               type="text"
               placeholder="例如: 嗨！今天过得怎么样？有按时吃晚餐吗？✨"
               value={greeting}
               onChange={(e) => setGreeting(e.target.value)}
+              onInput={(e) => setGreeting(e.currentTarget.value)}
+              onCompositionEnd={(e) => setGreeting(e.currentTarget.value)}
               className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 text-xs"
             />
           </div>
@@ -346,10 +383,13 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
 
             <div className="flex gap-2">
               <input
+                ref={newMemoryRef}
                 type="text"
                 placeholder="添加初始记忆（如: 用户喜欢在深夜看书）..."
                 value={newMemory}
                 onChange={(e) => setNewMemory(e.target.value)}
+                onInput={(e) => setNewMemory(e.currentTarget.value)}
+                onCompositionEnd={(e) => setNewMemory(e.currentTarget.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
