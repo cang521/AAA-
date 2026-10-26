@@ -14,6 +14,7 @@ import android.provider.Settings;
 import android.util.Log;
 import android.view.accessibility.AccessibilityManager;
 import androidx.core.app.NotificationManagerCompat;
+import androidx.core.content.ContextCompat;
 import android.app.usage.UsageStats;
 import android.app.usage.UsageStatsManager;
 
@@ -283,7 +284,7 @@ public class AndroidPermissionBridge extends Plugin {
         }
 
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLIPOP) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 UsageStatsManager usm = (UsageStatsManager) context.getSystemService(Context.USAGE_STATS_SERVICE);
                 if (usm != null) {
                     long now = System.currentTimeMillis();
