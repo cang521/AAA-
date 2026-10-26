@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { AiCharacter, UserProfile, GroupChat, GroupMember } from '../../../types';
 import { generateGroupInviteCode, DEFAULT_USER_AVATAR, DEFAULT_AI_AVATAR } from '../../../lib/storage';
+import { registerGroupOnServer } from '../../../lib/groupService';
 
 interface CreateGroupModalProps {
   isOpen: boolean;
@@ -147,6 +148,9 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
 
     // Update message groupIds
     newGroup.messages = newGroup.messages.map((m) => ({ ...m, groupId: newGroup.id }));
+
+    // Sync/register to server registry for cross-device support
+    registerGroupOnServer(newGroup);
 
     onCreateGroup(newGroup);
     onClose();

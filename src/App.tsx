@@ -48,6 +48,7 @@ import {
 
 import { PhoneContainer } from './components/PhoneContainer';
 import { LockScreen } from './components/LockScreen';
+import { lockSecurityService } from './lib/lockScreenSecurity';
 import { LauncherHome } from './components/LauncherHome';
 
 import { WeChatApp } from './components/apps/WeChatApp';
@@ -77,8 +78,8 @@ import { clearAllChatMessages } from './lib/chatDb';
 import { autoPaginateLayout } from './lib/layoutPaginator';
 
 export function App() {
-  // Lock state
-  const [isLocked, setIsLocked] = useState(true);
+  // Lock state re-hydrated from lockSecurityService (Re-entry maintains lock state)
+  const [isLocked, setIsLocked] = useState(() => lockSecurityService.getIsLocked());
 
   // Settings & Beautification state
   const [settings, setSettingsState] = useState(loadSettings());
@@ -414,7 +415,10 @@ export function App() {
   return (
     <div className="w-full h-screen bg-zinc-950 flex items-center justify-center select-none overflow-hidden">
       <PhoneContainer
-        onLockClick={() => setIsLocked(true)}
+        onLockClick={() => {
+          lockSecurityService.setLockedState(true);
+          setIsLocked(true);
+        }}
         customCss={settings?.customCss}
         theme={effectiveTheme}
       >
@@ -423,11 +427,11 @@ export function App() {
           <LockScreen
             wallpaperUrl={activeLockWallpaper}
             wallpaper={activeLockWallpaper}
-            correctPin={settings.pinCode}
-            pinCode={settings.pinCode}
-            isPinEnabled={settings.isPinEnabled}
             theme={effectiveTheme}
-            onUnlock={() => setIsLocked(false)}
+            onUnlock={() => {
+              lockSecurityService.setLockedState(false);
+              setIsLocked(false);
+            }}
           />
         ) : activeAppId ? (
           /* SUB-APP ACTIVE VIEW LAYER */
@@ -500,6 +504,10 @@ export function App() {
             {activeAppId === 'beautification' && (
               <BeautificationApp
                 onBackToLauncher={() => setActiveAppId(null)}
+                onLockPhone={() => {
+                  lockSecurityService.setLockedState(true);
+                  setIsLocked(true);
+                }}
                 desktopWallpaper={activeDesktopWallpaper}
                 lockWallpaper={activeLockWallpaper}
                 customCss={settings.customCss}

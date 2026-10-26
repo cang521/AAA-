@@ -33,6 +33,7 @@ import {
   ApiLog,
 } from '../../../types';
 import { GroupSettingsModal } from './GroupSettingsModal';
+import { syncGroupToServer } from '../../../lib/groupService';
 
 interface GroupChatViewProps {
   group: GroupChat;
@@ -94,11 +95,13 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   // Save updated messages into group
   const persistMessages = (newMessages: GroupChatMessage[]) => {
     setMessages(newMessages);
-    onUpdateGroup({
+    const updatedGroup = {
       ...group,
       messages: newMessages,
       updatedAt: Date.now(),
-    });
+    };
+    onUpdateGroup(updatedGroup);
+    syncGroupToServer(updatedGroup);
   };
 
   // Helper to extract @mentions from message text

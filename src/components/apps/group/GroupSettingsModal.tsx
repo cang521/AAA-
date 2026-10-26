@@ -24,6 +24,7 @@ import {
 import { GroupChat, GroupMember, GroupJoinRequest, AiCharacter, UserProfile } from '../../../types';
 import { DEFAULT_AI_AVATAR } from '../../../lib/storage';
 import { generateGroupInviteCode } from '../../../lib/storage';
+import { syncGroupToServer } from '../../../lib/groupService';
 import { EditGroupAiMemberModal } from './EditGroupAiMemberModal';
 
 interface GroupSettingsModalProps {
@@ -63,8 +64,13 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
   const isOwner = group.ownerId === 'user_main';
   const pendingRequests = (group.joinRequests || []).filter((r) => r.status === 'pending');
 
+  const handleUpdateGroupAndSync = (updatedGroup: GroupChat) => {
+    onUpdateGroup(updatedGroup);
+    syncGroupToServer(updatedGroup);
+  };
+
   const handleSaveInfo = () => {
-    onUpdateGroup({
+    handleUpdateGroupAndSync({
       ...group,
       name: nameInput.trim() || group.name,
       notice: noticeInput.trim(),
@@ -84,7 +90,7 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
 
   const handleRegenerateCode = () => {
     const newCode = generateGroupInviteCode();
-    onUpdateGroup({
+    handleUpdateGroupAndSync({
       ...group,
       inviteCode: newCode,
       updatedAt: Date.now(),
@@ -92,7 +98,7 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
   };
 
   const handleToggleInviteCode = () => {
-    onUpdateGroup({
+    handleUpdateGroupAndSync({
       ...group,
       inviteCodeActive: !group.inviteCodeActive,
       updatedAt: Date.now(),
@@ -126,7 +132,7 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
       timestamp: now,
     };
 
-    onUpdateGroup({
+    handleUpdateGroupAndSync({
       ...group,
       members: [...group.members, newMember],
       messages: [...group.messages, systemNoticeMsg],
@@ -139,7 +145,7 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
     const updatedRequests = (group.joinRequests || []).map((r) =>
       r.id === request.id ? { ...r, status: 'rejected' as const, reviewedAt: Date.now() } : r
     );
-    onUpdateGroup({
+    handleUpdateGroupAndSync({
       ...group,
       joinRequests: updatedRequests,
       updatedAt: Date.now(),
@@ -148,7 +154,7 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
 
   const handleSaveMemberEdit = (updatedMember: GroupMember) => {
     const updatedMembers = group.members.map((m) => (m.id === updatedMember.id ? updatedMember : m));
-    onUpdateGroup({
+    handleUpdateGroupAndSync({
       ...group,
       members: updatedMembers,
       updatedAt: Date.now(),
@@ -170,7 +176,7 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
       timestamp: now,
     };
 
-    onUpdateGroup({
+    handleUpdateGroupAndSync({
       ...group,
       members: updatedMembers,
       messages: [...group.messages, systemNoticeMsg],
@@ -210,7 +216,7 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
       timestamp: now,
     };
 
-    onUpdateGroup({
+    handleUpdateGroupAndSync({
       ...group,
       members: [...group.members, newMember],
       messages: [...group.messages, systemNoticeMsg],

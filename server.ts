@@ -2566,6 +2566,208 @@ ${historyText || '(群内暂无更多历史)'}
   }
 });
 
+// =========================================================================
+// Server Group Registry & Cross-Device Group Chat Endpoints
+// =========================================================================
+const serverGroupStore: Map<string, any> = new Map();
+const serverInviteCodeIndex: Map<string, string> = new Map();
+
+// Register/sync group chat on server
+app.post('/api/groups/register', (req, res) => {
+  try {
+    const { group } = req.body;
+    if (!group || !group.id || !group.inviteCode) {
+      return res.status(400).json({ success: false, error: '缺少群聊 ID 或邀请码' });
+    }
+    const cleanCode = String(group.inviteCode).trim().toUpperCase();
+    const updatedGroup = {
+      ...group,
+      inviteCode: cleanCode,
+      updatedAt: Date.now(),
+    };
+    serverGroupStore.set(group.id, updatedGroup);
+    serverInviteCodeIndex.set(cleanCode, group.id);
+
+    return res.json({ success: true, groupId: group.id, inviteCode: cleanCode });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Find group by invite code
+app.get('/api/groups/invite/:code', (req, res) => {
+  try {
+    const rawCode = req.params.code || '';
+    const cleanCode = rawCode.trim().toUpperCase();
+    const groupId = serverInviteCodeIndex.get(cleanCode);
+
+    if (!groupId) {
+      return res.status(404).json({ success: false, error: '未找到对应的群聊，请检查邀请码是否正确或已过期' });
+    }
+
+    const group = serverGroupStore.get(groupId);
+    if (!group || group.inviteCodeActive === false) {
+      return res.status(400).json({ success: false, error: '该群聊已关闭邀请码入群功能' });
+    }
+
+    return res.json({
+      success: true,
+      group: {
+        id: group.id,
+        name: group.name,
+        avatar: group.avatar,
+        notice: group.notice,
+        ownerId: group.ownerId,
+        inviteCode: group.inviteCode,
+        inviteCodeActive: group.inviteCodeActive,
+        membersCount: group.members ? group.members.length : 0,
+        members: group.members || [],
+        createdAt: group.createdAt,
+        messages: group.messages || [],
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Join group via invite code
+app.post('/api/groups/join', (req, res) => {
+  try {
+    const { inviteCode, userProfile } = req.body;
+    if (!inviteCode || !userProfile) {
+      return res.status(400).json({ success: false, error: '请提供邀请码及个人资料' });
+    }
+
+    const cleanCode = String(inviteCode).trim().toUpperCase();
+    const groupId = serverInviteCodeIndex.get(cleanCode);
+
+    if (!groupId) {
+      return res.status(404).json({ success: false, error: '未找到对应的群聊，请检查邀请码是否正确' });
+    }
+
+    const group = serverGroupStore.get(groupId);
+    if (!group || group.inviteCodeActive === false) {
+      return res.status(400).json({ success: false, error: '该群聊已关闭邀请码入群功能' });
+    }
+
+    // Check if user is already in group
+    const userId = userProfile.id || 'user_main';
+    const alreadyMember = (group.members || []).some((m: any) => m.id === userId || m.wxid === userProfile.wxid);
+
+    if (alreadyMember) {
+      return res.json({
+        success: true,
+        alreadyMember: true,
+        group,
+      });
+    }
+
+    // Direct Join: Add user to members list
+    const newMember = {
+      id: userId === 'user_main' ? 'user_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6) : userId,
+      name: userProfile.name || '新好友',
+      avatar: userProfile.avatar || '',
+      memberType: 'human',
+      role: 'member',
+      joinedAt: Date.now(),
+      wxid: userProfile.wxid || 'user_' + Date.now(),
+    };
+
+    const now = Date.now();
+    const systemNoticeMsg = {
+      id: 'gmsg_' + now + '_join',
+      groupId: group.id,
+      senderId: 'system',
+      senderName: '系统消息',
+      senderAvatar: group.avatar || '',
+      senderType: 'human',
+      text: `🎉 欢迎新成员 “${newMember.name}” 通过邀请码加入群聊！`,
+      timestamp: now,
+    };
+
+    const updatedGroup = {
+      ...group,
+      members: [...(group.members || []), newMember],
+      messages: [...(group.messages || []), systemNoticeMsg],
+      updatedAt: now,
+    };
+
+    serverGroupStore.set(group.id, updatedGroup);
+
+    return res.json({
+      success: true,
+      group: updatedGroup,
+      memberAdded: true,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get group chat by ID with access permission verification
+app.get('/api/groups/:groupId', (req, res) => {
+  try {
+    const groupId = req.params.groupId;
+    const userId = (req.query.userId as string) || '';
+    const inviteCode = (req.query.inviteCode as string) || '';
+
+    const group = serverGroupStore.get(groupId);
+    if (!group) {
+      return res.status(404).json({ success: false, error: '群聊不存在' });
+    }
+
+    // Access control check: Must be member OR have valid invite code
+    const isMember = (group.members || []).some((m: any) => m.id === userId || m.wxid === userId);
+    const isValidCode = inviteCode && group.inviteCode && group.inviteCode.toUpperCase() === inviteCode.toUpperCase();
+
+    if (!isMember && !isValidCode) {
+      return res.status(403).json({ success: false, error: '权限不足：您并非该群聊成员，无法直接查看该私密群聊数据' });
+    }
+
+    return res.json({ success: true, group });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Sync/update group settings or messages on server
+app.post('/api/groups/:groupId/sync', (req, res) => {
+  try {
+    const groupId = req.params.groupId;
+    const { group, userId = 'user_main' } = req.body;
+
+    if (!group) {
+      return res.status(400).json({ success: false, error: '缺少群聊数据' });
+    }
+
+    const existing = serverGroupStore.get(groupId);
+    // Access control check if existing group
+    if (existing) {
+      const isMember = (existing.members || []).some((m: any) => m.id === userId || m.wxid === userId);
+      if (!isMember && existing.ownerId !== userId && userId !== 'user_main') {
+        return res.status(403).json({ success: false, error: '权限不足：只有群聊成员或群主才能更新群数据' });
+      }
+    }
+
+    const cleanCode = group.inviteCode ? String(group.inviteCode).trim().toUpperCase() : '';
+    const updatedGroup = {
+      ...group,
+      inviteCode: cleanCode || existing?.inviteCode || '',
+      updatedAt: Date.now(),
+    };
+
+    serverGroupStore.set(groupId, updatedGroup);
+    if (cleanCode) {
+      serverInviteCodeIndex.set(cleanCode, groupId);
+    }
+
+    return res.json({ success: true, group: updatedGroup });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // 1.5 Dedicated Natural Language Device Control Endpoint
 app.post('/api/gemini/device-nlp-control', async (req, res) => {
   const { command, devicesSummary, apiConfig } = req.body;

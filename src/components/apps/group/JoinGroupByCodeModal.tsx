@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { GroupChat, GroupJoinRequest, UserProfile } from '../../../types';
 import { DEFAULT_USER_AVATAR } from '../../../lib/storage';
+import { findGroupByInviteCode, joinGroupViaServer } from '../../../lib/groupService';
 
 interface JoinGroupByCodeModalProps {
   isOpen: boolean;
@@ -51,39 +52,55 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [matchedGroup, setMatchedGroup] = useState<GroupChat | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
   const [appliedSuccess, setAppliedSuccess] = useState(false);
   const [activeTab, setActiveTab] = useState<'my_join' | 'simulate_others'>('my_join');
 
   if (!isOpen) return null;
 
-  const handleSearchCode = () => {
+  const handleSearchCode = async () => {
     const code = inviteCodeInput.trim().toUpperCase();
     if (!code) {
       setErrorMsg('请输入有效的群邀请码');
       return;
     }
 
-    const found = groupChats.find(
+    // 1. Local Search
+    const localFound = groupChats.find(
       (g) => g.inviteCode && g.inviteCode.toUpperCase() === code
     );
 
-    if (!found) {
-      setErrorMsg('未找到对应的群聊，请检查邀请码是否正确或已过期');
-      setMatchedGroup(null);
-    } else if (!found.inviteCodeActive) {
-      setErrorMsg('该群聊已关闭邀请码入群功能');
-      setMatchedGroup(null);
-    } else {
+    if (localFound) {
+      if (!localFound.inviteCodeActive) {
+        setErrorMsg('该群聊已关闭邀请码入群功能');
+        setMatchedGroup(null);
+      } else {
+        setErrorMsg('');
+        setMatchedGroup(localFound);
+      }
+      return;
+    }
+
+    // 2. Server Registry Search (Cross-device)
+    setIsSearching(true);
+    setErrorMsg('');
+    const serverResult = await findGroupByInviteCode(code);
+    setIsSearching(false);
+
+    if (serverResult.success && serverResult.group) {
       setErrorMsg('');
-      setMatchedGroup(found);
+      setMatchedGroup(serverResult.group);
+    } else {
+      setErrorMsg(serverResult.error || '未找到对应的群聊，请检查邀请码是否正确');
+      setMatchedGroup(null);
     }
   };
 
-  const handleApplyToJoin = () => {
+  const handleApplyToJoin = async () => {
     if (!matchedGroup) return;
 
-    // Check if user is already a member
-    const alreadyMember = matchedGroup.members.some((m) => m.id === 'user_main');
+    // Check if user is already a member locally or in matchedGroup
+    const alreadyMember = matchedGroup.members.some((m) => m.id === 'user_main' || m.wxid === userProfile.wxid);
     if (alreadyMember) {
       alert('您已经是该群聊的成员啦！');
       onJoinGroupSuccess(matchedGroup);
@@ -91,24 +108,35 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
       return;
     }
 
-    // Submit join request
-    const request: GroupJoinRequest = {
-      id: 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-      groupId: matchedGroup.id,
-      userId: 'user_main',
-      userName: userProfile.name || '小清',
-      userAvatar: userProfile.avatar || DEFAULT_USER_AVATAR,
-      userBio: userProfile.bio || '申请加入群聊',
-      inviteCodeUsed: matchedGroup.inviteCode,
-      status: 'pending',
-      requestedAt: Date.now(),
-    };
+    // Cross-device server join
+    const serverJoinRes = await joinGroupViaServer(matchedGroup.inviteCode, userProfile);
 
-    onJoinGroupSuccess(matchedGroup, request);
-    setAppliedSuccess(true);
-    setTimeout(() => {
-      onClose();
-    }, 1500);
+    if (serverJoinRes.success && serverJoinRes.group) {
+      onJoinGroupSuccess(serverJoinRes.group);
+      setAppliedSuccess(true);
+      setTimeout(() => {
+        onClose();
+      }, 1200);
+    } else {
+      // Fallback local join request
+      const request: GroupJoinRequest = {
+        id: 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        groupId: matchedGroup.id,
+        userId: 'user_main',
+        userName: userProfile.name || '小清',
+        userAvatar: userProfile.avatar || DEFAULT_USER_AVATAR,
+        userBio: userProfile.bio || '申请加入群聊',
+        inviteCodeUsed: matchedGroup.inviteCode,
+        status: 'pending',
+        requestedAt: Date.now(),
+      };
+
+      onJoinGroupSuccess(matchedGroup, request);
+      setAppliedSuccess(true);
+      setTimeout(() => {
+        onClose();
+      }, 1500);
+    }
   };
 
   const handleTriggerSimulatedApplicant = (fakeUser: typeof PRESET_SIMULATED_HUMANS[0]) => {

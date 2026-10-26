@@ -21,9 +21,13 @@ import {
 } from 'lucide-react';
 import { ImagePickerModal } from '../ImagePickerModal';
 import { IconCropperModal } from '../IconCropperModal';
+import { lockSecurityService, LockType } from '../../lib/lockScreenSecurity';
+import { GestureLock } from '../GestureLock';
+import { Shield, Grid3X3 } from 'lucide-react';
 
 interface BeautificationAppProps {
   onBackToLauncher: () => void;
+  onLockPhone?: () => void;
   desktopWallpaper: string;
   lockWallpaper: string;
   customCss: string;
@@ -48,6 +52,7 @@ interface BeautificationAppProps {
 
 export const BeautificationApp: React.FC<BeautificationAppProps> = ({
   onBackToLauncher,
+  onLockPhone,
   desktopWallpaper,
   lockWallpaper,
   customCss,
@@ -70,8 +75,16 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
   onAddApiLog,
 }) => {
   const [cssCode, setCssCode] = useState(customCss);
-  const [pinInput, setPinInput] = useState(pinCode);
-  const [pinToggle, setPinToggle] = useState(isPinEnabled);
+  const [isLockEnabled, setIsLockEnabled] = useState(lockSecurityService.getIsLockEnabled());
+  const [lockType, setLockType] = useState<LockType>(lockSecurityService.getLockType());
+  const [newPinInput, setNewPinInput] = useState('');
+  const [confirmPinInput, setConfirmPinInput] = useState('');
+  const [showGestureSetupModal, setShowGestureSetupModal] = useState(false);
+
+  // Verification modal before turning off lock
+  const [showVerifyCurrentModal, setShowVerifyCurrentModal] = useState(false);
+  const [verifyInput, setVerifyInput] = useState('');
+  const [verifyAction, setVerifyAction] = useState<'disable' | null>(null);
 
   const [activePicker, setActivePicker] = useState<'desktop' | 'lock' | null>(null);
   const [croppingTargetIcon, setCroppingTargetIcon] = useState<AppIconConfig | null>(null);
@@ -103,11 +116,12 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
     }
   };
 
-  const handleSavePin = () => {
-    if (pinInput.length === 4) {
-      onUpdatePinCode(pinInput);
-      onUpdatePinEnabled(pinToggle);
-      setSuccessMsg('密码锁屏设置已更新！');
+  const handleSavePin = async () => {
+    if (newPinInput.length === 4) {
+      await lockSecurityService.setPinCode(newPinInput);
+      onUpdatePinCode(newPinInput);
+      onUpdatePinEnabled(isLockEnabled);
+      setSuccessMsg('密码锁屏设置已成功安全更新！');
       setTimeout(() => setSuccessMsg(''), 2500);
     }
   };
@@ -334,41 +348,203 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
           </div>
         </div>
 
-        {/* 2. Lockscreen Password Settings */}
-        <div className="p-4 rounded-3xl bg-zinc-900 border border-zinc-800 space-y-3 shadow-sm">
-          <h3 className="font-bold text-sm text-amber-400 flex items-center gap-2">
-            <Lock className="w-4 h-4" />
-            2. 锁屏与安全密码
-          </h3>
-
-          <div className="flex items-center justify-between py-1">
-            <span className="font-medium text-zinc-200">开启数字密码锁屏</span>
-            <input
-              type="checkbox"
-              checked={pinToggle}
-              onChange={(e) => setPinToggle(e.target.checked)}
-              className="w-5 h-5 accent-amber-500 cursor-pointer"
-            />
+        {/* 2. Lockscreen Password Security Management System */}
+        <div className="p-4 rounded-3xl bg-zinc-900 border border-zinc-800 space-y-3.5 shadow-sm">
+          <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
+            <div className="flex items-center gap-2 font-bold text-sm text-amber-400">
+              <Shield className="w-4 h-4 text-amber-400" />
+              <span>2. 锁屏与安全密码中心</span>
+            </div>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${
+              isLockEnabled
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+            }`}>
+              {isLockEnabled ? (lockType === 'pattern' ? '✍️ 手势密码保护中' : '🔢 数字密码保护中') : '🔓 锁屏未开启'}
+            </span>
           </div>
 
-          {pinToggle && (
-            <div className="space-y-2 pt-2 border-t border-zinc-800">
-              <label className="block text-zinc-400">设置 4 位数字密码</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  maxLength={4}
-                  value={pinInput}
-                  onChange={(e) => setPinInput(e.target.value)}
-                  className="flex-1 px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-center font-mono text-base tracking-widest text-white"
-                />
-                <button
-                  onClick={handleSavePin}
-                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 font-medium text-zinc-950"
-                >
-                  重置密码
-                </button>
+          {/* Master Lock Protection Switch */}
+          <div className="flex items-center justify-between p-3 rounded-2xl bg-zinc-850 border border-zinc-750">
+            <div>
+              <div className="font-semibold text-xs text-zinc-100">开启模拟手机锁屏保护</div>
+              <div className="text-[10px] text-zinc-400 mt-0.5">
+                支持数字 PIN 与九宫格手势连线解锁，密码均经 Salted SHA-256 加密保存
               </div>
+            </div>
+            <button
+              onClick={() => {
+                if (isLockEnabled) {
+                  // Prompt to verify before disabling lock
+                  setVerifyAction('disable');
+                  setShowVerifyCurrentModal(true);
+                } else {
+                  lockSecurityService.setLockEnabled(true);
+                  setIsLockEnabled(true);
+                  onUpdatePinEnabled(true);
+                  setSuccessMsg('已开启锁屏保护！');
+                  setTimeout(() => setSuccessMsg(''), 2500);
+                }
+              }}
+              className={`w-11 h-6 rounded-full transition-colors relative shrink-0 ${
+                isLockEnabled ? 'bg-amber-500' : 'bg-zinc-700'
+              }`}
+            >
+              <div
+                className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
+                  isLockEnabled ? 'right-1' : 'left-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {isLockEnabled && (
+            <div className="space-y-3 pt-1">
+              {/* Lock Type Selector (Digital PIN vs Gesture Pattern) */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-semibold text-zinc-300 block">选择解锁方式</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => {
+                      lockSecurityService.setLockType('pin');
+                      setLockType('pin');
+                      setSuccessMsg('已切换为 4位数字密码 解锁模式');
+                      setTimeout(() => setSuccessMsg(''), 2000);
+                    }}
+                    className={`p-2.5 rounded-2xl border text-left flex items-center gap-2 transition ${
+                      lockType === 'pin'
+                        ? 'bg-amber-500/20 border-amber-500 text-amber-200 font-bold shadow-sm'
+                        : 'bg-zinc-850 border-zinc-750 text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    <Key className="w-4 h-4 text-amber-400 shrink-0" />
+                    <div>
+                      <div className="text-xs">数字 PIN 密码</div>
+                      <div className="text-[9px] text-zinc-400 font-normal">4位极速数字键盘</div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      if (!lockSecurityService.hasPatternSet()) {
+                        setShowGestureSetupModal(true);
+                      } else {
+                        lockSecurityService.setLockType('pattern');
+                        setLockType('pattern');
+                        setSuccessMsg('已切换为 九宫格手势密码 解锁模式');
+                        setTimeout(() => setSuccessMsg(''), 2000);
+                      }
+                    }}
+                    className={`p-2.5 rounded-2xl border text-left flex items-center gap-2 transition ${
+                      lockType === 'pattern'
+                        ? 'bg-amber-500/20 border-amber-500 text-amber-200 font-bold shadow-sm'
+                        : 'bg-zinc-850 border-zinc-750 text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    <Grid3X3 className="w-4 h-4 text-amber-400 shrink-0" />
+                    <div>
+                      <div className="text-xs">九宫格手势密码</div>
+                      <div className="text-[9px] text-zinc-400 font-normal">连线连点图样解锁</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Digital PIN Configuration Panel */}
+              {lockType === 'pin' && (
+                <div className="p-3.5 rounded-2xl bg-zinc-850 border border-zinc-750 space-y-2.5">
+                  <div className="flex items-center justify-between text-xs font-semibold text-zinc-200">
+                    <span>设置/修改数字 PIN 密码</span>
+                    <span className="text-[10px] text-emerald-400 font-mono">SHA-256 加密</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-zinc-400 block mb-1">新 4 位数字密码</label>
+                      <input
+                        type="password"
+                        maxLength={4}
+                        placeholder="输入新密码"
+                        value={newPinInput}
+                        onChange={(e) => setNewPinInput(e.target.value.replace(/\D/g, ''))}
+                        className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-center font-mono text-sm tracking-widest text-white focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] text-zinc-400 block mb-1">再次输入确认密码</label>
+                      <input
+                        type="password"
+                        maxLength={4}
+                        placeholder="重复确认"
+                        value={confirmPinInput}
+                        onChange={(e) => setConfirmPinInput(e.target.value.replace(/\D/g, ''))}
+                        className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-center font-mono text-sm tracking-widest text-white focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={async () => {
+                      if (newPinInput.length !== 4) {
+                        alert('请输入 4 位纯数字密码！');
+                        return;
+                      }
+                      if (newPinInput !== confirmPinInput) {
+                        alert('两次输入的新密码不一致，请重新检查！');
+                        return;
+                      }
+                      await lockSecurityService.setPinCode(newPinInput);
+                      onUpdatePinCode(newPinInput);
+                      setNewPinInput('');
+                      setConfirmPinInput('');
+                      setSuccessMsg('🎉 数字 PIN 密码已成功保存并安全加密！');
+                      setTimeout(() => setSuccessMsg(''), 3000);
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs shadow-md transition active:scale-95"
+                  >
+                    保存加密数字密码
+                  </button>
+                </div>
+              )}
+
+              {/* Gesture Pattern Configuration Panel */}
+              {lockType === 'pattern' && (
+                <div className="p-3.5 rounded-2xl bg-zinc-850 border border-zinc-750 space-y-2.5">
+                  <div className="flex items-center justify-between text-xs font-semibold text-zinc-200">
+                    <span>设置/重置九宫格手势</span>
+                    <span className="text-[10px] text-emerald-400 font-mono">
+                      {lockSecurityService.hasPatternSet() ? '已绘制保存' : '尚未绘制'}
+                    </span>
+                  </div>
+
+                  <p className="text-[10px] text-zinc-400 leading-relaxed">
+                    手势密码需至少连接 4 个点。首次绘制后系统将要求您二次绘制进行确认。
+                  </p>
+
+                  <button
+                    onClick={() => setShowGestureSetupModal(true)}
+                    className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs shadow-md transition active:scale-95 flex items-center justify-center gap-1.5"
+                  >
+                    <Grid3X3 className="w-4 h-4" />
+                    <span>{lockSecurityService.hasPatternSet() ? '重新绘制并设置手势密码' : '立即设置九宫格手势密码'}</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Instant Lock Test Button */}
+              {onLockPhone && (
+                <button
+                  onClick={() => {
+                    lockSecurityService.setLockedState(true);
+                    onLockPhone();
+                  }}
+                  className="w-full py-2.5 rounded-2xl bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 text-amber-300 font-bold text-xs flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer"
+                >
+                  <Lock className="w-4 h-4 text-amber-400" />
+                  <span>🔒 立即锁定手机（测试当前锁屏效果）</span>
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -569,6 +745,108 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
               >
                 只更换界面主题（保留原有壁纸）
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Gesture Pattern Setup Modal */}
+      {showGestureSetupModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-sm rounded-3xl bg-zinc-900 border border-amber-500/40 p-5 text-white shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
+                <Grid3X3 className="w-4 h-4" />
+                <span>设置九宫格手势密码</span>
+              </div>
+              <button
+                onClick={() => setShowGestureSetupModal(false)}
+                className="text-zinc-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <GestureLock
+              mode="setup"
+              onSetupSuccess={async (patternPath) => {
+                await lockSecurityService.setPattern(patternPath);
+                lockSecurityService.setLockType('pattern');
+                setLockType('pattern');
+                setShowGestureSetupModal(false);
+                setSuccessMsg('🎉 九宫格手势密码已成功设置并安全保存！');
+                setTimeout(() => setSuccessMsg(''), 3000);
+              }}
+              onCancelSetup={() => setShowGestureSetupModal(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Verify Current Password Modal (Before Disabling Lock) */}
+      {showVerifyCurrentModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-sm rounded-3xl bg-zinc-900 border border-rose-500/40 p-5 text-white shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2 text-rose-400 font-bold text-sm">
+                <Shield className="w-4 h-4" />
+                <span>验证当前锁屏密码</span>
+              </div>
+              <button
+                onClick={() => {
+                  setShowVerifyCurrentModal(false);
+                  setVerifyInput('');
+                }}
+                className="text-zinc-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              为了您的数据安全，关闭锁屏密码保护前请先验证当前数字密码：
+            </p>
+
+            <div className="space-y-3">
+              <input
+                type="password"
+                maxLength={4}
+                placeholder="输入当前 4 位 PIN"
+                value={verifyInput}
+                onChange={(e) => setVerifyInput(e.target.value.replace(/\D/g, ''))}
+                className="w-full px-3 py-2.5 rounded-xl bg-zinc-800 border border-zinc-700 text-center font-mono text-base tracking-widest text-white focus:outline-none focus:border-rose-500"
+              />
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setShowVerifyCurrentModal(false);
+                    setVerifyInput('');
+                  }}
+                  className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-300 font-semibold text-xs transition cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={async () => {
+                    const isValid = await lockSecurityService.verifyPin(verifyInput);
+                    if (isValid) {
+                      lockSecurityService.setLockEnabled(false);
+                      setIsLockEnabled(false);
+                      onUpdatePinEnabled(false);
+                      setShowVerifyCurrentModal(false);
+                      setVerifyInput('');
+                      setSuccessMsg('已安全关闭锁屏密码保护！');
+                      setTimeout(() => setSuccessMsg(''), 2500);
+                    } else {
+                      alert('当前密码验证错误！无法关闭锁屏保护。');
+                    }
+                  }}
+                  className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md transition cursor-pointer"
+                >
+                  确认关闭
+                </button>
+              </div>
             </div>
           </div>
         </div>
