@@ -1665,26 +1665,6 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                         );
                       })}
 
-                      {/* Real-time Typing Bubble when AI is thinking / generating / delivering */}
-                      {activeTaskStatus && (
-                        <div className="flex items-start gap-2.5 my-2 animate-in fade-in duration-150">
-                          <img
-                            src={activeCharacter.avatar}
-                            alt={activeCharacter.name}
-                            className="w-9 h-9 rounded-xl object-cover border border-zinc-750 shrink-0"
-                          />
-                          <div className="p-3 rounded-2xl rounded-tl-xs bg-zinc-850 border border-zinc-750/80 text-zinc-300 text-xs flex items-center gap-2 shadow-xs">
-                            <span className="flex items-center gap-1">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce [animation-delay:-0.3s]" />
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce [animation-delay:-0.15s]" />
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce" />
-                            </span>
-                            <span className="text-zinc-400 text-[11px]">
-                              {activeTaskStatus === 'delivering' ? '正在输入…' : '正在思考回复…'}
-                            </span>
-                          </div>
-                        </div>
-                      )}
 
                       {/* AI Reply Failure & Retry Alert */}
                       {failedTaskInfo && (

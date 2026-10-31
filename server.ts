@@ -2323,6 +2323,74 @@ ${devicesSummary}
       return true;
     });
 
+    // Calculate exact time gap since last chat turn for AI Time Gap Perception
+    const currentMs = req.body.userMessageTimestamp || Date.now();
+    let lastMs: number | undefined;
+    if (cleanedHistory && cleanedHistory.length > 0) {
+      for (let i = cleanedHistory.length - 1; i >= 0; i--) {
+        const item = cleanedHistory[i];
+        const ts = item.timestamp ?? item.createdAt ?? item.create_time ?? item.time;
+        if (typeof ts === 'number' && ts > 0) {
+          lastMs = ts < 10000000000 ? ts * 1000 : ts;
+          break;
+        } else if (typeof ts === 'string' && ts.trim()) {
+          const parsedNum = Number(ts);
+          if (!isNaN(parsedNum) && parsedNum > 0) {
+            lastMs = parsedNum < 10000000000 ? parsedNum * 1000 : parsedNum;
+            break;
+          }
+          const parsedDate = Date.parse(ts);
+          if (!isNaN(parsedDate) && parsedDate > 0) {
+            lastMs = parsedDate;
+            break;
+          }
+        }
+      }
+    }
+
+    let gapSummary = '';
+    let isLongTimeGap = false;
+    if (!lastMs) {
+      gapSummary = '本次为与该角色的首次对话（此前无历史沟通记录）';
+    } else {
+      const diffMs = Math.max(0, currentMs - lastMs);
+      const diffMins = Math.floor(diffMs / (60 * 1000));
+      const diffHours = Math.floor(diffMs / (3600 * 1000));
+      const diffDays = Math.floor(diffMs / (86400 * 1000));
+
+      if (diffMins < 1) {
+        gapSummary = '距离上一次对话不到 1 分钟（连续聊天中）';
+      } else if (diffMins < 60) {
+        gapSummary = `距离上一次对话过去 ${diffMins} 分钟（连续对话）`;
+      } else if (diffHours < 24) {
+        const remMins = diffMins % 60;
+        gapSummary = `距离上一次对话已过去 ${diffHours} 小时 ${remMins} 分钟`;
+        if (diffHours >= 6) isLongTimeGap = true;
+      } else {
+        const remHours = diffHours % 24;
+        gapSummary = `距离上一次对话已过去 ${diffDays} 天 ${remHours} 小时`;
+        isLongTimeGap = true;
+      }
+    }
+
+    const lastChatTimeStr = lastMs ? formatFullDateTime(lastMs) : '无历史记录';
+    const currentChatTimeStr = formatFullDateTime(currentMs);
+
+    contextPrompt += `\n【⏰ 真实聊天时间感知与时间间隔】:
+- 当前设备/消息真实时间：${currentChatTimeStr}
+- 上次与该角色对话时间：${lastChatTimeStr}
+- 两次对话真实时间差：${gapSummary}
+`;
+
+    if (isLongTimeGap) {
+      contextPrompt += `【⚠️ 跨时间段与长间隔交互准则】：
+1. 距离上一次对话已间隔较长时间。在过去聊天中如果提到过当时的‘明天’、‘后天’等计划（如“明天要面试”、“后天去开会”），请在心智中意识到这些事件在现实时间线中**可能已经发生或成为过去**，切勿将过去计划当作未发生的未来，也不要幻想未发生的事件。
+2. 请自然感知到时间跨度（根据人设自然问候，如“好久不见啦”、“这几天忙什么呢”或关心此前计划“前几天你说起的那个面试怎么样了？”），保持亲切贴切的真人口吻。
+`;
+    } else {
+      contextPrompt += `【连续对话准则】：间隔极短，保持紧凑连贯的微信日常交流节奏。\n`;
+    }
+
     const contents = [];
     if (cleanedHistory && cleanedHistory.length > 0) {
       cleanedHistory.forEach((msg: any) => {

@@ -76,23 +76,16 @@ export function formatMessageTimeDivider(timestamp: number, referenceDate = new 
   const minutes = date.getMinutes().toString().padStart(2, '0');
 
   const timeStr = `${hours}:${minutes}`;
+  const baseStr = `${year}年${month}月${day}日 ${timeStr}`;
 
   const todayStart = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate()).getTime();
   const yesterdayStart = todayStart - 86400000;
 
-  if (timestamp >= todayStart && timestamp < todayStart + 86400000) {
-    return timeStr;
-  }
-
   if (timestamp >= yesterdayStart && timestamp < todayStart) {
-    return `昨天 ${timeStr}`;
+    return `${baseStr}（昨天）`;
   }
 
-  if (year === referenceDate.getFullYear()) {
-    return `${month}月${day}日 ${timeStr}`;
-  }
-
-  return `${year}年${month}月${day}日 ${timeStr}`;
+  return baseStr;
 }
 
 /**
@@ -132,6 +125,7 @@ export function formatFullDateTime(timestamp?: number | string | Date): string {
  * Show time divider if:
  * 1. `prevMsg` is undefined (top message in list) and `currMsg` has a valid timestamp.
  * 2. OR gap between `currMsg` and `prevMsg` is >= 5 minutes (300,000 ms).
+ * 3. OR `currMsg` and `prevMsg` cross a natural calendar day boundary.
  */
 export function shouldShowTimeDivider(currMsg: any, prevMsg?: any): boolean {
   const tCurr = getMessageTimestamp(currMsg);
@@ -143,5 +137,18 @@ export function shouldShowTimeDivider(currMsg: any, prevMsg?: any): boolean {
   if (tPrev === undefined) return true;
 
   const gap = tCurr - tPrev;
-  return gap >= 5 * 60 * 1000; // 5 minutes threshold
+  if (gap >= 5 * 60 * 1000) return true; // 5 minutes threshold
+
+  // Natural calendar day boundary check
+  const dCurr = new Date(tCurr);
+  const dPrev = new Date(tPrev);
+  if (
+    dCurr.getFullYear() !== dPrev.getFullYear() ||
+    dCurr.getMonth() !== dPrev.getMonth() ||
+    dCurr.getDate() !== dPrev.getDate()
+  ) {
+    return true;
+  }
+
+  return false;
 }
