@@ -13,8 +13,8 @@ import android.os.PowerManager;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.accessibility.AccessibilityManager;
-import androidx.core.app.NotificationManagerCompat;
-import androidx.core.content.ContextCompat;
+import android.content.pm.ApplicationInfo;
+import android.app.usage.UsageEvents;
 import android.app.usage.UsageStats;
 import android.app.usage.UsageStatsManager;
 
@@ -331,6 +331,125 @@ public class AndroidPermissionBridge extends Plugin {
         ret.put("appUsageTimeMinutes", 0);
         ret.put("continuousUsageMinutes", 0);
         ret.put("minutes", 0);
+        call.resolve(ret);
+    }
+
+    /**
+     * Query real app-level usage statistics using Android OS UsageStatsManager & UsageEvents.
+     * Computes today's total foreground time, continuous session time, and last time used for each package.
+     */
+    @PluginMethod
+    public void getAppUsageList(PluginCall call) {
+        Context context = getContext();
+        JSObject ret = new JSObject();
+
+        boolean usageGranted = checkUsageStatsGranted(context);
+        ret.put("hasPermission", usageGranted);
+
+        if (!usageGranted) {
+            ret.put("apps", new com.getcapacitor.JSArray());
+            call.resolve(ret);
+            return;
+        }
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                UsageStatsManager usm = (UsageStatsManager) context.getSystemService(Context.USAGE_STATS_SERVICE);
+                PackageManager pm = context.getPackageManager();
+
+                if (usm != null && pm != null) {
+                    long now = System.currentTimeMillis();
+                    java.util.Calendar cal = java.util.Calendar.getInstance();
+                    cal.set(java.util.Calendar.HOUR_OF_DAY, 0);
+                    cal.set(java.util.Calendar.MINUTE, 0);
+                    cal.set(java.util.Calendar.SECOND, 0);
+                    cal.set(java.util.Calendar.MILLISECOND, 0);
+                    long todayMidnight = cal.getTimeInMillis();
+
+                    List<UsageStats> statsList = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, todayMidnight, now);
+                    java.util.Map<String, Long> totalTimeMap = new java.util.HashMap<>();
+                    java.util.Map<String, Long> lastTimeUsedMap = new java.util.HashMap<>();
+
+                    if (statsList != null) {
+                        for (UsageStats stats : statsList) {
+                            if (stats.getTotalTimeInForeground() > 0) {
+                                String pkg = stats.getPackageName();
+                                totalTimeMap.put(pkg, stats.getTotalTimeInForeground());
+                                lastTimeUsedMap.put(pkg, stats.getLastTimeUsed());
+                            }
+                        }
+                    }
+
+                    UsageEvents events = usm.queryEvents(todayMidnight, now);
+                    java.util.Map<String, Long> resumedAtMap = new java.util.HashMap<>();
+                    java.util.Map<String, Long> continuousTimeMap = new java.util.HashMap<>();
+
+                    if (events != null) {
+                        UsageEvents.Event event = new UsageEvents.Event();
+                        while (events.hasNextEvent()) {
+                            events.getNextEvent(event);
+                            String pkg = event.getPackageName();
+                            int eventType = event.getEventType();
+                            long eventTime = event.getTimeStamp();
+
+                            if (eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
+                                resumedAtMap.put(pkg, eventTime);
+                            } else if (eventType == UsageEvents.Event.ACTIVITY_PAUSED ||
+                                       eventType == 18 /* KEYGUARD_SHOWN */ ||
+                                       eventType == 26 /* DEVICE_SHUTDOWN */) {
+                                Long resTime = resumedAtMap.remove(pkg);
+                                if (resTime != null && eventTime > resTime) {
+                                    long dur = eventTime - resTime;
+                                    continuousTimeMap.put(pkg, dur);
+                                }
+                            }
+                        }
+
+                        for (java.util.Map.Entry<String, Long> entry : resumedAtMap.entrySet()) {
+                            String pkg = entry.getKey();
+                            long resTime = entry.getValue();
+                            if (now > resTime) {
+                                continuousTimeMap.put(pkg, now - resTime);
+                            }
+                        }
+                    }
+
+                    com.getcapacitor.JSArray appArray = new com.getcapacitor.JSArray();
+                    for (String pkg : totalTimeMap.keySet()) {
+                        long totalMs = totalTimeMap.get(pkg);
+                        long lastUsed = lastTimeUsedMap.containsKey(pkg) ? lastTimeUsedMap.get(pkg) : 0;
+                        long contMs = continuousTimeMap.containsKey(pkg) ? continuousTimeMap.get(pkg) : 0;
+
+                        String label = pkg;
+                        try {
+                            ApplicationInfo appInfo = pm.getApplicationInfo(pkg, 0);
+                            CharSequence appLabel = pm.getApplicationLabel(appInfo);
+                            if (appLabel != null && appLabel.length() > 0) {
+                                label = appLabel.toString();
+                            }
+                        } catch (Exception e) {
+                            // Fallback to pkg
+                        }
+
+                        JSObject appObj = new JSObject();
+                        appObj.put("packageName", pkg);
+                        appObj.put("appName", label);
+                        appObj.put("totalUsageMinutesToday", (int) (totalMs / (1000 * 60)));
+                        appObj.put("continuousUsageMinutes", (int) (contMs / (1000 * 60)));
+                        appObj.put("lastTimeUsed", lastUsed);
+                        appArray.put(appObj);
+                    }
+
+                    ret.put("apps", appArray);
+                    call.resolve(ret);
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to query getAppUsageList:", e);
+        }
+
+        ret.put("apps", new com.getcapacitor.JSArray());
         call.resolve(ret);
     }
 

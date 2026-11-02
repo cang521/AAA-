@@ -269,6 +269,28 @@ export interface ApiLog {
   purpose: string;
 }
 
+export interface AppUsageDetail {
+  packageName: string;
+  appName: string;
+  appIcon?: string;
+  totalUsageMinutesToday: number;
+  continuousUsageMinutes: number;
+  lastTimeUsed: number;
+  isMonitored: boolean;
+}
+
+export interface AppUsageListResult {
+  hasPermission: boolean;
+  apps: AppUsageDetail[];
+  isSimulation?: boolean;
+}
+
+export interface AppUsageMonitoringConfig {
+  enabled: boolean;
+  monitoredPackages: string[];
+  autoRefreshIntervalSeconds: number;
+}
+
 export interface AiDevicePermissions {
   discoverDevices: boolean; // AI发现设备
   viewStatus: boolean; // AI查看设备状态

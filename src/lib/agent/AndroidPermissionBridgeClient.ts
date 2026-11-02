@@ -10,6 +10,7 @@
 
 import { registerPlugin, Capacitor, WebPlugin } from '@capacitor/core';
 import { CapabilityStatus, SystemCapabilityId } from './types';
+import { AppUsageListResult } from '../../types';
 
 export interface AndroidNativeInfo {
   isNativeAndroid: boolean;
@@ -33,6 +34,7 @@ export interface AndroidPermissionBridgePlugin {
   requestPermission(options: { id: string }): Promise<{ success: boolean; message?: string }>;
   openSystemSettings(options: { target: string }): Promise<{ success: boolean; message?: string }>;
   getScreenUsageMinutes(): Promise<ScreenUsageStatsResult>;
+  getAppUsageList(): Promise<AppUsageListResult>;
 }
 
 export class AndroidPermissionBridgeWeb extends WebPlugin implements AndroidPermissionBridgePlugin {
@@ -71,6 +73,14 @@ export class AndroidPermissionBridgeWeb extends WebPlugin implements AndroidPerm
       appUsageTimeMinutes: 0,
       continuousUsageMinutes: 0,
       minutes: 0,
+    };
+  }
+
+  async getAppUsageList(): Promise<AppUsageListResult> {
+    return {
+      hasPermission: false,
+      apps: [],
+      isSimulation: false,
     };
   }
 }
@@ -212,6 +222,27 @@ export class AndroidPermissionBridgeClient {
         appUsageTimeMinutes: 0,
         continuousUsageMinutes: 0,
         minutes: 0,
+      };
+    }
+  }
+
+  public async getAppUsageList(): Promise<AppUsageListResult> {
+    if (!this.isNativeAndroid()) {
+      return {
+        hasPermission: false,
+        apps: [],
+        isSimulation: false,
+      };
+    }
+
+    try {
+      return await AndroidPermissionBridge.getAppUsageList();
+    } catch (e) {
+      console.warn('[AndroidPermissionBridgeClient] getAppUsageList error:', e);
+      return {
+        hasPermission: false,
+        apps: [],
+        isSimulation: false,
       };
     }
   }

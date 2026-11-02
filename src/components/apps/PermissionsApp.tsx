@@ -38,8 +38,10 @@ import {
   Radio,
   Zap,
   Bluetooth,
+  BarChart3,
 } from 'lucide-react';
 import { deviceService } from '../../lib/deviceService';
+import { AppUsageStatsView } from './permissions/AppUsageStatsView';
 
 interface PermissionsAppProps {
   onBackToLauncher: () => void;
@@ -78,6 +80,7 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
   const [showAccessibilityGuide, setShowAccessibilityGuide] = useState(false);
   const [isRequesting, setIsRequesting] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
+  const [showAppUsageStats, setShowAppUsageStats] = useState(false);
 
   // Dynamic Permission Request Dialog
   const [activeRequestDialog, setActiveRequestDialog] = useState<DynamicPermRequest | null>(null);
@@ -414,6 +417,10 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
     );
   };
 
+  if (showAppUsageStats) {
+    return <AppUsageStatsView onBack={() => setShowAppUsageStats(false)} />;
+  }
+
   return (
     <div className="relative w-full h-full flex flex-col bg-zinc-950 text-white font-sans overflow-hidden select-none">
       {/* Header */}
@@ -479,6 +486,30 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
               {statusMsg}
             </div>
           )}
+        </div>
+
+        {/* 应用使用情况监测与白名单管理入口 */}
+        <div className="p-3.5 rounded-3xl bg-gradient-to-br from-sky-950/90 via-indigo-950/80 to-slate-900 border border-sky-500/30 text-white space-y-2.5 shadow-md">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-2xl bg-sky-500/20 text-sky-300 border border-sky-500/30 flex items-center justify-center shrink-0">
+                <BarChart3 className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-xs text-sky-200">应用使用情况监测与统计</h4>
+                <p className="text-[10px] text-sky-300/80">
+                  真实 Android UsageStats 统计、当次连续时长与监测白名单
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowAppUsageStats(true)}
+              className="px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 active:scale-95 font-bold text-xs text-white shadow-xs transition cursor-pointer flex items-center gap-1 shrink-0"
+            >
+              <span>进入统计</span>
+              <ArrowLeft className="w-3.5 h-3.5 rotate-180" />
+            </button>
+          </div>
         </div>
 
         {/* 1. Real Interactive Hardware Features & Live Test (真实手机硬件互动与落地测试) */}
