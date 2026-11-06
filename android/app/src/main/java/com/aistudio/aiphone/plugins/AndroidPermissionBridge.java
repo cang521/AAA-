@@ -13,6 +13,8 @@ import android.os.PowerManager;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.accessibility.AccessibilityManager;
+import androidx.core.app.NotificationManagerCompat;
+import androidx.core.content.ContextCompat;
 import android.content.pm.ApplicationInfo;
 import android.app.usage.UsageEvents;
 import android.app.usage.UsageStats;
