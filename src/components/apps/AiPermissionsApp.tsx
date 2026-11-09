@@ -145,59 +145,53 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
     switch (status) {
       case 'GRANTED':
         return (
-          <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[11px] font-medium flex items-center gap-1 shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            🟢 已授权
+          <span className="px-2 py-0.5 rounded-full bg-[#DCFCE7] text-[#166534] border border-[#86EFAC] dark:bg-emerald-500/15 dark:text-emerald-400 dark:border-emerald-500/30 text-[11px] font-semibold flex items-center gap-1 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#16A34A] dark:bg-emerald-400 animate-pulse" />
+            已授权
           </span>
         );
       case 'TEMPORARY':
         return (
-          <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[11px] font-medium flex items-center gap-1 shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-            🟡 临时授权 / 使用时
+          <span className="px-2 py-0.5 rounded-full bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30 text-[11px] font-semibold flex items-center gap-1 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#D97706] dark:bg-amber-400" />
+            临时授权 / 使用时
           </span>
         );
       case 'DENIED':
         return (
-          <span className="px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/30 text-[11px] font-medium flex items-center gap-1 shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
-            🔴 未授权
+          <span className="px-2 py-0.5 rounded-full bg-[#FEE2E2] text-[#991B1B] border border-[#FCA5A5] dark:bg-rose-500/15 dark:text-rose-400 dark:border-rose-500/30 text-[11px] font-semibold flex items-center gap-1 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#DC2626] dark:bg-rose-400" />
+            未授权
           </span>
         );
       case 'REQUEST_FAILED':
         return (
-          <span className="px-2 py-0.5 rounded-full bg-orange-500/15 text-orange-400 border border-orange-500/30 text-[11px] font-medium flex items-center gap-1 shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-orange-400" />
-            🟠 获取失败
+          <span className="px-2 py-0.5 rounded-full bg-[#FFEDD5] text-[#9A3412] border border-[#FDBA74] dark:bg-orange-500/15 dark:text-orange-400 dark:border-orange-500/30 text-[11px] font-semibold flex items-center gap-1 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#EA580C] dark:bg-orange-400" />
+            获取失败
           </span>
         );
       case 'SETTINGS_REQUIRED':
         return (
-          <span className="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30 text-[11px] font-medium flex items-center gap-1 shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-            🔵 需要系统设置
+          <span className="px-2 py-0.5 rounded-full bg-[#E0F2FE] text-[#075985] border border-[#7DD3FC] dark:bg-blue-500/15 dark:text-blue-300 dark:border-blue-500/30 text-[11px] font-semibold flex items-center gap-1 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#0284C7] dark:bg-blue-400" />
+            需要系统设置
           </span>
         );
       case 'UNSUPPORTED':
         return (
-          <span className="px-2 py-0.5 rounded-full bg-zinc-700/30 text-zinc-400 border border-zinc-700/50 text-[11px] font-medium flex items-center gap-1 shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
-            ⚫ 当前设备不支持
+          <span className="px-2 py-0.5 rounded-full bg-[#F1F5F9] text-[#475569] border border-[#CBD5E1] dark:bg-zinc-700/30 dark:text-zinc-400 dark:border-zinc-700/50 text-[11px] font-semibold flex items-center gap-1 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#64748B] dark:bg-zinc-500" />
+            当前设备不支持
           </span>
         );
       case 'NEED_APK':
-        return (
-          <span className="px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 text-[11px] font-medium flex items-center gap-1 shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
-            🟣 需要安装 Android APK 后使用
-          </span>
-        );
       case 'NOT_IMPLEMENTED':
       default:
         return (
-          <span className="px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 text-[11px] font-medium flex items-center gap-1 shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
-            🟣 需要安装 Android APK 后使用
+          <span className="px-2 py-0.5 rounded-full bg-[#F3E8FF] text-[#6B21A8] border border-[#D8B4FE] dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30 text-[11px] font-semibold flex items-center gap-1 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#9333EA] dark:bg-purple-400" />
+            需要安装 Android 原生 APK
           </span>
         );
     }
@@ -226,32 +220,32 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
   const currentAiConfig = currentAi ? aiConfigs[currentAi.id] : null;
 
   return (
-    <div className="relative w-full h-full flex flex-col bg-zinc-950 text-white font-sans overflow-hidden select-none">
+    <div className="relative w-full h-full flex flex-col bg-white dark:bg-zinc-950 text-[#243040] dark:text-white font-sans overflow-hidden select-none">
       {/* Status Toast */}
       {statusMessage && (
-        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-2xl bg-zinc-900/95 border border-zinc-700 text-zinc-200 text-xs shadow-2xl backdrop-blur-md flex items-center gap-2 animate-in fade-in duration-200 max-w-[90%] text-center">
-          <Info className="w-4 h-4 text-indigo-400 shrink-0" />
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-2xl bg-white dark:bg-zinc-900/95 border border-[#D9EAF7] dark:border-zinc-700 text-[#243040] dark:text-zinc-200 text-xs shadow-2xl backdrop-blur-md flex items-center gap-2 animate-in fade-in duration-200 max-w-[90%] text-center">
+          <Info className="w-4 h-4 text-[#59B6E8] dark:text-indigo-400 shrink-0" />
           <span>{statusMessage}</span>
         </div>
       )}
 
       {/* Header */}
-      <div className="h-13 px-3 bg-zinc-900/95 border-b border-zinc-800/80 flex items-center justify-between shrink-0 z-20">
+      <div className="h-13 px-3 bg-white dark:bg-zinc-900/95 border-b border-[#D9EAF7] dark:border-zinc-800/80 flex items-center justify-between shrink-0 z-20 shadow-2xs">
         <button
           onClick={onBackToLauncher}
-          className="flex items-center gap-1.5 text-xs text-zinc-300 hover:text-white font-medium px-2.5 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-800 transition active:scale-95"
+          className="flex items-center gap-1.5 text-xs text-[#5B6B7C] dark:text-zinc-300 hover:text-[#243040] dark:hover:text-white font-medium px-2.5 py-1.5 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800/80 hover:bg-[#EAF7FF] dark:hover:bg-zinc-800 border border-[#D9EAF7] dark:border-transparent transition active:scale-95 cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>桌面</span>
         </button>
 
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
-            <ShieldCheck className="w-4 h-4 text-indigo-400" />
+          <div className="w-7 h-7 rounded-xl bg-[#EAF7FF] dark:bg-indigo-500/20 border border-[#9DD8F5] dark:border-indigo-500/30 flex items-center justify-center text-[#59B6E8] dark:text-indigo-400">
+            <ShieldCheck className="w-4 h-4" />
           </div>
           <div className="text-left">
-            <h2 className="text-sm font-semibold text-zinc-100 leading-tight">AI 权限</h2>
-            <p className="text-[10px] text-zinc-400 leading-tight">四层权限安全调度中心</p>
+            <h2 className="text-sm font-bold text-[#243040] dark:text-zinc-100 leading-tight">AI 权限调度中心</h2>
+            <p className="text-[10px] text-[#5B6B7C] dark:text-zinc-400 leading-tight">四层权限安全调度与硬件连通</p>
           </div>
         </div>
 
@@ -259,7 +253,7 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
           {onOpenActivityLogs && (
             <button
               onClick={onOpenActivityLogs}
-              className="p-1.5 rounded-xl text-zinc-400 hover:text-indigo-300 hover:bg-zinc-800/80 transition"
+              className="p-1.5 rounded-xl text-[#5B6B7C] dark:text-zinc-400 hover:text-[#243040] dark:hover:text-indigo-300 hover:bg-[#F3FAFF] dark:hover:bg-zinc-800/80 transition cursor-pointer"
               title="查看 AI 活动审计记录"
             >
               <FileText className="w-4 h-4" />
@@ -268,32 +262,32 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
           <button
             onClick={handleRecheckAll}
             disabled={isCheckingAll}
-            className="p-1.5 rounded-xl text-zinc-400 hover:text-indigo-300 hover:bg-zinc-800/80 transition"
+            className="p-1.5 rounded-xl text-[#5B6B7C] dark:text-zinc-400 hover:text-[#243040] dark:hover:text-indigo-300 hover:bg-[#F3FAFF] dark:hover:bg-zinc-800/80 transition cursor-pointer"
             title="重新检测系统能力"
           >
-            <RefreshCw className={`w-4 h-4 ${isCheckingAll ? 'animate-spin text-indigo-400' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${isCheckingAll ? 'animate-spin text-[#59B6E8] dark:text-indigo-400' : ''}`} />
           </button>
         </div>
       </div>
 
       {/* Top Banner: Master Mute & One-Click Summary */}
-      <div className="p-3 bg-zinc-900/60 border-b border-zinc-800/60 shrink-0 space-y-2.5">
+      <div className="p-3 bg-[#F7FBFF] dark:bg-zinc-900/60 border-b border-[#D9EAF7] dark:border-zinc-800/60 shrink-0 space-y-2.5">
         {/* "今天别管我" Master Mute Switch */}
-        <div className="flex items-center justify-between p-2.5 rounded-2xl bg-zinc-900 border border-zinc-800/80">
+        <div className="flex items-center justify-between p-2.5 rounded-2xl bg-white dark:bg-zinc-900 border border-[#D9EAF7] dark:border-zinc-800/80 shadow-2xs">
           <div className="flex items-center gap-2.5">
-            <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${dndToday ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-zinc-800 text-zinc-400'}`}>
+            <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${dndToday ? 'bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30' : 'bg-[#F3FAFF] dark:bg-zinc-800 text-[#5B6B7C] dark:text-zinc-400'}`}>
               <Bell className="w-4 h-4" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-zinc-200">今天别管我</span>
+                <span className="text-xs font-bold text-[#243040] dark:text-zinc-200">今天别管我</span>
                 {dndToday && (
-                  <span className="px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 text-[10px] font-medium border border-amber-500/30">
+                  <span className="px-1.5 py-0.2 rounded-md bg-[#FEF3C7] text-[#92400E] text-[10px] font-bold border border-[#FDE68A] dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30">
                     静默中
                   </span>
                 )}
               </div>
-              <p className="text-[10px] text-zinc-400 mt-0.5">
+              <p className="text-[10px] text-[#5B6B7C] dark:text-zinc-400 mt-0.5">
                 开启后暂停后台决策、主动消息与悬浮窗；用户主动聊天正常；不删除原有权限设置。
               </p>
             </div>
@@ -303,11 +297,11 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
           <button
             onClick={handleToggleDnd}
             className={`w-11 h-6 rounded-full transition-colors relative shrink-0 p-0.5 cursor-pointer ${
-              dndToday ? 'bg-amber-500' : 'bg-zinc-700'
+              dndToday ? 'bg-amber-500' : 'bg-slate-300 dark:bg-zinc-700'
             }`}
           >
             <div
-              className={`w-5 h-5 rounded-full bg-white transition-transform ${
+              className={`w-5 h-5 rounded-full bg-white transition-transform shadow-xs ${
                 dndToday ? 'translate-x-5' : 'translate-x-0'
               }`}
             />
@@ -315,18 +309,18 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
         </div>
 
         {/* One-Click Check System Capability Bar */}
-        <div className="flex items-center justify-between p-2.5 rounded-2xl bg-gradient-to-r from-indigo-950/40 via-zinc-900 to-zinc-900 border border-indigo-500/20">
+        <div className="flex items-center justify-between p-2.5 rounded-2xl bg-white dark:bg-gradient-to-r dark:from-indigo-950/40 dark:via-zinc-900 dark:to-zinc-900 border border-[#D9EAF7] dark:border-indigo-500/20 shadow-2xs">
           <div className="space-y-0.5">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-indigo-200 flex items-center gap-1.5">
-                <Cpu className="w-3.5 h-3.5 text-indigo-400" />
-                系统能力
+              <span className="text-xs font-bold text-[#243040] dark:text-indigo-200 flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5 text-[#59B6E8] dark:text-indigo-400" />
+                系统能力统计
               </span>
-              <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-[11px] font-mono font-bold">
+              <span className="px-2 py-0.5 rounded-full bg-[#EAF7FF] text-[#59B6E8] dark:bg-indigo-500/20 dark:text-indigo-300 text-[11px] font-mono font-bold border border-[#9DD8F5] dark:border-transparent">
                 {counts.available} / {counts.total} 可用
               </span>
             </div>
-            <p className="text-[10px] text-zinc-400">
+            <p className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">
               已授权 {counts.granted} · 临时 {counts.temporary} · 需要APK {counts.needApk} · 未授权 {counts.denied}
             </p>
           </div>
@@ -334,7 +328,7 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
           <button
             onClick={handleRecheckAll}
             disabled={isCheckingAll}
-            className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-medium text-xs flex items-center gap-1.5 shadow-md shadow-indigo-600/20 transition shrink-0"
+            className="px-3 py-1.5 rounded-xl bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-indigo-600 dark:hover:bg-indigo-500 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition shrink-0 cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isCheckingAll ? 'animate-spin' : ''}`} />
             <span>一键全面检测</span>
@@ -342,13 +336,13 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
         </div>
 
         {/* 3 Main Navigation Tabs */}
-        <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-zinc-900/90 border border-zinc-800">
+        <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-[#F3FAFF] dark:bg-zinc-900/90 border border-[#D9EAF7] dark:border-zinc-800">
           <button
             onClick={() => setActiveTab('system')}
-            className={`py-1.5 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5 ${
+            className={`py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'system'
-                ? 'bg-zinc-800 text-indigo-300 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200'
+                ? 'bg-[#59B6E8] dark:bg-zinc-800 text-white dark:text-indigo-300 shadow-xs'
+                : 'text-[#5B6B7C] dark:text-zinc-400 hover:text-[#243040] dark:hover:text-zinc-200'
             }`}
           >
             <Smartphone className="w-3.5 h-3.5" />
@@ -356,10 +350,10 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('ai')}
-            className={`py-1.5 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5 ${
+            className={`py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'ai'
-                ? 'bg-zinc-800 text-indigo-300 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200'
+                ? 'bg-[#59B6E8] dark:bg-zinc-800 text-white dark:text-indigo-300 shadow-xs'
+                : 'text-[#5B6B7C] dark:text-zinc-400 hover:text-[#243040] dark:hover:text-zinc-200'
             }`}
           >
             <Sparkles className="w-3.5 h-3.5" />
@@ -367,10 +361,10 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('scene')}
-            className={`py-1.5 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5 ${
+            className={`py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'scene'
-                ? 'bg-zinc-800 text-indigo-300 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200'
+                ? 'bg-[#59B6E8] dark:bg-zinc-800 text-white dark:text-indigo-300 shadow-xs'
+                : 'text-[#5B6B7C] dark:text-zinc-400 hover:text-[#243040] dark:hover:text-zinc-200'
             }`}
           >
             <Sliders className="w-3.5 h-3.5" />
@@ -386,7 +380,7 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
         {/* ========================================== */}
         {activeTab === 'system' && (
           <div className="space-y-3">
-            <div className="px-1 flex items-center justify-between text-[11px] text-zinc-400">
+            <div className="px-1 flex items-center justify-between text-[11px] text-[#5B6B7C] dark:text-zinc-400 font-medium">
               <span>Android 原生能力与宿主硬件环境对接清单</span>
               <span>14 项核心能力</span>
             </div>
@@ -403,46 +397,46 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                 return (
                   <div
                     key={cap.id}
-                    className="p-3.5 rounded-2xl bg-zinc-900 border border-zinc-800/90 space-y-2.5 hover:border-zinc-700/80 transition"
+                    className="p-3.5 rounded-2xl bg-white dark:bg-zinc-900 border border-[#D9EAF7] dark:border-zinc-800/90 space-y-2.5 hover:border-[#9DD8F5] dark:hover:border-zinc-700/80 transition shadow-2xs"
                   >
                     {/* Title & Status */}
                     <div className="flex items-start justify-between gap-2">
                       <div className="space-y-0.5 flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="text-xs font-semibold text-zinc-100">{cap.name}</h4>
+                          <h4 className="text-xs font-bold text-[#243040] dark:text-zinc-100">{cap.name}</h4>
                           {renderCapabilityStatusBadge(status)}
                         </div>
-                        <p className="text-[10px] text-zinc-400 font-mono truncate">{cap.androidApiName}</p>
+                        <p className="text-[10px] text-[#5B6B7C] dark:text-zinc-400 font-mono truncate">{cap.androidApiName}</p>
                       </div>
 
                       <button
                         onClick={() => handleOpenDiagnostics(cap.id)}
-                        className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-zinc-300 text-[10px] font-medium border border-zinc-700/60 flex items-center gap-1 shrink-0 transition"
+                        className="px-2 py-1 rounded-lg bg-[#F3FAFF] dark:bg-zinc-800 hover:bg-[#EAF7FF] dark:hover:bg-zinc-750 text-[#5B6B7C] dark:text-zinc-300 text-[10px] font-medium border border-[#D9EAF7] dark:border-zinc-700/60 flex items-center gap-1 shrink-0 transition cursor-pointer"
                         title="查看环境兼容性与底层诊断"
                       >
-                        <Search className="w-3 h-3 text-indigo-400" />
+                        <Search className="w-3 h-3 text-[#59B6E8] dark:text-indigo-400" />
                         <span>诊断</span>
                       </button>
                     </div>
 
                     {/* Description */}
-                    <p className="text-[11px] text-zinc-300 leading-relaxed">{cap.description}</p>
-                    <div className="p-2 rounded-xl bg-zinc-950/60 border border-zinc-800/70 text-[10px] text-zinc-400 flex items-start gap-1.5">
-                      <Info className="w-3 h-3 text-indigo-400 shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-[#243040] dark:text-zinc-300 leading-relaxed">{cap.description}</p>
+                    <div className="p-2 rounded-xl bg-[#EAF7FF] dark:bg-zinc-950/60 border border-[#9DD8F5] dark:border-zinc-800/70 text-[10px] text-[#5B6B7C] dark:text-zinc-400 flex items-start gap-1.5">
+                      <Info className="w-3 h-3 text-[#59B6E8] dark:text-indigo-400 shrink-0 mt-0.5" />
                       <span>{cap.whyNeeded}</span>
                     </div>
 
                     {/* Action Buttons */}
-                    <div className="pt-1 flex items-center justify-end gap-2 flex-wrap border-t border-zinc-800/60">
+                    <div className="pt-1 flex items-center justify-end gap-2 flex-wrap border-t border-[#D9EAF7] dark:border-zinc-800/60">
                       {isNeedApk && (
                         <>
-                          <span className="text-[10px] text-purple-400 mr-auto flex items-center gap-1">
-                            <Layers className="w-3 h-3 text-purple-400" />
+                          <span className="text-[10px] text-purple-700 dark:text-purple-400 mr-auto flex items-center gap-1 font-medium">
+                            <Layers className="w-3 h-3 text-purple-600 dark:text-purple-400" />
                             需要安装 Android APK 后使用
                           </span>
                           <button
                             onClick={() => setApkRequirementCap(cap)}
-                            className="px-2.5 py-1 rounded-xl bg-purple-900/30 hover:bg-purple-900/50 text-purple-300 border border-purple-500/30 text-[11px] font-medium transition"
+                            className="px-2.5 py-1 rounded-xl bg-[#F3E8FF] dark:bg-purple-900/30 hover:bg-[#E9D5FF] dark:hover:bg-purple-900/50 text-[#6B21A8] dark:text-purple-300 border border-[#D8B4FE] dark:border-purple-500/30 text-[11px] font-semibold transition cursor-pointer"
                           >
                             真机说明
                           </button>
@@ -454,7 +448,7 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                                 handleRequestCapability(cap.id);
                               }
                             }}
-                            className="px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-medium transition"
+                            className="px-2.5 py-1 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800 hover:bg-[#EAF7FF] dark:hover:bg-zinc-700 text-[#5B6B7C] dark:text-zinc-300 text-[11px] font-medium border border-[#D9EAF7] dark:border-transparent transition cursor-pointer"
                           >
                             尝试授权
                           </button>
@@ -464,7 +458,7 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                       {isDenied && (
                         <button
                           onClick={() => handleRequestCapability(cap.id)}
-                          className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium transition shadow-sm active:scale-95"
+                          className="px-3 py-1.5 rounded-xl bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white text-[11px] font-bold transition shadow-xs active:scale-95 cursor-pointer"
                         >
                           获取权限
                         </button>
@@ -475,13 +469,13 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                           {/* CRITICAL USER REQUIREMENT: 重新获取权限 is ALWAYS enabled and visible! */}
                           <button
                             onClick={() => handleRequestCapability(cap.id)}
-                            className="px-3 py-1.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-medium transition active:scale-95"
+                            className="px-3 py-1.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-bold transition active:scale-95 cursor-pointer"
                           >
                             重新获取权限
                           </button>
                           <button
                             onClick={() => handleOpenFallbackDrawer(cap)}
-                            className="px-2.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] font-medium transition"
+                            className="px-2.5 py-1.5 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800 hover:bg-[#EAF7FF] dark:hover:bg-zinc-700 text-[#5B6B7C] dark:text-zinc-200 text-[11px] font-medium border border-[#D9EAF7] dark:border-transparent transition cursor-pointer"
                           >
                             系统设置入口
                           </button>
@@ -492,16 +486,16 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                         <>
                           <button
                             onClick={() => handleRequestCapability(cap.id)}
-                            className="px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-medium transition"
+                            className="px-2.5 py-1 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800 hover:bg-[#EAF7FF] dark:hover:bg-zinc-700 text-[#5B6B7C] dark:text-zinc-300 text-[11px] font-medium border border-[#D9EAF7] dark:border-transparent transition cursor-pointer"
                           >
                             重新检测
                           </button>
                           <button
                             onClick={() => handleOpenFallbackDrawer(cap)}
-                            className="px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-medium transition flex items-center gap-1"
+                            className="px-2.5 py-1 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800 hover:bg-[#EAF7FF] dark:hover:bg-zinc-700 text-[#5B6B7C] dark:text-zinc-300 text-[11px] font-medium border border-[#D9EAF7] dark:border-transparent transition flex items-center gap-1 cursor-pointer"
                           >
                             <span>系统设置</span>
-                            <ExternalLink className="w-3 h-3 text-zinc-400" />
+                            <ExternalLink className="w-3 h-3 text-[#73869A] dark:text-zinc-400" />
                           </button>
                         </>
                       )}
@@ -510,7 +504,7 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                         <>
                           <button
                             onClick={() => handleOpenFallbackDrawer(cap)}
-                            className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-medium transition"
+                            className="px-3 py-1.5 rounded-xl bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-blue-600 dark:hover:bg-blue-500 text-white text-[11px] font-bold transition cursor-pointer"
                           >
                             前往设置
                           </button>
@@ -519,7 +513,7 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                               await systemCapabilityManager.recheckAll();
                               triggerToast('已重新检测系统真实状态');
                             }}
-                            className="px-2.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] font-medium transition"
+                            className="px-2.5 py-1.5 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800 hover:bg-[#EAF7FF] dark:hover:bg-zinc-700 text-[#5B6B7C] dark:text-zinc-200 text-[11px] font-medium border border-[#D9EAF7] dark:border-transparent transition cursor-pointer"
                           >
                             已在系统开启 · 重新检测
                           </button>
@@ -548,21 +542,21 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                     <button
                       key={char.id}
                       onClick={() => setSelectedAiId(char.id)}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition shrink-0 ${
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition shrink-0 cursor-pointer ${
                         isSelected
-                          ? 'bg-indigo-600/20 border-indigo-500 text-indigo-200'
-                          : 'bg-zinc-800/70 border-zinc-700 text-zinc-300 hover:bg-zinc-800'
+                          ? 'bg-[#EAF7FF] dark:bg-indigo-600/20 border-[#59B6E8] dark:border-indigo-500 text-[#59B6E8] dark:text-indigo-200 font-bold shadow-2xs'
+                          : 'bg-[#F3FAFF] dark:bg-zinc-800/70 border-[#D9EAF7] dark:border-zinc-700 text-[#5B6B7C] dark:text-zinc-300 hover:bg-[#EAF7FF] dark:hover:bg-zinc-800'
                       }`}
                     >
                       <img
                         src={char.avatar}
                         alt={char.name}
-                        className="w-6 h-6 rounded-full object-cover border border-zinc-700"
+                        className="w-6 h-6 rounded-full object-cover border border-[#9DD8F5] dark:border-zinc-700"
                         onError={(e) => {
                           (e.target as HTMLElement).style.display = 'none';
                         }}
                       />
-                      <span className="text-xs font-medium">{char.name}</span>
+                      <span className="text-xs font-semibold">{char.name}</span>
                     </button>
                   );
                 })}
@@ -570,13 +564,13 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
 
               {/* Awareness Toggle for this AI */}
               {currentAiConfig && (
-                <div className="pt-2 border-t border-zinc-800/70 flex items-center justify-between">
+                <div className="pt-2 border-t border-[#D9EAF7] dark:border-zinc-800/70 flex items-center justify-between">
                   <div className="space-y-0.5">
-                    <span className="text-xs font-medium text-zinc-200 flex items-center gap-1.5">
-                      <Eye className="w-3.5 h-3.5 text-indigo-400" />
+                    <span className="text-xs font-bold text-[#243040] dark:text-zinc-200 flex items-center gap-1.5">
+                      <Eye className="w-3.5 h-3.5 text-[#59B6E8] dark:text-indigo-400" />
                       允许 AI 感知自己的权限变化
                     </span>
-                    <p className="text-[10px] text-zinc-400">
+                    <p className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">
                       开启后，权限被你调整时，AI 可在后续对话中感知到变化（但绝无法绕过新权限）。
                     </p>
                   </div>
@@ -587,12 +581,12 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                         !currentAiConfig.allowAwarePermissionChanges
                       )
                     }
-                    className={`w-10 h-5 rounded-full transition-colors relative shrink-0 p-0.5 ${
-                      currentAiConfig.allowAwarePermissionChanges ? 'bg-indigo-600' : 'bg-zinc-700'
+                    className={`w-10 h-5 rounded-full transition-colors relative shrink-0 p-0.5 cursor-pointer ${
+                      currentAiConfig.allowAwarePermissionChanges ? 'bg-[#59B6E8] dark:bg-indigo-600' : 'bg-slate-300 dark:bg-zinc-700'
                     }`}
                   >
                     <div
-                      className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                      className={`w-4 h-4 rounded-full bg-white transition-transform shadow-2xs ${
                         currentAiConfig.allowAwarePermissionChanges ? 'translate-x-5' : 'translate-x-0'
                       }`}
                     />
@@ -603,10 +597,10 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
 
             {/* Quick Link to AI Permission Change History */}
             <div className="flex items-center justify-between px-1">
-              <span className="text-[11px] text-zinc-400 font-medium">7 大类独立能力细则</span>
+              <span className="text-[11px] text-[#5B6B7C] dark:text-zinc-400 font-bold">7 大类独立能力细则</span>
               <button
                 onClick={() => setShowHistoryModal(true)}
-                className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium"
+                className="text-[11px] text-[#59B6E8] dark:text-indigo-400 hover:underline flex items-center gap-1 font-bold cursor-pointer"
               >
                 <History className="w-3.5 h-3.5" />
                 <span>权限变更历史</span>
@@ -627,29 +621,29 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                   return (
                     <div
                       key={item.id}
-                      className="p-3.5 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-2.5"
+                      className="p-3.5 rounded-2xl bg-white dark:bg-zinc-900 border border-[#D9EAF7] dark:border-zinc-800 space-y-2.5 shadow-2xs"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div>
                           <div className="flex items-center gap-2">
-                            <h4 className="text-xs font-semibold text-zinc-100">{item.name}</h4>
+                            <h4 className="text-xs font-bold text-[#243040] dark:text-zinc-100">{item.name}</h4>
                             {item.isSensitive && (
-                              <span className="px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-300 text-[9px] border border-rose-500/30">
+                              <span className="px-1.5 py-0.2 rounded bg-[#FEE2E2] text-[#991B1B] dark:bg-rose-500/10 dark:text-rose-300 text-[9px] border border-[#FCA5A5] dark:border-rose-500/30 font-bold">
                                 敏感权限
                               </span>
                             )}
                           </div>
-                          <p className="text-[10px] text-zinc-400 mt-0.5">{item.description}</p>
+                          <p className="text-[10px] text-[#5B6B7C] dark:text-zinc-400 mt-0.5">{item.description}</p>
                         </div>
 
                         {/* System Capability Hint */}
                         {item.requiredCapabilityId && (
                           <div className="text-right shrink-0">
                             <span
-                              className={`text-[10px] px-1.5 py-0.5 rounded-md border ${
+                              className={`text-[10px] px-1.5 py-0.5 rounded-md border font-semibold ${
                                 isSysGranted
-                                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                                  : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                                  ? 'bg-[#DCFCE7] text-[#166534] border-[#86EFAC] dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/30'
+                                  : 'bg-[#F3FAFF] text-[#5B6B7C] border-[#D9EAF7] dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700'
                               }`}
                             >
                               系统能力: {isSysGranted ? '🟢 可用' : '🔴 未就绪'}
@@ -659,52 +653,52 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                       </div>
 
                       {/* 3-Level Permission Selector */}
-                      <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-zinc-950/80 border border-zinc-800">
+                      <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-[#F7FBFF] dark:bg-zinc-950/80 border border-[#D9EAF7] dark:border-zinc-800">
                         <button
                           onClick={() =>
                             permissionManager.updateAiPermission(currentAi.id, item.id, 'DENY', 'USER')
                           }
-                          className={`py-1 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1 ${
+                          className={`py-1 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
                             currentLevel === 'DENY'
-                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-sm'
-                              : 'text-zinc-400 hover:text-zinc-200'
+                              ? 'bg-[#FEE2E2] text-[#991B1B] border border-[#FCA5A5] dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/40 shadow-xs'
+                              : 'text-[#5B6B7C] dark:text-zinc-400 hover:text-[#243040] dark:hover:text-zinc-200'
                           }`}
                         >
-                          <XCircle className="w-3.5 h-3.5" />
+                          <XCircle className="w-3.5 h-3.5 text-[#DC2626] dark:text-rose-400" />
                           <span>禁止</span>
                         </button>
                         <button
                           onClick={() =>
                             permissionManager.updateAiPermission(currentAi.id, item.id, 'ASK', 'USER')
                           }
-                          className={`py-1 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1 ${
+                          className={`py-1 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
                             currentLevel === 'ASK'
-                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
-                              : 'text-zinc-400 hover:text-zinc-200'
+                              ? 'bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/40 shadow-xs'
+                              : 'text-[#5B6B7C] dark:text-zinc-400 hover:text-[#243040] dark:hover:text-zinc-200'
                           }`}
                         >
-                          <AlertTriangle className="w-3.5 h-3.5" />
+                          <AlertTriangle className="w-3.5 h-3.5 text-[#D97706] dark:text-amber-400" />
                           <span>每次询问</span>
                         </button>
                         <button
                           onClick={() =>
                             permissionManager.updateAiPermission(currentAi.id, item.id, 'ALLOW', 'USER')
                           }
-                          className={`py-1 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1 ${
+                          className={`py-1 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
                             currentLevel === 'ALLOW'
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
-                              : 'text-zinc-400 hover:text-zinc-200'
+                              ? 'bg-[#DCFCE7] text-[#166534] border border-[#86EFAC] dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40 shadow-xs'
+                              : 'text-[#5B6B7C] dark:text-zinc-400 hover:text-[#243040] dark:hover:text-zinc-200'
                           }`}
                         >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] dark:text-emerald-400" />
                           <span>始终允许</span>
                         </button>
                       </div>
 
                       {/* Sub-note: System != AI */}
                       {item.requiredCapabilityId && !isSysGranted && currentLevel === 'ALLOW' && (
-                        <div className="p-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[10px] text-amber-300 flex items-center gap-1.5">
-                          <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                        <div className="p-1.5 rounded-lg bg-[#FEF3C7] border border-[#FDE68A] dark:bg-amber-500/10 dark:border-amber-500/30 text-[10px] text-[#92400E] dark:text-amber-300 flex items-center gap-1.5 font-medium">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-[#D97706] dark:text-amber-400" />
                           <span>
                             你虽已设为【始终允许】，但底层系统能力尚未授权，AI 执行时仍会被系统层拦截。
                           </span>

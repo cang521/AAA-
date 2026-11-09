@@ -1040,7 +1040,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                           </div>
 
                           {/* App Label */}
-                          <span className="mt-1.5 text-[11px] font-medium text-white tracking-tight drop-shadow-md truncate max-w-[68px] text-center">
+                          <span className="mt-1.5 text-[11px] font-semibold text-[#243040] dark:text-zinc-100 tracking-tight truncate max-w-[68px] text-center">
                             {icon.name}
                           </span>
                         </div>

@@ -1,41 +1,8 @@
 export const CLOUD_MILK_DESKTOP_WALLPAPER = `data:image/svg+xml;utf8,${encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 2000" width="100%" height="100%">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#E2F3FF"/>
-      <stop offset="35%" stop-color="#F5FBFF"/>
-      <stop offset="70%" stop-color="#EBF6FF"/>
-      <stop offset="100%" stop-color="#D4ECFC"/>
-    </linearGradient>
-    <linearGradient id="cloud1" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.9"/>
-      <stop offset="100%" stop-color="#E1F2FE" stop-opacity="0.75"/>
-    </linearGradient>
-    <linearGradient id="cloud2" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.98"/>
-      <stop offset="100%" stop-color="#D8EEFC" stop-opacity="0.85"/>
-    </linearGradient>
-    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="18" result="blur"/>
-    </filter>
-  </defs>
-
-  <rect width="1000" height="2000" fill="url(#bg)"/>
-
-  <circle cx="500" cy="220" r="280" fill="#FFFFFF" opacity="0.65" filter="url(#softGlow)"/>
-  <circle cx="500" cy="220" r="160" fill="#EBF7FF" opacity="0.75"/>
-
-  <path d="M 120,280 Q 180,190 270,210 Q 350,170 430,210 Q 510,150 590,200 Q 670,160 740,210 Q 830,190 890,260 Q 960,290 930,370 L 80,370 Z" fill="url(#cloud1)"/>
-  
-  <path d="M 220,120 L 226,134 L 240,140 L 226,146 L 220,160 L 214,146 L 200,140 L 214,134 Z" fill="#8DCCF4" opacity="0.85"/>
-  <path d="M 780,100 L 784,110 L 794,114 L 784,118 L 780,128 L 776,118 L 766,114 L 776,110 Z" fill="#8DCCF4" opacity="0.75"/>
-  <circle cx="340" cy="110" r="6" fill="#BCE3FD" opacity="0.9"/>
-  <circle cx="680" cy="140" r="8" fill="#FFFFFF" opacity="0.95"/>
-
-  <rect x="0" y="370" width="1000" height="1250" fill="#F5FBFF" opacity="0.1"/>
-
-  <path d="M -50,1780 Q 150,1660 380,1720 Q 600,1620 820,1700 Q 980,1640 1050,1750 L 1050,2050 L -50,2050 Z" fill="url(#cloud2)"/>
-  <path d="M -50,1860 Q 250,1780 500,1830 Q 750,1760 1050,1850 L 1050,2050 L -50,2050 Z" fill="#FFFFFF" opacity="0.95"/>
+  <rect width="1000" height="2000" fill="#FFFFFF"/>
+  <circle cx="500" cy="240" r="300" fill="#F7FBFF" opacity="0.8"/>
+  <circle cx="200" cy="1800" r="400" fill="#F3FAFF" opacity="0.7"/>
 </svg>
 `)}`;
 

@@ -62,38 +62,44 @@ textarea,
    CLOUD MILK GLOBAL THEME SYSTEM (Light & Dark Modes)
    ====================================================== */
 
-/* 1. LIGHT MODE (白天模式 / 晴空牛奶蓝) */
+/* 1. LIGHT MODE (全新重建独立白天主题系统) */
 :root,
 [data-theme="light"],
 [data-theme="cloud_milk"],
 .theme-light,
 .theme-cloud-milk {
   color-scheme: light !important;
-  --theme-bg: #F5FBFF;
+  --theme-bg: #FFFFFF;
+  --theme-page-bg: #FFFFFF;
   --theme-surface: #FFFFFF;
-  --theme-surface-soft: #EAF7FF;
-  --theme-primary: #8DCCF4;
-  --theme-primary-light: #DDF2FF;
-  --theme-primary-strong: #67B7EA;
-  --theme-text: #1E293B;
-  --theme-text-secondary: #64748B;
-  --theme-border: #CFE9F8;
-  --theme-shadow: rgba(92, 167, 214, 0.16);
+  --theme-surface-sub: #F3FAFF;
+  --theme-surface-soft: #F7FBFF;
+  --theme-primary: #59B6E8;
+  --theme-primary-light: #EAF7FF;
+  --theme-primary-strong: #40A4DC;
+  --theme-text: #243040;
+  --theme-text-secondary: #5B6B7C;
+  --theme-text-sub: #73869A;
+  --theme-text-disabled: #A0AFBD;
+  --theme-border: #D9EAF7;
+  --theme-border-highlight: #9DD8F5;
+  --theme-border-focus: #69BEEA;
+  --theme-shadow: 0 4px 16px rgba(89, 182, 232, 0.12);
 
   /* Desktop Widget Light Mode Theme Variables */
-  --widget-bg: rgba(255, 255, 255, 0.88);
-  --widget-search-bg: rgba(255, 255, 255, 0.85);
-  --widget-border: rgba(186, 230, 253, 0.85);
-  --widget-shadow: 0 8px 24px rgba(56, 189, 248, 0.14);
+  --widget-bg: #FFFFFF;
+  --widget-search-bg: #FFFFFF;
+  --widget-border: #D9EAF7;
+  --widget-shadow: 0 4px 16px rgba(89, 182, 232, 0.12);
   --widget-radius: 1.5rem;
-  --widget-text-main: #1E293B;
-  --widget-text-sub: #64748B;
-  --widget-accent: #0284C7;
-  --widget-accent-light: #E0F2FE;
-  --widget-accent-border: #BAE6FD;
+  --widget-text-main: #243040;
+  --widget-text-sub: #5B6B7C;
+  --widget-accent: #59B6E8;
+  --widget-accent-light: #EAF7FF;
+  --widget-accent-border: #9DD8F5;
 }
 
-/* Light Mode DOM Overrides */
+/* Complete Independent Light Mode DOM Overrides */
 [data-theme="light"] .phone-screen,
 [data-theme="cloud_milk"] .phone-screen,
 .theme-light .phone-screen,
@@ -101,8 +107,14 @@ textarea,
 [data-theme="light"] .bg-zinc-950,
 [data-theme="cloud_milk"] .bg-zinc-950,
 [data-theme="light"] .bg-zinc-900,
-[data-theme="cloud_milk"] .bg-zinc-900 {
-  background-color: var(--theme-bg) !important;
+[data-theme="cloud_milk"] .bg-zinc-900,
+[data-theme="light"] .bg-slate-950,
+[data-theme="cloud_milk"] .bg-slate-950,
+[data-theme="light"] .bg-slate-900,
+[data-theme="cloud_milk"] .bg-slate-900,
+[data-theme="light"] .bg-black,
+[data-theme="cloud_milk"] .bg-black {
+  background-color: #FFFFFF !important;
 }
 
 [data-theme="light"] .bg-zinc-850,
@@ -112,15 +124,35 @@ textarea,
 [data-theme="light"] .bg-zinc-900\/90,
 [data-theme="cloud_milk"] .bg-zinc-900\/90,
 [data-theme="light"] .bg-zinc-900\/80,
-[data-theme="cloud_milk"] .bg-zinc-900\/80 {
-  background-color: var(--theme-surface) !important;
+[data-theme="cloud_milk"] .bg-zinc-900\/80,
+[data-theme="light"] .bg-zinc-850\/90,
+[data-theme="cloud_milk"] .bg-zinc-850\/90,
+[data-theme="light"] .bg-zinc-850\/95,
+[data-theme="cloud_milk"] .bg-zinc-850\/95,
+[data-theme="light"] .bg-slate-900\/70,
+[data-theme="cloud_milk"] .bg-slate-900\/70,
+[data-theme="light"] .bg-slate-800,
+[data-theme="cloud_milk"] .bg-slate-800,
+[data-theme="light"] .bg-zinc-800\/90,
+[data-theme="cloud_milk"] .bg-zinc-800\/90,
+[data-theme="light"] .bg-zinc-800\/80,
+[data-theme="cloud_milk"] .bg-zinc-800\/80 {
+  background-color: #F3FAFF !important;
 }
 
 [data-theme="light"] .bg-zinc-750,
 [data-theme="cloud_milk"] .bg-zinc-750,
 [data-theme="light"] .bg-zinc-700,
-[data-theme="cloud_milk"] .bg-zinc-700 {
-  background-color: var(--theme-surface-soft) !important;
+[data-theme="cloud_milk"] .bg-zinc-700,
+[data-theme="light"] .bg-zinc-900\/60,
+[data-theme="cloud_milk"] .bg-zinc-900\/60,
+[data-theme="light"] .bg-zinc-800\/60,
+[data-theme="cloud_milk"] .bg-zinc-800\/60,
+[data-theme="light"] .bg-slate-800\/80,
+[data-theme="cloud_milk"] .bg-slate-800\/80,
+[data-theme="light"] .bg-slate-700,
+[data-theme="cloud_milk"] .bg-slate-700 {
+  background-color: #F7FBFF !important;
 }
 
 [data-theme="light"] .text-white,
@@ -128,8 +160,12 @@ textarea,
 [data-theme="light"] .text-zinc-100,
 [data-theme="cloud_milk"] .text-zinc-100,
 [data-theme="light"] .text-zinc-200,
-[data-theme="cloud_milk"] .text-zinc-200 {
-  color: var(--theme-text) !important;
+[data-theme="cloud_milk"] .text-zinc-200,
+[data-theme="light"] .text-slate-100,
+[data-theme="cloud_milk"] .text-slate-100,
+[data-theme="light"] .text-slate-200,
+[data-theme="cloud_milk"] .text-slate-200 {
+  color: #243040 !important;
 }
 
 [data-theme="light"] .text-zinc-300,
@@ -137,8 +173,12 @@ textarea,
 [data-theme="light"] .text-zinc-400,
 [data-theme="cloud_milk"] .text-zinc-400,
 [data-theme="light"] .text-zinc-500,
-[data-theme="cloud_milk"] .text-zinc-500 {
-  color: var(--theme-text-secondary) !important;
+[data-theme="cloud_milk"] .text-zinc-500,
+[data-theme="light"] .text-slate-400,
+[data-theme="cloud_milk"] .text-slate-400,
+[data-theme="light"] .text-slate-300,
+[data-theme="cloud_milk"] .text-slate-300 {
+  color: #5B6B7C !important;
 }
 
 [data-theme="light"] .border-zinc-800,
@@ -148,10 +188,17 @@ textarea,
 [data-theme="light"] .border-zinc-700,
 [data-theme="cloud_milk"] .border-zinc-700,
 [data-theme="light"] .border-zinc-600,
-[data-theme="cloud_milk"] .border-zinc-600 {
-  border-color: var(--theme-border) !important;
+[data-theme="cloud_milk"] .border-zinc-600,
+[data-theme="light"] .border-slate-800,
+[data-theme="cloud_milk"] .border-slate-800,
+[data-theme="light"] .border-slate-700,
+[data-theme="cloud_milk"] .border-slate-700,
+[data-theme="light"] .border-slate-600,
+[data-theme="cloud_milk"] .border-slate-600 {
+  border-color: #D9EAF7 !important;
 }
 
+/* Light Theme Inputs & Form Controls */
 [data-theme="light"] input[type="text"],
 [data-theme="cloud_milk"] input[type="text"],
 [data-theme="light"] input[type="password"],
@@ -162,17 +209,87 @@ textarea,
 [data-theme="cloud_milk"] textarea,
 [data-theme="light"] select,
 [data-theme="cloud_milk"] select {
-  background-color: var(--theme-surface) !important;
-  color: var(--theme-text) !important;
-  border-color: var(--theme-border) !important;
+  background-color: #FFFFFF !important;
+  color: #243040 !important;
+  border-color: #D9EAF7 !important;
+}
+
+[data-theme="light"] input:focus,
+[data-theme="cloud_milk"] input:focus,
+[data-theme="light"] textarea:focus,
+[data-theme="cloud_milk"] textarea:focus {
+  border-color: #69BEEA !important;
+  box-shadow: 0 0 0 3px rgba(105, 190, 234, 0.2) !important;
 }
 
 [data-theme="light"] input::placeholder,
 [data-theme="cloud_milk"] input::placeholder,
 [data-theme="light"] textarea::placeholder,
 [data-theme="cloud_milk"] textarea::placeholder {
-  color: var(--theme-text-secondary) !important;
-  opacity: 0.75;
+  color: #73869A !important;
+  opacity: 0.85;
+}
+
+/* Light Theme Gradients, Dark Overlay Removals & Card Overrides */
+[data-theme="light"] .bg-rose-950,
+[data-theme="cloud_milk"] .bg-rose-950,
+[data-theme="light"] .bg-rose-950\/90,
+[data-theme="cloud_milk"] .bg-rose-950\/90,
+[data-theme="light"] .bg-rose-950\/40,
+[data-theme="cloud_milk"] .bg-rose-950\/40,
+[data-theme="light"] .bg-rose-950\/30,
+[data-theme="cloud_milk"] .bg-rose-950\/30,
+[data-theme="light"] .bg-rose-950\/20,
+[data-theme="cloud_milk"] .bg-rose-950\/20,
+[data-theme="light"] .bg-purple-950\/30,
+[data-theme="cloud_milk"] .bg-purple-950\/30,
+[data-theme="light"] .bg-indigo-950\/30,
+[data-theme="cloud_milk"] .bg-indigo-950\/30 {
+  background-color: #F3FAFF !important;
+}
+
+[data-theme="light"] .from-rose-950,
+[data-theme="cloud_milk"] .from-rose-950,
+[data-theme="light"] .via-zinc-900,
+[data-theme="cloud_milk"] .via-zinc-900,
+[data-theme="light"] .to-pink-950\/70,
+[data-theme="cloud_milk"] .to-pink-950\/70 {
+  --tw-gradient-from: #FFFFFF !important;
+  --tw-gradient-to: #F3FAFF !important;
+  --tw-gradient-stops: var(--tw-gradient-from), #F7FBFF, var(--tw-gradient-to) !important;
+}
+
+[data-theme="light"] .bg-black\/55,
+[data-theme="cloud_milk"] .bg-black\/55,
+[data-theme="light"] .bg-black\/60,
+[data-theme="cloud_milk"] .bg-black\/60 {
+  background-color: rgba(255, 255, 255, 0.4) !important;
+}
+
+[data-theme="light"] .text-rose-200,
+[data-theme="cloud_milk"] .text-rose-200,
+[data-theme="light"] .text-rose-300,
+[data-theme="cloud_milk"] .text-rose-300 {
+  color: #243040 !important;
+}
+
+/* Chat Bubbles in Light Mode */
+[data-theme="light"] .chat-bubble-user,
+[data-theme="cloud_milk"] .chat-bubble-user,
+.theme-light .chat-bubble-user,
+.theme-cloud-milk .chat-bubble-user {
+  background-color: #59B6E8 !important;
+  color: #FFFFFF !important;
+  border: 1px solid #59B6E8 !important;
+}
+
+[data-theme="light"] .chat-bubble-ai,
+[data-theme="cloud_milk"] .chat-bubble-ai,
+.theme-light .chat-bubble-ai,
+.theme-cloud-milk .chat-bubble-ai {
+  background-color: #FFFFFF !important;
+  color: #243040 !important;
+  border: 1px solid #D9EAF7 !important;
 }
 
 /* 2. DARK MODE (黑夜模式 / 云海夜空) */
