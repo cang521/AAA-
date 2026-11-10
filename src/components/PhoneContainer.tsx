@@ -12,9 +12,10 @@ export const PhoneContainer: React.FC<PhoneContainerProps> = ({
   children,
   onLockClick,
   customCss = '',
-  theme = 'default',
+  theme = 'light',
 }) => {
   const [timeStr, setTimeStr] = useState('');
+  const isLight = theme === 'light' || theme === 'cloud_milk' || theme === 'default';
 
   useEffect(() => {
     const updateTime = () => {
@@ -29,7 +30,9 @@ export const PhoneContainer: React.FC<PhoneContainerProps> = ({
   }, []);
 
   return (
-    <div className="relative w-full h-screen h-full bg-zinc-950 flex flex-col overflow-hidden select-none selection:bg-emerald-500 selection:text-white">
+    <div className={`relative w-full h-screen h-full flex flex-col overflow-hidden select-none selection:bg-sky-500 selection:text-white transition-colors duration-200 ${
+      isLight ? 'bg-[#FFFFFF]' : 'bg-zinc-950'
+    }`}>
       {/* Dynamic User Custom CSS Injection */}
       {customCss && <style dangerouslySetInnerHTML={{ __html: customCss }} />}
 
@@ -37,7 +40,7 @@ export const PhoneContainer: React.FC<PhoneContainerProps> = ({
       <div
         data-theme={theme}
         className={`phone-screen relative w-full h-full flex-1 overflow-hidden flex flex-col transition-colors duration-200 theme-${theme} ${
-          theme === 'light' || theme === 'cloud_milk' ? 'theme-cloud-milk bg-[#FFFFFF]' : 'theme-dark bg-[#090D12]'
+          isLight ? 'theme-cloud-milk bg-[#FFFFFF] text-[#243040]' : 'theme-dark bg-[#090D12] text-zinc-100'
         }`}
       >
         {/* Main Application Active View Area */}

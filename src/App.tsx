@@ -377,9 +377,9 @@ export function App() {
       ? systemPrefersDark
         ? 'dark'
         : 'light'
-      : activeTheme === 'light' || activeTheme === 'cloud_milk'
-      ? 'light'
-      : 'dark';
+      : activeTheme === 'dark'
+      ? 'dark'
+      : 'light';
 
   // Synchronize document root attribute for global modal and body styling
   useEffect(() => {
@@ -413,7 +413,9 @@ export function App() {
   }
 
   return (
-    <div className="w-full h-screen bg-zinc-950 flex items-center justify-center select-none overflow-hidden">
+    <div className={`w-full h-screen flex items-center justify-center select-none overflow-hidden transition-colors duration-200 ${
+      effectiveTheme === 'light' ? 'bg-[#FFFFFF]' : 'bg-zinc-950'
+    }`}>
       <PhoneContainer
         onLockClick={() => {
           lockSecurityService.setLockedState(true);
@@ -435,7 +437,9 @@ export function App() {
           />
         ) : activeAppId ? (
           /* SUB-APP ACTIVE VIEW LAYER */
-          <div className="w-full h-full relative flex flex-col pt-safe pb-safe pl-safe pr-safe bg-zinc-900">
+          <div className={`w-full h-full relative flex flex-col pt-safe pb-safe pl-safe pr-safe transition-colors duration-200 ${
+            effectiveTheme === 'light' ? 'bg-[#FFFFFF]' : 'bg-zinc-900'
+          }`}>
             {activeAppId === 'wechat' && (
               <WeChatApp
                 onBackToLauncher={() => setActiveAppId(null)}

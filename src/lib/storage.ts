@@ -662,7 +662,7 @@ export const loadSettings = (): SettingsState => ({
   ),
   pinCode: loadFromStorage(STORAGE_KEYS.PIN, '1234'),
   isPinEnabled: loadFromStorage(STORAGE_KEYS.PIN_ENABLED, true),
-  theme: loadFromStorage<ThemeId>(STORAGE_KEYS.THEME, 'default'),
+  theme: loadFromStorage<ThemeId>(STORAGE_KEYS.THEME, 'light'),
   wallpaperSource: loadFromStorage<WallpaperSource>(STORAGE_KEYS.WALLPAPER_SOURCE, 'default'),
   customDesktopWallpaper: loadFromStorage<string | undefined>(STORAGE_KEYS.CUSTOM_DESKTOP_WALLPAPER, undefined),
   customLockWallpaper: loadFromStorage<string | undefined>(STORAGE_KEYS.CUSTOM_LOCK_WALLPAPER, undefined),

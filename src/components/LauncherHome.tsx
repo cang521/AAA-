@@ -95,6 +95,27 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     else if (onLaunchApp) onLaunchApp(appId);
   };
 
+  const [isLightMode, setIsLightMode] = useState<boolean>(() => {
+    if (typeof document !== 'undefined') {
+      const dataTheme = document.documentElement.getAttribute('data-theme');
+      return dataTheme === 'light' || dataTheme === 'cloud_milk' || dataTheme === 'default';
+    }
+    return true;
+  });
+
+  useEffect(() => {
+    const updateThemeState = () => {
+      if (typeof document !== 'undefined') {
+        const dataTheme = document.documentElement.getAttribute('data-theme');
+        setIsLightMode(dataTheme === 'light' || dataTheme === 'cloud_milk' || dataTheme === 'default');
+      }
+    };
+    updateThemeState();
+    const observer = new MutationObserver(updateThemeState);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
+    return () => observer.disconnect();
+  }, []);
+
   const [currentPage, setCurrentPage] = useState<number>(() => loadLauncherCurrentPage());
 
   // Desktop Page Horizontal Sliding Animation & Follow-finger Dragging State
@@ -625,9 +646,17 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
       <img
         src={actualWallpaper}
         alt="Desktop Wallpaper"
-        className="absolute inset-0 w-full h-full object-cover filter brightness-[0.88] pointer-events-none"
+        className={`absolute inset-0 w-full h-full object-cover pointer-events-none transition-all duration-300 ${
+          isLightMode ? 'brightness-100' : 'brightness-[0.88]'
+        }`}
       />
-      <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-transparent to-black/60 pointer-events-none" />
+      <div
+        className={`absolute inset-0 pointer-events-none transition-all duration-300 ${
+          isLightMode
+            ? 'bg-gradient-to-b from-sky-50/20 via-transparent to-sky-100/30'
+            : 'bg-gradient-to-b from-black/25 via-transparent to-black/60'
+        }`}
+      />
 
       {/* Edit Mode Header Bar */}
       {isEditMode ? (
@@ -679,18 +708,20 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
           style={{ paddingTop: 'calc(var(--safe-area-top, 0px) + 0.75rem)' }}
         >
           <div
-            className="w-full h-10 rounded-2xl backdrop-blur-md border flex items-center px-3.5 gap-2.5 shadow-xs cursor-pointer transition"
-            style={{
-              backgroundColor: 'var(--widget-search-bg, rgba(255, 255, 255, 0.85))',
-              borderColor: 'var(--widget-border, rgba(186, 230, 253, 0.75))',
-            }}
+            className={`w-full h-10 rounded-2xl backdrop-blur-md border flex items-center px-3.5 gap-2.5 cursor-pointer transition ${
+              isLightMode
+                ? 'bg-white/95 border-[#D9EAF7] text-[#243040] shadow-[0_2px_12px_rgba(89,182,232,0.12)]'
+                : 'bg-[#151D28]/85 border-sky-400/20 text-zinc-100 shadow-xs'
+            }`}
             onClick={() => handleOpenApp('memo')}
           >
-            <Search className="w-4 h-4 text-sky-500/80 shrink-0" />
+            <Search className={`w-4 h-4 shrink-0 ${isLightMode ? 'text-sky-500' : 'text-sky-400'}`} />
             <input
               type="text"
               placeholder="搜索 App、联系人、备忘录..."
-              className="w-full bg-transparent text-xs text-slate-800 placeholder-slate-400 focus:outline-none cursor-pointer font-normal"
+              className={`w-full bg-transparent text-xs focus:outline-none cursor-pointer font-normal ${
+                isLightMode ? 'text-[#243040] placeholder-[#73869A]' : 'text-zinc-100 placeholder-zinc-400'
+              }`}
               readOnly
             />
           </div>
@@ -1102,13 +1133,19 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
         className="relative z-20 flex flex-col items-center gap-2 pl-safe pr-safe"
         style={{ paddingBottom: 'calc(var(--safe-area-bottom, 0px) + 0.75rem)' }}
       >
-        <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-black/25 backdrop-blur-xs border border-white/10">
+        <div className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full backdrop-blur-md transition ${
+          isLightMode
+            ? 'bg-white/90 border border-[#D9EAF7] shadow-[0_2px_10px_rgba(89,182,232,0.15)]'
+            : 'bg-black/25 border border-white/10'
+        }`}>
           {[...Array(pagesCount)].map((_, idx) => (
             <button
               key={idx}
               onClick={() => handleSetCurrentPage(idx)}
               className={`h-2 rounded-full transition-all ${
-                currentPage === idx ? 'w-5 bg-emerald-400' : 'w-2 bg-white/40 hover:bg-white/70'
+                currentPage === idx
+                  ? isLightMode ? 'w-5 bg-[#59B6E8]' : 'w-5 bg-emerald-400'
+                  : isLightMode ? 'w-2 bg-[#D9EAF7] hover:bg-[#9DD8F5]' : 'w-2 bg-white/40 hover:bg-white/70'
               }`}
             />
           ))}
