@@ -610,16 +610,24 @@ public class AndroidPermissionBridge extends Plugin {
 
         Bitmap decoded = null;
         if (avatarSource.startsWith("data:image/")) {
-            int commaIndex = avatarSource.indexOf(',');
-            if (commaIndex <= 0 || commaIndex + 1 >= avatarSource.length()) {
+            try {
+                int commaIndex = avatarSource.indexOf(',');
+                if (commaIndex <= 0 || commaIndex + 1 >= avatarSource.length()) {
+                    return null;
+                }
+                String base64Payload = avatarSource.substring(commaIndex + 1);
+                byte[] rawBytes = Base64.decode(base64Payload, Base64.DEFAULT);
+                if (rawBytes == null || rawBytes.length == 0 || rawBytes.length > MAX_AVATAR_BYTES) {
+                    return null;
+                }
+                decoded = decodeSampledBitmapFromBytes(rawBytes, MAX_AVATAR_DIM, MAX_AVATAR_DIM);
+            } catch (Exception e) {
+                Log.w(
+                    NOTIF_TAG,
+                    "Failed to decode Base64 notification avatar: " + e.getClass().getSimpleName()
+                );
                 return null;
             }
-            String base64Payload = avatarSource.substring(commaIndex + 1);
-            byte[] rawBytes = Base64.decode(base64Payload, Base64.DEFAULT);
-            if (rawBytes == null || rawBytes.length == 0 || rawBytes.length > MAX_AVATAR_BYTES) {
-                return null;
-            }
-            decoded = decodeSampledBitmapFromBytes(rawBytes, MAX_AVATAR_DIM, MAX_AVATAR_DIM);
         } else if (avatarSource.startsWith("https://") || avatarSource.startsWith("http://")) {
             HttpURLConnection conn = null;
             try {
@@ -655,6 +663,12 @@ public class AndroidPermissionBridge extends Plugin {
                     byte[] rawBytes = baos.toByteArray();
                     decoded = decodeSampledBitmapFromBytes(rawBytes, MAX_AVATAR_DIM, MAX_AVATAR_DIM);
                 }
+            } catch (Exception e) {
+                Log.w(
+                    NOTIF_TAG,
+                    "Failed to load remote notification avatar: " + e.getClass().getSimpleName()
+                );
+                return null;
             } finally {
                 if (conn != null) {
                     conn.disconnect();
