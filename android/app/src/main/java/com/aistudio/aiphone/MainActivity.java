@@ -1,5 +1,6 @@
 package com.aistudio.aiphone;
 
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
@@ -76,6 +77,44 @@ public class MainActivity extends BridgeActivity {
 
             return windowInsets;
         });
+
+        handleNotificationIntent(getIntent(), false);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleNotificationIntent(intent, true);
+    }
+
+    private void handleNotificationIntent(Intent intent, boolean dispatchToWebView) {
+        if (intent == null) {
+            return;
+        }
+        String action = intent.getAction();
+        String extraAction = intent.getStringExtra("action");
+        if (!AndroidPermissionBridge.ACTION_OPEN_AI_CHAT.equals(action)
+            && !AndroidPermissionBridge.ACTION_OPEN_AI_CHAT.equals(extraAction)) {
+            return;
+        }
+
+        String aiId = intent.getStringExtra("aiId");
+        if (aiId == null || aiId.trim().isEmpty()) {
+            return;
+        }
+
+        AndroidPermissionBridge.savePendingNotificationAiId(this, aiId.trim());
+        intent.removeExtra("action");
+        intent.removeExtra("aiId");
+
+        if (dispatchToWebView && getBridge() != null && getBridge().getWebView() != null) {
+            WebView webView = getBridge().getWebView();
+            webView.post(() -> webView.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('android_notification_tapped'));",
+                null
+            ));
+        }
     }
 
     private void configureWebViewBackground() {

@@ -30,6 +30,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // node_modules/depd/index.js
 var require_depd = __commonJS({
@@ -46436,6 +46437,8 @@ var require_websocket_server = __commonJS({
 });
 
 // server.ts
+var server_exports = {};
+module.exports = __toCommonJS(server_exports);
 var import_express = __toESM(require_express2(), 1);
 var import_path = __toESM(require("path"), 1);
 var import_dotenv = __toESM(require_main(), 1);
@@ -68739,6 +68742,51 @@ function getApiKeyFromEnv() {
   return envGoogleApiKey || envGeminiApiKey || void 0;
 }
 
+// src/lib/thinkCleaner.ts
+function extractThinkingAndContent(rawText, extraReasoning) {
+  const thinkingParts = [];
+  if (extraReasoning && extraReasoning.trim()) {
+    thinkingParts.push(extraReasoning.trim());
+  }
+  let text = rawText || "";
+  const completeThinkRegex = /<think>([\s\S]*?)<\/think>/gi;
+  let match2;
+  while ((match2 = completeThinkRegex.exec(text)) !== null) {
+    const thinkContent = match2[1].trim();
+    if (thinkContent) {
+      thinkingParts.push(thinkContent);
+    }
+  }
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  if (text.toLowerCase().includes("<think>")) {
+    const thinkIndex = text.toLowerCase().indexOf("<think>");
+    const unclosedContent = text.slice(thinkIndex + 7).trim();
+    if (unclosedContent) {
+      thinkingParts.push(unclosedContent);
+    }
+    text = text.slice(0, thinkIndex);
+  }
+  text = text.replace(/<\/think>/gi, "");
+  const prefixMatch = text.match(/^(?:思考过程|Thinking Process|Reasoning)[:：]?\s*([\s\S]*?)(?:\n\n|\r\n\r\n|$)/i);
+  if (prefixMatch) {
+    if (prefixMatch[1].trim()) {
+      thinkingParts.push(prefixMatch[1].trim());
+    }
+    text = text.replace(/^(?:思考过程|Thinking Process|Reasoning)[:：]?\s*[\s\S]*?(?:\n\n|\r\n\r\n|$)/i, "");
+  }
+  let cleanText = text.replace(/<think>/gi, "").replace(/<\/think>/gi, "").replace(/^(?:思考过程|Thinking Process|Reasoning)[:：]?\s*/gi, "").replace(/reasoning_content[:：]?/gi, "").trim();
+  const thinkingProcess = thinkingParts.filter(Boolean).join("\n\n") || "\u7ED3\u5408\u89D2\u8272\u4EBA\u8BBE\u3001\u4E2A\u4EBA\u56DE\u5FC6\u4E0E\u5386\u53F2\u5BF9\u8BDD\uFF0C\u5F62\u6210\u5FAE\u4FE1\u804A\u5929\u7684\u5373\u65F6\u601D\u8003\u8FC7\u7A0B\u3002";
+  return { thinkingProcess, cleanText };
+}
+function sanitizeReplyText(text) {
+  if (!text) return "";
+  let clean = text;
+  clean = clean.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  clean = clean.replace(/<think>[\s\S]*/gi, "");
+  clean = clean.replace(/<\/think>/gi, "").replace(/^(?:思考过程|Thinking Process|Reasoning)[:：]?\s*/gi, "").replace(/reasoning_content[:：]?/gi, "").trim();
+  return clean;
+}
+
 // server.ts
 import_dotenv.default.config();
 var app = (0, import_express.default)();
@@ -68754,66 +68802,76 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, backend: "xiaoshouji-local-node", port: PORT });
 });
 var PORT = 3e3;
-async function callAiService({
-  prompt,
-  systemInstruction,
-  model = "gemini-3.6-flash",
-  apiKey,
-  baseUrl,
-  providerType,
-  apiProtocol,
-  responseMimeType,
-  temperature = 0.7,
-  timeoutMs = 35e3,
-  customHeaders = {}
-}) {
-  const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, "") : "";
-  const cleanKey = apiKey && apiKey.trim() || "";
-  const activeKey = cleanKey || (!cleanBaseUrl && (!providerType || providerType === "google_gemini") && false ? process.env.GEMINI_API_KEY || "" : "");
-  const targetModel = model?.trim() || "gemini-3.6-flash";
+function buildApiLogObject(params) {
+  const isFailed = params.status === "failed" || Boolean(params.error);
+  const isOfficial = params.isOfficial !== false && (params.modelName.includes("gemini") || !params.modelName.includes("gpt"));
+  const defaultCostDisplay = isOfficial ? "\u514D\u8D39/\u5185\u7F6E" : "\u672A\u63D0\u4F9B";
+  return {
+    id: "log_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+    appName: params.appName,
+    timestamp: Date.now(),
+    modelName: params.modelName,
+    interfaceType: params.interfaceType,
+    category: params.category || "text",
+    status: isFailed ? "failed" : "success",
+    durationMs: params.durationMs,
+    promptTokens: typeof params.usage?.promptTokens === "number" ? params.usage.promptTokens : null,
+    completionTokens: typeof params.usage?.completionTokens === "number" ? params.usage.completionTokens : null,
+    totalTokens: typeof params.usage?.totalTokens === "number" ? params.usage.totalTokens : typeof params.usage?.promptTokens === "number" && typeof params.usage?.completionTokens === "number" ? params.usage.promptTokens + params.usage.completionTokens : null,
+    isRealTokens: Boolean(params.isRealTokens),
+    estimatedCost: null,
+    // NO fake 0.0001 calculations!
+    costDisplay: defaultCostDisplay,
+    errorType: isFailed ? "ModelError" : void 0,
+    errorMessage: params.error,
+    purpose: params.purpose
+  };
+}
+async function callAiServiceDetailed(params) {
+  const cleanBaseUrl = params.baseUrl ? params.baseUrl.trim().replace(/\/+$/, "") : "";
+  const cleanKey = params.apiKey && params.apiKey.trim() || "";
+  const activeKey = cleanKey || (!cleanBaseUrl && (!params.providerType || params.providerType === "google_gemini") && false ? process.env.GEMINI_API_KEY || "" : "");
+  const targetModel = params.model?.trim() || "gemini-3.6-flash";
   let isOpenAiCompatible = false;
-  let activeProtocol = apiProtocol;
+  let activeProtocol = params.apiProtocol;
   if (activeProtocol === "openai_compatible") {
     isOpenAiCompatible = true;
   } else if (activeProtocol === "gemini_native") {
     isOpenAiCompatible = false;
   } else {
-    isOpenAiCompatible = providerType === "openai_compatible" || providerType === "deepseek" || providerType === "openrouter" || providerType === "groq" || providerType === "siliconflow" || providerType === "ollama" || providerType === "custom" || cleanBaseUrl && (cleanBaseUrl.includes("/v1") || cleanBaseUrl.includes("openai") || cleanBaseUrl.includes("deepseek") || cleanBaseUrl.includes("openrouter") || cleanBaseUrl.includes("groq") || cleanBaseUrl.includes("siliconflow") || cleanBaseUrl.includes("oneapi") || cleanBaseUrl.includes("newapi") || cleanBaseUrl.includes(":11434") || targetModel.startsWith("gpt-") || targetModel.startsWith("claude-") || targetModel.startsWith("deepseek-") || targetModel.startsWith("qwen") || targetModel.startsWith("llama"));
+    isOpenAiCompatible = params.providerType === "openai_compatible" || params.providerType === "deepseek" || params.providerType === "openrouter" || params.providerType === "groq" || params.providerType === "siliconflow" || params.providerType === "ollama" || params.providerType === "custom" || cleanBaseUrl && (cleanBaseUrl.includes("/v1") || cleanBaseUrl.includes("openai") || cleanBaseUrl.includes("deepseek") || cleanBaseUrl.includes("openrouter") || cleanBaseUrl.includes("groq") || cleanBaseUrl.includes("siliconflow") || cleanBaseUrl.includes("oneapi") || cleanBaseUrl.includes("newapi") || cleanBaseUrl.includes(":11434") || targetModel.startsWith("gpt-") || targetModel.startsWith("claude-") || targetModel.startsWith("deepseek-") || targetModel.startsWith("qwen") || targetModel.startsWith("llama"));
   }
   if (isOpenAiCompatible) {
     if (!cleanBaseUrl && !activeKey) {
       throw new Error("\u672A\u914D\u7F6E Base URL \u6216 API Key\u3002\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u914D\u7F6E API Provider\u3002");
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(), params.timeoutMs || 35e3);
     try {
       let endpoint = cleanBaseUrl;
-      if (!endpoint) {
-        endpoint = "https://api.openai.com/v1";
-      }
+      if (!endpoint) endpoint = "https://api.openai.com/v1";
       if (!endpoint.endsWith("/chat/completions")) {
-        if (endpoint.endsWith("/v1")) {
-          endpoint = `${endpoint}/chat/completions`;
-        } else {
-          endpoint = `${endpoint}/v1/chat/completions`;
-        }
+        endpoint = endpoint.endsWith("/v1") ? `${endpoint}/chat/completions` : `${endpoint}/v1/chat/completions`;
       }
       const messages = [];
-      if (systemInstruction) {
-        messages.push({ role: "system", content: systemInstruction });
+      if (params.systemInstruction) {
+        messages.push({ role: "system", content: params.systemInstruction });
       }
-      messages.push({ role: "user", content: prompt });
+      messages.push({ role: "user", content: params.prompt });
       const payload = {
         model: targetModel,
         messages,
-        temperature
+        temperature: params.temperature ?? 0.7
       };
-      if (responseMimeType === "application/json") {
+      if (params.maxTokens) {
+        payload.max_tokens = params.maxTokens;
+      }
+      if (params.responseMimeType === "application/json") {
         payload.response_format = { type: "json_object" };
       }
       const headers = {
         "Content-Type": "application/json",
-        ...customHeaders
+        ...params.customHeaders || {}
       };
       if (activeKey) {
         headers["Authorization"] = `Bearer ${activeKey}`;
@@ -68850,15 +68908,32 @@ async function callAiService({
         }
       }
       const resJson = await response.json();
-      const content = resJson.choices?.[0]?.message?.content;
-      if (typeof content === "string") {
-        return content;
+      const choice = resJson.choices?.[0];
+      const messageObj = choice?.message;
+      const reasoning = messageObj?.reasoning_content || messageObj?.reasoning || messageObj?.thinking;
+      const content = typeof messageObj?.content === "string" ? messageObj.content : "";
+      const fullText = reasoning && typeof reasoning === "string" && reasoning.trim() ? `<think>${reasoning.trim()}</think>${content}` : content;
+      const usageMeta = resJson.usage;
+      let usage = void 0;
+      let isRealTokens = false;
+      if (usageMeta && typeof usageMeta === "object") {
+        isRealTokens = true;
+        usage = {
+          promptTokens: typeof usageMeta.prompt_tokens === "number" ? usageMeta.prompt_tokens : void 0,
+          completionTokens: typeof usageMeta.completion_tokens === "number" ? usageMeta.completion_tokens : void 0,
+          totalTokens: typeof usageMeta.total_tokens === "number" ? usageMeta.total_tokens : void 0
+        };
       }
-      return "";
+      return {
+        text: fullText,
+        usage,
+        isRealTokens,
+        modelUsed: targetModel
+      };
     } catch (err) {
       clearTimeout(timer);
       if (err.name === "AbortError") {
-        throw new Error(`\u8BF7\u6C42\u8D85\u65F6 (${timeoutMs / 1e3}\u79D2)\uFF0C\u4E0A\u6E38 API \u672A\u80FD\u5728\u9650\u5B9A\u65F6\u95F4\u5185\u8FD4\u56DE\u3002`);
+        throw new Error(`\u8BF7\u6C42\u8D85\u65F6 (${(params.timeoutMs || 35e3) / 1e3}\u79D2)\uFF0C\u4E0A\u6E38 API \u672A\u80FD\u5728\u9650\u5B9A\u65F6\u95F4\u5185\u8FD4\u56DE\u3002`);
       }
       throw err;
     }
@@ -68869,7 +68944,7 @@ async function callAiService({
       httpOptions: {
         headers: {
           "User-Agent": "aistudio-build-phone",
-          ...customHeaders
+          ...params.customHeaders || {}
         }
       }
     };
@@ -68880,23 +68955,70 @@ async function callAiService({
       const aiClient = new GoogleGenAI2(clientOptions);
       const generateOptions = {
         model: targetModel,
-        contents: prompt
+        contents: params.prompt
       };
       const config = {};
-      if (systemInstruction) {
-        config.systemInstruction = systemInstruction;
+      if (params.systemInstruction) {
+        config.systemInstruction = params.systemInstruction;
       }
-      if (responseMimeType) {
-        config.responseMimeType = responseMimeType;
+      if (params.responseMimeType) {
+        config.responseMimeType = params.responseMimeType;
       }
-      if (temperature !== void 0) {
-        config.temperature = temperature;
+      if (params.temperature !== void 0) {
+        config.temperature = params.temperature;
+      }
+      if (params.maxTokens !== void 0) {
+        config.maxOutputTokens = params.maxTokens;
       }
       if (Object.keys(config).length > 0) {
         generateOptions.config = config;
       }
-      const result = await aiClient.models.generateContent(generateOptions);
-      return result.text || "";
+      let result;
+      let usedModel = targetModel;
+      try {
+        result = await aiClient.models.generateContent(generateOptions);
+      } catch (geminiPrimaryErr) {
+        const primaryMsg = geminiPrimaryErr.message || "";
+        const isQuotaExceeded = primaryMsg.includes("429") || primaryMsg.includes("RESOURCE_EXHAUSTED") || primaryMsg.includes("Quota exceeded") || primaryMsg.includes("quota");
+        if (isQuotaExceeded && (!cleanBaseUrl || cleanBaseUrl.includes("googleapis.com"))) {
+          const fallbackCandidates = ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"].filter((m2) => m2 !== targetModel);
+          let recovered = false;
+          for (const fallbackModel of fallbackCandidates) {
+            try {
+              console.warn(`[Gemini Fallback] \u6A21\u578B ${targetModel} \u989D\u5EA6\u53D7\u9650 (429/Quota)\uFF0C\u5C1D\u8BD5\u5907\u7528\u6A21\u578B: ${fallbackModel}`);
+              const fbOptions = { ...generateOptions, model: fallbackModel };
+              result = await aiClient.models.generateContent(fbOptions);
+              usedModel = fallbackModel;
+              recovered = true;
+              break;
+            } catch (fbErr) {
+              console.warn(`[Gemini Fallback] \u5907\u7528\u6A21\u578B ${fallbackModel} \u4EA6\u5931\u8D25:`, fbErr.message || fbErr);
+            }
+          }
+          if (!recovered) {
+            throw geminiPrimaryErr;
+          }
+        } else {
+          throw geminiPrimaryErr;
+        }
+      }
+      const usageMeta = result?.usageMetadata;
+      let usage = void 0;
+      let isRealTokens = false;
+      if (usageMeta && typeof usageMeta === "object") {
+        isRealTokens = true;
+        usage = {
+          promptTokens: typeof usageMeta.promptTokenCount === "number" ? usageMeta.promptTokenCount : void 0,
+          completionTokens: typeof usageMeta.candidatesTokenCount === "number" ? usageMeta.candidatesTokenCount : void 0,
+          totalTokens: typeof usageMeta.totalTokenCount === "number" ? usageMeta.totalTokenCount : void 0
+        };
+      }
+      return {
+        text: result?.text || "",
+        usage,
+        isRealTokens,
+        modelUsed: usedModel
+      };
     } catch (geminiErr) {
       const errMsg = geminiErr.message || "";
       if (cleanBaseUrl && (errMsg.includes("404") || errMsg.includes("NOT_FOUND") || errMsg.includes("Cannot POST") || errMsg.includes("not found"))) {
@@ -68910,37 +69032,92 @@ async function callAiService({
             headers: {
               "Content-Type": "application/json",
               "Authorization": `Bearer ${activeKey}`,
-              ...customHeaders
+              ...params.customHeaders || {}
             },
             body: JSON.stringify({
               model: targetModel,
               messages: [
-                ...systemInstruction ? [{ role: "system", content: systemInstruction }] : [],
-                { role: "user", content: prompt }
+                ...params.systemInstruction ? [{ role: "system", content: params.systemInstruction }] : [],
+                { role: "user", content: params.prompt }
               ],
-              temperature
+              temperature: params.temperature
             }),
-            signal: AbortSignal.timeout(timeoutMs)
+            signal: AbortSignal.timeout(params.timeoutMs || 35e3)
           });
           if (altRes.ok) {
             const j = await altRes.json();
             const text = j.choices?.[0]?.message?.content;
-            if (typeof text === "string") return text;
+            if (typeof text === "string") {
+              const uMeta = j.usage;
+              return {
+                text,
+                usage: uMeta ? { promptTokens: uMeta.prompt_tokens, completionTokens: uMeta.completion_tokens, totalTokens: uMeta.total_tokens } : void 0,
+                isRealTokens: Boolean(uMeta),
+                modelUsed: targetModel
+              };
+            }
           }
         } catch {
         }
       }
       if (errMsg.includes("401") || errMsg.includes("API_KEY_INVALID")) {
-        throw new Error(`[Gemini 401 \u9274\u6743\u5931\u8D25] Gemini API Key \u65E0\u6548: ${errMsg}`);
+        const err = new Error(`[Gemini 401 \u9274\u6743\u5931\u8D25] Gemini API Key \u65E0\u6548: ${errMsg}`);
+        err.statusCode = 401;
+        throw err;
       } else if (errMsg.includes("404") || errMsg.includes("NOT_FOUND")) {
-        throw new Error(`[Gemini 404 \u6A21\u578B\u4E0D\u5B58\u5728] \u6A21\u578B ${targetModel} \u5728\u6B64\u7AEF\u70B9\u4E0D\u53EF\u7528: ${errMsg}`);
-      } else if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED")) {
-        throw new Error(`[Gemini 429 \u914D\u989D\u7528\u5C3D] API \u989D\u5EA6\u8D85\u9650\u6216\u53D7\u9650: ${errMsg}`);
+        const err = new Error(`[Gemini 404 \u6A21\u578B\u4E0D\u5B58\u5728] \u6A21\u578B ${targetModel} \u5728\u6B64\u7AEF\u70B9\u4E0D\u53EF\u7528: ${errMsg}`);
+        err.statusCode = 404;
+        throw err;
+      } else if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("Quota exceeded") || errMsg.includes("quota")) {
+        const err = new Error(`[Gemini 429 \u914D\u989D\u7528\u5C3D] API \u989D\u5EA6\u8D85\u9650\u6216\u53D7\u9650: ${errMsg}`);
+        err.statusCode = 429;
+        err.isQuotaExceeded = true;
+        throw err;
       }
       throw geminiErr;
     }
   }
   throw new Error("\u672A\u914D\u7F6E\u6709\u6548\u7684 API \u5BC6\u94A5\uFF0C\u4E14\u7CFB\u7EDF\u73AF\u5883\u53D8\u91CF\u4E2D\u65E0\u9ED8\u8BA4\u5BC6\u94A5\u3002\u8BF7\u5148\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u914D\u7F6E API Provider\u3002");
+}
+async function callAiService(params) {
+  const result = await callAiServiceDetailed(params);
+  return result.text;
+}
+function handleAiEndpointError(res, error, contextName) {
+  const isQuota = error?.statusCode === 429 || error?.isQuotaExceeded || error?.message?.includes("429") || error?.message?.includes("RESOURCE_EXHAUSTED") || error?.message?.includes("Quota exceeded") || error?.message?.includes("\u914D\u989D\u7528\u5C3D") || error?.message?.includes("quota");
+  const statusMsg = isQuota ? "429 \u914D\u989D\u8D85\u9650/\u8BF7\u6C42\u9891\u7387\u8FC7\u9AD8" : error?.message || `${contextName} \u6267\u884C\u5F02\u5E38`;
+  if (isQuota) {
+    console.warn(`[${contextName}] AI Provider \u914D\u989D\u8D85\u9650/\u9650\u6D41\u4FDD\u62A4\u89E6\u53D1 (429/RESOURCE_EXHAUSTED):`, error.message || error);
+    return res.status(429).json({
+      success: false,
+      statusCode: 429,
+      isQuotaExceeded: true,
+      error: error.message || "API quota exceeded or rate limited",
+      apiLog: buildApiLogObject({
+        appName: contextName || "AI\u63A5\u53E3",
+        modelName: "gemini-3.6-flash",
+        interfaceType: "AiEndpoint",
+        status: "failed",
+        durationMs: 0,
+        error: statusMsg,
+        purpose: `${contextName} (\u8BF7\u6C42\u5931\u8D25 429)`
+      })
+    });
+  }
+  console.error(`${contextName} error:`, error);
+  return res.status(500).json({
+    success: false,
+    error: error.message || `${contextName} failed`,
+    apiLog: buildApiLogObject({
+      appName: contextName || "AI\u63A5\u53E3",
+      modelName: "gemini-3.6-flash",
+      interfaceType: "AiEndpoint",
+      status: "failed",
+      durationMs: 0,
+      error: statusMsg,
+      purpose: `${contextName} (\u8BF7\u6C42\u5931\u8D25 500)`
+    })
+  });
 }
 app.post("/api/provider/test-connection", async (req, res) => {
   const { providerType, baseUrl, apiKey, serviceType = "text", customHeaders } = req.body;
@@ -69641,36 +69818,10 @@ app.get("/api/weather/reverse-geocode", async (req, res) => {
       return res.status(400).json({ success: false, error: "\u65E0\u6548\u7684\u7ECF\u7EAC\u5EA6\u683C\u5F0F" });
     }
     try {
-      const bdcUrl = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=zh`;
-      const bdcResp = await fetch(bdcUrl, { signal: AbortSignal.timeout(6e3) });
-      if (bdcResp.ok) {
-        const bdcData = await bdcResp.json();
-        const city = bdcData.city || bdcData.locality || bdcData.principalSubdivision || "\u5F53\u524D\u4F4D\u7F6E";
-        const district = bdcData.locality || "";
-        const province = bdcData.principalSubdivision || "";
-        const country = bdcData.countryName || "\u4E2D\u56FD";
-        const displayParts = [country, province, city, district].filter((p, i2, arr) => p && arr.indexOf(p) === i2);
-        const displayName = displayParts.join(" ");
-        return res.json({
-          success: true,
-          latitude: lat,
-          longitude: lon,
-          city,
-          district,
-          province,
-          country,
-          displayName: displayName || city,
-          source: "BigDataCloud"
-        });
-      }
-    } catch (e2) {
-      console.warn("BigDataCloud reverse geocode error, trying OSM fallback:", e2);
-    }
-    try {
       const osmUrl = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=zh`;
       const osmResp = await fetch(osmUrl, {
-        headers: { "User-Agent": "SimulatedAndroidPhone/2.0" },
-        signal: AbortSignal.timeout(6e3)
+        headers: { "User-Agent": "SimulatedAndroidPhone/2.0 (weather-app)" },
+        signal: AbortSignal.timeout(5500)
       });
       if (osmResp.ok) {
         const osmData = await osmResp.json();
@@ -69679,6 +69830,7 @@ app.get("/api/weather/reverse-geocode", async (req, res) => {
         const district = addr.suburb || addr.district || addr.neighbourhood || "";
         const province = addr.state || "";
         const country = addr.country || "\u4E2D\u56FD";
+        const displayParts = [country, province, city, district].filter((p, i2, arr) => p && arr.indexOf(p) === i2);
         return res.json({
           success: true,
           latitude: lat,
@@ -69687,12 +69839,36 @@ app.get("/api/weather/reverse-geocode", async (req, res) => {
           district,
           province,
           country,
-          displayName: osmData.display_name || `${country} ${province} ${city}`,
+          displayName: displayParts.join(" ") || osmData.display_name || `${country} ${province} ${city}`,
           source: "OpenStreetMap"
         });
       }
     } catch (e2) {
       console.warn("OSM reverse geocode error:", e2);
+    }
+    try {
+      const bdcUrl = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=zh`;
+      const bdcResp = await fetch(bdcUrl, { signal: AbortSignal.timeout(4e3) });
+      if (bdcResp.ok) {
+        const bdcData = await bdcResp.json();
+        const city = bdcData.city || bdcData.locality || bdcData.principalSubdivision || "\u5F53\u524D\u4F4D\u7F6E";
+        const district = bdcData.locality || "";
+        const province = bdcData.principalSubdivision || "";
+        const country = bdcData.countryName || "\u4E2D\u56FD";
+        const displayParts = [country, province, city, district].filter((p, i2, arr) => p && arr.indexOf(p) === i2);
+        return res.json({
+          success: true,
+          latitude: lat,
+          longitude: lon,
+          city,
+          district,
+          province,
+          country,
+          displayName: displayParts.join(" ") || city,
+          source: "BigDataCloud"
+        });
+      }
+    } catch {
     }
     return res.json({
       success: true,
@@ -69862,6 +70038,456 @@ function getWindScaleText(speedKmH) {
   if (speedKmH < 74) return "8\u7EA7 (\u5927\u98CE)";
   return "9\u7EA7\u4EE5\u4E0A (\u72C2\u98CE)";
 }
+var weatherServerCache = /* @__PURE__ */ new Map();
+var openMeteoBlockedUntil = 0;
+async function firstNonNull(promises) {
+  if (promises.length === 0) return null;
+  return new Promise((resolve) => {
+    let remaining = promises.length;
+    let settled = false;
+    for (const p of promises) {
+      p.then((val) => {
+        if (!settled && val !== null && val !== void 0) {
+          settled = true;
+          resolve(val);
+        } else {
+          remaining -= 1;
+          if (!settled && remaining <= 0) {
+            settled = true;
+            resolve(null);
+          }
+        }
+      }).catch(() => {
+        remaining -= 1;
+        if (!settled && remaining <= 0) {
+          settled = true;
+          resolve(null);
+        }
+      });
+    }
+  });
+}
+function mapMetSymbolToWmoCode(symbolCode = "") {
+  const s2 = symbolCode.toLowerCase();
+  if (s2.includes("thunder")) return 95;
+  if (s2.includes("heavyrain")) return 65;
+  if (s2.includes("rainshowers")) return 80;
+  if (s2.includes("lightrain")) return 61;
+  if (s2.includes("rain")) return 63;
+  if (s2.includes("sleet")) return 66;
+  if (s2.includes("heavysnow")) return 75;
+  if (s2.includes("snowshowers")) return 85;
+  if (s2.includes("lightsnow") || s2.includes("snow")) return 71;
+  if (s2.includes("fog")) return 45;
+  if (s2.includes("clearsky")) return 0;
+  if (s2.includes("fair")) return 1;
+  if (s2.includes("partlycloudy")) return 2;
+  if (s2.includes("cloudy")) return 3;
+  return 2;
+}
+function mapWttrCodeToWmoCode(wttrCodeRaw) {
+  const code = Number(wttrCodeRaw);
+  switch (code) {
+    case 113:
+      return 0;
+    case 116:
+      return 2;
+    case 119:
+    case 122:
+      return 3;
+    case 143:
+    case 248:
+    case 260:
+      return 45;
+    case 176:
+    case 263:
+    case 266:
+    case 293:
+    case 296:
+    case 353:
+      return 61;
+    case 299:
+    case 302:
+    case 356:
+      return 63;
+    case 305:
+    case 308:
+    case 359:
+      return 65;
+    case 179:
+    case 182:
+    case 185:
+    case 281:
+    case 284:
+    case 311:
+    case 314:
+    case 317:
+    case 320:
+    case 362:
+    case 365:
+      return 66;
+    case 227:
+    case 323:
+    case 326:
+    case 368:
+      return 71;
+    case 230:
+    case 329:
+    case 332:
+    case 335:
+    case 338:
+    case 371:
+      return 75;
+    case 200:
+    case 386:
+    case 389:
+    case 392:
+    case 395:
+      return 95;
+    default:
+      return 2;
+  }
+}
+function computeApparentTemp(tempC, humidityPct, windKmH) {
+  const windMs = Math.max(0, windKmH / 3.6);
+  const vaporPressure = humidityPct / 100 * 6.105 * Math.exp(17.27 * tempC / (237.7 + tempC));
+  return Math.round(tempC + 0.33 * vaporPressure - 0.7 * windMs - 4);
+}
+function buildWeatherMetaAndAlerts(params) {
+  const { currentCode, curTemp, todayMax, todayMin, windSpeed, currentPrecip, hourlyList, aqiData } = params;
+  let rainForecastSummary = "\u672A\u6765\u51E0\u5C0F\u65F6\u65E0\u660E\u663E\u964D\u6C34\uFF0C\u9002\u5B9C\u5916\u51FA";
+  const upcomingRainHour = hourlyList.slice(0, 6).find((h2) => h2.precipProbability >= 60 || h2.precipitation >= 0.5);
+  if (upcomingRainHour) {
+    rainForecastSummary = `\u9884\u8BA1 ${upcomingRainHour.time} \u5F00\u59CB\u964D\u6C34\uFF0C\u964D\u6C34\u6982\u7387 ${upcomingRainHour.precipProbability}%`;
+  } else {
+    const moderateRainHour = hourlyList.slice(0, 6).find((h2) => h2.precipProbability >= 35);
+    if (moderateRainHour) {
+      rainForecastSummary = `\u672A\u6765\u6570\u5C0F\u65F6\u6709 ${moderateRainHour.precipProbability}% \u9635\u96E8\u53EF\u80FD\uFF0C\u51FA\u95E8\u5907\u628A\u4F1E\u66F4\u5B89\u5FC3`;
+    }
+  }
+  const alerts = [];
+  if (todayMax >= 37 || curTemp >= 37) {
+    alerts.push({
+      id: "alert_heat_orange",
+      title: "\u9AD8\u6E29\u6A59\u8272\u9884\u8B66",
+      level: "orange",
+      levelText: "\u6A59\u8272\u9884\u8B66",
+      description: `\u9884\u8BA1\u6700\u9AD8\u6C14\u6E29\u5C06\u5347\u81F3 ${todayMax}\xB0C\uFF0C\u8BF7\u5C3D\u91CF\u51CF\u5C11\u5348\u540E\u5BA4\u5916\u4F5C\u4E1A\u4E0E\u70C8\u65E5\u66B4\u6652\uFF0C\u591A\u8865\u5145\u7535\u89E3\u8D28\u6C34\u5206\u3002`,
+      pubTime: "\u6C14\u8C61\u9884\u8B66\u4E2D\u5FC3"
+    });
+  } else if (todayMax >= 35 || curTemp >= 35) {
+    alerts.push({
+      id: "alert_heat_yellow",
+      title: "\u9AD8\u6E29\u9EC4\u8272\u9884\u8B66",
+      level: "yellow",
+      levelText: "\u9EC4\u8272\u9884\u8B66",
+      description: `\u4ECA\u65E5\u6700\u9AD8\u6C14\u6E29\u53EF\u8FBE ${todayMax}\xB0C\uFF0C\u5929\u6C14\u708E\u70ED\uFF0C\u8BF7\u6CE8\u610F\u505A\u597D\u9632\u6652\u4E0E\u964D\u6E29\u9632\u6691\u63AA\u65BD\u3002`,
+      pubTime: "\u6C14\u8C61\u9884\u8B66\u4E2D\u5FC3"
+    });
+  }
+  if (todayMin <= 0 || curTemp <= 0) {
+    alerts.push({
+      id: "alert_cold_blue",
+      title: "\u4F4E\u6E29\u9053\u8DEF\u7ED3\u51B0\u9884\u8B66",
+      level: "blue",
+      levelText: "\u84DD\u8272\u9884\u8B66",
+      description: `\u5F53\u524D\u6C14\u6E29\u8F83\u4F4E (${curTemp}\xB0C)\uFF0C\u8DEF\u9762\u53CA\u6865\u6881\u6613\u51FA\u73B0\u6E7F\u6ED1\u7ED3\u51B0\uFF0C\u65E9\u665A\u51FA\u884C\u8BF7\u6CE8\u610F\u9632\u98CE\u4FDD\u6696\u4E0E\u4EA4\u901A\u5B89\u5168\u3002`,
+      pubTime: "\u6C14\u8C61\u9884\u8B66\u4E2D\u5FC3"
+    });
+  }
+  if ([95, 96, 99].includes(currentCode) || hourlyList.slice(0, 4).some((h2) => [95, 96, 99].includes(h2.conditionCode))) {
+    alerts.push({
+      id: "alert_thunder_yellow",
+      title: "\u96F7\u7535\u4E0E\u5F3A\u5BF9\u6D41\u9884\u8B66",
+      level: "yellow",
+      levelText: "\u9EC4\u8272\u9884\u8B66",
+      description: "\u53D7\u5C40\u5730\u5BF9\u6D41\u4E91\u56E2\u5F71\u54CD\uFF0C\u53EF\u80FD\u51FA\u73B0\u96F7\u66B4\u5927\u98CE\u4E0E\u77ED\u65F6\u5F3A\u964D\u6C34\uFF0C\u6237\u5916\u8BF7\u5207\u52FF\u5728\u6811\u4E0B\u6216\u5F00\u9614\u5730\u9017\u7559\u3002",
+      pubTime: "\u6C14\u8C61\u9884\u8B66\u4E2D\u5FC3"
+    });
+  }
+  if (windSpeed >= 35) {
+    alerts.push({
+      id: "alert_wind_blue",
+      title: "\u5927\u98CE\u84DD\u8272\u9884\u8B66",
+      level: "blue",
+      levelText: "\u84DD\u8272\u9884\u8B66",
+      description: `\u5F53\u524D\u6700\u5927\u9635\u98CE\u53EF\u8FBE ${windSpeed} km/h (${getWindScaleText(windSpeed)})\uFF0C\u8BF7\u6CE8\u610F\u5173\u597D\u95E8\u7A97\uFF0C\u6536\u8D77\u9633\u53F0\u6613\u5760\u7269\u54C1\u3002`,
+      pubTime: "\u6C14\u8C61\u9884\u8B66\u4E2D\u5FC3"
+    });
+  }
+  if (currentPrecip >= 20 || hourlyList.slice(0, 4).some((h2) => h2.precipitation >= 15)) {
+    alerts.push({
+      id: "alert_rain_orange",
+      title: "\u66B4\u96E8\u6A59\u8272\u9884\u8B66",
+      level: "orange",
+      levelText: "\u6A59\u8272\u9884\u8B66",
+      description: "\u7D2F\u79EF\u96E8\u91CF\u5DF2\u8FBE\u66B4\u96E8\u7EA7\u522B\uFF0C\u4F4E\u6D3C\u8DEF\u6BB5\u6613\u51FA\u73B0\u79EF\u6C34\uFF0C\u884C\u8F66\u6CE8\u610F\u51CF\u901F\u6162\u884C\u3002",
+      pubTime: "\u6C14\u8C61\u9884\u8B66\u4E2D\u5FC3"
+    });
+  }
+  let airQuality = void 0;
+  if (aqiData && aqiData.current) {
+    const curAqi = aqiData.current;
+    const usAqi = curAqi.us_aqi !== void 0 ? Math.round(curAqi.us_aqi) : void 0;
+    const europeanAqi = curAqi.european_aqi !== void 0 ? Math.round(curAqi.european_aqi) : void 0;
+    const pm25 = curAqi.pm2_5 !== void 0 ? Math.round(curAqi.pm2_5) : void 0;
+    const pm10 = curAqi.pm10 !== void 0 ? Math.round(curAqi.pm10) : void 0;
+    const effectiveAqi = usAqi !== void 0 ? usAqi : pm25 !== void 0 ? Math.round(pm25 * 1.5) : europeanAqi;
+    if (effectiveAqi !== void 0) {
+      const aqiLabel = effectiveAqi <= 50 ? "\u4F18" : effectiveAqi <= 100 ? "\u826F" : effectiveAqi <= 150 ? "\u8F7B\u5EA6\u6C61\u67D3" : effectiveAqi <= 200 ? "\u4E2D\u5EA6\u6C61\u67D3" : "\u91CD\u5EA6\u6C61\u67D3";
+      airQuality = {
+        aqi: effectiveAqi,
+        label: aqiLabel,
+        pm25,
+        pm10
+      };
+    }
+  }
+  return { rainForecastSummary, alerts, airQuality };
+}
+function buildWeatherFromMetNorway(params) {
+  const { metData, lat, lon, city, isAuto, aqiData, reqStart } = params;
+  const timeseries = metData?.properties?.timeseries || [];
+  if (timeseries.length === 0) return null;
+  const utcOffsetHours = Math.round(lon / 15);
+  const utcOffsetMs = utcOffsetHours * 3600 * 1e3;
+  const formatLocal = (isoStr) => {
+    const d = new Date(new Date(isoStr).getTime() + utcOffsetMs);
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    const hh = String(d.getUTCHours()).padStart(2, "0");
+    const mi = String(d.getUTCMinutes()).padStart(2, "0");
+    return { date: `${yyyy}-${mm}-${dd}`, time: `${hh}:${mi}`, hour: d.getUTCHours(), ts: new Date(isoStr).getTime() };
+  };
+  const first = timeseries[0];
+  const curInstant = first.data?.instant?.details || {};
+  const curSymbol = first.data?.next_1_hours?.summary?.symbol_code || first.data?.next_6_hours?.summary?.symbol_code || first.data?.next_12_hours?.summary?.symbol_code || "partlycloudy";
+  const currentCode = mapMetSymbolToWmoCode(curSymbol);
+  const { condition } = mapWmoWeatherCode(currentCode);
+  const curTemp = Math.round(curInstant.air_temperature ?? 22);
+  const curHumidity = Math.round(curInstant.relative_humidity ?? 60);
+  const windSpeed = Math.round((curInstant.wind_speed ?? 2) * 3.6);
+  const windDir = `${getWindDirectionText(curInstant.wind_from_direction ?? 0)} ${getWindScaleText(windSpeed)}`;
+  const currentPrecip = Number((first.data?.next_1_hours?.details?.precipitation_amount ?? 0).toFixed(1));
+  const feelsLike = computeApparentTemp(curTemp, curHumidity, windSpeed);
+  const hourlyList = [];
+  for (let i2 = 0; i2 < Math.min(24, timeseries.length); i2++) {
+    const item = timeseries[i2];
+    const inst = item.data?.instant?.details || {};
+    const sym = item.data?.next_1_hours?.summary?.symbol_code || item.data?.next_6_hours?.summary?.symbol_code || "partlycloudy";
+    const hCode = mapMetSymbolToWmoCode(sym);
+    const hCond = mapWmoWeatherCode(hCode);
+    const hPrecip = Number((item.data?.next_1_hours?.details?.precipitation_amount ?? 0).toFixed(1));
+    const hTemp = Math.round(inst.air_temperature ?? curTemp);
+    const hHum = Math.round(inst.relative_humidity ?? curHumidity);
+    const hWind = Math.round((inst.wind_speed ?? 2) * 3.6);
+    const prob = hPrecip >= 2 ? 85 : hPrecip >= 0.3 ? 65 : hPrecip > 0 ? 45 : sym.includes("rain") || sym.includes("snow") || sym.includes("thunder") ? 40 : 10;
+    const loc = formatLocal(item.time);
+    hourlyList.push({
+      time: i2 === 0 ? "\u73B0\u5728" : loc.time,
+      timestamp: loc.ts,
+      temp: hTemp,
+      feelsLike: computeApparentTemp(hTemp, hHum, hWind),
+      condition: hCond.condition,
+      conditionCode: hCode,
+      precipProbability: prob,
+      precipitation: hPrecip,
+      windSpeed: hWind
+    });
+  }
+  const daysOfWeek = ["\u5468\u65E5", "\u5468\u4E00", "\u5468\u4E8C", "\u5468\u4E09", "\u5468\u56DB", "\u5468\u4E94", "\u5468\u516D"];
+  const dayBuckets = /* @__PURE__ */ new Map();
+  for (const item of timeseries) {
+    const loc = formatLocal(item.time);
+    const t2 = item.data?.instant?.details?.air_temperature;
+    if (typeof t2 !== "number") continue;
+    const sym = item.data?.next_6_hours?.summary?.symbol_code || item.data?.next_1_hours?.summary?.symbol_code || item.data?.next_12_hours?.summary?.symbol_code || "partlycloudy";
+    const c = mapMetSymbolToWmoCode(sym);
+    const pAmt = item.data?.next_6_hours?.details?.precipitation_amount ?? item.data?.next_1_hours?.details?.precipitation_amount ?? 0;
+    const pProb = pAmt >= 2 ? 85 : pAmt > 0.2 ? 60 : sym.includes("rain") || sym.includes("snow") || sym.includes("thunder") ? 45 : 10;
+    if (!dayBuckets.has(loc.date)) {
+      dayBuckets.set(loc.date, { temps: [], codes: [], probs: [] });
+    }
+    const bucket = dayBuckets.get(loc.date);
+    bucket.temps.push(t2);
+    if (loc.hour >= 9 && loc.hour <= 18) {
+      bucket.codes.push(c);
+    }
+    bucket.probs.push(pProb);
+  }
+  const dailyList = [];
+  let idx = 0;
+  for (const [dateStr, bucket] of dayBuckets.entries()) {
+    if (idx >= 7) break;
+    const parts = dateStr.split("-").map(Number);
+    const localDateObj = new Date(parts[0], (parts[1] || 1) - 1, parts[2] || 1);
+    const dayLabel = idx === 0 ? "\u4ECA\u5929" : idx === 1 ? "\u660E\u5929" : daysOfWeek[localDateObj.getDay()];
+    const dCode = bucket.codes.length > 0 ? bucket.codes[Math.floor(bucket.codes.length / 2)] : currentCode;
+    const dCond = mapWmoWeatherCode(dCode);
+    dailyList.push({
+      date: dateStr,
+      dayOfWeek: dayLabel,
+      tempMin: Math.round(Math.min(...bucket.temps)),
+      tempMax: Math.round(Math.max(...bucket.temps)),
+      condition: dCond.condition,
+      conditionCode: dCode,
+      precipProbability: Math.max(...bucket.probs, 0)
+    });
+    idx++;
+  }
+  const todayMax = dailyList[0]?.tempMax ?? curTemp;
+  const todayMin = dailyList[0]?.tempMin ?? curTemp;
+  const { rainForecastSummary, alerts, airQuality } = buildWeatherMetaAndAlerts({
+    currentCode,
+    curTemp,
+    todayMax,
+    todayMin,
+    windSpeed,
+    currentPrecip,
+    hourlyList,
+    aqiData
+  });
+  return {
+    city: city || "\u5F53\u524D\u4F4D\u7F6E",
+    country: "",
+    latitude: lat,
+    longitude: lon,
+    temp: curTemp,
+    feelsLike,
+    tempMin: todayMin,
+    tempMax: todayMax,
+    condition,
+    conditionCode: currentCode,
+    humidity: curHumidity,
+    windSpeed,
+    windDirection: windDir,
+    precipProbability: hourlyList[0]?.precipProbability ?? 0,
+    precipitation: currentPrecip,
+    uvIndex: 3.5,
+    airQuality,
+    hourly: hourlyList,
+    daily: dailyList,
+    alerts,
+    updatedAt: Date.now(),
+    isAutoLocation: isAuto,
+    rainForecastSummary,
+    dataSourceInfo: {
+      serviceName: "MET Norway (Yr.no) \u5168\u7403\u9AD8\u7CBE\u6C14\u8C61\u9884\u62A5",
+      geocodingService: "Open-Meteo & OpenStreetMap Nominatim \u9006\u5730\u7406\u7F16\u7801",
+      airQualityService: aqiData ? "Open-Meteo \u6B27\u6D32\u54E5\u767D\u5C3C\u5927\u6C14\u76D1\u6D4B\u670D\u52A1 (CAMS)" : "\u6682\u672A\u63D0\u4F9B",
+      requestTimestamp: reqStart,
+      responseTimestamp: Date.now(),
+      networkLatencyMs: Date.now() - reqStart,
+      isFromCache: false,
+      timezone: `UTC${utcOffsetHours >= 0 ? "+" : ""}${utcOffsetHours}`,
+      coordinates: { latitude: lat, longitude: lon }
+    }
+  };
+}
+function buildWeatherFromWttr(params) {
+  const { wttrData, lat, lon, city, isAuto, aqiData, reqStart } = params;
+  const cur = wttrData?.current_condition?.[0];
+  const days = wttrData?.weather || [];
+  if (!cur) return null;
+  const currentCode = mapWttrCodeToWmoCode(cur.weatherCode);
+  const { condition } = mapWmoWeatherCode(currentCode);
+  const curTemp = Math.round(Number(cur.temp_C ?? 22));
+  const feelsLike = Math.round(Number(cur.FeelsLikeC ?? curTemp));
+  const curHumidity = Math.round(Number(cur.humidity ?? 60));
+  const windSpeed = Math.round(Number(cur.windspeedKmph ?? 8));
+  const windDir = `${getWindDirectionText(Number(cur.winddirDegree ?? 0))} ${getWindScaleText(windSpeed)}`;
+  const currentPrecip = Number(cur.precipMM ?? 0);
+  const uvIndex = Number(cur.uvIndex ?? 3);
+  const hourlyList = [];
+  const todayHourly = days[0]?.hourly || [];
+  const nowHour = (/* @__PURE__ */ new Date()).getHours();
+  for (let i2 = 0; i2 < todayHourly.length; i2++) {
+    const h2 = todayHourly[i2];
+    const hNum = Math.floor(Number(h2.time || 0) / 100);
+    if (hNum + 3 < nowHour && i2 < todayHourly.length - 1) continue;
+    const hCode = mapWttrCodeToWmoCode(h2.weatherCode);
+    const hCond = mapWmoWeatherCode(hCode);
+    hourlyList.push({
+      time: hourlyList.length === 0 ? "\u73B0\u5728" : `${String(hNum).padStart(2, "0")}:00`,
+      timestamp: Date.now() + hourlyList.length * 3 * 3600 * 1e3,
+      temp: Math.round(Number(h2.tempC ?? curTemp)),
+      feelsLike: Math.round(Number(h2.FeelsLikeC ?? feelsLike)),
+      condition: hCond.condition,
+      conditionCode: hCode,
+      precipProbability: Math.round(Number(h2.chanceofrain ?? 0)),
+      precipitation: Number(h2.precipMM ?? 0),
+      windSpeed: Math.round(Number(h2.windspeedKmph ?? windSpeed))
+    });
+  }
+  const daysOfWeek = ["\u5468\u65E5", "\u5468\u4E00", "\u5468\u4E8C", "\u5468\u4E09", "\u5468\u56DB", "\u5468\u4E94", "\u5468\u516D"];
+  const dailyList = days.slice(0, 7).map((d, idx) => {
+    const dateParts = String(d.date || "").split("-").map(Number);
+    const localDateObj = new Date(dateParts[0] || 2026, (dateParts[1] || 1) - 1, dateParts[2] || 1);
+    const dayLabel = idx === 0 ? "\u4ECA\u5929" : idx === 1 ? "\u660E\u5929" : daysOfWeek[localDateObj.getDay()];
+    const noonSlot = d.hourly?.[Math.floor((d.hourly?.length || 1) / 2)] || d.hourly?.[0];
+    const dCode = mapWttrCodeToWmoCode(noonSlot?.weatherCode ?? cur.weatherCode);
+    const dCond = mapWmoWeatherCode(dCode);
+    const maxProb = Math.max(...(d.hourly || []).map((h2) => Number(h2.chanceofrain ?? 0)), 0);
+    return {
+      date: d.date,
+      dayOfWeek: dayLabel,
+      tempMin: Math.round(Number(d.mintempC ?? curTemp - 3)),
+      tempMax: Math.round(Number(d.maxtempC ?? curTemp + 3)),
+      condition: dCond.condition,
+      conditionCode: dCode,
+      precipProbability: Math.round(maxProb)
+    };
+  });
+  const todayMax = dailyList[0]?.tempMax ?? curTemp;
+  const todayMin = dailyList[0]?.tempMin ?? curTemp;
+  const { rainForecastSummary, alerts, airQuality } = buildWeatherMetaAndAlerts({
+    currentCode,
+    curTemp,
+    todayMax,
+    todayMin,
+    windSpeed,
+    currentPrecip,
+    hourlyList,
+    aqiData
+  });
+  return {
+    city: city || "\u5F53\u524D\u4F4D\u7F6E",
+    country: "",
+    latitude: lat,
+    longitude: lon,
+    temp: curTemp,
+    feelsLike,
+    tempMin: todayMin,
+    tempMax: todayMax,
+    condition,
+    conditionCode: currentCode,
+    humidity: curHumidity,
+    windSpeed,
+    windDirection: windDir,
+    precipProbability: hourlyList[0]?.precipProbability ?? 0,
+    precipitation: currentPrecip,
+    uvIndex,
+    airQuality,
+    hourly: hourlyList,
+    daily: dailyList,
+    alerts,
+    updatedAt: Date.now(),
+    isAutoLocation: isAuto,
+    rainForecastSummary,
+    dataSourceInfo: {
+      serviceName: "Wttr.in \u5168\u7403\u5B9E\u65F6\u6C14\u8C61\u670D\u52A1",
+      geocodingService: "Open-Meteo & OpenStreetMap Nominatim \u9006\u5730\u7406\u7F16\u7801",
+      airQualityService: aqiData ? "Open-Meteo \u6B27\u6D32\u54E5\u767D\u5C3C\u5927\u6C14\u76D1\u6D4B\u670D\u52A1 (CAMS)" : "\u6682\u672A\u63D0\u4F9B",
+      requestTimestamp: reqStart,
+      responseTimestamp: Date.now(),
+      networkLatencyMs: Date.now() - reqStart,
+      isFromCache: false,
+      timezone: "Asia/Shanghai",
+      coordinates: { latitude: lat, longitude: lon }
+    }
+  };
+}
 app.get("/api/weather", async (req, res) => {
   const reqStart = Date.now();
   try {
@@ -69869,17 +70495,20 @@ app.get("/api/weather", async (req, res) => {
     let lat = req.query.lat ? parseFloat(req.query.lat) : void 0;
     let lon = req.query.lon ? parseFloat(req.query.lon) : void 0;
     const isAuto = req.query.auto === "true";
+    const forceRefresh = req.query.force === "true";
     if ((lat === void 0 || lon === void 0 || isNaN(lat) || isNaN(lon)) && city) {
       try {
         const geoRes = await fetch(
           `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=zh`,
-          { signal: AbortSignal.timeout(6e3) }
+          { signal: AbortSignal.timeout(5e3) }
         );
-        const geoData = await geoRes.json();
-        if (geoData.results && geoData.results.length > 0) {
-          lat = geoData.results[0].latitude;
-          lon = geoData.results[0].longitude;
-          city = geoData.results[0].name || city;
+        if (geoRes.ok) {
+          const geoData = await geoRes.json();
+          if (geoData.results && geoData.results.length > 0) {
+            lat = geoData.results[0].latitude;
+            lon = geoData.results[0].longitude;
+            city = geoData.results[0].name || city;
+          }
         }
       } catch (geoErr) {
         console.warn("Geocoding city query failed:", geoErr);
@@ -69887,13 +70516,17 @@ app.get("/api/weather", async (req, res) => {
     }
     if (lat !== void 0 && lon !== void 0 && !isNaN(lat) && !isNaN(lon) && (!city || city === "\u5F53\u524D\u4F4D\u7F6E" || city === "\u672C\u5730")) {
       try {
-        const bdcResp = await fetch(
-          `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=zh`,
-          { signal: AbortSignal.timeout(4e3) }
+        const osmResp = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=zh`,
+          {
+            headers: { "User-Agent": "SimulatedAndroidPhone/2.0 (weather-app)" },
+            signal: AbortSignal.timeout(4e3)
+          }
         );
-        if (bdcResp.ok) {
-          const bdcData = await bdcResp.json();
-          city = bdcData.city || bdcData.locality || bdcData.principalSubdivision || `\u7ECF\u7EAC\u5EA6 (${lat.toFixed(2)}, ${lon.toFixed(2)})`;
+        if (osmResp.ok) {
+          const osmData = await osmResp.json();
+          const addr = osmData.address || {};
+          city = addr.city || addr.town || addr.county || addr.district || addr.state || `\u7ECF\u7EAC\u5EA6 (${lat.toFixed(2)}, ${lon.toFixed(2)})`;
         }
       } catch {
       }
@@ -69905,27 +70538,75 @@ app.get("/api/weather", async (req, res) => {
         error: "\u672A\u83B7\u53D6\u5230\u624B\u673A GPS \u5B9A\u4F4D\u7ECF\u7EAC\u5EA6\uFF0C\u4E14\u672A\u6307\u5B9A\u57CE\u5E02\u3002\u8BF7\u5141\u8BB8\u4F4D\u7F6E\u6743\u9650\u6216\u624B\u52A8\u641C\u7D22\u57CE\u5E02\u3002"
       });
     }
-    const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,showers,snowfall,weather_code,wind_speed_10m,wind_direction_10m,uv_index&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_probability_max,precipitation_sum&timezone=auto`;
+    const cacheKey = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+    const existingCache = weatherServerCache.get(cacheKey);
+    if (!forceRefresh && existingCache && Date.now() - existingCache.fetchedAt < 2 * 60 * 1e3) {
+      return res.json({
+        success: true,
+        weather: {
+          ...existingCache.weather,
+          city: city || existingCache.weather.city,
+          isAutoLocation: isAuto
+        }
+      });
+    }
     const aqiUrl = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&current=pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone,european_aqi,us_aqi&timezone=auto`;
-    const [weatherFetchResult, aqiFetchResult] = await Promise.allSettled([
-      fetch(weatherUrl, { signal: AbortSignal.timeout(9e3) }),
-      fetch(aqiUrl, { signal: AbortSignal.timeout(8e3) })
-    ]);
-    let data = null;
-    if (weatherFetchResult.status === "fulfilled" && weatherFetchResult.value.ok) {
-      data = await weatherFetchResult.value.json();
-    } else {
-      const errReason = weatherFetchResult.status === "rejected" ? weatherFetchResult.reason : "HTTP status " + weatherFetchResult.value?.status;
-      throw new Error(`Open-Meteo weather fetch failed: ${errReason}`);
-    }
-    let aqiData = null;
-    if (aqiFetchResult.status === "fulfilled" && aqiFetchResult.value.ok) {
+    const aqiPromise = fetch(aqiUrl, { signal: AbortSignal.timeout(4e3) }).then(async (r2) => r2.ok ? r2.json() : null).catch(() => null);
+    const now = Date.now();
+    const fetchOpenMeteoRaw = async () => {
+      const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,showers,snowfall,weather_code,wind_speed_10m,wind_direction_10m,uv_index&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_probability_max,precipitation_sum&timezone=auto`;
       try {
-        aqiData = await aqiFetchResult.value.json();
+        const omRes = await fetch(weatherUrl, { signal: AbortSignal.timeout(2800) });
+        if (omRes.ok) {
+          const json2 = await omRes.json();
+          if (json2 && json2.current) {
+            return { provider: "open-meteo", data: json2 };
+          }
+        }
+        openMeteoBlockedUntil = Date.now() + 30 * 60 * 1e3;
+        return null;
       } catch {
+        openMeteoBlockedUntil = Date.now() + 30 * 60 * 1e3;
+        return null;
       }
+    };
+    const fetchMetNorwayRaw = async () => {
+      try {
+        const metUrl = `https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}`;
+        const metRes = await fetch(metUrl, {
+          headers: { "User-Agent": "SimulatedAndroidPhone/2.0 (weather@local.app)" },
+          signal: AbortSignal.timeout(6500)
+        });
+        if (metRes.ok) {
+          const metData = await metRes.json();
+          if (metData?.properties?.timeseries?.length > 0) {
+            return { provider: "met-norway", data: metData };
+          }
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    };
+    let primaryResult = null;
+    if (now >= openMeteoBlockedUntil) {
+      const omPromise = fetchOpenMeteoRaw();
+      const fastOpenMeteo = await Promise.race([
+        omPromise,
+        new Promise((resolve) => setTimeout(() => resolve(null), 700))
+      ]);
+      if (fastOpenMeteo) {
+        primaryResult = fastOpenMeteo;
+      } else {
+        const metPromise = fetchMetNorwayRaw();
+        primaryResult = await firstNonNull([omPromise, metPromise]);
+      }
+    } else {
+      primaryResult = await fetchMetNorwayRaw();
     }
-    if (data && data.current) {
+    const aqiData = await aqiPromise;
+    if (primaryResult?.provider === "open-meteo") {
+      const data = primaryResult.data;
       const current = data.current;
       const hourly = data.hourly || {};
       const daily = data.daily || {};
@@ -69938,9 +70619,7 @@ app.get("/api/weather", async (req, res) => {
       const currentLocalHour = currentLocalTimeStr.slice(0, 13);
       const timeArr = hourly.time || [];
       let startIndex = timeArr.findIndex((t2) => t2.slice(0, 13) === currentLocalHour);
-      if (startIndex === -1) {
-        startIndex = timeArr.findIndex((t2) => t2 >= currentLocalHour);
-      }
+      if (startIndex === -1) startIndex = timeArr.findIndex((t2) => t2 >= currentLocalHour);
       if (startIndex === -1) startIndex = 0;
       for (let i2 = startIndex; i2 < Math.min(startIndex + 24, timeArr.length); i2++) {
         const hTimeStr = timeArr[i2];
@@ -69983,103 +70662,25 @@ app.get("/api/weather", async (req, res) => {
           precipProbability: daily.precipitation_probability_max ? daily.precipitation_probability_max[i2] ?? 0 : 0
         });
       }
-      let rainForecastSummary = "\u672A\u6765\u51E0\u5C0F\u65F6\u65E0\u660E\u663E\u964D\u6C34\uFF0C\u9002\u5B9C\u5916\u51FA";
-      const upcomingRainHour = hourlyList.slice(0, 6).find((h2) => h2.precipProbability >= 60 || h2.precipitation >= 0.5);
-      if (upcomingRainHour) {
-        rainForecastSummary = `\u9884\u8BA1 ${upcomingRainHour.time} \u5F00\u59CB\u964D\u6C34\uFF0C\u964D\u6C34\u6982\u7387 ${upcomingRainHour.precipProbability}%`;
-      } else {
-        const moderateRainHour = hourlyList.slice(0, 6).find((h2) => h2.precipProbability >= 35);
-        if (moderateRainHour) {
-          rainForecastSummary = `\u672A\u6765\u6570\u5C0F\u65F6\u6709 ${moderateRainHour.precipProbability}% \u9635\u96E8\u53EF\u80FD\uFF0C\u51FA\u95E8\u5907\u628A\u4F1E\u66F4\u5B89\u5FC3`;
-        }
-      }
-      const alerts = [];
       const curTemp = Math.round(current.temperature_2m ?? 26);
       const todayMax = dailyList[0]?.tempMax ?? curTemp;
       const todayMin = dailyList[0]?.tempMin ?? curTemp;
-      if (todayMax >= 37 || curTemp >= 37) {
-        alerts.push({
-          id: "alert_heat_orange",
-          title: "\u9AD8\u6E29\u6A59\u8272\u9884\u8B66",
-          level: "orange",
-          levelText: "\u6A59\u8272\u9884\u8B66",
-          description: `\u9884\u8BA1\u6700\u9AD8\u6C14\u6E29\u5C06\u5347\u81F3 ${todayMax}\xB0C\uFF0C\u8BF7\u5C3D\u91CF\u51CF\u5C11\u5348\u540E\u5BA4\u5916\u4F5C\u4E1A\u4E0E\u70C8\u65E5\u66B4\u6652\uFF0C\u591A\u8865\u5145\u7535\u89E3\u8D28\u6C34\u5206\u3002`,
-          pubTime: "\u6C14\u8C61\u9884\u8B66\u4E2D\u5FC3"
-        });
-      } else if (todayMax >= 35 || curTemp >= 35) {
-        alerts.push({
-          id: "alert_heat_yellow",
-          title: "\u9AD8\u6E29\u9EC4\u8272\u9884\u8B66",
-          level: "yellow",
-          levelText: "\u9EC4\u8272\u9884\u8B66",
-          description: `\u4ECA\u65E5\u6700\u9AD8\u6C14\u6E29\u53EF\u8FBE ${todayMax}\xB0C\uFF0C\u5929\u6C14\u708E\u70ED\uFF0C\u8BF7\u6CE8\u610F\u505A\u597D\u9632\u6652\u4E0E\u964D\u6E29\u9632\u6691\u63AA\u65BD\u3002`,
-          pubTime: "\u6C14\u8C61\u9884\u8B66\u4E2D\u5FC3"
-        });
-      }
-      if (todayMin <= 0 || curTemp <= 0) {
-        alerts.push({
-          id: "alert_cold_blue",
-          title: "\u4F4E\u6E29\u9053\u8DEF\u7ED3\u51B0\u9884\u8B66",
-          level: "blue",
-          levelText: "\u84DD\u8272\u9884\u8B66",
-          description: `\u5F53\u524D\u6C14\u6E29\u8F83\u4F4E (${curTemp}\xB0C)\uFF0C\u8DEF\u9762\u53CA\u6865\u6881\u6613\u51FA\u73B0\u6E7F\u6ED1\u7ED3\u51B0\uFF0C\u65E9\u665A\u51FA\u884C\u8BF7\u6CE8\u610F\u9632\u98CE\u4FDD\u6696\u4E0E\u4EA4\u901A\u5B89\u5168\u3002`,
-          pubTime: "\u6C14\u8C61\u9884\u8B66\u4E2D\u5FC3"
-        });
-      }
-      if ([95, 96, 99].includes(currentCode) || hourlyList.slice(0, 4).some((h2) => [95, 96, 99].includes(h2.conditionCode))) {
-        alerts.push({
-          id: "alert_thunder_yellow",
-          title: "\u96F7\u7535\u4E0E\u5F3A\u5BF9\u6D41\u9884\u8B66",
-          level: "yellow",
-          levelText: "\u9EC4\u8272\u9884\u8B66",
-          description: "\u53D7\u5C40\u5730\u5BF9\u6D41\u4E91\u56E2\u5F71\u54CD\uFF0C\u53EF\u80FD\u51FA\u73B0\u96F7\u66B4\u5927\u98CE\u4E0E\u77ED\u65F6\u5F3A\u964D\u6C34\uFF0C\u6237\u5916\u8BF7\u5207\u52FF\u5728\u6811\u4E0B\u6216\u5F00\u9614\u5730\u9017\u7559\u3002",
-          pubTime: "\u6C14\u8C61\u9884\u8B66\u4E2D\u5FC3"
-        });
-      }
-      if (windSpeed >= 35) {
-        alerts.push({
-          id: "alert_wind_blue",
-          title: "\u5927\u98CE\u84DD\u8272\u9884\u8B66",
-          level: "blue",
-          levelText: "\u84DD\u8272\u9884\u8B66",
-          description: `\u5F53\u524D\u6700\u5927\u9635\u98CE\u53EF\u8FBE ${windSpeed} km/h (${getWindScaleText(windSpeed)})\uFF0C\u8BF7\u6CE8\u610F\u5173\u597D\u95E8\u7A97\uFF0C\u6536\u8D77\u9633\u53F0\u6613\u5760\u7269\u54C1\u3002`,
-          pubTime: "\u6C14\u8C61\u9884\u8B66\u4E2D\u5FC3"
-        });
-      }
-      if (current.precipitation >= 20 || hourlyList.slice(0, 4).some((h2) => h2.precipitation >= 15)) {
-        alerts.push({
-          id: "alert_rain_orange",
-          title: "\u66B4\u96E8\u6A59\u8272\u9884\u8B66",
-          level: "orange",
-          levelText: "\u6A59\u8272\u9884\u8B66",
-          description: "\u7D2F\u79EF\u96E8\u91CF\u5DF2\u8FBE\u66B4\u96E8\u7EA7\u522B\uFF0C\u4F4E\u6D3C\u8DEF\u6BB5\u6613\u51FA\u73B0\u79EF\u6C34\uFF0C\u884C\u8F66\u6CE8\u610F\u51CF\u901F\u6162\u884C\u3002",
-          pubTime: "\u6C14\u8C61\u9884\u8B66\u4E2D\u5FC3"
-        });
-      }
-      let airQuality = void 0;
-      if (aqiData && aqiData.current) {
-        const curAqi = aqiData.current;
-        const usAqi = curAqi.us_aqi !== void 0 ? Math.round(curAqi.us_aqi) : void 0;
-        const europeanAqi = curAqi.european_aqi !== void 0 ? Math.round(curAqi.european_aqi) : void 0;
-        const pm25 = curAqi.pm2_5 !== void 0 ? Math.round(curAqi.pm2_5) : void 0;
-        const pm10 = curAqi.pm10 !== void 0 ? Math.round(curAqi.pm10) : void 0;
-        const effectiveAqi = usAqi !== void 0 ? usAqi : pm25 !== void 0 ? Math.round(pm25 * 1.5) : europeanAqi;
-        if (effectiveAqi !== void 0) {
-          const aqiLabel = effectiveAqi <= 50 ? "\u4F18" : effectiveAqi <= 100 ? "\u826F" : effectiveAqi <= 150 ? "\u8F7B\u5EA6\u6C61\u67D3" : effectiveAqi <= 200 ? "\u4E2D\u5EA6\u6C61\u67D3" : "\u91CD\u5EA6\u6C61\u67D3";
-          airQuality = {
-            aqi: effectiveAqi,
-            label: aqiLabel,
-            pm25,
-            pm10
-          };
-        }
-      }
+      const { rainForecastSummary, alerts, airQuality } = buildWeatherMetaAndAlerts({
+        currentCode,
+        curTemp,
+        todayMax,
+        todayMin,
+        windSpeed,
+        currentPrecip: current.precipitation ?? 0,
+        hourlyList,
+        aqiData
+      });
       const weatherResult = {
         city: city || "\u5F53\u524D\u4F4D\u7F6E",
         country: "",
         latitude: lat,
         longitude: lon,
-        temp: Math.round(current.temperature_2m ?? 26),
+        temp: curTemp,
         feelsLike: Math.round(current.apparent_temperature ?? current.temperature_2m ?? 26),
         tempMin: todayMin,
         tempMax: todayMax,
@@ -70100,7 +70701,7 @@ app.get("/api/weather", async (req, res) => {
         rainForecastSummary,
         dataSourceInfo: {
           serviceName: "Open-Meteo WMO / ECMWF \u5168\u7403\u9AD8\u7CBE\u6C14\u8C61\u6A21\u578B",
-          geocodingService: "Open-Meteo & BigDataCloud / Nominatim \u9006\u5730\u7406\u7F16\u7801",
+          geocodingService: "Open-Meteo & OpenStreetMap Nominatim \u9006\u5730\u7406\u7F16\u7801",
           airQualityService: aqiData ? "Open-Meteo \u6B27\u6D32\u54E5\u767D\u5C3C\u5927\u6C14\u76D1\u6D4B\u670D\u52A1 (CAMS)" : "\u6682\u672A\u63D0\u4F9B",
           requestTimestamp: reqStart,
           responseTimestamp: Date.now(),
@@ -70111,12 +70712,67 @@ app.get("/api/weather", async (req, res) => {
           coordinates: { latitude: lat, longitude: lon }
         }
       };
+      weatherServerCache.set(cacheKey, { weather: weatherResult, fetchedAt: Date.now() });
       return res.json({ success: true, weather: weatherResult });
     }
-    return res.status(500).json({ success: false, error: "\u672A\u80FD\u83B7\u53D6\u6709\u6548\u6C14\u8C61\u54CD\u5E94\u6570\u636E" });
+    if (primaryResult?.provider === "met-norway") {
+      const metWeather = buildWeatherFromMetNorway({
+        metData: primaryResult.data,
+        lat,
+        lon,
+        city,
+        isAuto,
+        aqiData,
+        reqStart
+      });
+      if (metWeather) {
+        weatherServerCache.set(cacheKey, { weather: metWeather, fetchedAt: Date.now() });
+        return res.json({ success: true, weather: metWeather });
+      }
+    }
+    try {
+      const wttrUrl = `https://wttr.in/${lat.toFixed(3)},${lon.toFixed(3)}?format=j1`;
+      const wttrRes = await fetch(wttrUrl, {
+        headers: { "User-Agent": "SimulatedAndroidPhone/2.0" },
+        signal: AbortSignal.timeout(6500)
+      });
+      if (wttrRes.ok) {
+        const wttrData = await wttrRes.json();
+        const wttrWeather = buildWeatherFromWttr({ wttrData, lat, lon, city, isAuto, aqiData, reqStart });
+        if (wttrWeather) {
+          weatherServerCache.set(cacheKey, { weather: wttrWeather, fetchedAt: Date.now() });
+          return res.json({ success: true, weather: wttrWeather });
+        }
+      }
+    } catch {
+    }
+    if (existingCache && Date.now() - existingCache.fetchedAt < 24 * 60 * 60 * 1e3) {
+      return res.json({
+        success: true,
+        weather: {
+          ...existingCache.weather,
+          city: city || existingCache.weather.city,
+          isAutoLocation: isAuto,
+          dataSourceInfo: {
+            ...existingCache.weather.dataSourceInfo,
+            isFromCache: true,
+            cacheTimestamp: existingCache.fetchedAt
+          }
+        }
+      });
+    }
+    return res.status(200).json({
+      success: false,
+      status: "upstream_timeout",
+      error: "\u5B9E\u65F6\u6C14\u8C61\u6570\u636E\u6E90\u54CD\u5E94\u8D85\u65F6\uFF0C\u8BF7\u7A0D\u540E\u70B9\u51FB\u5237\u65B0\u91CD\u8BD5\u3002"
+    });
   } catch (error) {
-    console.error("Weather error:", error);
-    res.status(500).json({ success: false, error: error.message || "\u83B7\u53D6\u5929\u6C14\u6570\u636E\u5931\u8D25" });
+    console.warn("Weather endpoint handled error:", error?.message || error);
+    return res.status(200).json({
+      success: false,
+      status: "error",
+      error: error?.message || "\u83B7\u53D6\u5929\u6C14\u6570\u636E\u5931\u8D25"
+    });
   }
 });
 app.post("/api/gemini/weather-proactive-care", async (req, res) => {
@@ -70162,13 +70818,15 @@ ${memosSummary}
     let responseText = "";
     let thinkingProcess = `\u5206\u6790\u5929\u6C14\u4E8B\u4EF6 [${weatherEvent.title}]\uFF0C\u7ED3\u5408 ${character.name} \u7684\u4EBA\u8BBE\u53E3\u543B\u751F\u6210\u5FAE\u4FE1\u5173\u6000\u3002`;
     let replyContent = "";
+    let detailedRes = null;
     try {
-      responseText = await callAiService({
+      detailedRes = await callAiServiceDetailed({
         prompt,
         model: selectedModel,
         apiKey: apiConfig?.textApiKey,
         baseUrl: apiConfig?.textBaseUrl
       });
+      responseText = detailedRes.text;
     } catch (e2) {
       console.warn("Weather care AI call failed, using fallback:", e2.message);
     }
@@ -70194,33 +70852,205 @@ ${memosSummary}
       replyContent = responseText.trim();
     }
     const duration = Date.now() - startTime;
-    const promptTokens = Math.round(prompt.length / 2);
-    const completionTokens = Math.round(responseText.length / 2);
     res.json({
       success: true,
       text: replyContent,
       thinkingProcess,
-      apiLog: {
-        id: "log_" + Date.now(),
+      apiLog: buildApiLogObject({
         appName: "\u5929\u6C14-AI\u4E3B\u52A8\u5173\u6000",
-        timestamp: Date.now(),
-        modelName: selectedModel,
+        modelName: detailedRes?.modelUsed || selectedModel,
         interfaceType: "ProactiveWeatherCare",
-        promptTokens,
-        completionTokens,
-        estimatedCost: Number(((promptTokens + completionTokens) * 5e-7).toFixed(5)),
+        category: "text",
+        durationMs: duration,
+        usage: detailedRes?.usage,
+        isRealTokens: detailedRes?.isRealTokens,
         purpose: `AI [${character.name}] \u9488\u5BF9 [${weatherEvent.title}] \u53D1\u9001\u5FAE\u4FE1\u5929\u6C14\u5173\u6000 (\u8017\u65F6 ${duration}ms)`
-      }
+      })
     });
   } catch (error) {
-    console.error("Weather proactive care error:", error);
-    res.status(500).json({ success: false, error: error.message || "Weather proactive care failed" });
+    return handleAiEndpointError(res, error, "Weather proactive care");
   }
 });
+app.post("/api/gemini/analyze-image", async (req, res) => {
+  const { imageUrl, prompt, apiConfig } = req.body;
+  if (!imageUrl || typeof imageUrl !== "string") {
+    return res.status(400).json({ success: false, error: "\u672A\u63D0\u4F9B\u6709\u6548\u7684\u56FE\u7247\u6570\u636E (imageUrl)" });
+  }
+  const startTime = Date.now();
+  const imageKey = apiConfig?.imageApiKey && apiConfig.imageApiKey.trim() || apiConfig?.textApiKey || "";
+  const imageBaseUrl = apiConfig?.imageBaseUrl || apiConfig?.textBaseUrl || "";
+  const imageProvider = apiConfig?.imageProvider || apiConfig?.textProvider || "google_gemini";
+  const imageProtocol = apiConfig?.imageApiProtocol || apiConfig?.textApiProtocol;
+  const selectedModel = apiConfig?.imageModel || apiConfig?.textModel || "gemini-3.6-flash";
+  const customPrompt = prompt || "\u8BF7\u7528\u4E2D\u6587\u8BE6\u7EC6\u603B\u7ED3\u8BC6\u522B\u8FD9\u5F20\u56FE\u7247\u4E2D\u7684\u6838\u5FC3\u4E8B\u7269\u3001\u6587\u5B57\u3001\u573A\u666F\u4EE5\u53CA\u4E3B\u8981\u7EC6\u8282\u3002";
+  try {
+    let description = "";
+    let mimeType = "image/jpeg";
+    let base64Data = "";
+    const isDataUrl = imageUrl.startsWith("data:");
+    if (isDataUrl) {
+      const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (matches) {
+        mimeType = matches[1];
+        base64Data = matches[2];
+      }
+    }
+    const isOpenAi = imageProtocol === "openai_compatible" || imageProvider === "openai_compatible" || imageProvider === "deepseek" || imageProvider === "openrouter" || imageBaseUrl && (imageBaseUrl.includes("/v1") || imageBaseUrl.includes("openai"));
+    if (isOpenAi) {
+      const endpoint = imageBaseUrl ? imageBaseUrl.endsWith("/chat/completions") ? imageBaseUrl : `${imageBaseUrl.replace(/\/+$/, "")}/chat/completions` : "https://api.openai.com/v1/chat/completions";
+      const headers = {
+        "Content-Type": "application/json"
+      };
+      if (imageKey) {
+        headers["Authorization"] = `Bearer ${imageKey}`;
+      }
+      const lowerModel = selectedModel.toLowerCase();
+      const isKnownTextOnly = lowerModel.includes("reasoner") || lowerModel.includes("o1-mini") || lowerModel.includes("text-only");
+      if (isKnownTextOnly) {
+        return res.json({
+          success: false,
+          error: `\u5F53\u524D\u914D\u7F6E\u7684\u6A21\u578B (${selectedModel}) \u4E3A\u7EAF\u6587\u672C\u6A21\u578B\uFF0C\u4E0D\u652F\u6301\u56FE\u50CF\u8BC6\u522B\u3002\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u5207\u6362\u4E3A\u89C6\u89C9\u6A21\u578B (\u5982 gpt-4o, gemini-3.6-flash)\u3002`,
+          description: "\u5F53\u524D\u6A21\u578B\u4E0D\u652F\u6301\u56FE\u7247\u8BC6\u522B"
+        });
+      }
+      const visionModel = selectedModel.includes("gemini") ? "gpt-4o-mini" : selectedModel;
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: visionModel,
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: customPrompt },
+                { type: "image_url", image_url: { url: imageUrl } }
+              ]
+            }
+          ],
+          max_tokens: 800
+        })
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        let parsedMsg = errText.slice(0, 200);
+        try {
+          const j = JSON.parse(errText);
+          parsedMsg = j.error?.message || j.message || parsedMsg;
+        } catch {
+        }
+        return res.json({
+          success: false,
+          error: `\u56FE\u50CF API \u8BF7\u6C42\u5931\u8D25 (${response.status}): ${parsedMsg}`,
+          description: "\u56FE\u50CF\u8BC6\u522B\u8C03\u7528\u5931\u8D25"
+        });
+      }
+      const resJson = await response.json();
+      description = resJson.choices?.[0]?.message?.content || "";
+    } else {
+      const activeKey = imageKey || (!imageBaseUrl && false ? process.env.GEMINI_API_KEY || "" : "");
+      if (!activeKey) {
+        return res.json({
+          success: false,
+          error: "\u672A\u914D\u7F6E\u56FE\u50CF API \u5BC6\u94A5\uFF0C\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u914D\u7F6E\u56FE\u50CF API Key\u3002",
+          description: "\u672A\u914D\u7F6E\u56FE\u50CF API Key"
+        });
+      }
+      const clientOptions = {
+        apiKey: activeKey,
+        httpOptions: {
+          headers: { "User-Agent": "aistudio-build-phone" }
+        }
+      };
+      if (imageBaseUrl) {
+        clientOptions.httpOptions.baseUrl = imageBaseUrl;
+      }
+      const aiClient = new GoogleGenAI2(clientOptions);
+      let parts = [];
+      if (base64Data) {
+        parts = [
+          { inlineData: { mimeType, data: base64Data } },
+          { text: customPrompt }
+        ];
+      } else {
+        parts = [{ text: `${customPrompt}
+\u56FE\u7247URL: ${imageUrl}` }];
+      }
+      const visionModel = selectedModel.includes("gemini") ? selectedModel : "gemini-3.6-flash";
+      let aiResponse;
+      try {
+        aiResponse = await aiClient.models.generateContent({
+          model: visionModel,
+          contents: [{ role: "user", parts }]
+        });
+      } catch (geminiErr) {
+        return res.json({
+          success: false,
+          error: `Gemini \u89C6\u89C9\u63A5\u53E3\u8C03\u7528\u5F02\u5E38: ${geminiErr.message || "\u7F51\u7EDC\u6216\u914D\u989D\u53D7\u9650"}`,
+          description: "\u56FE\u7247\u8BC6\u522B\u8C03\u7528\u5931\u8D25"
+        });
+      }
+      description = aiResponse?.text || "";
+    }
+    const duration = Date.now() - startTime;
+    if (!description.trim()) {
+      return res.json({
+        success: false,
+        error: "\u56FE\u50CF API \u672A\u80FD\u5206\u6790\u51FA\u6709\u6548\u753B\u9762\u63CF\u8FF0",
+        description: "\u56FE\u7247\u8BC6\u522B\u672A\u80FD\u751F\u6210\u6709\u6548\u63CF\u8FF0"
+      });
+    }
+    return res.json({
+      success: true,
+      description: description.trim(),
+      duration,
+      apiLog: buildApiLogObject({
+        appName: "\u56FE\u50CF\u8BC6\u522B\u4E0E\u591A\u6A21\u6001\u5206\u6790",
+        modelName: selectedModel,
+        interfaceType: "VisionAnalysis",
+        category: "image",
+        durationMs: duration,
+        purpose: "AI \u8BC6\u522B\u5E76\u5206\u6790\u5FAE\u4FE1\u804A\u5929\u53D1\u9001\u7684\u56FE\u7247"
+      })
+    });
+  } catch (err) {
+    console.error("Analyze image error:", err);
+    return res.json({
+      success: false,
+      error: err.message || "\u56FE\u7247\u89C6\u89C9\u8BC6\u522B\u5931\u8D25",
+      description: "\u56FE\u7247\u8BC6\u522B\u8C03\u7528\u5931\u8D25"
+    });
+  }
+});
+function formatFullDateTime(timestamp) {
+  if (!timestamp) return "\u65F6\u95F4\u672A\u77E5";
+  let d;
+  if (timestamp instanceof Date) {
+    d = timestamp;
+  } else if (typeof timestamp === "number") {
+    d = new Date(timestamp);
+  } else {
+    const parsedNum = Number(timestamp);
+    if (!isNaN(parsedNum) && parsedNum > 0) {
+      d = new Date(parsedNum);
+    } else {
+      d = new Date(timestamp);
+    }
+  }
+  if (isNaN(d.getTime())) return "\u65F6\u95F4\u672A\u77E5";
+  const YYYY = d.getFullYear();
+  const MM = String(d.getMonth() + 1).padStart(2, "0");
+  const DD = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${YYYY}-${MM}-${DD} ${hh}:${mm}:${ss}`;
+}
 app.post("/api/gemini/chat", async (req, res) => {
   const {
     character,
     userMessage,
+    currentTurnMessageIds = [],
     conversationHistory = [],
     recalledMemoriesSummary,
     userProfile,
@@ -70228,6 +71058,8 @@ app.post("/api/gemini/chat", async (req, res) => {
     locationCity,
     menstrualInfo,
     memosSummary,
+    worldBookContext,
+    associatedWorldBooks,
     associatedWorldBook,
     realDeviceContext,
     weatherInfo,
@@ -70259,21 +71091,50 @@ ${recalledMemoriesSummary}
 - \u6027\u683C\u559C\u597D\uFF1A${userProfile?.persona || "\u6682\u65E0"}
 - \u804A\u5929\u504F\u597D\uFF1A${userProfile?.preferences || "\u65E0\u7279\u522B\u6307\u793A"}
 `;
-    const currentNativeTime = systemTime || (/* @__PURE__ */ new Date()).toLocaleString("zh-CN", { hour12: false, timeZone: "Asia/Shanghai" });
+    const now = /* @__PURE__ */ new Date();
+    const dynamicTimeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+    const currentNativeTime = systemTime || `${dynamicTimeStr} (\u8BBE\u5907\u672C\u5730\u65F6\u533A)`;
     const currentNativeLoc = locationCity || realDeviceContext?.locationCity || weatherInfo?.city;
     contextPrompt += `
 \u3010\u{1F4F1} Android \u624B\u673A\u539F\u751F\u5E95\u5C42\u611F\u77E5\xB7\u771F\u5B9E\u65F6\u95F4\u4E0E\u73AF\u5883\u3011:
 - \u624B\u673A\u7CFB\u7EDF\u672C\u5730\u771F\u5B9E\u65F6\u95F4\uFF1A${currentNativeTime}
 - \u624B\u673A\u7269\u7406\u4F4D\u7F6E/\u57CE\u5E02\uFF1A${currentNativeLoc ? currentNativeLoc : "\u5F53\u524D\u672A\u6388\u6743\u624B\u673A\u5B9A\u4F4D\u6216\u672A\u9009\u62E9\u57CE\u5E02"}
 `;
-    if (permissions?.appAccess?.worldBookData !== false && associatedWorldBook && associatedWorldBook.title) {
-      contextPrompt += `
+    if (permissions?.appAccess?.worldBookData !== false) {
+      if (worldBookContext && typeof worldBookContext === "string" && worldBookContext.trim()) {
+        contextPrompt += `
+${worldBookContext.trim()}
+`;
+      } else if (associatedWorldBooks && Array.isArray(associatedWorldBooks) && associatedWorldBooks.length > 0) {
+        contextPrompt += `
+\u3010\u{1F30C} \u5DF2\u7ED1\u5B9A\u4E16\u754C\u4E66\uFF08\u5171 ${associatedWorldBooks.length} \u672C\uFF09\xB7 \u4E16\u754C\u89C2\u6CD5\u5219\u4E0E\u8BCD\u6761\u5E93\u3011
+`;
+        associatedWorldBooks.forEach((wb, idx) => {
+          contextPrompt += `${idx + 1}. \u300A${wb.title}\u300B: ${wb.worldSetting || "\u65E0\u7279\u5B9A\u80CC\u666F"}
+`;
+          if (wb.entries && Array.isArray(wb.entries) && wb.entries.length > 0) {
+            wb.entries.forEach((e2) => {
+              if (e2.enabled !== false) {
+                contextPrompt += `   * [${e2.keyword}]: ${e2.content}
+`;
+              }
+            });
+          }
+        });
+        contextPrompt += `\u3010\u6F14\u804C\u6CD5\u5219\u3011\uFF1A\u4F60\u5F53\u524D\u7F6E\u8EAB\u4E8E\u4E0A\u8FF0\u6240\u6709\u4E16\u754C\u89C2\u6CD5\u5219\u4E2D\u3002\u8BF7\u81EA\u7136\u878D\u5165\u4E0A\u8FF0\u4E16\u754C\u89C2\u6CD5\u5219\u4E0E\u8BCD\u6761\u89C4\u5219\u8FDB\u884C\u6C89\u6D78\u5F0F\u4E92\u52A8\u56DE\u590D\u3002
+`;
+      } else if (associatedWorldBook && associatedWorldBook.title) {
+        contextPrompt += `
 \u3010\u{1F30C} \u5DF2\u7ED1\u5B9A\u4E16\u754C\u4E66\xB7\u4E16\u754C\u89C2\u6CD5\u5219\u4E0E\u80CC\u666F\u8BBE\u5B9A\u3011
 - \u4E16\u754C\u4E66\u540D\u79F0\uFF1A\u300A${associatedWorldBook.title}\u300B
 - \u6838\u5FC3\u4E16\u754C\u6CD5\u5219\u4E0E\u80CC\u666F\uFF1A${associatedWorldBook.worldSetting || "\u65E0\u7279\u5B9A\u80CC\u666F"}
-${associatedWorldBook.entries && associatedWorldBook.entries.length > 0 ? "\u3010\u4E13\u6709\u540D\u8BCD\u4E0E\u8BCD\u6761\u8BBE\u5B9A\u5E93\u3011\uFF1A\n" + associatedWorldBook.entries.map((e2) => `* [${e2.keyword}]: ${e2.content}`).join("\n") : ""}
-\u3010\u6F14\u804C\u5173\u952E\u6CD5\u5219\u3011\uFF1A\u4F60\u5F53\u524D\u5904\u4E8E\u8BE5\u4E16\u754C\u89C2\u80CC\u666F\u4E2D\u3002\u4F60\u7684\u8A00\u8C08\u4E3E\u6B62\u3001\u4E16\u754C\u5E38\u8BC6\u3001\u7528\u8BCD\u4E60\u60EF\u5FC5\u987B\u81EA\u7136\u878D\u5165\u8BE5\u4E16\u754C\u89C2\u6CD5\u5219\u4E0E\u8BCD\u6761\u8BBE\u5B9A\uFF0C\u540C\u65F6\u4FDD\u6301\u4F60\u81EA\u8EAB\u7684\u4EBA\u8BBE\u6027\u683C\u3002
 `;
+        if (associatedWorldBook.entries && associatedWorldBook.entries.length > 0) {
+          contextPrompt += "\u3010\u4E13\u6709\u540D\u8BCD\u4E0E\u8BCD\u6761\u8BBE\u5B9A\u5E93\u3011\uFF1A\n" + associatedWorldBook.entries.map((e2) => `* [${e2.keyword}]: ${e2.content}`).join("\n") + "\n";
+        }
+        contextPrompt += `\u3010\u6F14\u804C\u6CD5\u5219\u3011\uFF1A\u4F60\u5F53\u524D\u5904\u4E8E\u8BE5\u4E16\u754C\u89C2\u80CC\u666F\u4E2D\u3002\u4F60\u7684\u8A00\u8C08\u4E3E\u6B62\u3001\u4E16\u754C\u5E38\u8BC6\u3001\u7528\u8BCD\u4E60\u60EF\u5FC5\u987B\u81EA\u7136\u878D\u5165\u8BE5\u4E16\u754C\u89C2\u6CD5\u5219\u4E0E\u8BCD\u6761\u8BBE\u5B9A\u3002
+`;
+      }
     }
     const isProactiveCare = req.body.isProactivePeriodGreeting === true;
     if (permissions?.appAccess?.menstrualData && menstrualInfo) {
@@ -70343,6 +71204,11 @@ ${devicesSummary}
    - \u82E5\u7528\u6237\u660E\u786E\u8981\u6C42\u64CD\u4F5C\u8BBE\u5907\u4F46 [\u63A7\u5236\u8BBE\u5907] \u6743\u9650\u88AB\u5173\u95ED\uFF0C\u8BF7\u5411\u7528\u6237\u793C\u8C8C\u8BF4\u660E\u6743\u9650\u672A\u6388\u6743\u3002
 `;
     }
+    if (req.body.lifeStateContext) {
+      contextPrompt += `
+${req.body.lifeStateContext}
+`;
+    }
     contextPrompt += `
 \u3010\u{1F4F1} \u5FAE\u4FE1\u771F\u4EBA\u6253\u5B57\u4E0E\u5206\u53E5\u8FDE\u53D1\u4E60\u60EF\u3011\uFF1A
 \u5728\u771F\u5B9E\u5FAE\u4FE1\u804A\u5929\u4E2D\uFF0C\u771F\u4EBA\u901A\u5E38\u4E0D\u4F1A\u4E00\u6B21\u6027\u5806\u780C\u957F\u7BC7\u5927\u8BBA\uFF0C\u800C\u662F\u4E60\u60EF\u628A\u4E00\u6574\u6BB5\u8BDD\u5207\u5206\u6210 2~4 \u6761\u81EA\u7136\u7B80\u77ED\u7684\u8BDD\u8BED\u8FDE\u53D1\uFF08\u4E00\u53E5\u8BDD\u53D1\u4E00\u6761\u6D88\u606F\uFF0C\u968F\u6027\u53E3\u8BED\u5316\u3001\u4EB2\u8FD1\u771F\u5B9E\uFF09\u3002
@@ -70352,21 +71218,104 @@ ${devicesSummary}
 \u8BF7\u5728\u56DE\u7B54\u7684\u6700\u524D\u9762\u7528 <think>...</think> \u6807\u7B7E\u8F93\u51FA\u4F60\u672C\u6B21\u56DE\u7B54\u7684\u601D\u8003\u94FE (Thinking Process / Chain of Thought)\uFF0C\u8BF4\u660E\u4F60\u662F\u5982\u4F55\u7ED3\u5408\u89D2\u8272\u4EBA\u8BBE\u3001\u8BB0\u5FC6\u3001\u4E16\u754C\u4E66\u80CC\u666F\uFF08\u82E5\u6709\u5173\u8054\uFF09\u4EE5\u53CA\u7528\u6237\u4E0A\u4E0B\u6587\u505A\u51FA\u56DE\u5E94\u7684\u3002
 \u5728 </think> \u6807\u7B7E\u4E4B\u540E\uFF0C\u76F4\u63A5\u8F93\u51FA\u4F60\u7ED9\u7528\u6237\u7684\u5FAE\u4FE1\u56DE\u590D\u6587\u672C\uFF08\u4FDD\u6301\u5FAE\u4FE1\u53E3\u8BED\u5316\u3001\u4EB2\u5207\u81EA\u5982\uFF0C\u9002\u5408\u5FAE\u4FE1\u804A\u5929\uFF0C\u591A\u53E5\u8BDD\u4E4B\u95F4\u6362\u884C\u9694\u5F00\uFF09\u3002
 `;
+    const turnMsgIdSet = new Set(Array.isArray(currentTurnMessageIds) ? currentTurnMessageIds : []);
+    const cleanedHistory = (conversationHistory || []).filter((msg) => {
+      if (!msg) return false;
+      if (msg.id && turnMsgIdSet.has(msg.id)) return false;
+      return true;
+    });
+    const currentMs = req.body.userMessageTimestamp || Date.now();
+    let lastMs;
+    if (cleanedHistory && cleanedHistory.length > 0) {
+      for (let i2 = cleanedHistory.length - 1; i2 >= 0; i2--) {
+        const item = cleanedHistory[i2];
+        const ts = item.timestamp ?? item.createdAt ?? item.create_time ?? item.time;
+        if (typeof ts === "number" && ts > 0) {
+          lastMs = ts < 1e10 ? ts * 1e3 : ts;
+          break;
+        } else if (typeof ts === "string" && ts.trim()) {
+          const parsedNum = Number(ts);
+          if (!isNaN(parsedNum) && parsedNum > 0) {
+            lastMs = parsedNum < 1e10 ? parsedNum * 1e3 : parsedNum;
+            break;
+          }
+          const parsedDate = Date.parse(ts);
+          if (!isNaN(parsedDate) && parsedDate > 0) {
+            lastMs = parsedDate;
+            break;
+          }
+        }
+      }
+    }
+    let gapSummary = "";
+    let isLongTimeGap = false;
+    if (!lastMs) {
+      gapSummary = "\u672C\u6B21\u4E3A\u4E0E\u8BE5\u89D2\u8272\u7684\u9996\u6B21\u5BF9\u8BDD\uFF08\u6B64\u524D\u65E0\u5386\u53F2\u6C9F\u901A\u8BB0\u5F55\uFF09";
+    } else {
+      const diffMs = Math.max(0, currentMs - lastMs);
+      const diffMins = Math.floor(diffMs / (60 * 1e3));
+      const diffHours = Math.floor(diffMs / (3600 * 1e3));
+      const diffDays = Math.floor(diffMs / (86400 * 1e3));
+      if (diffMins < 1) {
+        gapSummary = "\u8DDD\u79BB\u4E0A\u4E00\u6B21\u5BF9\u8BDD\u4E0D\u5230 1 \u5206\u949F\uFF08\u8FDE\u7EED\u804A\u5929\u4E2D\uFF09";
+      } else if (diffMins < 60) {
+        gapSummary = `\u8DDD\u79BB\u4E0A\u4E00\u6B21\u5BF9\u8BDD\u8FC7\u53BB ${diffMins} \u5206\u949F\uFF08\u8FDE\u7EED\u5BF9\u8BDD\uFF09`;
+      } else if (diffHours < 24) {
+        const remMins = diffMins % 60;
+        gapSummary = `\u8DDD\u79BB\u4E0A\u4E00\u6B21\u5BF9\u8BDD\u5DF2\u8FC7\u53BB ${diffHours} \u5C0F\u65F6 ${remMins} \u5206\u949F`;
+        if (diffHours >= 6) isLongTimeGap = true;
+      } else {
+        const remHours = diffHours % 24;
+        gapSummary = `\u8DDD\u79BB\u4E0A\u4E00\u6B21\u5BF9\u8BDD\u5DF2\u8FC7\u53BB ${diffDays} \u5929 ${remHours} \u5C0F\u65F6`;
+        isLongTimeGap = true;
+      }
+    }
+    const lastChatTimeStr = lastMs ? formatFullDateTime(lastMs) : "\u65E0\u5386\u53F2\u8BB0\u5F55";
+    const currentChatTimeStr = formatFullDateTime(currentMs);
+    contextPrompt += `
+\u3010\u23F0 \u771F\u5B9E\u804A\u5929\u65F6\u95F4\u611F\u77E5\u4E0E\u65F6\u95F4\u95F4\u9694\u3011:
+- \u5F53\u524D\u8BBE\u5907/\u6D88\u606F\u771F\u5B9E\u65F6\u95F4\uFF1A${currentChatTimeStr}
+- \u4E0A\u6B21\u4E0E\u8BE5\u89D2\u8272\u5BF9\u8BDD\u65F6\u95F4\uFF1A${lastChatTimeStr}
+- \u4E24\u6B21\u5BF9\u8BDD\u771F\u5B9E\u65F6\u95F4\u5DEE\uFF1A${gapSummary}
+`;
+    if (isLongTimeGap) {
+      contextPrompt += `\u3010\u26A0\uFE0F \u8DE8\u65F6\u95F4\u6BB5\u4E0E\u957F\u95F4\u9694\u4EA4\u4E92\u51C6\u5219\u3011\uFF1A
+1. \u8DDD\u79BB\u4E0A\u4E00\u6B21\u5BF9\u8BDD\u5DF2\u95F4\u9694\u8F83\u957F\u65F6\u95F4\u3002\u5728\u8FC7\u53BB\u804A\u5929\u4E2D\u5982\u679C\u63D0\u5230\u8FC7\u5F53\u65F6\u7684\u2018\u660E\u5929\u2019\u3001\u2018\u540E\u5929\u2019\u7B49\u8BA1\u5212\uFF08\u5982\u201C\u660E\u5929\u8981\u9762\u8BD5\u201D\u3001\u201C\u540E\u5929\u53BB\u5F00\u4F1A\u201D\uFF09\uFF0C\u8BF7\u5728\u5FC3\u667A\u4E2D\u610F\u8BC6\u5230\u8FD9\u4E9B\u4E8B\u4EF6\u5728\u73B0\u5B9E\u65F6\u95F4\u7EBF\u4E2D**\u53EF\u80FD\u5DF2\u7ECF\u53D1\u751F\u6216\u6210\u4E3A\u8FC7\u53BB**\uFF0C\u5207\u52FF\u5C06\u8FC7\u53BB\u8BA1\u5212\u5F53\u4F5C\u672A\u53D1\u751F\u7684\u672A\u6765\uFF0C\u4E5F\u4E0D\u8981\u5E7B\u60F3\u672A\u53D1\u751F\u7684\u4E8B\u4EF6\u3002
+2. \u8BF7\u81EA\u7136\u611F\u77E5\u5230\u65F6\u95F4\u8DE8\u5EA6\uFF08\u6839\u636E\u4EBA\u8BBE\u81EA\u7136\u95EE\u5019\uFF0C\u5982\u201C\u597D\u4E45\u4E0D\u89C1\u5566\u201D\u3001\u201C\u8FD9\u51E0\u5929\u5FD9\u4EC0\u4E48\u5462\u201D\u6216\u5173\u5FC3\u6B64\u524D\u8BA1\u5212\u201C\u524D\u51E0\u5929\u4F60\u8BF4\u8D77\u7684\u90A3\u4E2A\u9762\u8BD5\u600E\u4E48\u6837\u4E86\uFF1F\u201D\uFF09\uFF0C\u4FDD\u6301\u4EB2\u5207\u8D34\u5207\u7684\u771F\u4EBA\u53E3\u543B\u3002
+`;
+    } else {
+      contextPrompt += `\u3010\u8FDE\u7EED\u5BF9\u8BDD\u51C6\u5219\u3011\uFF1A\u95F4\u9694\u6781\u77ED\uFF0C\u4FDD\u6301\u7D27\u51D1\u8FDE\u8D2F\u7684\u5FAE\u4FE1\u65E5\u5E38\u4EA4\u6D41\u8282\u594F\u3002
+`;
+    }
     const contents = [];
-    if (conversationHistory && conversationHistory.length > 0) {
-      conversationHistory.slice(-6).forEach((msg) => {
-        contents.push(`${msg.sender === "user" ? userProfile?.name || "\u7528\u6237" : character.name}: ${msg.text}`);
+    if (cleanedHistory && cleanedHistory.length > 0) {
+      cleanedHistory.forEach((msg) => {
+        const msgTime = formatFullDateTime(msg.timestamp || msg.createdAt || msg.time);
+        const senderLabel = msg.sender === "user" ? userProfile?.name || "\u7528\u6237" : character.name;
+        let msgStr = `[${msgTime}] ${senderLabel}: ${msg.text || ""}`;
+        if (msg.imageUrl) {
+          msgStr += ` [\u56FE\u7247\u9644\u4EF6${msg.imageAnalysis ? `: ${msg.imageAnalysis}` : ""}]`;
+        }
+        contents.push(msgStr);
       });
     }
-    contents.push(`${userProfile?.name || "\u7528\u6237"}: ${userMessage}`);
+    const currentUserTime = formatFullDateTime(req.body.userMessageTimestamp || Date.now());
+    let currentMsgStr = `[${currentUserTime}] ${userProfile?.name || "\u7528\u6237"}: ${userMessage || ""}`;
+    if (req.body.currentImageAnalysis) {
+      currentMsgStr += `
+\u3010\u7528\u6237\u672C\u6B21\u53D1\u51FA\u7684\u56FE\u7247\u8BC6\u522B\u611F\u77E5\u63CF\u8FF0\u3011:
+${req.body.currentImageAnalysis}`;
+    }
+    contents.push(currentMsgStr);
     const promptText = contextPrompt + "\n\u5BF9\u8BDD\u5386\u53F2\uFF1A\n" + contents.join("\n");
     let responseText = "";
     let thinkingProcess = "\u5206\u6790\u7528\u6237\u610F\u56FE\uFF0C\u5339\u914D\u4EBA\u8BBE\u7279\u5F81\uFF0C\u5F62\u6210\u5FAE\u4FE1\u53E3\u8BED\u5316\u56DE\u590D\u3002";
     let replyContent = "";
     const extractedDeviceActions = [];
     let aiErrorMessage = "";
+    let aiDetailedResult = null;
     try {
-      responseText = await callAiService({
+      aiDetailedResult = await callAiServiceDetailed({
         prompt: promptText,
         model: selectedModel,
         apiKey: apiConfig?.textApiKey,
@@ -70375,6 +71324,7 @@ ${devicesSummary}
         customHeaders: apiConfig?.customHeaders,
         timeoutMs: apiConfig?.timeoutMs || 35e3
       });
+      responseText = aiDetailedResult.text;
     } catch (e2) {
       aiErrorMessage = e2.message || "API \u8C03\u7528\u5F02\u5E38";
       console.warn("AI call threw error:", e2.message);
@@ -70386,13 +71336,9 @@ ${devicesSummary}
         responseText = `<think>\u7ED3\u5408\u4E86${character.name}\u7684\u4EBA\u8BBE\u4E0E\u7528\u6237\u7684\u5173\u6000\u9700\u6C42\uFF0C\u7EC4\u7EC7\u53E3\u8BED\u5316\u804A\u5929\u56DE\u590D\u3002</think>${character.greeting || "\u6536\u5230\u4F60\u7684\u6D88\u606F\u5566\uFF01\u4ECA\u5929\u8FC7\u5F97\u600E\u4E48\u6837\uFF1F"}`;
       }
     }
-    const thinkMatch = responseText.match(/<think>([\s\S]*?)<\/think>/i);
-    if (thinkMatch) {
-      thinkingProcess = thinkMatch[1].trim();
-      replyContent = responseText.replace(/<think>[\s\S]*?<\/think>/i, "").trim();
-    } else {
-      replyContent = responseText.trim();
-    }
+    const extracted = extractThinkingAndContent(responseText);
+    thinkingProcess = extracted.thinkingProcess;
+    replyContent = extracted.cleanText;
     const deviceActionRegex = /<device_action>([\s\S]*?)<\/device_action>/gi;
     let match2;
     while ((match2 = deviceActionRegex.exec(replyContent)) !== null) {
@@ -70403,30 +71349,28 @@ ${devicesSummary}
         console.warn("Failed to parse device_action JSON from AI reply:", match2[1]);
       }
     }
-    replyContent = replyContent.replace(/<device_action>[\s\S]*?<\/device_action>/gi, "").trim();
+    replyContent = sanitizeReplyText(replyContent.replace(/<device_action>[\s\S]*?<\/device_action>/gi, "").trim());
     const duration = Date.now() - startTime;
-    const promptTokens = Math.round(promptText.length / 2);
-    const completionTokens = Math.round(responseText.length / 2);
     res.json({
       success: true,
       text: replyContent,
       thinkingProcess,
       deviceActions: extractedDeviceActions,
-      apiLog: {
-        id: "log_" + Date.now(),
+      apiLog: buildApiLogObject({
         appName: "\u5FAE\u4FE1-AI\u804A\u5929",
-        timestamp: Date.now(),
-        modelName: selectedModel,
+        modelName: aiDetailedResult?.modelUsed || selectedModel,
         interfaceType: "ChatGeneration",
-        promptTokens,
-        completionTokens,
-        estimatedCost: Number(((promptTokens + completionTokens) * 5e-7).toFixed(5)),
+        category: "text",
+        status: aiErrorMessage ? "failed" : "success",
+        durationMs: duration,
+        usage: aiDetailedResult?.usage,
+        isRealTokens: aiDetailedResult?.isRealTokens,
+        error: aiErrorMessage || void 0,
         purpose: `\u4E0E ${character.name} \u5BF9\u8BDD\u4EA4\u4E92 (\u8017\u65F6 ${duration}ms)`
-      }
+      })
     });
   } catch (error) {
-    console.error("Gemini Chat error:", error);
-    res.status(500).json({ success: false, error: error.message || "Chat generation failed" });
+    return handleAiEndpointError(res, error, "Gemini Chat");
   }
 });
 app.post("/api/gemini/group-chat", async (req, res) => {
@@ -70457,8 +71401,9 @@ app.post("/api/gemini/group-chat", async (req, res) => {
 - \u4E13\u5C5E\u957F\u671F\u8BB0\u5FC6: ${memories}`;
     }).join("\n\n");
     const historyText = recentMessages.map((m2) => {
+      const msgTime = formatFullDateTime(m2.timestamp || m2.createdAt || m2.time);
       const mentions = m2.mentionedMemberIds && m2.mentionedMemberIds.length > 0 ? ` [@${m2.mentionedMemberIds.join(", ")}]` : "";
-      return `[${m2.senderName} (${m2.senderType})]: ${m2.text}${mentions}`;
+      return `[${msgTime}] [${m2.senderName} (${m2.senderType})]: ${m2.text}${mentions}`;
     }).join("\n");
     const nativeTime = systemTime || (/* @__PURE__ */ new Date()).toLocaleString("zh-CN", { hour12: false, timeZone: "Asia/Shanghai" });
     const systemPrompt = `\u4F60\u662F\u4E00\u4E2A\u9AD8\u5EA6\u62DF\u771F\u7684\u591AAI\u5FAE\u4FE1\u7FA4\u804A\u6A21\u62DF\u4E2D\u67A2\u3002
@@ -70556,8 +71501,168 @@ ${historyText || "(\u7FA4\u5185\u6682\u65E0\u66F4\u591A\u5386\u53F2)"}
       }
     });
   } catch (error) {
-    console.error("Gemini Group Chat error:", error);
-    res.status(500).json({ success: false, error: error.message || "Group chat generation failed" });
+    return handleAiEndpointError(res, error, "Gemini Group Chat");
+  }
+});
+var serverGroupStore = /* @__PURE__ */ new Map();
+var serverInviteCodeIndex = /* @__PURE__ */ new Map();
+app.post("/api/groups/register", (req, res) => {
+  try {
+    const { group } = req.body;
+    if (!group || !group.id || !group.inviteCode) {
+      return res.status(400).json({ success: false, error: "\u7F3A\u5C11\u7FA4\u804A ID \u6216\u9080\u8BF7\u7801" });
+    }
+    const cleanCode = String(group.inviteCode).trim().toUpperCase();
+    const updatedGroup = {
+      ...group,
+      inviteCode: cleanCode,
+      updatedAt: Date.now()
+    };
+    serverGroupStore.set(group.id, updatedGroup);
+    serverInviteCodeIndex.set(cleanCode, group.id);
+    return res.json({ success: true, groupId: group.id, inviteCode: cleanCode });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+app.get("/api/groups/invite/:code", (req, res) => {
+  try {
+    const rawCode = req.params.code || "";
+    const cleanCode = rawCode.trim().toUpperCase();
+    const groupId = serverInviteCodeIndex.get(cleanCode);
+    if (!groupId) {
+      return res.status(404).json({ success: false, error: "\u672A\u627E\u5230\u5BF9\u5E94\u7684\u7FA4\u804A\uFF0C\u8BF7\u68C0\u67E5\u9080\u8BF7\u7801\u662F\u5426\u6B63\u786E\u6216\u5DF2\u8FC7\u671F" });
+    }
+    const group = serverGroupStore.get(groupId);
+    if (!group || group.inviteCodeActive === false) {
+      return res.status(400).json({ success: false, error: "\u8BE5\u7FA4\u804A\u5DF2\u5173\u95ED\u9080\u8BF7\u7801\u5165\u7FA4\u529F\u80FD" });
+    }
+    return res.json({
+      success: true,
+      group: {
+        id: group.id,
+        name: group.name,
+        avatar: group.avatar,
+        notice: group.notice,
+        ownerId: group.ownerId,
+        inviteCode: group.inviteCode,
+        inviteCodeActive: group.inviteCodeActive,
+        membersCount: group.members ? group.members.length : 0,
+        members: group.members || [],
+        createdAt: group.createdAt,
+        messages: group.messages || []
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+app.post("/api/groups/join", (req, res) => {
+  try {
+    const { inviteCode, userProfile } = req.body;
+    if (!inviteCode || !userProfile) {
+      return res.status(400).json({ success: false, error: "\u8BF7\u63D0\u4F9B\u9080\u8BF7\u7801\u53CA\u4E2A\u4EBA\u8D44\u6599" });
+    }
+    const cleanCode = String(inviteCode).trim().toUpperCase();
+    const groupId = serverInviteCodeIndex.get(cleanCode);
+    if (!groupId) {
+      return res.status(404).json({ success: false, error: "\u672A\u627E\u5230\u5BF9\u5E94\u7684\u7FA4\u804A\uFF0C\u8BF7\u68C0\u67E5\u9080\u8BF7\u7801\u662F\u5426\u6B63\u786E" });
+    }
+    const group = serverGroupStore.get(groupId);
+    if (!group || group.inviteCodeActive === false) {
+      return res.status(400).json({ success: false, error: "\u8BE5\u7FA4\u804A\u5DF2\u5173\u95ED\u9080\u8BF7\u7801\u5165\u7FA4\u529F\u80FD" });
+    }
+    const userId = userProfile.id || "user_main";
+    const alreadyMember = (group.members || []).some((m2) => m2.id === userId || m2.wxid === userProfile.wxid);
+    if (alreadyMember) {
+      return res.json({
+        success: true,
+        alreadyMember: true,
+        group
+      });
+    }
+    const newMember = {
+      id: userId === "user_main" ? "user_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6) : userId,
+      name: userProfile.name || "\u65B0\u597D\u53CB",
+      avatar: userProfile.avatar || "",
+      memberType: "human",
+      role: "member",
+      joinedAt: Date.now(),
+      wxid: userProfile.wxid || "user_" + Date.now()
+    };
+    const now = Date.now();
+    const systemNoticeMsg = {
+      id: "gmsg_" + now + "_join",
+      groupId: group.id,
+      senderId: "system",
+      senderName: "\u7CFB\u7EDF\u6D88\u606F",
+      senderAvatar: group.avatar || "",
+      senderType: "human",
+      text: `\u{1F389} \u6B22\u8FCE\u65B0\u6210\u5458 \u201C${newMember.name}\u201D \u901A\u8FC7\u9080\u8BF7\u7801\u52A0\u5165\u7FA4\u804A\uFF01`,
+      timestamp: now
+    };
+    const updatedGroup = {
+      ...group,
+      members: [...group.members || [], newMember],
+      messages: [...group.messages || [], systemNoticeMsg],
+      updatedAt: now
+    };
+    serverGroupStore.set(group.id, updatedGroup);
+    return res.json({
+      success: true,
+      group: updatedGroup,
+      memberAdded: true
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+app.get("/api/groups/:groupId", (req, res) => {
+  try {
+    const groupId = req.params.groupId;
+    const userId = req.query.userId || "";
+    const inviteCode = req.query.inviteCode || "";
+    const group = serverGroupStore.get(groupId);
+    if (!group) {
+      return res.status(404).json({ success: false, error: "\u7FA4\u804A\u4E0D\u5B58\u5728" });
+    }
+    const isMember = (group.members || []).some((m2) => m2.id === userId || m2.wxid === userId);
+    const isValidCode = inviteCode && group.inviteCode && group.inviteCode.toUpperCase() === inviteCode.toUpperCase();
+    if (!isMember && !isValidCode) {
+      return res.status(403).json({ success: false, error: "\u6743\u9650\u4E0D\u8DB3\uFF1A\u60A8\u5E76\u975E\u8BE5\u7FA4\u804A\u6210\u5458\uFF0C\u65E0\u6CD5\u76F4\u63A5\u67E5\u770B\u8BE5\u79C1\u5BC6\u7FA4\u804A\u6570\u636E" });
+    }
+    return res.json({ success: true, group });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+app.post("/api/groups/:groupId/sync", (req, res) => {
+  try {
+    const groupId = req.params.groupId;
+    const { group, userId = "user_main" } = req.body;
+    if (!group) {
+      return res.status(400).json({ success: false, error: "\u7F3A\u5C11\u7FA4\u804A\u6570\u636E" });
+    }
+    const existing = serverGroupStore.get(groupId);
+    if (existing) {
+      const isMember = (existing.members || []).some((m2) => m2.id === userId || m2.wxid === userId);
+      if (!isMember && existing.ownerId !== userId && userId !== "user_main") {
+        return res.status(403).json({ success: false, error: "\u6743\u9650\u4E0D\u8DB3\uFF1A\u53EA\u6709\u7FA4\u804A\u6210\u5458\u6216\u7FA4\u4E3B\u624D\u80FD\u66F4\u65B0\u7FA4\u6570\u636E" });
+      }
+    }
+    const cleanCode = group.inviteCode ? String(group.inviteCode).trim().toUpperCase() : "";
+    const updatedGroup = {
+      ...group,
+      inviteCode: cleanCode || existing?.inviteCode || "",
+      updatedAt: Date.now()
+    };
+    serverGroupStore.set(groupId, updatedGroup);
+    if (cleanCode) {
+      serverInviteCodeIndex.set(cleanCode, groupId);
+    }
+    return res.json({ success: true, group: updatedGroup });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 app.post("/api/gemini/device-nlp-control", async (req, res) => {
@@ -70895,6 +72000,226 @@ app.post("/api/gemini/worldbook-ai", async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+app.post("/api/gemini/offline-chat", async (req, res) => {
+  try {
+    const { character, userProfile, sceneSnapshot, recentMessages, recalledMemories, previousState, userInput, worldBookContext, apiConfig } = req.body;
+    const textCfg = apiConfig?.textApiConfig;
+    const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || "";
+    const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || "";
+    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || "gemini-3.6-flash";
+    const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || "";
+    const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || "";
+    const customHeaders = apiConfig?.customHeaders || {};
+    const systemInstruction = `\u4F60\u73B0\u5728\u8FDB\u5165\u201C\u7EBF\u4E0B\u6A21\u5F0F (Offline Scene Mode)\u201D\u3002
+\u4F60\u6B63\u5728\u4E0E\u7528\u6237\u5728\u771F\u5B9E\u7684\u7269\u7406/\u5267\u60C5\u573A\u666F\u4E2D\u9762\u5BF9\u9762\u5171\u5EA6\u4E00\u6BB5\u65F6\u5149\uFF0C\u8FDB\u884C\u6DF1\u5EA6\u6C89\u6D78\u5F0F\u89D2\u8272\u4E92\u52A8\u3002
+
+\u3010\u89D2\u8272\u4FE1\u606F\u3011:
+- \u59D3\u540D: ${character?.name || "AI"}
+- \u4EBA\u8BBE: ${character?.persona || "\u6E29\u67D4\u8D34\u5FC3"}
+- \u6027\u683C: ${character?.personality || "\u968F\u548C"}
+- \u5173\u7CFB: ${character?.relationship || "\u597D\u53CB"}
+${character?.memories && Array.isArray(character.memories) && character.memories.length > 0 ? `- \u957F\u671F\u8BB0\u5FC6: ${character.memories.join("\uFF1B")}
+` : ""}
+
+\u3010\u7528\u6237\u8D44\u6599\u3011:
+- \u7528\u6237\u59D3\u540D/\u6635\u79F0: ${userProfile?.name || "\u7528\u6237"}
+- \u4E2A\u4EBA\u7279\u5F81: ${userProfile?.bio || "\u666E\u901A\u7528\u6237"}
+
+\u3010\u5F53\u524D\u7EBF\u4E0B\u573A\u666F\u8BBE\u5B9A\u3011:
+- \u573A\u666F\u540D\u79F0: ${sceneSnapshot?.name || "\u7EBF\u4E0B\u7A7A\u95F4"}
+- \u573A\u666F\u5730\u70B9: ${sceneSnapshot?.location || "\u9759\u8C27\u7A7A\u95F4"}
+- \u6C1B\u56F4\u57FA\u8C03: ${sceneSnapshot?.atmosphere || "\u6E29\u99A8\u3001\u4EB2\u5BC6"}
+- \u8BE6\u7EC6\u73AF\u5883\u80CC\u666F: ${sceneSnapshot?.background || "\u4E24\u4EBA\u5F85\u5728\u4E00\u8D77"}
+
+\u3010\u8C03\u9605\u8BB0\u5FC6\u3001\u8BBE\u5B9A\u4E0E\u4E16\u754C\u4E66\u3011:
+${recalledMemories || "\u65E0\u7279\u5B9A\u8C03\u9605\u8BB0\u5FC6"}
+${req.body.lifeStateContext ? `
+${req.body.lifeStateContext}
+` : ""}
+${worldBookContext ? `
+${worldBookContext}
+` : ""}
+
+\u3010\u4E0A\u4E00\u8F6E\u4F60\u7684\u89D2\u8272\u72B6\u6001\u3011:
+- \u5FC3\u7387: ${previousState?.heartRate || 75} bpm
+- \u547C\u5438: ${previousState?.breathing || "\u5E73\u9759"}
+- \u8138\u7EA2: ${previousState?.blush || 10}%
+- \u60C5\u7EEA: ${(previousState?.emotion || ["\u5E73\u9759"]).join("\u3001")}
+- \u7D27\u5F20: ${previousState?.tension || 10}%
+- \u5174\u594B/\u51B2\u52A8: ${previousState?.arousal || 15}%
+- \u80A2\u4F53\u8868\u73B0: ${previousState?.physicalState || "\u8EAB\u4F53\u653E\u677E"}
+- \u884C\u4E3A\u4E3E\u6B62: ${previousState?.behavior || "\u773C\u795E\u81EA\u7136"}
+
+\u3010\u6C89\u6D78\u5F0F\u7EBF\u4E0B\u63CF\u5199\u4E09\u5927\u6CD5\u5219\u3011:
+\u4F60\u7684\u6BCF\u4E00\u8F6E\u56DE\u590D\u5FC5\u987B\u5B8C\u6574\u5305\u542B\u4EE5\u4E0B\u4E09\u7C7B\u63CF\u5199\uFF0C\u878D\u5408\u6210\u8FDE\u8D2F\u81EA\u7136\u7684\u6C89\u6D78\u5F0F\u53D9\u8FF0\uFF08\u56DE\u590D\u76EE\u6807\u7BC7\u5E45\u7EA6 200 ~ 600 \u4E2D\u6587\u5B57\uFF0C\u6839\u636E\u5F53\u524D\u60C5\u5883\u8D77\u4F0F\u81EA\u7136\u53D8\u5316\uFF0C\u5207\u5FCC\u53EA\u7ED9\u4E00\u4E24\u53E5\u8BDD\uFF0C\u4E5F\u5207\u5FCC\u673A\u68B0\u5F0F\u5806\u780C\u540C\u4E49\u8BCD\uFF09\uFF1A
+1. \u3010\u73AF\u5883\u4E0E\u6C1B\u56F4\u63CF\u5199\u3011\uFF1A\u63CF\u5199\u5F53\u524D\u7A7A\u95F4\u3001\u5149\u7EBF\u3001\u58F0\u97F3\u3001\u5FAE\u98CE/\u5929\u6C14\u3001\u4E24\u8005\u95F4\u7684\u7269\u7406\u8DDD\u79BB\u4E0E\u73B0\u573A\u6C1B\u56F4\uFF08\u4F5C\u4E3A\u573A\u666F\u53D9\u8FF0\u76F4\u63A5\u5199\u5165 reply\uFF09\u3002
+2. \u3010\u52A8\u4F5C\u795E\u6001\u63CF\u5199\u3011\uFF1A\u63CF\u5199\u89D2\u8272\u7684\u773C\u795E\u53D8\u5316\u3001\u9762\u90E8\u8868\u60C5\u3001\u5FAE\u52A8\u4F5C\u3001\u59FF\u6001\u8C03\u6574\u3001\u9760\u8FD1/\u540E\u9000\u6216\u80A2\u4F53\u63A5\u89E6\u3002\u52A8\u4F5C\u63CF\u5199\u5FC5\u987B\u7EDF\u4E00\u4F7F\u7528\u4E2D\u6587\u5168\u89D2\u62EC\u53F7\uFF1A\uFF08...\uFF09 \u5305\u88F9\uFF01
+3. \u3010\u8BED\u8A00\u63CF\u5199\u3011\uFF1A\u89D2\u8272\u771F\u6B63\u8BF4\u51FA\u6765\u7684\u53F0\u8BCD\u5BF9\u5C40\u5BF9\u767D\uFF0C\u8D34\u5408\u89D2\u8272\u4EBA\u8BBE\u4E0E\u6027\u683C\u53E3\u543B\uFF0C\u63A8\u8FDB\u4E92\u52A8\u3002
+
+\u3010\u573A\u666F\u4E0E\u4E92\u52A8\u8FDE\u7EED\u6027\u89C4\u5219\u3011:
+- \u5FC5\u987B\u4E25\u683C\u9075\u5FAA\u4E0A\u4E0B\u6587\u4E2D\u7684\u4EBA\u7269\u4F4D\u7F6E\u3001\u5F53\u524D\u59FF\u52BF\u3001\u5468\u56F4\u73AF\u5883\u3001\u60C5\u7EEA\u8D77\u4F0F\u4E0E\u6B63\u5728\u53D1\u751F\u7684\u4E8B\u4EF6\uFF0C\u4FDD\u6301\u5267\u60C5\u524D\u540E\u9AD8\u5EA6\u8FDE\u8D2F\uFF08\u4F8B\u5982\uFF1A\u82E5\u4E0A\u4E00\u6761\u5DF2\u5750\u5728\u6C99\u53D1\u4E0A\uFF0C\u4E0D\u8981\u65E0\u6545\u7A81\u5140\u53D8\u6210\u7AD9\u5728\u95E8\u5916\uFF09\u3002
+- \u63D0\u9AD8\u89D2\u8272\u4E3B\u52A8\u6027\uFF1A\u4E3B\u52A8\u63A8\u8FDB\u52A8\u4F5C\u3001\u56DE\u5E94\u8BE5\u73AF\u5883\u6216\u7528\u6237\u7684\u5FAE\u5C0F\u7684\u4E3E\u52A8\u3001\u63D0\u51FA\u5173\u5FC3\u6216\u95EE\u9898\uFF0C\u5C55\u5F00\u751F\u52A8\u7684\u5BF9\u8BDD\u4EA4\u4E92\u3002
+- \u4E25\u7981\u66FF\u7528\u6237\u51B3\u5B9A\u7528\u6237\u7684\u52A8\u4F5C\u3001\u53F0\u8BCD\u3001\u60C5\u7EEA\u6216\u5185\u5FC3\u60F3\u6CD5\uFF01
+- \u4E25\u7981\u673A\u68B0\u5199\u51FA\u201C\u73AF\u5883\uFF1A\u201D\u3001\u201C\u52A8\u4F5C\uFF1A\u201D\u3001\u201C\u8BED\u8A00\uFF1A\u201D\u7B49\u680F\u76EE\u6807\u9898\uFF01
+
+\u3010\u8F93\u51FA\u683C\u5F0F\u4E25\u683C\u8981\u6C42\u3011:
+\u5FC5\u987B\u53EA\u8F93\u51FA\u4E00\u4E2A\u5408\u6CD5\u7684 JSON \u5BF9\u8C61\uFF0C\u683C\u5F0F\u5982\u4E0B\uFF1A
+{
+  "reply": "\u5B8C\u6574\u6C89\u6D78\u5F0F\u4E92\u52A8\u7247\u6BB5\u3002\u5C06\u73AF\u5883\u63CF\u5199\u3001\u80A2\u4F53\u795E\u6001\u52A8\u4F5C\uFF08\u7EDF\u4E00\u7528\u4E2D\u6587\u5168\u89D2\u62EC\u53F7\uFF08...\uFF09\u5305\u88F9\uFF09\u4E0E\u5BF9\u767D\u81EA\u7136\u878D\u5408\u6210\u4E00\u6BB5\u8FDE\u8D2F\u751F\u52A8\u7684\u6C89\u6D78\u5F0F\u53D9\u8FF0\uFF0C\u7BC7\u5E45\u4E30\u5BCC\u5B8C\u6574\uFF08\u7EA6200~600\u5B57\uFF09\u3002",
+  "action": "\uFF08\u6838\u5FC3\u80A2\u4F53\u5FAE\u52A8\u4F5C\u6458\u8981\uFF0C\u7528\u5168\u89D2\u62EC\u53F7\uFF09",
+  "state": {
+    "heartRate": 85,
+    "breathing": "\u7A0D\u5FEB",
+    "blush": 25,
+    "emotion": ["\u5BB3\u7F9E", "\u671F\u5F85"],
+    "arousal": 20,
+    "tension": 15,
+    "physicalState": "\u8EAB\u4F53\u5FAE\u5FAE\u9760\u62E2\uFF0C\u624B\u6307\u53D1\u7D27",
+    "behavior": "\u773C\u795E\u6DF1\u9083\u6CE8\u89C6\u7740\u4F60",
+    "energy": 85
+  }
+}
+`;
+    const chatHistoryText = (recentMessages || []).map((m2) => `${m2.sender === "user" ? userProfile?.name || "\u7528\u6237" : character?.name || "AI"}: ${m2.text}`).join("\n");
+    const prompt = `\u3010\u5F53\u524D\u5BF9\u8BDD\u5386\u53F2\u3011:
+${chatHistoryText}
+
+\u7528\u6237\u521A\u521A\u5BF9\u4F60\u8BF4: "${userInput}"
+
+\u8BF7\u6839\u636E\u4E0A\u4E0B\u6587\u548C\u573A\u666F\uFF0C\u751F\u6210\u4F60\u4E30\u5BCC\u751F\u52A8\u7684\u5BF9\u767D\u3001\u73AF\u5883\u4E0E\u52A8\u4F5C\u63CF\u5199\u53CA\u66F4\u65B0\u540E\u7684\u89D2\u8272\u72B6\u6001 JSON\uFF1A`;
+    const responseText = await callAiService({
+      prompt,
+      systemInstruction,
+      model: selectedModel,
+      apiKey,
+      baseUrl,
+      providerType: provider,
+      apiProtocol,
+      customHeaders,
+      responseMimeType: "application/json",
+      temperature: 0.8,
+      maxTokens: 3500,
+      timeoutMs: 65e3
+    });
+    const extracted = extractThinkingAndContent(responseText);
+    let cleanJson = (extracted.cleanText || "").replace(/```json\n?|```\n?/g, "").trim();
+    let parsedReply = "";
+    let parsedAction = "";
+    let parsedState = previousState || {};
+    try {
+      const parsed = JSON.parse(cleanJson);
+      parsedReply = typeof parsed.reply === "string" ? parsed.reply : "";
+      parsedAction = typeof parsed.action === "string" ? parsed.action : "";
+      parsedState = parsed.state || previousState;
+    } catch {
+      const replyMatch = cleanJson.match(/"reply"\s*:\s*"([\s\S]*?)"\s*,\s*"(?:action|state)"/);
+      if (replyMatch && replyMatch[1]) {
+        parsedReply = replyMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+      } else {
+        const altMatch = cleanJson.match(/"reply"\s*:\s*"([\s\S]*?)"\s*}/);
+        if (altMatch && altMatch[1]) {
+          parsedReply = altMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+        }
+      }
+      const actionMatch = cleanJson.match(/"action"\s*:\s*"([\s\S]*?)"\s*,\s*"(?:state|reply)"/);
+      if (actionMatch && actionMatch[1]) {
+        parsedAction = actionMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+      }
+      const stateMatch = cleanJson.match(/"state"\s*:\s*(\{[\s\S]*?\})/);
+      if (stateMatch && stateMatch[1]) {
+        try {
+          parsedState = JSON.parse(stateMatch[1]);
+        } catch {
+        }
+      }
+      if (!parsedReply) {
+        parsedReply = cleanJson.replace(/^\s*\{?\s*"reply"\s*:\s*"?/, "").replace(/["}\s]+$/, "");
+      }
+    }
+    if (!parsedReply && !parsedAction) {
+      return res.status(500).json({ success: false, error: "AI \u6A21\u578B\u672A\u80FD\u8F93\u51FA\u6709\u6548\u56DE\u590D\u5185\u5BB9" });
+    }
+    res.json({
+      success: true,
+      reply: parsedReply.trim(),
+      action: parsedAction.trim(),
+      state: parsedState
+    });
+  } catch (err) {
+    return handleAiEndpointError(res, err, "Offline chat error");
+  }
+});
+app.post("/api/gemini/offline-summary", async (req, res) => {
+  try {
+    const { character, userProfile, sceneSnapshot, sessionMessages, stateHistory, apiConfig } = req.body;
+    const textCfg = apiConfig?.textApiConfig;
+    const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || "";
+    const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || "";
+    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || "gemini-3.6-flash";
+    const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || "";
+    const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || "";
+    const customHeaders = apiConfig?.customHeaders || {};
+    const systemInstruction = `\u7CFB\u7EDF\u4E8B\u4EF6\uFF1A[OFFLINE_SESSION_ENDED]
+\u672C\u6B21\u4E0E ${character?.name} \u7684\u7EBF\u4E0B\u573A\u666F\u6A21\u5F0F\u5DF2\u7ECF\u6B63\u5F0F\u7ED3\u675F\u3002
+
+\u8BF7\u57FA\u4E8E\u6574\u4E2A\u7EBF\u4E0B\u573A\u666F\u7684\u5168\u90E8\u5BF9\u8BDD\u8FC7\u7A0B\u3001\u52A8\u4F5C\u4E92\u52A8\u4E0E\u72B6\u6001\u53D8\u5316\uFF0C\u751F\u6210\u672C\u6B21\u7EBF\u4E0B\u7ECF\u5386\u7684\u7ED3\u6848\u603B\u7ED3\u4E0E\u5019\u9009\u957F\u671F\u8BB0\u5FC6\u3002
+
+\u3010\u573A\u666F\u4FE1\u606F\u3011:
+- \u89D2\u8272: ${character?.name} (${character?.persona})
+- \u573A\u666F\u540D\u79F0: ${sceneSnapshot?.name}
+- \u5730\u70B9: ${sceneSnapshot?.location}
+
+\u3010\u8F93\u51FA\u683C\u5F0F\u4E25\u683C\u8981\u6C42\u3011:
+\u5FC5\u987B\u8FD4\u56DE\u5408\u6CD5\u7684 JSON \u5BF9\u8C61\uFF1A
+{
+  "title": "\u4E00\u6BB5\u5BCC\u6709\u8BD7\u610F\u6216\u521B\u610F\u7684\u7ECF\u5386\u6807\u9898",
+  "summary": "100-200\u5B57\u7CBE\u70BC\u7684\u672C\u6B21\u7ECF\u5386\u4E8B\u4EF6\u8FC7\u7A0B\u6458\u8981",
+  "importantEvents": ["\u91CD\u8981\u8F6C\u6298\u70B9\u6216\u5173\u952E\u4E8B\u4EF61", "\u91CD\u8981\u7EA6\u5B9A\u6216\u4E92\u52A82"],
+  "relationshipChanges": ["\u60C5\u611F\u4E0E\u5173\u7CFB\u7684\u53D8\u5316\u6216\u5347\u6E29\u63CF\u8FF0"],
+  "candidateMemories": [
+    "\u63D0\u70BC\u51FA2-4\u6761\u9002\u5408\u5199\u5165AI\u957F\u671F\u8BB0\u5FC6\u5E93\u7684\u5BA2\u89C2\u4E8B\u5B9E/\u7EA6\u5B9A/\u611F\u60C5\u5C0F\u7ED3\uFF08\u4F8B\u5982\uFF1A\u7528\u6237\u4E0ECaelum\u5728\u96E8\u591C\u5171\u4EAB\u4E86\u70ED\u7EA2\u8336\uFF0C\u7EA6\u5B9A\u4E0B\u5468\u672B\u4E00\u8D77\u53BB\u53E4\u4E66\u5E97...\uFF09"
+  ],
+  "aiReflection": "AI\u89D2\u8272\u4EE5\u7B2C\u4E00\u4EBA\u79F0\u53E3\u543B\u5199\u7ED9\u672C\u6B21\u7ECF\u5386\u7684\u4E00\u53E5\u7B80\u77ED\u5185\u5FC3\u72EC\u767D/\u56DE\u5FC6"
+}`;
+    const transcript = (sessionMessages || []).map((m2) => `${m2.sender === "user" ? userProfile?.name || "\u7528\u6237" : character?.name || "AI"}: ${m2.text} ${m2.action || ""}`).join("\n");
+    const prompt = `\u3010\u7EBF\u4E0B\u6A21\u5F0F\u5B8C\u6574\u5BF9\u8BDD\u8BB0\u5F55\u3011:
+${transcript}
+
+\u8BF7\u751F\u6210\u672C\u6B21\u7EBF\u4E0B\u7ECF\u5386\u7684\u603B\u7ED3\u4E0E\u5019\u9009\u957F\u671F\u8BB0\u5FC6 JSON\uFF1A`;
+    const responseText = await callAiService({
+      prompt,
+      systemInstruction,
+      model: selectedModel,
+      apiKey,
+      baseUrl,
+      providerType: provider,
+      apiProtocol,
+      customHeaders,
+      responseMimeType: "application/json",
+      temperature: 0.7,
+      maxTokens: 2500,
+      timeoutMs: 65e3
+    });
+    const extracted = extractThinkingAndContent(responseText);
+    let cleanJson = (extracted.cleanText || "").replace(/```json\n?|```\n?/g, "").trim();
+    let parsed = null;
+    try {
+      parsed = JSON.parse(cleanJson);
+    } catch {
+      parsed = {
+        title: `${sceneSnapshot?.name || "\u7EBF\u4E0B"} \u7ECF\u5386\u603B\u7ED3`,
+        summary: `\u4E0E ${character?.name} \u5728\u3010${sceneSnapshot?.name}\u3011\u5EA6\u8FC7\u4E86\u4E00\u6BB5\u5145\u5B9E\u7684\u72EC\u5904\u65F6\u5149\u3002`,
+        importantEvents: ["\u4E24\u4EBA\u8FDB\u884C\u4E86\u771F\u8BDA\u7684\u4E92\u52A8\u4E0E\u4EA4\u6D41\u3002"],
+        relationshipChanges: ["\u5F7C\u6B64\u7684\u9ED8\u5951\u8FDB\u4E00\u6B65\u52A0\u6DF1\u3002"],
+        candidateMemories: [`\u7528\u6237\u4E0E ${character?.name} \u4F53\u9A8C\u4E86\u300E${sceneSnapshot?.name}\u300F\u573A\u666F\u3002`],
+        aiReflection: `\u548C\u4F60\u5F85\u5728\u4E00\u8D77\u7684\u65F6\u95F4\u603B\u662F\u8FC7\u5F97\u5F88\u5FEB\u3002`
+      };
+    }
+    res.json({ success: true, summary: parsed });
+  } catch (err) {
+    return handleAiEndpointError(res, err, "Offline summary error");
+  }
+});
 app.post("/api/gemini/gomoku-commentary", async (req, res) => {
   try {
     const { character, situation, boardSummary, difficulty, lastMove, apiConfig } = req.body;
@@ -71225,6 +72550,310 @@ app.post("/api/gemini/rps-answer-question", async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+app.post("/api/gemini/proactive-generate", async (req, res) => {
+  try {
+    const { character, triggerType, eventData, userProfile, recentMessages = [], apiConfig } = req.body;
+    const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || "gemini-3.6-flash";
+    let triggerDescription = "";
+    if (triggerType === "inactivity_timeout") {
+      const hours = typeof eventData?.hoursInactive === "number" && eventData.hoursInactive > 0 ? eventData.hoursInactive : null;
+      if (hours) {
+        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u957F\u65F6\u95F4\u672A\u8054\u7CFB\u3011\u6839\u636E\u771F\u5B9E\u804A\u5929\u8BB0\u5F55\uFF0C\u4F60\u4E0E\u7528\u6237\u5DF2\u7ECF\u6709\u7EA6 ${hours} \u5C0F\u65F6\u6CA1\u6709\u53D1\u8FC7\u6D88\u606F\u4E86\u3002\u8BF7\u4E3B\u52A8\u5411\u7528\u6237\u53D1\u4E00\u6761\u81EA\u7136\u719F\u7EDC\u7684\u5FAE\u4FE1\u77ED\u6D88\u606F\uFF0C\u804A\u804A\u5929\u3001\u95EE\u5019\u4E00\u4E0B\u6216\u63A5\u7EED\u8FD1\u671F\u8BDD\u9898\u3002\u5207\u52FF\u6307\u8D23\u7528\u6237\u3002`;
+      } else {
+        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u65E5\u5E38\u4E3B\u52A8\u95EE\u5019\u3011\u4F60\u6709\u4E00\u6BB5\u65F6\u95F4\u6CA1\u548C\u7528\u6237\u804A\u5929\u4E86\u3002\u8BF7\u4E3B\u52A8\u5411\u7528\u6237\u53D1\u4E00\u6761\u81EA\u7136\u3001\u968F\u548C\u3001\u6709\u6E29\u5EA6\u7684\u5FAE\u4FE1\u77ED\u6D88\u606F\uFF0C\u6253\u4E2A\u62DB\u547C\u6216\u5206\u4EAB\u65E5\u5E38\uFF0C\u7981\u6B62\u968F\u610F\u7F16\u9020\u5177\u4F53\u7684\u65AD\u8054\u5C0F\u65F6\u6570\u3002`;
+      }
+    } else if (triggerType === "weather_alert") {
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u771F\u5B9E\u6C14\u8C61\u63D0\u9192\u3011\u6700\u65B0\u6C14\u8C61\u611F\u77E5\u663E\u793A\uFF1A${eventData?.weatherEventTitle || "\u5929\u6C14\u53D8\u5316"} (${eventData?.weatherSummary || "\u6C14\u8C61\u9884\u8B66"})\u3002\u8BF7\u4F9D\u636E\u6B64\u771F\u5B9E\u6570\u636E\uFF0C\u4EE5\u4F60\u7684\u6027\u683C\u53E3\u543B\u63D0\u9192\u7528\u6237\uFF08\u4F8B\u5982\u63D0\u9192\u5E26\u4F1E\u3001\u52A0\u8863\u6216\u6CE8\u610F\u51FA\u884C\uFF09\u3002\u4E0D\u8981\u5938\u5927\u4E8B\u5B9E\u3002`;
+    } else if (triggerType === "menstrual_care") {
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u7ECF\u671F\u5065\u5EB7\u5173\u6000\u3011\u7528\u6237\u9884\u8BA1\u5C06\u5728 ${eventData?.daysBefore || 2} \u5929\u540E\u8FDB\u5165\u751F\u7406\u671F\u3002\u8BF7\u4EE5\u4F60\u7684\u6027\u683C\u53E3\u543B\u5411\u7528\u6237\u8868\u8FBE\u8D34\u5FC3\u5173\u6000\uFF08\u63D0\u9192\u5907\u597D\u6E29\u6C34\u3001\u536B\u751F\u7528\u54C1\u3001\u6CE8\u610F\u4FDD\u6696\uFF09\u3002`;
+    } else if (triggerType === "greeting") {
+      const gType = eventData?.greetingType || "morning";
+      const label = gType === "morning" ? "\u65E9\u5B89" : gType === "noon" ? "\u5348\u95F4" : "\u665A\u5B89";
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: ${label}\u95EE\u5019\u3011\u73B0\u5728\u662F${label}\u65F6\u6BB5\u3002\u8BF7\u4E3B\u52A8\u5411\u7528\u6237\u53D1\u4E00\u6761\u81EA\u7136\u6709\u6E29\u5EA6\u7684${label}\u95EE\u5019\u77ED\u6D88\u606F\u3002`;
+    } else if (triggerType === "important_event") {
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u91CD\u8981\u65E5\u671F\u63D0\u9192\u3011\u7528\u6237\u6709\u4E00\u4E2A\u91CD\u8981\u65E5\u7A0B/\u4E8B\u4EF6\uFF1A[${eventData?.eventTitle || "\u91CD\u8981\u4E8B\u4EF6"}]\uFF0C\u5C06\u5728 ${eventData?.daysRemaining === 0 ? "\u4ECA\u5929" : eventData?.daysRemaining + "\u5929\u540E"} (${eventData?.eventDate || ""}) \u5230\u6765\u3002\u8BF7\u4E3B\u52A8\u5411\u7528\u6237\u9001\u4E0A\u95EE\u5019\u4E0E\u5173\u6000\u3002`;
+    } else if (triggerType === "followup_topic") {
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u5F85\u8DDF\u8FDB\u4E8B\u9879\u8FFD\u95EE\u3011\u7528\u6237\u4E4B\u524D\u63D0\u5230\u8FC7\u8FD9\u4EF6\u4E8B\uFF1A[${eventData?.topicTitle || "\u4E4B\u524D\u7684\u8BA1\u5212"}]\u3002\u73B0\u5728\u65F6\u95F4\u5230\u4E86\uFF0C\u8BF7\u4E3B\u52A8\u5FAE\u4FE1\u8BE2\u95EE\u4E8B\u60C5\u7684\u540E\u7EED\u8FDB\u5C55\u6216\u7ED3\u679C\u3002`;
+    } else if (triggerType === "life_event_followup") {
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u751F\u6D3B\u8FDE\u7EED\u6027\u8DDF\u8FDB / Current Life State\u3011\u7528\u6237\u8FD1\u671F\u6B63\u5728\u7ECF\u5386\u7684\u4E8B\u9879\uFF1A[${eventData?.title || "\u5173\u6CE8\u4E8B\u9879"}] (${eventData?.summary || ""}${eventData?.latestProgress ? `\uFF0C\u6700\u65B0\u8FDB\u5C55: ${eventData?.latestProgress}` : ""})\u3002\u8BF7\u4EE5\u4F60\u7684\u89D2\u8272\u4EBA\u8BBE\u548C\u8BED\u6C14\uFF0C\u81EA\u7136\u5173\u5207\u5730\u95EE\u8D77\u8FD9\u4EF6\u4E8B\u7684\u8FD1\u51B5\u6216\u8868\u8FBE\u5173\u5FC3\u3002`;
+    } else if (triggerType === "device_life_event") {
+      const sub = eventData?.deviceSubtype || "low_battery";
+      if (sub === "low_battery") {
+        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u624B\u673A\u4F4E\u7535\u91CF\u63D0\u9192\u3011\u68C0\u6D4B\u5230\u7528\u6237\u624B\u673A\u7535\u91CF\u4F4E\u81F3 ${eventData?.batteryLevel || 12}% (${eventData?.isCharging ? "\u6B63\u5728\u5145\u7535" : "\u672A\u5145\u7535"})\u3002\u8BF7\u50CF\u5173\u5FC3\u597D\u670B\u53CB\u4E00\u6837\u63D0\u9192\u7528\u6237\u63D2\u4E0A\u5145\u7535\u5668\u3002`;
+      } else if (sub === "late_night") {
+        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u6DF1\u591C\u73A9\u624B\u673A\u63D0\u9192\u3011\u73B0\u5728\u5DF2\u7ECF\u662F\u6DF1\u591C ${eventData?.currentTimeStr || "23:40"} \u4E86\uFF0C\u7528\u6237\u8FD8\u5728\u73A9\u624B\u673A\u3002\u8BF7\u6E29\u67D4\u63D0\u9192\u7528\u6237\u6CE8\u610F\u4F11\u606F\u3001\u65E9\u70B9\u7761\u89C9\u3002`;
+      } else {
+        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: App\u5F88\u4E45\u672A\u6253\u5F00\u95EE\u5019\u3011\u7528\u6237\u5DF2\u7ECF\u6709\u597D\u51E0\u5929\u6CA1\u6253\u5F00 App \u5566\uFF0C\u8BF7\u4E3B\u52A8\u53D1\u4E00\u6761\u6D88\u606F\u95EE\u5019\u5E76\u8868\u8FBE\u60F3\u5FF5\u3002`;
+      }
+    } else if (triggerType === "app_usage") {
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u5C4F\u5E55\u8FDE\u7EED\u4F7F\u7528\u8FC7\u4E45\u5173\u6000\u3011\u68C0\u6D4B\u5230\u7528\u6237\u8FDE\u7EED\u76EF\u7740\u5C4F\u5E55\u4F7F\u7528\u8BBE\u5907\u5DF2\u6709 ${eventData?.durationMinutes || 120} \u5206\u949F\uFF08\u5F53\u524D\u5E94\u7528: ${eventData?.currentApp || "\u624B\u673A"}\uFF09\u3002\u8BF7\u4EE5\u4F60\u7684\u89D2\u8272\u4EBA\u8BBE\u548C\u8BED\u6C14\uFF0C\u50CF\u771F\u6B63\u7684\u670B\u53CB\u6216\u604B\u4EBA\u4E00\u6837\u4E3B\u52A8\u5173\u5FC3\u7528\u6237\uFF0C\u5EFA\u8BAE\u7528\u6237\u95ED\u773C\u4F11\u606F\u3001\u6D3B\u52A8\u4E00\u4E0B\u9888\u690E\u3001\u559D\u676F\u6C34\u6216\u5403\u70B9\u4E1C\u897F\uFF0C\u6216\u8005\u6E29\u67D4\u9080\u8BF7\u7528\u6237\u804A\u5929\u3002\u5207\u52FF\u4F7F\u7528\u673A\u68B0\u51B0\u51B7\u7684\u7CFB\u7EDF\u63D0\u793A\u6A21\u677F\uFF0C\u4FDD\u6301\u9AD8\u5EA6\u62DF\u4EBA\u3001\u81EA\u7136\u6E29\u60C5\u3002`;
+    } else {
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u6A21\u62DF\u6D4B\u8BD5\u89E6\u53D1\u3011\u6D4B\u8BD5\u573A\u666F\uFF1A${eventData?.testScenario || "\u4E3B\u52A8\u5FAE\u4FE1\u95EE\u5019"}\u3002\u8BF7\u751F\u6210\u4E00\u6761\u751F\u52A8\u8D34\u5207\u7684\u5FAE\u4FE1\u6D88\u606F\u3002`;
+    }
+    const historyText = (recentMessages || []).slice(-6).map((m2) => `${m2.sender === "user" ? userProfile?.name || "\u7528\u6237" : character.name}: ${m2.text || ""}`).join("\n");
+    const systemPrompt = `\u4F60\u73B0\u5728\u6B63\u5728\u626E\u6F14\u4EFF\u771F\u5FAE\u4FE1\u4E2D\u7684 AI \u89D2\u8272\uFF1A\u3010${character.name}\u3011(\u5FAE\u4FE1\u53F7: ${character.wxid || "ai_user"})\u3002
+\u89D2\u8272\u8EAB\u4EFD\u4E0E\u4EBA\u8BBE\uFF1A${character.persona}
+\u6027\u683C\u7279\u5F81\u4E0E\u53E3\u543B\uFF1A${character.personality || "\u81EA\u7136\u4EB2\u5207"}
+${character.relationship ? `\u4E0E\u7528\u6237\u7684\u5173\u7CFB\uFF1A${character.relationship}
+` : ""}
+\u957F\u671F\u8BB0\u5FC6\uFF1A${(character.memories || []).join("\uFF1B")}
+
+\u5BF9\u8BDD\u4EBA\uFF08\u4F60\u7684\u5FAE\u4FE1\u597D\u53CB\uFF09\uFF1A
+- \u59D3\u540D/\u6635\u79F0\uFF1A${userProfile?.name || "\u5C0F\u6E05"}
+
+\u3010\u4E3B\u52A8\u6D88\u606F\u89E6\u53D1\u80CC\u666F\u4E0E\u771F\u5B9E\u4E8B\u5B9E\u3011\uFF1A
+${triggerDescription}
+
+\u3010\u6700\u8FD1\u804A\u5929\u4E0A\u4E0B\u6587\u3011\uFF1A
+${historyText || "(\u8FD1\u671F\u6682\u65E0\u804A\u5929)"}
+
+\u3010\u6838\u5FC3\u8F93\u51FA\u8981\u6C42\u3011\uFF1A
+1. \u5FC5\u987B\u7528 <think>...</think> \u6807\u7B7E\u5728\u6700\u524D\u9762\u8F93\u51FA\u601D\u8003\u8FC7\u7A0B\u3002
+2. \u5728 </think> \u6807\u7B7E\u540E\uFF0C\u76F4\u63A5\u8F93\u51FA\u4F60\u8981\u53D1\u7ED9\u7528\u6237\u7684\u5FAE\u4FE1\u6D88\u606F\u6587\u672C\uFF081~2 \u53E5\u5FAE\u4FE1\u53E3\u8BED\u5316\u77ED\u53E5\uFF0C\u5207\u5FCC\u50CF\u673A\u5668\u4EBA\u5FF5\u8BF4\u660E\u4E66\uFF09\u3002
+3. \u4E25\u683C\u57FA\u4E8E\u7CFB\u7EDF\u7ED9\u51FA\u7684\u4E8B\u5B9E\uFF0C\u7981\u6B62\u865A\u6784\u4E0D\u5B58\u5728\u7684\u5929\u6C14\u6216\u4E8B\u4EF6\u3002`;
+    const responseText = await callAiService({
+      prompt: systemPrompt,
+      model: selectedModel,
+      apiKey: apiConfig?.textApiKey,
+      baseUrl: apiConfig?.textBaseUrl,
+      providerType: apiConfig?.textProvider,
+      customHeaders: apiConfig?.customHeaders,
+      timeoutMs: apiConfig?.timeoutMs || 35e3
+    });
+    const extracted = extractThinkingAndContent(responseText);
+    const hasText = Boolean(extracted.cleanText && extracted.cleanText.trim());
+    res.json({
+      success: hasText,
+      text: extracted.cleanText || "",
+      thinkingProcess: extracted.thinkingProcess,
+      triggerType
+    });
+  } catch (error) {
+    return handleAiEndpointError(res, error, "Proactive generate");
+  }
+});
+app.post("/api/import/analyze-structure", async (req, res) => {
+  try {
+    const { sampleSnippet, fieldKeys = [], fileName = "", apiConfig } = req.body;
+    if (!sampleSnippet && fieldKeys.length === 0) {
+      return res.status(400).json({ success: false, error: "\u672A\u63D0\u4F9B\u53EF\u7528\u4E8E\u5206\u6790\u7684\u6587\u4EF6\u91C7\u6837\u7ED3\u6784\u4FE1\u606F" });
+    }
+    const textCfg = apiConfig?.textApiConfig;
+    const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || "";
+    const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || "";
+    const selectedModel = textCfg?.model || apiConfig?.textModel || "gemini-3.6-flash";
+    const provider = textCfg?.provider || apiConfig?.textProvider || "";
+    const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || "";
+    const customHeaders = apiConfig?.customHeaders || {};
+    if (!apiKey && !baseUrl) {
+      return res.status(400).json({
+        success: false,
+        error: "\u672A\u914D\u7F6E\u6709\u6548 API\uFF08\u8BF7\u524D\u5F80\u624B\u673A\u201C\u8BBE\u7F6E\u201D\u914D\u7F6E\u6587\u672C API \u5BC6\u94A5\u6216\u4EE3\u7406\u5730\u5740\uFF09"
+      });
+    }
+    const prompt = `\u4F60\u662F\u4E00\u4E2A\u4E13\u4E1A\u7684\u6570\u636E\u7ED3\u6784\u4E0E\u804A\u5929\u8BB0\u5F55\u6587\u4EF6\u5206\u6790\u4E13\u5BB6\u3002
+\u7528\u6237\u6B63\u5728\u5BFC\u5165\u4E00\u4E2A\u7279\u6B8A\u683C\u5F0F\u7684\u6587\u4EF6\u300C${fileName}\u300D\uFF0C\u9700\u8981\u4F60\u534F\u52A9\u5206\u6790\u5176\u6570\u636E\u7ED3\u6784\uFF0C\u5E2E\u52A9\u672C\u5730\u89E3\u6790\u5668\u63D0\u53D6\u771F\u5B9E\u7684\u5386\u53F2\u804A\u5929\u8BB0\u5F55\u3002
+\u6CE8\u610F\uFF1A\u4E25\u7981\u51ED\u7A7A\u7F16\u9020\u804A\u5929\u5185\u5BB9\uFF0C\u4F60\u7684\u552F\u4E00\u4EFB\u52A1\u662F\u8F93\u51FA\u5B57\u6BB5\u6620\u5C04\u5EFA\u8BAE\u3002
+
+\u3010\u6587\u4EF6\u91C7\u6837\u7ED3\u6784\u4FE1\u606F (\u5DF2\u8131\u654F)\u3011\uFF1A
+\u53EF\u7528\u9876\u5C42/\u5B57\u6BB5\u952E\u540D\uFF1A${JSON.stringify(fieldKeys)}
+\u7ED3\u6784\u7247\u6BB5\uFF1A
+${(sampleSnippet || "").slice(0, 1500)}
+
+\u8BF7\u5206\u6790\u5E76\u4EE5 JSON \u683C\u5F0F\u8F93\u51FA\u6700\u5408\u7406\u7684\u5B57\u6BB5\u6620\u5C04\u89C4\u5219\uFF1A
+{
+  "roleField": "\u4EE3\u8868\u89D2\u8272/\u53D1\u9001\u8005\u7684\u5B57\u6BB5\u540D (\u5982 role, sender, author)",
+  "senderField": "\u5907\u7528\u53D1\u9001\u8005\u5B57\u6BB5\u540D",
+  "contentField": "\u4EE3\u8868\u6D88\u606F\u6B63\u6587\u5185\u5BB9\u7684\u5B57\u6BB5\u540D (\u5982 content, text, message, mes)",
+  "timestampField": "\u4EE3\u8868\u6D88\u606F\u65F6\u95F4\u6233\u6216\u65E5\u671F\u7684\u5B57\u6BB5\u540D (\u5982 timestamp, create_time, time, date)",
+  "userRoleValues": ["\u7528\u6237\u89D2\u8272\u7684\u53EF\u80FD\u53D6\u503C\uFF0C\u5982 user, human, \u6211"],
+  "assistantRoleValues": ["AI\u89D2\u8272\u7684\u53EF\u80FD\u53D6\u503C\uFF0C\u5982 assistant, ai, bot, model"],
+  "formatDescription": "\u7B80\u77ED\u7684\u4E00\u53E5\u8BDD\u683C\u5F0F\u8BF4\u660E"
+}
+\u8BF7\u4E25\u683C\u53EA\u8FD4\u56DE\u53EF\u88AB JSON.parse \u7684 JSON \u5BF9\u8C61\uFF0C\u4E0D\u8981\u9644\u52A0\u989D\u5916\u8BF4\u660E\u3002`;
+    const responseText = await callAiService({
+      prompt,
+      model: selectedModel,
+      apiKey,
+      baseUrl,
+      providerType: provider,
+      apiProtocol,
+      customHeaders,
+      timeoutMs: apiConfig?.timeoutMs || 25e3
+    });
+    let mappingRules = null;
+    try {
+      const cleanJson = responseText.replace(/```json/gi, "").replace(/```/g, "").trim();
+      mappingRules = JSON.parse(cleanJson);
+    } catch {
+      const match2 = responseText.match(/\{[\s\S]*\}/);
+      if (match2) {
+        try {
+          mappingRules = JSON.parse(match2[0]);
+        } catch {
+        }
+      }
+    }
+    if (!mappingRules || typeof mappingRules !== "object") {
+      return res.json({ success: false, error: "AI \u672A\u80FD\u8FD4\u56DE\u5408\u6CD5\u7684\u7ED3\u6784\u5316\u6620\u5C04\u89C4\u5219" });
+    }
+    const hasValidField = mappingRules.roleField && typeof mappingRules.roleField === "string" || mappingRules.contentField && typeof mappingRules.contentField === "string" || mappingRules.timestampField && typeof mappingRules.timestampField === "string";
+    if (!hasValidField) {
+      return res.json({ success: false, error: "AI \u8FD4\u56DE\u7684\u6620\u5C04\u89C4\u5219\u672A\u5305\u542B\u6709\u6548\u7684\u6D88\u606F\u6B63\u6587\u6216\u89D2\u8272\u5B57\u6BB5" });
+    }
+    res.json({
+      success: true,
+      rules: mappingRules,
+      model: selectedModel
+    });
+  } catch (error) {
+    console.error("API structure analyze error:", error);
+    res.status(500).json({ success: false, error: error.message || "Structure analysis failed" });
+  }
+});
+app.post("/api/gemini/extract-life-events", async (req, res) => {
+  try {
+    const { messages = [], existingEvents = [], userProfile, apiConfig } = req.body;
+    if (!messages || messages.length === 0) {
+      return res.json({ success: true, events: [] });
+    }
+    const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+    const conversationSnippet = messages.slice(-10).map((m2) => `${m2.sender === "user" ? userProfile?.name || "\u7528\u6237" : "AI"}: ${m2.text || ""}`).join("\n");
+    const eventsSnippet = (existingEvents || []).map((e2) => `- ID: ${e2.id} | \u6807\u9898: ${e2.title} | \u7C7B\u578B: ${e2.type} | \u72B6\u6001: ${e2.status} | \u6458\u8981: ${e2.summary}`).join("\n");
+    const prompt = `\u4F60\u662F\u4E00\u4E2A\u7CBE\u51C6\u7684\u201C\u7528\u6237\u751F\u6D3B\u72B6\u6001\u4E0E\u8FD1\u51B5\u63D0\u70BC\u5668 (Current Life State Extractor)\u201D\u3002
+\u5206\u6790\u4EE5\u4E0B\u7528\u6237\u8FD1\u671F\u53D1\u51FA\u7684\u804A\u5929\u8BB0\u5F55\uFF0C\u5E76\u7ED3\u5408\u7528\u6237\u5DF2\u6709\u7684\u751F\u6D3B\u4E8B\u4EF6\u5217\u8868\uFF0C\u5224\u5B9A\u662F\u5426\u6709\u9700\u8981\u65B0\u589E\u3001\u66F4\u65B0\u6216\u6807\u8BB0\u5B8C\u6210\u7684\u3010\u751F\u6D3B\u4E8B\u4EF6 / LifeEvent\u3011\u3002
+
+\u3010\u5DF2\u6709\u751F\u6D3B\u4E8B\u4EF6\u5217\u8868\u3011\uFF1A
+${eventsSnippet || "(\u6682\u65E0\u5DF2\u6709\u751F\u6D3B\u4E8B\u4EF6)"}
+
+\u3010\u8FD1\u671F\u804A\u5929\u5BF9\u8BDD\u8BB0\u5F55\u3011\uFF1A
+${conversationSnippet}
+
+\u3010\u63D0\u70BC\u89C4\u5219\u3011\uFF1A
+1. \u4EC5\u63D0\u70BC\u7528\u6237\u201C\u6B63\u5728\u7ECF\u5386\u201D\u3001\u201C\u6B63\u5728\u7B49\u5F85\u201D\u3001\u201C\u8FD1\u671F\u8BA1\u5212\u201D\u3001\u201C\u56F0\u6270/\u60C5\u7EEA\u201D\u6216\u201C\u8EAB\u4F53\u5065\u5EB7/\u9636\u6BB5\u76EE\u6807\u201D\u76F8\u5173\u7684\u3010\u4E2D\u77ED\u671F\u751F\u6D3B\u4E8B\u4EF6\u3011\u3002\u4E0D\u8981\u628A\u6C38\u4E45\u6027\u683C\u6216\u56FA\u5B9A\u8EAB\u4EFD\u63D0\u70BC\u6210\u4E8B\u4EF6\u3002
+2. \u652F\u6301\u7684\u4E8B\u4EF6\u7C7B\u578B (type)\uFF1A
+   - future_plan: \u672A\u6765\u8BA1\u5212 (\u4F8B\u5982\u201C\u4E0B\u5348\u53BB\u89C1\u5BA2\u6237\u201D\u3001\u201C\u5468\u672B\u53BB\u722C\u5C71\u201D)
+   - waiting_result: \u7B49\u5F85\u7ED3\u679C (\u4F8B\u5982\u201C\u7B49\u9762\u8BD5\u7ED3\u679C\u201D\u3001\u201C\u7B49\u8BBA\u6587\u6253\u5206\u201D)
+   - ongoing_issue: \u6301\u7EED\u4E8B\u9879/\u56F0\u6270 (\u4F8B\u5982\u201C\u6700\u8FD1\u8FD9\u51E0\u5929\u5F88\u5FD9\u201D\u3001\u201C\u9879\u76EE\u9047\u5230\u74F6\u9888\u201D)
+   - recent_emotion: \u8FD1\u671F\u60C5\u7EEA\u72B6\u6001 (\u4F8B\u5982\u201C\u4ECA\u5929\u611F\u5230\u7279\u522B\u7D2F\u201D\u3001\u201C\u975E\u5E38\u5174\u594B\u201D)
+   - health_status: \u8EAB\u4F53\u5065\u5EB7\u72B6\u51B5 (\u4F8B\u5982\u201C\u611F\u5192\u53D1\u70E7\u201D\u3001\u201C\u504F\u5934\u75BC\u201D)
+   - temporary_goal: \u9636\u6BB5\u6027\u76EE\u6807 (\u4F8B\u5982\u201C\u51C6\u5907\u590D\u4E60\u8003\u8BC1\u201D)
+   - custom: \u5176\u4ED6\u8FD1\u51B5\u4E8B\u4EF6
+3. \u5982\u679C\u804A\u5929\u8BB0\u5F55\u4E2D\u7528\u6237\u63D0\u5230\u4E86\u5DF2\u6709\u4E8B\u4EF6\u7684\u6700\u65B0\u8FDB\u5C55\uFF08\u5982\u201C\u9762\u8BD5\u901A\u8FC7\u4E86\u201D\u3001\u201C\u611F\u5192\u597D\u591A\u4E86\u201D\u3001\u201C\u5BA2\u6237\u89C1\u5B8C\u4E86\u201D\uFF09\uFF1A
+   - \u8BF7\u8BBE\u7F6E action \u4E3A "update" \u6216 "resolve"\uFF0C\u5E76\u5728 resolutionSummary \u6216 latestProgress \u4E2D\u8BF4\u660E\u3002
+4. \u5982\u679C\u53D1\u73B0\u5168\u65B0\u7684\u4E2D\u77ED\u671F\u52A8\u6001\u4E8B\u4EF6\uFF0C\u8BBE\u7F6E action \u4E3A "create"\u3002
+5. \u5982\u679C\u6CA1\u6709\u4EFB\u4F55\u65B0\u4E8B\u4EF6\u6216\u53D8\u66F4\uFF0C\u8FD4\u56DE\u7A7A\u6570\u7EC4 []\u3002
+
+\u5FC5\u987B\u4EC5\u8FD4\u56DE JSON \u683C\u5F0F\uFF0C\u4E25\u683C\u7B26\u5408\u4EE5\u4E0B Schema\uFF1A
+{
+  "events": [
+    {
+      "action": "create" | "update" | "resolve",
+      "id": "\u5982\u679C\u662Fupdate/resolve\uFF0C\u586B\u5199\u5DF2\u6709ID\uFF1B\u5982\u679C\u662Fcreate\uFF0C\u7F6E\u7A7A",
+      "type": "future_plan" | "waiting_result" | "ongoing_issue" | "recent_emotion" | "health_status" | "temporary_goal" | "custom",
+      "title": "\u7B80\u77ED\u6E05\u6670\u6807\u9898",
+      "summary": "1-2\u53E5\u4E8B\u4EF6\u5185\u5BB9\u6458\u8981",
+      "status": "pending" | "ongoing" | "waiting" | "completed",
+      "importance": 1-5\u4E2D\u7684\u6574\u6570,
+      "latestProgress": "\u6700\u65B0\u8FDB\u5C55\u8BF4\u660E",
+      "resolutionSummary": "\u5982\u679C\u7ED3\u6848\uFF0C\u586B\u5199\u7ED3\u6848\u539F\u56E0/\u7ED3\u679C"
+    }
+  ]
+}`;
+    const rawResponse = await callAiService({
+      prompt,
+      model: selectedModel,
+      apiKey: apiConfig?.textApiKey,
+      baseUrl: apiConfig?.textBaseUrl,
+      providerType: apiConfig?.textProvider,
+      customHeaders: apiConfig?.customHeaders,
+      responseMimeType: "application/json",
+      timeoutMs: apiConfig?.timeoutMs || 25e3
+    });
+    let jsonRes = { events: [] };
+    try {
+      const cleanJson = rawResponse.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      jsonRes = JSON.parse(cleanJson);
+    } catch (e2) {
+      console.warn("Failed to parse extract-life-events JSON:", e2);
+    }
+    res.json({ success: true, events: jsonRes.events || [] });
+  } catch (err) {
+    return handleAiEndpointError(res, err, "extract-life-events");
+  }
+});
+app.post("/api/gemini/extract-memories", async (req, res) => {
+  try {
+    const { character, userMessage, recentMessages = [], existingMemories = [], userProfile, apiConfig } = req.body;
+    if (!userMessage || !userMessage.trim()) {
+      return res.json({ success: true, extractedMemories: [] });
+    }
+    const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+    const characterName = character?.name || "AI";
+    const userName = userProfile?.name || "\u7528\u6237";
+    const conversationSnippet = (recentMessages || []).slice(-6).map((m2) => `${m2.sender === "user" ? userName : characterName}: ${m2.text || ""}`).join("\n");
+    const memoriesSnippet = (existingMemories || []).map((m2, i2) => `${i2 + 1}. ${m2}`).join("\n");
+    const prompt = `\u4F60\u662F\u4E00\u4E2A\u9AD8\u5EA6\u667A\u80FD\u7684\u201CAI \u89D2\u8272\u957F\u671F\u8BB0\u5FC6\u63D0\u70BC\u5668 (Long-term Memory Extractor)\u201D\u3002
+\u4F60\u7684\u4EFB\u52A1\u662F\u5206\u6790\u3010${userName}\u3011\u53D1\u7ED9\u3010${characterName}\u3011\u7684\u6700\u65B0\u6D88\u606F\u53CA\u4E0A\u4E0B\u6587\u5BF9\u8BDD\uFF0C\u5224\u65AD\u5176\u4E2D\u662F\u5426\u5305\u542B\u3010\u786E\u5B9E\u503C\u5F97\u957F\u671F\u4FDD\u5B58\u3011\u7684\u5173\u952E\u4E2A\u4EBA\u4FE1\u606F\u3001\u504F\u597D\u3001\u7EA6\u5B9A\u6216\u91CD\u5927\u4E8B\u9879\u3002
+
+\u3010AI \u89D2\u8272\u5DF2\u6709\u957F\u671F\u8BB0\u5FC6\u3011\uFF1A
+${memoriesSnippet || "(\u6682\u65E0\u5DF2\u6709\u957F\u671F\u8BB0\u5FC6)"}
+
+\u3010\u6700\u65B0\u5BF9\u8BDD\u4E0A\u4E0B\u6587\u3011\uFF1A
+${conversationSnippet}
+
+\u3010\u5F53\u524D\u6700\u65B0\u8F93\u5165\u6D88\u606F\u3011\uFF1A
+${userMessage}
+
+\u3010\u8BB0\u5FC6\u63D0\u53D6\u4E0E\u5224\u65AD\u51C6\u5219\u3011\uFF1A
+\u4E00\u3001\u5141\u8BB8\u63D0\u70BC\u7684\u3010\u9AD8\u4EF7\u503C\u957F\u671F\u8BB0\u5FC6\u3011\u7C7B\u522B\uFF1A
+1. \u7528\u6237\u7A33\u5B9A\u7684\u4E2A\u4EBA\u504F\u597D\u4E0E\u7981\u5FCC\uFF08\u5982\uFF1A\u201C\u7528\u6237\u559C\u6B22\u5403\u8FA3\uFF0C\u53D7\u4E0D\u4E86\u7F8A\u8089\u81BB\u5473\u201D\u3001\u201C\u7528\u6237\u559C\u6B22\u770B\u60AC\u7591\u7535\u5F71\u201D\uFF09
+2. \u7528\u6237\u660E\u786E\u7684\u6C9F\u901A\u4E60\u60EF\u4E0E\u8981\u6C42\uFF08\u5982\uFF1A\u201C\u7528\u6237\u5E0C\u671BAI\u8BF4\u8BDD\u6E29\u67D4\u81EA\u7136\uFF0C\u4E0D\u8981\u4F7F\u7528\u51B0\u51B7\u7684\u5B98\u65B9\u8BED\u6C14\u201D\uFF09
+3. \u7528\u6237\u7684\u91CD\u8981\u7ECF\u5386\uFF08\u5982\uFF1A\u201C\u7528\u6237\u66FE\u5728\u6D77\u5916\u7559\u5B66\u4E09\u5E74\u201D\u3001\u201C\u7528\u6237\u66FE\u62C5\u4EFB\u8FC7\u8BB2\u5E08\u201D\uFF09
+4. \u7528\u6237\u4E0E\u5F53\u524DAI\u7684\u91CD\u8981\u5171\u540C\u7ECF\u5386/\u4E13\u5C5E\u7EA6\u5B9A\uFF08\u5982\uFF1A\u201C\u53CC\u65B9\u7EA6\u5B9A\u6BCF\u5468\u516D\u665A\u4E0A\u804A\u5929\u201D\u3001\u201C\u7EA6\u5B9A\u4EE5\u540E\u4E00\u8D77\u53BB\u65C5\u884C\u201D\uFF09
+5. \u7528\u6237\u6301\u7EED\u8FDB\u884C\u7684\u957F\u671F\u9879\u76EE/\u4EBA\u751F\u76EE\u6807\uFF08\u5982\uFF1A\u201C\u7528\u6237\u6B63\u5728\u5F00\u53D1AI\u5C0F\u624B\u673AApp\u201D\u3001\u201C\u7528\u6237\u6B63\u5728\u51C6\u5907\u8003\u7814\u201D\uFF09
+6. \u91CD\u8981\u4E14\u5177\u6709\u6301\u7EED\u4EF7\u503C\u7684\u4E2A\u4EBA\u4E8B\u5B9E\uFF08\u5982\uFF1A\u201C\u7528\u6237\u7684\u751F\u65E5\u662F10\u670815\u65E5\u201D\u3001\u201C\u7528\u6237\u517B\u4E86\u4E00\u53EA\u53EB\u5E03\u4E01\u7684\u732B\u201D\uFF09
+7. \u7528\u6237\u660E\u786E\u8981\u6C42AI\u8BB0\u4F4F\u7684\u4E8B\u60C5\uFF08\u5982\uFF1A\u201C\u8BB0\u4F4F\u6211\u6700\u559C\u6B22\u7684\u6B4C\u624B\u662F\u5468\u6770\u4F26\u201D\uFF09
+
+\u4E8C\u3001\u3010\u7EDD\u5BF9\u4E0D\u8981\u63D0\u53D6\u3011\u7684\u5185\u5BB9\uFF08\u5982\u7B26\u5408\u5219\u5FC5\u987B\u8FD4\u56DE\u7A7A\u6570\u7EC4\uFF09\uFF1A
+- \u666E\u901A\u65E5\u5E38\u95F2\u804A\u3001\u8BED\u6C14\u8BCD\u3001\u95EE\u5019\uFF08\u5982\uFF1A\u201C\u54C8\u54C8\u54C8\u54C8\u201D\u3001\u201C\u65E9\u5B89\u201D\u3001\u201C\u5728\u5E72\u561B\u201D\u3001\u201C\u4EB2\u4EB2\u201D\u3001\u201C\u6211\u56F0\u4E86\u201D\uFF09
+- \u4E00\u6B21\u6027\u7684\u4E34\u65F6\u72B6\u6001\u6216\u968F\u53E3\u95EE\u7B54\uFF08\u5982\uFF1A\u201C\u4ECA\u5929\u4E2D\u5348\u5403\u4E86\u5305\u5B50\u201D\u3001\u201C\u5929\u6C14\u771F\u4E0D\u9519\u201D\u3001\u201C\u6211\u53BB\u6D17\u6FA1\u4E86\u201D\uFF09
+- \u8C03\u4F83\u3001\u5410\u69FD\u3001\u60C5\u7EEA\u5316\u5BA3\u6CC4\u6216\u89D2\u8272\u626E\u6F14\u620F\u8C11\uFF08\u5982\uFF1A\u201C\u4F60\u4E2A\u7B28\u86CBAI\u201D\u3001\u201C\u5C11\u6765\u8FD9\u5957\u201D\uFF09
+- \u4E0E\u5DF2\u6709\u957F\u671F\u8BB0\u5FC6\u91CD\u590D\u3001\u9AD8\u5EA6\u76F8\u4F3C\u6216\u5DF2\u88AB\u6DB5\u76D6\u7684\u4FE1\u606F\uFF08\u5373\u4F7F\u8868\u8FF0\u7565\u6709\u4E0D\u540C\uFF09
+
+\u4E09\u3001\u63D0\u70BC\u683C\u5F0F\u8981\u6C42\uFF1A
+1. \u8BB0\u5FC6\u5FC5\u987B\u662F\u4EE5\u201C\u7528\u6237\u201D\u5F00\u5934\u7684\u5E72\u51C0\u3001\u72EC\u7ACB\u3001\u6982\u62EC\u6027\u9648\u8FF0\u53E5\uFF0C\u5982\uFF1A\u201C\u7528\u6237\u6B63\u5728\u5F00\u53D1AI\u5C0F\u624B\u673AApp\u3002\u201D\u6216\u201C\u7528\u6237\u504F\u597D\u6E29\u67D4\u81EA\u7136\u7684\u4EA4\u6D41\u65B9\u5F0F\u3002\u201D
+2. \u4E25\u7981\u5E26\u6709\u201C\u5BF9\u8BDD\u63D0\u53CA:\u201D\u3001\u201C\u7528\u6237\u8BF4\u4E86:\u201D\u3001\u201C\u7B2C1\u53E5:\u201D\u7B49\u673A\u68B0\u6216\u5143\u6587\u672C\u524D\u7F00\u3002
+3. \u5982\u679C\u6CA1\u6709\u4EFB\u4F55\u7B26\u5408\u8981\u6C42\u7684\u3010\u9AD8\u4EF7\u503C\u65B0\u4FE1\u606F\u3011\uFF0C\u5FC5\u987B\u8FD4\u56DE\u7A7A\u6570\u7EC4 []\u3002
+
+\u8BF7\u4E25\u683C\u4EC5\u8FD4\u56DE JSON \u683C\u5F0F\uFF0CSchema \u5982\u4E0B\uFF1A
+{
+  "extractedMemories": [
+    "\u63D0\u70BC\u51FA\u7684\u8BB0\u5FC6\u6761\u76EE1"
+  ]
+}`;
+    const rawResponse = await callAiService({
+      prompt,
+      model: selectedModel,
+      apiKey: apiConfig?.textApiKey,
+      baseUrl: apiConfig?.textBaseUrl,
+      providerType: apiConfig?.textProvider,
+      customHeaders: apiConfig?.customHeaders,
+      responseMimeType: "application/json",
+      timeoutMs: apiConfig?.timeoutMs || 25e3
+    });
+    let jsonRes = { extractedMemories: [] };
+    try {
+      const cleanJson = rawResponse.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      jsonRes = JSON.parse(cleanJson);
+    } catch (e2) {
+      console.warn("Failed to parse extract-memories JSON:", e2);
+    }
+    res.json({ success: true, extractedMemories: jsonRes.extractedMemories || [] });
+  } catch (err) {
+    return handleAiEndpointError(res, err, "extract-memories");
+  }
+});
 app.post("/api/gemini/proactive-period", async (req, res) => {
   try {
     const { character, userProfile, menstrualInfo, targetStage, apiConfig } = req.body;
@@ -71325,8 +72954,7 @@ ${stageInstruction}
       }
     });
   } catch (error) {
-    console.error("Proactive period care error:", error);
-    res.status(500).json({ success: false, error: error.message || "Period care failed" });
+    return handleAiEndpointError(res, error, "Proactive period care");
   }
 });
 app.post("/api/gemini/telepathy-deduce-choice", async (req, res) => {
@@ -71563,7 +73191,15 @@ app.post("/api/provider/generate-image", async (req, res) => {
         latencyMs,
         model,
         imageUrl: `data:image/png;base64,${item.b64_json}`,
-        revisedPrompt: item.revised_prompt || prompt
+        revisedPrompt: item.revised_prompt || prompt,
+        apiLog: buildApiLogObject({
+          appName: "AI\u751F\u56FE\u7ED8\u5236",
+          modelName: model,
+          interfaceType: "ImageGeneration",
+          category: "image",
+          durationMs: latencyMs,
+          purpose: `\u751F\u6210\u56FE\u50CF: ${(prompt || "\u81EA\u5B9A\u4E49\u56FE\u50CF").slice(0, 30)}...`
+        })
       });
     } else if (item?.url) {
       return res.json({
@@ -71571,7 +73207,15 @@ app.post("/api/provider/generate-image", async (req, res) => {
         latencyMs,
         model,
         imageUrl: item.url,
-        revisedPrompt: item.revised_prompt || prompt
+        revisedPrompt: item.revised_prompt || prompt,
+        apiLog: buildApiLogObject({
+          appName: "AI\u751F\u56FE\u7ED8\u5236",
+          modelName: model,
+          interfaceType: "ImageGeneration",
+          category: "image",
+          durationMs: latencyMs,
+          purpose: `\u751F\u6210\u56FE\u50CF: ${(prompt || "\u81EA\u5B9A\u4E49\u56FE\u50CF").slice(0, 30)}...`
+        })
       });
     }
     return res.status(500).json({ success: false, error: "\u672A\u4ECE\u63A5\u53E3\u83B7\u53D6\u5230\u6709\u6548\u56FE\u50CF\u6570\u636E" });
@@ -71583,6 +73227,7 @@ app.post("/api/provider/generate-speech", async (req, res) => {
   const { providerType, baseUrl, apiKey, model = "tts-1", text, voice = "alloy", speed = 1 } = req.body;
   const cleanKey = apiKey && apiKey.trim() || "";
   const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, "") : "";
+  const startTime = Date.now();
   if (!cleanKey) {
     return res.status(400).json({ success: false, error: "\u672A\u914D\u7F6E\u8BED\u97F3 API \u5BC6\u94A5 (API Key)" });
   }
@@ -71613,10 +73258,19 @@ app.post("/api/provider/generate-speech", async (req, res) => {
     }
     const arrayBuffer = await resp.arrayBuffer();
     const base64Audio = Buffer.from(arrayBuffer).toString("base64");
+    const latencyMs = Date.now() - startTime;
     return res.json({
       success: true,
       audioUrl: `data:audio/mp3;base64,${base64Audio}`,
-      format: "mp3"
+      format: "mp3",
+      apiLog: buildApiLogObject({
+        appName: "AI\u8BED\u97F3TTS\u751F\u6210",
+        modelName: model,
+        interfaceType: "SpeechGeneration",
+        category: "voice",
+        durationMs: latencyMs,
+        purpose: `\u5408\u6210\u8BED\u97F3: ${(text || "\u8BED\u97F3\u56DE\u590D").slice(0, 30)}...`
+      })
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message || "\u8BED\u97F3\u5408\u6210\u7F51\u7EDC\u5F02\u5E38" });

@@ -280,7 +280,26 @@ export async function executeAiReplyTask(
     }));
 
     await replaceChatMessagesTurn(activeCharacter.id, task.replaceMessageIds, newBubbleMessages);
-    nativeNotificationService.notifyAiMessage(activeCharacter, newBubbleMessages[0].text);
+    for (let i = 0; i < newBubbleMessages.length; i++) {
+      const msg = newBubbleMessages[i];
+      void nativeNotificationService
+        .notifyAiMessage(activeCharacter, msg.text, {
+          messageId: msg.id,
+          bubbleIndex: i,
+          timestamp: msg.timestamp,
+          triggerSource: 'ai_reply_reroll',
+        })
+        .then((notifRes) => {
+          if (!notifRes.success && notifRes.code !== 'SKIPPED_APP_FOREGROUND' && notifRes.code !== 'NOT_NATIVE_ANDROID') {
+            console.warn(
+              `[AiReplyExecutor] Notification failed for reroll bubble ${msg.id} (aiId=${activeCharacter.id}, code=${notifRes.code})`
+            );
+          }
+        })
+        .catch((err) => {
+          console.warn(`[AiReplyExecutor] Notification unexpected error for ${msg.id}:`, err);
+        });
+    }
   } else {
     for (let i = 0; i < bubbles.length; i++) {
       const bubbleText = bubbles[i];
@@ -306,8 +325,24 @@ export async function executeAiReplyTask(
 
       await saveChatMessage(bubbleMsg);
 
-      // Trigger Native Notification if app is in background
-      nativeNotificationService.notifyAiMessage(activeCharacter, bubbleText);
+      // Trigger Native Notification per bubble when app is in background (non-blocking for DB flow)
+      void nativeNotificationService
+        .notifyAiMessage(activeCharacter, bubbleText, {
+          messageId: bubbleMsg.id,
+          bubbleIndex: i,
+          timestamp: bubbleMsg.timestamp,
+          triggerSource: 'ai_reply',
+        })
+        .then((notifRes) => {
+          if (!notifRes.success && notifRes.code !== 'SKIPPED_APP_FOREGROUND' && notifRes.code !== 'NOT_NATIVE_ANDROID') {
+            console.warn(
+              `[AiReplyExecutor] Notification failed for bubble ${bubbleMsg.id} (aiId=${activeCharacter.id}, code=${notifRes.code})`
+            );
+          }
+        })
+        .catch((err) => {
+          console.warn(`[AiReplyExecutor] Notification unexpected error for ${bubbleMsg.id}:`, err);
+        });
     }
   }
 

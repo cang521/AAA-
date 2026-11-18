@@ -36,6 +36,12 @@ import {
 import { deviceService } from '../../lib/deviceService';
 import { AppUsageStatsView } from './permissions/AppUsageStatsView';
 import { PressableButton, ElasticToggle } from '../ui/interaction';
+import {
+  androidPermissionBridgeClient,
+  NotificationDiagnostics,
+} from '../../lib/agent/AndroidPermissionBridgeClient';
+import { systemCapabilityManager } from '../../lib/agent/SystemCapabilityManager';
+import { nativeNotificationService } from '../../lib/NativeNotificationService';
 
 interface PermissionsAppProps {
   onBackToLauncher: () => void;
@@ -65,6 +71,9 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
   const [realNotif, setRealNotif] = useState<PermStatus>('checking');
   const [realStorage, setRealStorage] = useState<PermStatus>('checking');
   const [batteryLevel, setBatteryLevel] = useState<string>('检测中');
+  const [notifDiag, setNotifDiag] = useState<NotificationDiagnostics | null>(null);
+  const [notifTestFeedback, setNotifTestFeedback] = useState<string>('');
+  const [isSendingTestNotif, setIsSendingTestNotif] = useState(false);
 
   const [isRequesting, setIsRequesting] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
@@ -137,12 +146,25 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
       setRealGeo('denied');
     }
 
-    // 2. Notification
-    if ('Notification' in window) {
-      const perm = Notification.permission;
-      setRealNotif(perm === 'default' ? 'prompt' : (perm as PermStatus));
+    // 2. Notification (authoritative Android bridge on APK; Web Notification fallback in browser)
+    if (androidPermissionBridgeClient.isNativeAndroid()) {
+      try {
+        const statuses = await systemCapabilityManager.recheckAll();
+        const diag = await androidPermissionBridgeClient.getNotificationDiagnostics();
+        setNotifDiag(diag);
+        setRealNotif(statuses.notification === 'GRANTED' ? 'granted' : 'denied');
+      } catch {
+        setRealNotif('denied');
+      }
     } else {
-      setRealNotif('denied');
+      const diag = await androidPermissionBridgeClient.getNotificationDiagnostics();
+      setNotifDiag(diag);
+      if ('Notification' in window) {
+        const perm = Notification.permission;
+        setRealNotif(perm === 'default' ? 'prompt' : (perm as PermStatus));
+      } else {
+        setRealNotif('denied');
+      }
     }
 
     // 3. Storage
@@ -212,9 +234,20 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
     }
 
     // Request Notification
-    if ('Notification' in window) {
+    if (androidPermissionBridgeClient.isNativeAndroid()) {
+      try {
+        const capRes = await systemCapabilityManager.requestCapability('notification');
+        const diag = await androidPermissionBridgeClient.getNotificationDiagnostics();
+        setNotifDiag(diag);
+        setRealNotif(capRes.success ? 'granted' : 'denied');
+      } catch (e) {
+        console.warn('Native notification request failed', e);
+      }
+    } else if ('Notification' in window) {
       try {
         const res = await Notification.requestPermission();
+        const diag = await androidPermissionBridgeClient.getNotificationDiagnostics();
+        setNotifDiag(diag);
         setRealNotif(res === 'default' ? 'prompt' : (res as PermStatus));
       } catch (e) {
         console.warn('Notif request failed', e);
@@ -293,6 +326,43 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
       }
     }
     setTimeout(() => setStatusMsg(''), 3000);
+  };
+
+  const handleSendTestNotification = async () => {
+    setIsSendingTestNotif(true);
+    try {
+      const ts = Date.now();
+      const res = await nativeNotificationService.notifyAiMessage(
+        { id: 'test_ai_notification', name: '小手机通知测试' },
+        '如果你看到了这条消息，Android系统通知链已经接通。',
+        {
+          messageId: `test_${ts}`,
+          bubbleIndex: 0,
+          timestamp: ts,
+          forceForTest: true,
+          triggerSource: 'permissions_app_test',
+        }
+      );
+      const diag = await androidPermissionBridgeClient.getNotificationDiagnostics();
+      setNotifDiag(diag);
+
+      if (res.code === 'NOTIFICATION_POSTED') {
+        const msg = '已向Android系统提交测试通知，请检查状态栏。';
+        setNotifTestFeedback(`${msg} (code: ${res.code})`);
+        setStatusMsg(msg);
+      } else {
+        const msg = `${res.message || '未通过原生通知发送'} (code: ${res.code})`;
+        setNotifTestFeedback(msg);
+        setStatusMsg(msg);
+      }
+    } catch (e: any) {
+      const msg = e?.message || '发送测试通知异常';
+      setNotifTestFeedback(msg);
+      setStatusMsg(msg);
+    } finally {
+      setIsSendingTestNotif(false);
+      setTimeout(() => setStatusMsg(''), 4000);
+    }
   };
 
   // Create a new dynamic custom permission request
@@ -717,15 +787,61 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
             </div>
 
             {/* Notifications */}
-            <div className="flex items-center justify-between pt-2.5 gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <Bell className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" />
-                <div>
-                  <span className="block font-semibold text-[#243040] dark:text-zinc-200">系统级推送通知权限</span>
-                  <span className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">AI 主动关怀提醒与微信消息推送</span>
+            <div className="pt-2.5 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Bell className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" />
+                  <div>
+                    <span className="block font-semibold text-[#243040] dark:text-zinc-200">
+                      Android 系统推送通知权限（发送提醒）
+                    </span>
+                    <span className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">
+                      向手机状态栏发送 AI 消息通知（不同于读取外部通知的“通知使用权”）
+                    </span>
+                  </div>
                 </div>
+                {renderBadge(realNotif)}
               </div>
-              {renderBadge(realNotif)}
+
+              <div className="p-2.5 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800/70 border border-[#D9EAF7] dark:border-zinc-700/70 space-y-1.5 text-[10px]">
+                {notifDiag && (
+                  <div className="grid grid-cols-2 gap-1 text-[#5B6B7C] dark:text-zinc-300">
+                    <span>环境: {notifDiag.isNativeAndroid ? `Android SDK ${notifDiag.sdkVersion}` : 'Web 预览'}</span>
+                    <span>总开关: {notifDiag.notificationsEnabled ? '已开启' : '未开启'}</span>
+                    <span>POST_NOTIFICATIONS: {notifDiag.postNotificationsGranted ? '已授权' : '未授权'}</span>
+                    <span>渠道({notifDiag.channelId}): {notifDiag.channelExists ? `就绪(${notifDiag.channelImportance})` : '未创建'}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-2 pt-1">
+                  <PressableButton
+                    onClick={handleSendTestNotification}
+                    disabled={isSendingTestNotif}
+                    withRipple
+                    rippleTone="light"
+                    className="px-3 py-1 rounded-lg bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white font-semibold text-[11px] cursor-pointer disabled:opacity-60"
+                  >
+                    {isSendingTestNotif ? '发送中...' : '发送测试通知'}
+                  </PressableButton>
+                  <PressableButton
+                    onClick={async () => {
+                      if (androidPermissionBridgeClient.isNativeAndroid()) {
+                        await systemCapabilityManager.requestCapability('notification');
+                      } else if ('Notification' in window) {
+                        await Notification.requestPermission();
+                      }
+                      await checkRealPermissions();
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-zinc-900 border border-[#D9EAF7] dark:border-zinc-700 text-[#243040] dark:text-zinc-200 font-medium text-[11px] cursor-pointer"
+                  >
+                    授权 / 打开通知设置
+                  </PressableButton>
+                </div>
+                {notifTestFeedback && (
+                  <p className="text-[10px] text-[#243040] dark:text-amber-300 font-medium pt-0.5">
+                    {notifTestFeedback}
+                  </p>
+                )}
+              </div>
             </div>
 
             {/* Storage */}

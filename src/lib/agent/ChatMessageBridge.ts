@@ -28,9 +28,10 @@ class ChatMessageBridge {
   public async postProactiveMessage(
     aiId: string,
     text: string,
-    contextSummary: string
+    contextSummary: string,
+    options?: { notifySystem?: boolean; triggerSource?: string }
   ): Promise<ProactiveMessageResult> {
-    const multiResults = await this.postProactiveMultiBubbleMessage(aiId, text, contextSummary);
+    const multiResults = await this.postProactiveMultiBubbleMessage(aiId, text, contextSummary, options);
     return multiResults[0];
   }
 
@@ -40,7 +41,8 @@ class ChatMessageBridge {
   public async postProactiveMultiBubbleMessage(
     aiId: string,
     rawText: string,
-    contextSummary: string
+    contextSummary: string,
+    options?: { notifySystem?: boolean; triggerSource?: string }
   ): Promise<ProactiveMessageResult[]> {
     const characters = loadCharacters();
     const character = characters.find((c) => c.id === aiId) || characters[0];
@@ -59,6 +61,7 @@ class ChatMessageBridge {
 
     const results: ProactiveMessageResult[] = [];
     const baseTimestamp = Date.now();
+    const shouldNotifySystem = options?.notifySystem ?? false;
 
     for (let i = 0; i < bubbles.length; i++) {
       const bubbleText = bubbles[i];
@@ -84,10 +87,29 @@ class ChatMessageBridge {
         console.error('[ChatMessageBridge] Failed to save to ChatDB IndexedDB:', e);
       }
 
+      // 2. Post system notification per bubble when permitted and app is in background
+      if (shouldNotifySystem) {
+        try {
+          const notifRes = await nativeNotificationService.notifyAiMessage(character, newMessage.text, {
+            messageId: newMessage.id,
+            bubbleIndex: i,
+            timestamp: newMessage.timestamp,
+            triggerSource: options?.triggerSource || 'proactive',
+          });
+          if (!notifRes.success && notifRes.code !== 'SKIPPED_APP_FOREGROUND' && notifRes.code !== 'NOT_NATIVE_ANDROID') {
+            console.warn(
+              `[ChatMessageBridge] Notification failed for proactive msg ${newMessage.id} (aiId=${character.id}, code=${notifRes.code})`
+            );
+          }
+        } catch (err) {
+          console.warn('[ChatMessageBridge] Unexpected error calling nativeNotificationService:', err);
+        }
+      }
+
       results.push({ message: newMessage, character });
     }
 
-    // 2. Increment unread badge for the character by total bubbles count
+    // 3. Increment unread badge for the character by total bubbles count
     const updatedCharacters = characters.map((c) => {
       if (c.id === character.id) {
         return {

@@ -19,6 +19,7 @@ import { getLifeEventsSync, updateLifeEvent } from '../lifeState/lifeStateStore'
 
 import { deviceContextManager } from '../agent/DeviceContextManager';
 import { permissionManager } from '../agent/PermissionManager';
+import { nativeNotificationService } from '../NativeNotificationService';
 
 export interface ProactiveTriggerCandidate {
   characterId: string;
@@ -523,25 +524,19 @@ class ProactiveEngine {
    */
   public showSystemNotification(title: string, body: string, charId: string): void {
     if (typeof window === 'undefined') return;
-
-    if ('Notification' in window && Notification.permission === 'granted') {
-      try {
-        const notif = new Notification(title, {
-          body,
-          icon: '/favicon.ico',
-        });
-        notif.onclick = () => {
-          window.focus();
-          window.dispatchEvent(new CustomEvent('open_ai_chat', { detail: { charId } }));
-        };
-      } catch {}
-    } else if ('Notification' in window && Notification.permission !== 'denied') {
-      Notification.requestPermission().then((perm) => {
-        if (perm === 'granted') {
-          this.showSystemNotification(title, body, charId);
-        }
-      });
-    }
+    const characters = loadCharacters();
+    const char = characters.find((c) => c.id === charId);
+    const ts = Date.now();
+    void nativeNotificationService.notifyAiMessage(
+      { id: charId, name: char?.name || title, avatar: char?.avatar },
+      body,
+      {
+        messageId: `proactive_engine_${ts}`,
+        bubbleIndex: 0,
+        timestamp: ts,
+        triggerSource: 'proactive_engine',
+      }
+    );
   }
 
   private isInQuietHours(currentHM: string, quietConfig: { enabled: boolean; startStr: string; endStr: string }): boolean {

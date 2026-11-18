@@ -51,6 +51,11 @@ import {
 import { loadCharacters } from '../../lib/storage';
 import { AiCharacter } from '../../types';
 import { PressableButton, ElasticToggle } from '../ui/interaction';
+import {
+  androidPermissionBridgeClient,
+  NotificationDiagnostics,
+} from '../../lib/agent/AndroidPermissionBridgeClient';
+import { nativeNotificationService } from '../../lib/NativeNotificationService';
 
 interface AiPermissionsAppProps {
   onBackToLauncher: () => void;
@@ -74,6 +79,13 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
   const [fallbackModalCap, setFallbackModalCap] = useState<SystemCapabilityDef | null>(null);
   const [apkRequirementCap, setApkRequirementCap] = useState<SystemCapabilityDef | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [notifDiag, setNotifDiag] = useState<NotificationDiagnostics | null>(null);
+  const [lastNotifTestResult, setLastNotifTestResult] = useState<{
+    code: string;
+    message: string;
+    success: boolean;
+  } | null>(null);
+  const [isSendingTestNotif, setIsSendingTestNotif] = useState(false);
 
   // AI independent permissions state
   const [characters, setCharacters] = useState<AiCharacter[]>([]);
@@ -105,10 +117,12 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
 
     // Auto-check real permissions on mount
     systemCapabilityManager.recheckAll();
+    androidPermissionBridgeClient.getNotificationDiagnostics().then(setNotifDiag).catch(() => {});
 
     // Recheck immediately when user returns to app from Android Settings
     const handleFocusReturn = () => {
       systemCapabilityManager.recheckAll();
+      androidPermissionBridgeClient.getNotificationDiagnostics().then(setNotifDiag).catch(() => {});
     };
     window.addEventListener('focus', handleFocusReturn);
 
@@ -135,8 +149,46 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
     setIsCheckingAll(true);
     triggerToast('正在读取系统底层真实权限状态...');
     await systemCapabilityManager.recheckAll();
+    const diag = await androidPermissionBridgeClient.getNotificationDiagnostics().catch(() => null);
+    if (diag) setNotifDiag(diag);
     setIsCheckingAll(false);
     triggerToast('系统真实权限检测已完成');
+  };
+
+  const handleSendTestNotification = async () => {
+    setIsSendingTestNotif(true);
+    try {
+      const ts = Date.now();
+      const res = await nativeNotificationService.notifyAiMessage(
+        { id: 'test_ai_notification', name: '小手机通知测试' },
+        '如果你看到了这条消息，Android系统通知链已经接通。',
+        {
+          messageId: `test_${ts}`,
+          bubbleIndex: 0,
+          timestamp: ts,
+          forceForTest: true,
+          triggerSource: 'ai_permissions_test',
+        }
+      );
+      const diag = await androidPermissionBridgeClient.getNotificationDiagnostics().catch(() => null);
+      if (diag) setNotifDiag(diag);
+
+      if (res.code === 'NOTIFICATION_POSTED') {
+        const msg = '已向Android系统提交测试通知，请检查状态栏。';
+        setLastNotifTestResult({ code: res.code, message: msg, success: true });
+        triggerToast(msg);
+      } else {
+        const msg = res.message || '未通过 Android 原生通知链发送';
+        setLastNotifTestResult({ code: res.code, message: msg, success: false });
+        triggerToast(`${msg} (${res.code})`);
+      }
+    } catch (e: any) {
+      const msg = e?.message || '发送测试通知异常';
+      setLastNotifTestResult({ code: 'NOTIFICATION_TEST_ERROR', message: msg, success: false });
+      triggerToast(msg);
+    } finally {
+      setIsSendingTestNotif(false);
+    }
   };
 
   const counts = systemCapabilityManager.getCapabilityCounts();
@@ -429,6 +481,50 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                       <Info className="w-3 h-3 text-[#59B6E8] dark:text-indigo-400 shrink-0 mt-0.5" />
                       <span>{cap.whyNeeded}</span>
                     </div>
+
+                    {/* Live Notification Diagnostics & Test Button */}
+                    {cap.id === 'notification' && (
+                      <div className="p-2.5 rounded-xl bg-[#F7FBFF] dark:bg-zinc-950/80 border border-[#D9EAF7] dark:border-zinc-800 space-y-2 text-[10px]">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-[#243040] dark:text-zinc-200">
+                            通知执行链实时诊断
+                          </span>
+                          <PressableButton
+                            onClick={handleSendTestNotification}
+                            disabled={isSendingTestNotif}
+                            withRipple
+                            rippleTone="light"
+                            className="px-2.5 py-1 rounded-lg bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white font-bold text-[11px] shadow-2xs transition cursor-pointer disabled:opacity-60"
+                          >
+                            {isSendingTestNotif ? '发送中...' : '发送测试通知'}
+                          </PressableButton>
+                        </div>
+
+                        {notifDiag && (
+                          <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[#5B6B7C] dark:text-zinc-400 font-mono">
+                            <span>原生Android: {notifDiag.isNativeAndroid ? `是 (SDK ${notifDiag.sdkVersion})` : '否 (Web预览)'}</span>
+                            <span>POST_NOTIFICATIONS: {notifDiag.postNotificationsGranted ? '已授权' : '未授权'}</span>
+                            <span>应用通知开关: {notifDiag.notificationsEnabled ? '已开启' : '已关闭'}</span>
+                            <span>
+                              渠道({notifDiag.channelId}):{' '}
+                              {notifDiag.channelExists ? `已创建(重要度 ${notifDiag.channelImportance})` : '未创建/不可用'}
+                            </span>
+                          </div>
+                        )}
+
+                        {lastNotifTestResult && (
+                          <div
+                            className={`p-2 rounded-lg border text-[10px] font-medium ${
+                              lastNotifTestResult.success
+                                ? 'bg-[#DCFCE7] text-[#166534] border-[#86EFAC] dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30'
+                                : 'bg-[#FEF3C7] text-[#92400E] border-[#FDE68A] dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30'
+                            }`}
+                          >
+                            最近测试结果: {lastNotifTestResult.message} (code: {lastNotifTestResult.code})
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Action Buttons */}
                     <div className="pt-1 flex items-center justify-end gap-2 flex-wrap border-t border-[#D9EAF7] dark:border-zinc-800/60">

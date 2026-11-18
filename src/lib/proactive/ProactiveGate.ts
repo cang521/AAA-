@@ -23,8 +23,7 @@ import {
 } from './proactiveStore';
 import { chatMessageBridge } from '../agent/ChatMessageBridge';
 import { permissionManager } from '../agent/PermissionManager';
-import { loadCharacters, loadPermissions, loadMenstrualData } from '../storage';
-import { nativeNotificationService } from '../NativeNotificationService';
+import { loadPermissions, loadMenstrualData } from '../storage';
 import { aiReplyTaskManager } from '../aiReply/AiReplyTaskManager';
 
 export interface GateCheckParams {
@@ -241,15 +240,18 @@ class ProactiveGateService {
     const runtimeState = loadProactiveRuntimeState();
 
     try {
-      // 1. Post multi-bubble message via ChatMessageBridge with metadata
+      // 1. Post multi-bubble message via ChatMessageBridge (which also handles per-bubble system notification when permitted)
       const results = await chatMessageBridge.postProactiveMultiBubbleMessage(
         params.aiId,
         params.proposedText,
-        params.contextSummary || `【触发类型: ${params.triggerType}】${params.eventId}`
+        params.contextSummary || `【触发类型: ${params.triggerType}】${params.eventId}`,
+        {
+          notifySystem: Boolean(settings.systemNotificationsEnabled),
+          triggerSource: params.triggerType,
+        }
       );
 
       const firstMessage = results[0]?.message;
-      const character = results[0]?.character;
 
       // 2. Update Runtime State
       const charRuntime = getCharacterProactiveRuntime(params.aiId, runtimeState);
@@ -268,12 +270,6 @@ class ProactiveGateService {
       runtimeState.characterStates[params.aiId] = charRuntime;
       runtimeState.lastGlobalCheckAt = Date.now();
       saveProactiveRuntimeState(runtimeState);
-
-      // 3. System Notification (if systemNotificationsEnabled is true) - using final bubble text preview
-      if (settings.systemNotificationsEnabled && character && results.length > 0) {
-        const finalPreviewText = results[results.length - 1].message.text;
-        this.showSystemNotification(character.name, finalPreviewText, character.id);
-      }
 
       return { sent: true, messageId: firstMessage?.id };
     } catch (e: any) {
@@ -335,19 +331,6 @@ class ProactiveGateService {
       return currentTimeStr >= start || currentTimeStr < end;
     }
     return currentTimeStr >= start && currentTimeStr < end;
-  }
-
-  private showSystemNotification(title: string, body: string, aiId: string) {
-    if (typeof window === 'undefined') return;
-    try {
-      const characters = loadCharacters();
-      const char = characters.find((c: any) => c.id === aiId);
-      const name = char?.name || title;
-      const avatar = char?.avatar;
-      nativeNotificationService.notifyAiMessage({ id: aiId, name, avatar }, body);
-    } catch (e) {
-      console.warn('System Notification error:', e);
-    }
   }
 }
 

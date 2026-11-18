@@ -179,9 +179,16 @@ class ActionExecutor {
     try {
       // Phase 1: Safe executions like notification or vibration
       if (actionId === 'system_notification' && typeof window !== 'undefined') {
-        nativeNotificationService.notifyAiMessage(
+        const ts = Date.now();
+        await nativeNotificationService.notifyAiMessage(
           { id: aiId, name: aiName, avatar: payload?.avatar },
-          payload?.text || '点击进入小手机查看详情'
+          payload?.text || '点击进入小手机查看详情',
+          {
+            messageId: payload?.messageId || `action_${ts}`,
+            bubbleIndex: 0,
+            timestamp: ts,
+            triggerSource: 'action_executor',
+          }
         );
       }
 

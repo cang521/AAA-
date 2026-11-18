@@ -3,16 +3,34 @@ package com.aistudio.aiphone.plugins;
 import android.Manifest;
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.AppOpsManager;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
+import android.graphics.Rect;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
+import android.media.AudioAttributes;
+import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.PowerManager;
 import android.provider.Settings;
+import android.util.Base64;
 import android.util.Log;
 import android.view.accessibility.AccessibilityManager;
+import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 import android.content.pm.ApplicationInfo;
@@ -20,6 +38,8 @@ import android.app.usage.UsageEvents;
 import android.app.usage.UsageStats;
 import android.app.usage.UsageStatsManager;
 
+import com.aistudio.aiphone.MainActivity;
+import com.aistudio.aiphone.R;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -28,8 +48,14 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @CapacitorPlugin(
     name = "AndroidPermissionBridge",
@@ -54,6 +80,54 @@ import java.util.Set;
 )
 public class AndroidPermissionBridge extends Plugin {
     private static final String TAG = "AndroidPermissionBridge";
+    private static final String NOTIF_TAG = "AiMessageNotification";
+    public static final String CHANNEL_ID = "ai_messages_v1";
+    public static final String CHANNEL_NAME = "AI消息提醒";
+    public static final String CHANNEL_DESCRIPTION = "显示AI角色的新消息和主动关怀";
+    public static final String PREFS_NAME = "aiphone_notification_prefs";
+    public static final String KEY_PENDING_AI_ID = "pending_notification_ai_id";
+    public static final String ACTION_OPEN_AI_CHAT = "OPEN_AI_CHAT";
+    private static final int MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+    private static final int MAX_AVATAR_DIM = 192;
+
+    private static final ExecutorService AVATAR_EXECUTOR = Executors.newFixedThreadPool(2);
+
+    @Override
+    public void load() {
+        super.load();
+        ensureAiMessageNotificationChannel(getContext());
+    }
+
+    public static void savePendingNotificationAiId(Context context, String aiId) {
+        if (context == null || aiId == null || aiId.trim().isEmpty()) {
+            return;
+        }
+        try {
+            SharedPreferences prefs = context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            prefs.edit().putString(KEY_PENDING_AI_ID, aiId.trim()).apply();
+            Log.i(NOTIF_TAG, "Saved pending notification tap aiId=" + aiId.trim());
+        } catch (Exception e) {
+            Log.w(NOTIF_TAG, "Failed to save pending notification aiId", e);
+        }
+    }
+
+    public static String consumePendingNotificationAiId(Context context) {
+        if (context == null) {
+            return null;
+        }
+        try {
+            SharedPreferences prefs = context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            String aiId = prefs.getString(KEY_PENDING_AI_ID, null);
+            if (aiId != null) {
+                prefs.edit().remove(KEY_PENDING_AI_ID).apply();
+                Log.i(NOTIF_TAG, "Consumed pending notification tap aiId=" + aiId);
+            }
+            return aiId;
+        } catch (Exception e) {
+            Log.w(NOTIF_TAG, "Failed to consume pending notification aiId", e);
+            return null;
+        }
+    }
 
     @PluginMethod
     public void getEnvironmentInfo(PluginCall call) {
@@ -75,8 +149,10 @@ public class AndroidPermissionBridge extends Plugin {
         Context context = getContext();
         JSObject ret = new JSObject();
 
-        // 1. Notification (NotificationManagerCompat.areNotificationsEnabled)
-        boolean notifGranted = NotificationManagerCompat.from(context).areNotificationsEnabled();
+        // 1. Notification (NotificationManagerCompat.areNotificationsEnabled + Android 13+ POST_NOTIFICATIONS)
+        boolean notifEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled();
+        boolean postNotifGranted = isPostNotificationsGranted(context);
+        boolean notifGranted = notifEnabled && postNotifGranted;
         ret.put("notification", notifGranted ? "GRANTED" : "DENIED");
 
         // 2. NotificationListenerService (enabled_notification_listeners)
@@ -174,13 +250,13 @@ public class AndroidPermissionBridge extends Plugin {
 
                 case "notification":
                     if (Build.VERSION.SDK_INT >= 33) {
-                        // Request runtime POST_NOTIFICATIONS
-                        if (getPermissionState("notification") != com.getcapacitor.PermissionState.GRANTED) {
+                        // Request runtime POST_NOTIFICATIONS first if not granted
+                        if (!isPostNotificationsGranted(context)) {
                             requestPermissionForAlias("notification", call, "permissionCallback");
                             return;
                         }
                     }
-                    // If below 33 or runtime denied, open notification settings
+                    // If below 33 or runtime already granted (e.g., OS toggle off), open notification settings
                     openAppNotificationSettings(context);
                     call.resolve(createResult(true, "已打开通知设置页"));
                     break;
@@ -262,6 +338,394 @@ public class AndroidPermissionBridge extends Plugin {
             openAppDetailsSettings(context);
             call.resolve(createResult(true, "已降级打开应用详情设置页"));
         }
+    }
+
+    /**
+     * Inspect real Android notification system diagnostics (permissions, channel, importance).
+     */
+    @PluginMethod
+    public void getNotificationDiagnostics(PluginCall call) {
+        Context context = getContext();
+        ensureAiMessageNotificationChannel(context);
+
+        boolean postGranted = isPostNotificationsGranted(context);
+        boolean notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled();
+        boolean channelExists = true;
+        int channelImportance = NotificationManagerCompat.IMPORTANCE_HIGH;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            NotificationChannel channel = nm != null ? nm.getNotificationChannel(CHANNEL_ID) : null;
+            channelExists = channel != null;
+            channelImportance = channel != null ? channel.getImportance() : NotificationManager.IMPORTANCE_NONE;
+        }
+
+        JSObject ret = new JSObject();
+        ret.put("isNativeAndroid", true);
+        ret.put("sdkVersion", Build.VERSION.SDK_INT);
+        ret.put("postNotificationsGranted", postGranted);
+        ret.put("notificationsEnabled", notificationsEnabled);
+        ret.put("channelId", CHANNEL_ID);
+        ret.put("channelExists", channelExists);
+        ret.put("channelImportance", channelImportance);
+        call.resolve(ret);
+    }
+
+    /**
+     * Read and clear any pending AI chat target stored by a notification tap.
+     */
+    @PluginMethod
+    public void consumePendingNotificationAction(PluginCall call) {
+        String aiId = consumePendingNotificationAiId(getContext());
+        JSObject ret = new JSObject();
+        boolean hasPending = aiId != null && !aiId.isEmpty();
+        ret.put("hasPendingAction", hasPending);
+        ret.put("aiId", hasPending ? aiId : "");
+        call.resolve(ret);
+    }
+
+    /**
+     * Post a genuine Android status bar / notification drawer message using NotificationCompat.
+     */
+    @PluginMethod
+    public void showAiMessageNotification(PluginCall call) {
+        final Context context = getContext().getApplicationContext();
+        final String aiId = call.getString("aiId", "default_ai");
+        final String title = call.getString("title", "").trim();
+        final String body = call.getString("body", "").trim();
+        final String avatar = call.getString("avatar", "");
+        final Integer notifIdObj = call.getInt("notificationId");
+        final int notificationId = notifIdObj != null ? notifIdObj : 0;
+        final Long tsObj = call.getLong("timestamp");
+        final long timestamp = (tsObj != null && tsObj > 0) ? tsObj : System.currentTimeMillis();
+        final String groupKey = call.getString("groupKey", "ai_chat_" + aiId);
+
+        if (notificationId <= 0 || title.isEmpty() || body.isEmpty()) {
+            Log.w(NOTIF_TAG, "Invalid notification arguments: id=" + notificationId);
+            call.resolve(createNotifResult(false, "INVALID_ARGUMENT", "通知参数不完整 (title/body/notificationId 无效)", notificationId));
+            return;
+        }
+
+        if (!isPostNotificationsGranted(context)) {
+            Log.w(NOTIF_TAG, "POST_NOTIFICATIONS permission denied on Android 13+");
+            call.resolve(createNotifResult(false, "NOTIFICATION_PERMISSION_DENIED", "缺少 Android 13+ POST_NOTIFICATIONS 通知权限", notificationId));
+            return;
+        }
+
+        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            Log.w(NOTIF_TAG, "App notifications disabled in Android OS settings");
+            call.resolve(createNotifResult(false, "NOTIFICATIONS_DISABLED", "Android 系统已关闭本应用的通知开关", notificationId));
+            return;
+        }
+
+        ensureAiMessageNotificationChannel(context);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            NotificationChannel channel = nm != null ? nm.getNotificationChannel(CHANNEL_ID) : null;
+            if (channel == null || channel.getImportance() == NotificationManager.IMPORTANCE_NONE) {
+                Log.w(NOTIF_TAG, "Notification channel disabled or missing: " + CHANNEL_ID);
+                call.resolve(createNotifResult(false, "CHANNEL_DISABLED", "AI消息提醒通知渠道已被系统或用户关闭", notificationId));
+                return;
+            }
+        }
+
+        try {
+            final PendingIntent contentIntent = createChatPendingIntent(context, aiId, notificationId);
+            final Bitmap fallbackLargeIcon = loadDefaultAppIconBitmap(context);
+
+            Notification initialNotification = buildAiMessageNotification(
+                context,
+                title,
+                body,
+                timestamp,
+                groupKey,
+                contentIntent,
+                fallbackLargeIcon,
+                false
+            );
+
+            NotificationManagerCompat.from(context).notify(notificationId, initialNotification);
+            Log.i(NOTIF_TAG, "Notification posted id=" + notificationId + ", aiId=" + aiId);
+
+            // Asynchronously decode/fetch AI avatar without blocking status bar delivery
+            if (avatar != null && !avatar.trim().isEmpty() && !avatar.startsWith("blob:")) {
+                final String avatarSource = avatar.trim();
+                AVATAR_EXECUTOR.execute(() -> {
+                    try {
+                        Bitmap avatarBitmap = loadAvatarBitmapSafely(avatarSource);
+                        if (avatarBitmap != null) {
+                            if (!isPostNotificationsGranted(context) || !NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+                                avatarBitmap.recycle();
+                                return;
+                            }
+                            PendingIntent refreshIntent = createChatPendingIntent(context, aiId, notificationId);
+                            Notification updatedNotification = buildAiMessageNotification(
+                                context,
+                                title,
+                                body,
+                                timestamp,
+                                groupKey,
+                                refreshIntent,
+                                avatarBitmap,
+                                true
+                            );
+                            NotificationManagerCompat.from(context).notify(notificationId, updatedNotification);
+                            Log.i(NOTIF_TAG, "Updated notification avatar id=" + notificationId);
+                        }
+                    } catch (SecurityException se) {
+                        Log.w(NOTIF_TAG, "Permission revoked while updating avatar for id=" + notificationId);
+                    } catch (Throwable t) {
+                        Log.w(NOTIF_TAG, "Async avatar load skipped for id=" + notificationId + ": " + t.getClass().getSimpleName());
+                    }
+                });
+            }
+
+            call.resolve(createNotifResult(true, "NOTIFICATION_POSTED", "已向Android系统提交状态栏通知", notificationId));
+        } catch (SecurityException se) {
+            Log.e(NOTIF_TAG, "SecurityException posting notification id=" + notificationId, se);
+            call.resolve(createNotifResult(false, "NOTIFICATION_PERMISSION_DENIED", "系统拒绝发送通知: " + se.getMessage(), notificationId));
+        } catch (Exception e) {
+            Log.e(NOTIF_TAG, "Failed to post notification id=" + notificationId, e);
+            call.resolve(createNotifResult(false, "NOTIFICATION_POST_FAILED", "发送Android通知失败: " + e.getMessage(), notificationId));
+        }
+    }
+
+    private boolean isPostNotificationsGranted(Context context) {
+        if (Build.VERSION.SDK_INT >= 33) {
+            return ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+        }
+        return true;
+    }
+
+    private void ensureAiMessageNotificationChannel(Context context) {
+        if (context == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+        try {
+            NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) {
+                return;
+            }
+            if (nm.getNotificationChannel(CHANNEL_ID) != null) {
+                return;
+            }
+
+            NotificationChannel channel = new NotificationChannel(
+                CHANNEL_ID,
+                CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_HIGH
+            );
+            channel.setDescription(CHANNEL_DESCRIPTION);
+            channel.enableVibration(true);
+            channel.enableLights(true);
+            Uri soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+            if (soundUri != null) {
+                AudioAttributes attrs = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build();
+                channel.setSound(soundUri, attrs);
+            }
+            nm.createNotificationChannel(channel);
+            Log.i(NOTIF_TAG, "Created NotificationChannel " + CHANNEL_ID);
+        } catch (Exception e) {
+            Log.w(NOTIF_TAG, "Failed to create notification channel", e);
+        }
+    }
+
+    private PendingIntent createChatPendingIntent(Context context, String aiId, int notificationId) {
+        Intent tapIntent = new Intent(context, MainActivity.class);
+        tapIntent.setAction(ACTION_OPEN_AI_CHAT);
+        tapIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        tapIntent.putExtra("action", ACTION_OPEN_AI_CHAT);
+        tapIntent.putExtra("aiId", aiId);
+        tapIntent.putExtra("notificationId", notificationId);
+
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        return PendingIntent.getActivity(context, notificationId, tapIntent, flags);
+    }
+
+    private Notification buildAiMessageNotification(
+        Context context,
+        String title,
+        String body,
+        long timestamp,
+        String groupKey,
+        PendingIntent contentIntent,
+        Bitmap largeIcon,
+        boolean onlyAlertOnce
+    ) {
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_ai_message)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setAutoCancel(true)
+            .setWhen(timestamp)
+            .setShowWhen(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setGroup(groupKey)
+            .setContentIntent(contentIntent)
+            .setOnlyAlertOnce(onlyAlertOnce)
+            .setDefaults(NotificationCompat.DEFAULT_ALL);
+
+        if (largeIcon != null) {
+            builder.setLargeIcon(largeIcon);
+        }
+
+        return builder.build();
+    }
+
+    private Bitmap loadDefaultAppIconBitmap(Context context) {
+        try {
+            Drawable drawable = context.getPackageManager().getApplicationIcon(context.getPackageName());
+            if (drawable instanceof BitmapDrawable && ((BitmapDrawable) drawable).getBitmap() != null) {
+                return ((BitmapDrawable) drawable).getBitmap();
+            }
+            int size = 128;
+            Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            drawable.setBounds(0, 0, canvas.getWidth(), canvas.getHeight());
+            drawable.draw(canvas);
+            return bitmap;
+        } catch (Exception e) {
+            try {
+                return BitmapFactory.decodeResource(context.getResources(), R.mipmap.ic_launcher);
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
+    }
+
+    private Bitmap loadAvatarBitmapSafely(String avatarSource) {
+        if (avatarSource == null || avatarSource.isEmpty()) {
+            return null;
+        }
+
+        Bitmap decoded = null;
+        if (avatarSource.startsWith("data:image/")) {
+            int commaIndex = avatarSource.indexOf(',');
+            if (commaIndex <= 0 || commaIndex + 1 >= avatarSource.length()) {
+                return null;
+            }
+            String base64Payload = avatarSource.substring(commaIndex + 1);
+            byte[] rawBytes = Base64.decode(base64Payload, Base64.DEFAULT);
+            if (rawBytes == null || rawBytes.length == 0 || rawBytes.length > MAX_AVATAR_BYTES) {
+                return null;
+            }
+            decoded = decodeSampledBitmapFromBytes(rawBytes, MAX_AVATAR_DIM, MAX_AVATAR_DIM);
+        } else if (avatarSource.startsWith("https://") || avatarSource.startsWith("http://")) {
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(avatarSource);
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setConnectTimeout(4000);
+                conn.setReadTimeout(5000);
+                conn.setInstanceFollowRedirects(true);
+                conn.setDoInput(true);
+                conn.connect();
+
+                int code = conn.getResponseCode();
+                if (code < 200 || code >= 300) {
+                    return null;
+                }
+                int contentLength = conn.getContentLength();
+                if (contentLength > MAX_AVATAR_BYTES) {
+                    return null;
+                }
+
+                try (InputStream is = conn.getInputStream();
+                     ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+                    byte[] buf = new byte[8192];
+                    int read;
+                    int total = 0;
+                    while ((read = is.read(buf)) != -1) {
+                        total += read;
+                        if (total > MAX_AVATAR_BYTES) {
+                            return null;
+                        }
+                        baos.write(buf, 0, read);
+                    }
+                    byte[] rawBytes = baos.toByteArray();
+                    decoded = decodeSampledBitmapFromBytes(rawBytes, MAX_AVATAR_DIM, MAX_AVATAR_DIM);
+                }
+            } finally {
+                if (conn != null) {
+                    conn.disconnect();
+                }
+            }
+        }
+
+        if (decoded == null) {
+            return null;
+        }
+        Bitmap circular = toCircularBitmap(decoded, 128);
+        if (circular != null && circular != decoded) {
+            decoded.recycle();
+            return circular;
+        }
+        return decoded;
+    }
+
+    private Bitmap decodeSampledBitmapFromBytes(byte[] data, int reqWidth, int reqHeight) {
+        BitmapFactory.Options boundsOpts = new BitmapFactory.Options();
+        boundsOpts.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(data, 0, data.length, boundsOpts);
+        if (boundsOpts.outWidth <= 0 || boundsOpts.outHeight <= 0) {
+            return null;
+        }
+
+        int inSampleSize = 1;
+        int halfHeight = boundsOpts.outHeight / 2;
+        int halfWidth = boundsOpts.outWidth / 2;
+        while ((halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
+            inSampleSize *= 2;
+        }
+
+        BitmapFactory.Options decodeOpts = new BitmapFactory.Options();
+        decodeOpts.inSampleSize = inSampleSize;
+        decodeOpts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+        return BitmapFactory.decodeByteArray(data, 0, data.length, decodeOpts);
+    }
+
+    private Bitmap toCircularBitmap(Bitmap source, int targetSize) {
+        if (source == null) return null;
+        try {
+            int minEdge = Math.min(source.getWidth(), source.getHeight());
+            int cropX = (source.getWidth() - minEdge) / 2;
+            int cropY = (source.getHeight() - minEdge) / 2;
+
+            Bitmap output = Bitmap.createBitmap(targetSize, targetSize, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(output);
+            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            float radius = targetSize / 2f;
+
+            canvas.drawARGB(0, 0, 0, 0);
+            canvas.drawCircle(radius, radius, radius, paint);
+            paint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC_IN));
+
+            Rect srcRect = new Rect(cropX, cropY, cropX + minEdge, cropY + minEdge);
+            Rect dstRect = new Rect(0, 0, targetSize, targetSize);
+            canvas.drawBitmap(source, srcRect, dstRect, paint);
+            return output;
+        } catch (Throwable t) {
+            return source;
+        }
+    }
+
+    private JSObject createNotifResult(boolean success, String code, String message, int notificationId) {
+        JSObject res = new JSObject();
+        res.put("success", success);
+        res.put("code", code);
+        res.put("message", message);
+        res.put("notificationId", notificationId);
+        return res;
     }
 
     /**

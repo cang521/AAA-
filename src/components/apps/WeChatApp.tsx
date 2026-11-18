@@ -154,6 +154,8 @@ interface WeChatAppProps {
   permissions: AiPermissions;
   apiConfig?: ApiConfig;
   worldBooks?: WorldBook[];
+  pendingChatId?: string | null;
+  onConsumePendingChatId?: () => void;
   onUpdateCharacters: (chars: AiCharacter[]) => void;
   onUpdateMessages?: (msgs: ChatMessage[]) => void;
   onUpdateMoments: (posts: MomentPost[]) => void;
@@ -236,6 +238,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   permissions,
   apiConfig,
   worldBooks = [],
+  pendingChatId,
+  onConsumePendingChatId,
   onUpdateCharacters,
   onUpdateMoments,
   onUpdateUserProfile,
@@ -675,6 +679,24 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     }));
   };
 
+  // Navigate directly to target AI chat when launched from an Android notification tap
+  useEffect(() => {
+    if (!pendingChatId) return;
+    const targetExists = characters.some((c) => c.id === pendingChatId);
+    setActiveTab('chats');
+    setMeSubView('hub');
+    setShowAiSettingsModal(false);
+    setShowOfflineModal(false);
+    if (targetExists) {
+      handleOpenChat(pendingChatId);
+    } else {
+      // Target character missing/deleted: stay safely in conversation list (never fallback to characters[0])
+      setActiveChatId(null);
+      setActiveGroupChatId(null);
+    }
+    onConsumePendingChatId?.();
+  }, [pendingChatId, characters, onConsumePendingChatId]);
+
   // Load initial page of messages when opening a chat
   useEffect(() => {
     if (!activeChatId) {
@@ -963,6 +985,14 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       setTotalHistoryCount((c) => c + 1);
       scrollToBottom(true);
       await saveChatMessage(aiMsg).catch((e) => console.error('Save AI msg error', e));
+      void nativeNotificationService
+        .notifyAiMessage(character, aiMsg.text, {
+          messageId: aiMsg.id,
+          bubbleIndex: 0,
+          timestamp: aiMsg.timestamp,
+          triggerSource: 'wechat_direct',
+        })
+        .catch(() => {});
       if (permissions?.realDevice?.vibration && typeof navigator !== 'undefined' && navigator.vibrate) {
         navigator.vibrate(options?.vibrationPattern || [50]);
       }
@@ -1005,7 +1035,14 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       saveChatMessage(bubbleMsg).catch((e) => console.error('Save AI bubble msg error', e));
 
       // Trigger Native Android System Notification IF app is in background (isAppActive === false)
-      nativeNotificationService.notifyAiMessage(character, bubbleText);
+      void nativeNotificationService
+        .notifyAiMessage(character, bubbleText, {
+          messageId: bubbleMsg.id,
+          bubbleIndex: i,
+          timestamp: bubbleMsg.timestamp,
+          triggerSource: 'wechat_direct',
+        })
+        .catch(() => {});
 
       if (permissions?.realDevice?.vibration && typeof navigator !== 'undefined' && navigator.vibrate) {
         navigator.vibrate([35]);

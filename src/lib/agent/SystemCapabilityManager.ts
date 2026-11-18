@@ -5,16 +5,16 @@ import {
   CapabilityDiagnosticResult,
   normalizeCapabilityId,
 } from './types';
-import { androidPermissionBridgeClient } from './AndroidPermissionBridgeClient';
+import { androidPermissionBridgeClient, NotificationDiagnostics } from './AndroidPermissionBridgeClient';
 
 export const SYSTEM_CAPABILITIES_LIST: SystemCapabilityDef[] = [
   {
     id: 'notification',
-    name: '系统通知权限',
+    name: 'Android 系统通知权限（发送提醒）',
     category: 'core',
     androidApiName: 'POST_NOTIFICATIONS / NotificationManagerCompat',
-    description: '允许小手机在通知栏常驻并发送系统级关怀消息或提醒。',
-    whyNeeded: 'AI 角色在被用户需要或关怀提醒时，通过系统通知栏主动传达消息。',
+    description: '允许小手机主动向手机状态栏与通知栏发送 AI 消息和关怀通知（不同于读取外部软件通知的“通知使用权”）。',
+    whyNeeded: 'AI 角色在后台回复或主动关怀时，直接显示在 Android 手机状态栏与通知中心。',
     isSensitive: false,
     requiresNativeService: false,
     settingsPathTier1: 'android.settings.APP_NOTIFICATION_SETTINGS',
@@ -633,6 +633,10 @@ class SystemCapabilityManager {
       notSupportedReason,
       timestamp: Date.now(),
     };
+  }
+
+  public async getNotificationDiagnostics(): Promise<NotificationDiagnostics> {
+    return await androidPermissionBridgeClient.getNotificationDiagnostics();
   }
 
   /**

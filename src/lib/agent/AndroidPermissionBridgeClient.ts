@@ -28,6 +28,38 @@ export interface ScreenUsageStatsResult {
   minutes: number;
 }
 
+export interface ShowAiMessageNotificationOptions {
+  aiId: string;
+  title: string;
+  body: string;
+  avatar?: string;
+  notificationId: number;
+  timestamp?: number;
+  groupKey?: string;
+}
+
+export interface NativeNotificationResult {
+  success: boolean;
+  code: string;
+  message?: string;
+  notificationId?: number;
+}
+
+export interface NotificationDiagnostics {
+  isNativeAndroid: boolean;
+  sdkVersion: number;
+  postNotificationsGranted: boolean;
+  notificationsEnabled: boolean;
+  channelId: string;
+  channelExists: boolean;
+  channelImportance: number;
+}
+
+export interface PendingNotificationAction {
+  hasPendingAction: boolean;
+  aiId: string;
+}
+
 export interface AndroidPermissionBridgePlugin {
   getEnvironmentInfo(): Promise<AndroidNativeInfo>;
   checkAllPermissions(): Promise<Record<string, CapabilityStatus>>;
@@ -35,6 +67,9 @@ export interface AndroidPermissionBridgePlugin {
   openSystemSettings(options: { target: string }): Promise<{ success: boolean; message?: string }>;
   getScreenUsageMinutes(): Promise<ScreenUsageStatsResult>;
   getAppUsageList(): Promise<AppUsageListResult>;
+  showAiMessageNotification(options: ShowAiMessageNotificationOptions): Promise<NativeNotificationResult>;
+  consumePendingNotificationAction(): Promise<PendingNotificationAction>;
+  getNotificationDiagnostics(): Promise<NotificationDiagnostics>;
 }
 
 export class AndroidPermissionBridgeWeb extends WebPlugin implements AndroidPermissionBridgePlugin {
@@ -83,6 +118,38 @@ export class AndroidPermissionBridgeWeb extends WebPlugin implements AndroidPerm
       isSimulation: false,
     };
   }
+
+  async showAiMessageNotification(
+    options: ShowAiMessageNotificationOptions
+  ): Promise<NativeNotificationResult> {
+    return {
+      success: false,
+      code: 'NOT_NATIVE_ANDROID',
+      message: '当前运行于 Web 预览环境，无法调用 Android 原生状态栏通知。',
+      notificationId: options.notificationId,
+    };
+  }
+
+  async consumePendingNotificationAction(): Promise<PendingNotificationAction> {
+    return {
+      hasPendingAction: false,
+      aiId: '',
+    };
+  }
+
+  async getNotificationDiagnostics(): Promise<NotificationDiagnostics> {
+    const webPermGranted =
+      typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted';
+    return {
+      isNativeAndroid: false,
+      sdkVersion: 0,
+      postNotificationsGranted: webPermGranted,
+      notificationsEnabled: webPermGranted,
+      channelId: 'ai_messages_v1',
+      channelExists: false,
+      channelImportance: 0,
+    };
+  }
 }
 
 export const AndroidPermissionBridge = registerPlugin<AndroidPermissionBridgePlugin>('AndroidPermissionBridge', {
@@ -111,7 +178,7 @@ export class AndroidPermissionBridgeClient {
 
     // Must be running inside Capacitor's native container on an Android device
     const isCapacitorNative = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
-    
+
     // Check if the native bridge is truly available and callable
     const hasNativeBridge = isCapacitorNative && Capacitor.isPluginAvailable('AndroidPermissionBridge');
 
@@ -199,6 +266,84 @@ export class AndroidPermissionBridgeClient {
   }
 
   /**
+   * Show real Android system notification via AndroidPermissionBridge
+   */
+  public async showAiMessageNotification(
+    options: ShowAiMessageNotificationOptions
+  ): Promise<NativeNotificationResult> {
+    if (!this.isNativeAndroid()) {
+      return {
+        success: false,
+        code: 'NOT_NATIVE_ANDROID',
+        message: '当前处于 Web 预览环境，未调用 Android 原生状态栏通知',
+        notificationId: options.notificationId,
+      };
+    }
+
+    try {
+      return await AndroidPermissionBridge.showAiMessageNotification(options);
+    } catch (e: any) {
+      console.warn('[AndroidPermissionBridgeClient] showAiMessageNotification error:', e);
+      return {
+        success: false,
+        code: 'NOTIFICATION_BRIDGE_ERROR',
+        message: e?.message || '调用 Android 原生通知桥失败',
+        notificationId: options.notificationId,
+      };
+    }
+  }
+
+  /**
+   * Consume any pending AI chat ID saved when user tapped a notification
+   */
+  public async consumePendingNotificationAction(): Promise<PendingNotificationAction> {
+    if (!this.isNativeAndroid()) {
+      return { hasPendingAction: false, aiId: '' };
+    }
+
+    try {
+      return await AndroidPermissionBridge.consumePendingNotificationAction();
+    } catch (e) {
+      console.warn('[AndroidPermissionBridgeClient] consumePendingNotificationAction error:', e);
+      return { hasPendingAction: false, aiId: '' };
+    }
+  }
+
+  /**
+   * Read genuine Android notification channel and permission diagnostics
+   */
+  public async getNotificationDiagnostics(): Promise<NotificationDiagnostics> {
+    if (!this.isNativeAndroid()) {
+      const webPermGranted =
+        typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted';
+      return {
+        isNativeAndroid: false,
+        sdkVersion: 0,
+        postNotificationsGranted: webPermGranted,
+        notificationsEnabled: webPermGranted,
+        channelId: 'ai_messages_v1',
+        channelExists: false,
+        channelImportance: 0,
+      };
+    }
+
+    try {
+      return await AndroidPermissionBridge.getNotificationDiagnostics();
+    } catch (e) {
+      console.warn('[AndroidPermissionBridgeClient] getNotificationDiagnostics error:', e);
+      return {
+        isNativeAndroid: true,
+        sdkVersion: 0,
+        postNotificationsGranted: false,
+        notificationsEnabled: false,
+        channelId: 'ai_messages_v1',
+        channelExists: false,
+        channelImportance: 0,
+      };
+    }
+  }
+
+  /**
    * Query screen usage statistics from Android OS UsageStatsManager
    */
   public async getScreenUsageMinutes(): Promise<ScreenUsageStatsResult> {
@@ -253,3 +398,4 @@ export class AndroidPermissionBridgeClient {
 }
 
 export const androidPermissionBridgeClient = AndroidPermissionBridgeClient.getInstance();
+

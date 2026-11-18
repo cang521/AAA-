@@ -1,4 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { App as CapacitorApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
+import { androidPermissionBridgeClient } from './lib/agent/AndroidPermissionBridgeClient';
 import {
   AppIconConfig,
   WidgetConfig,
@@ -101,10 +104,78 @@ export function App() {
 
   // Active sub-app state
   const [activeAppId, setActiveAppId] = useState<string | null>(null);
+  const [pendingWechatChatId, setPendingWechatChatId] = useState<string | null>(null);
 
   // Phase 2: Agent Orchestration states
   const [activeAskPrompt, setActiveAskPrompt] = useState<AgentAskPrompt | null>(null);
   const [activeNotification, setActiveNotification] = useState<InPhoneNotification | null>(null);
+
+  const navigateToWechatChat = useCallback((aiId: string) => {
+    const targetId = (aiId || '').trim();
+    if (!targetId) return;
+    lockSecurityService.setLockedState(false);
+    setIsLocked(false);
+    setActiveAppId('wechat');
+    setPendingWechatChatId(targetId);
+  }, []);
+
+  // Consume Android notification tap action on cold start, warm resume, or Web banner click
+  useEffect(() => {
+    let isCancelled = false;
+    let appListenerHandle: { remove: () => Promise<void> } | null = null;
+
+    const checkPendingNotificationAction = async () => {
+      try {
+        const pending = await androidPermissionBridgeClient.consumePendingNotificationAction();
+        if (!isCancelled && pending.hasPendingAction && pending.aiId) {
+          navigateToWechatChat(pending.aiId);
+        }
+      } catch (e) {
+        console.warn('[App] consumePendingNotificationAction warning:', e);
+      }
+    };
+
+    checkPendingNotificationAction();
+
+    const handleAndroidTap = () => {
+      checkPendingNotificationAction();
+    };
+    window.addEventListener('android_notification_tapped', handleAndroidTap);
+
+    const handleOpenAiChat = (e: Event) => {
+      const detail = (e as CustomEvent<{ aiId?: string; charId?: string }>).detail;
+      const targetId = detail?.aiId || detail?.charId;
+      if (targetId) {
+        navigateToWechatChat(targetId);
+      }
+    };
+    window.addEventListener('open_ai_chat', handleOpenAiChat);
+
+    if (Capacitor.isPluginAvailable('App')) {
+      CapacitorApp.addListener('appStateChange', (state: { isActive: boolean }) => {
+        if (state.isActive) {
+          checkPendingNotificationAction();
+        }
+      })
+        .then((handle) => {
+          if (isCancelled) {
+            handle.remove().catch(() => {});
+          } else {
+            appListenerHandle = handle;
+          }
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      isCancelled = true;
+      window.removeEventListener('android_notification_tapped', handleAndroidTap);
+      window.removeEventListener('open_ai_chat', handleOpenAiChat);
+      if (appListenerHandle) {
+        appListenerHandle.remove().catch(() => {});
+      }
+    };
+  }, [navigateToWechatChat]);
 
   // Subscribe to Agent Orchestrator & Start Background Proactive Scheduler
   useEffect(() => {
@@ -452,6 +523,8 @@ export function App() {
                 permissions={permissions}
                 apiConfig={currentEngineConfig}
                 worldBooks={worldBooks}
+                pendingChatId={pendingWechatChatId}
+                onConsumePendingChatId={() => setPendingWechatChatId(null)}
                 onUpdateCharacters={updateCharacters}
                 onUpdateMessages={updateMessages}
                 onUpdateMoments={updateMoments}
@@ -690,9 +763,13 @@ export function App() {
         {activeNotification && (
           <InPhoneNotificationBanner
             notification={activeNotification}
-            onOpenWechat={() => {
+            onOpenWechat={(characterId) => {
+              lockSecurityService.setLockedState(false);
               setIsLocked(false);
               setActiveAppId('wechat');
+              if (characterId) {
+                setPendingWechatChatId(characterId);
+              }
             }}
             onDismiss={() => agentOrchestrator.dismissNotification()}
           />
