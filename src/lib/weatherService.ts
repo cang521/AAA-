@@ -168,6 +168,7 @@ class WeatherService {
       if (lat !== undefined && !isNaN(lat)) url.searchParams.set('lat', lat.toString());
       if (lon !== undefined && !isNaN(lon)) url.searchParams.set('lon', lon.toString());
       url.searchParams.set('auto', isAuto ? 'true' : 'false');
+      if (force) url.searchParams.set('force', 'true');
 
       // If we have neither coordinates nor a city, do not make an invalid request
       if ((lat === undefined || lon === undefined || isNaN(lat) || isNaN(lon)) && !city) {
@@ -193,7 +194,7 @@ class WeatherService {
             locationError: locationErrorMsg || undefined,
             isAutoLocation: isAuto,
             isSimulated: false,
-            dataStatus: 'realtime',
+            dataStatus: data.weather?.dataSourceInfo?.isFromCache ? 'cached' : 'realtime',
           };
           this.cachedWeather = freshWeather;
           try {
@@ -204,7 +205,11 @@ class WeatherService {
           this.notifyListeners(freshWeather);
           this.isFetching = false;
           return freshWeather;
+        } else if (data.error) {
+          locationErrorMsg = data.error;
         }
+      } else {
+        locationErrorMsg = `天气服务异常 (HTTP ${res.status})`;
       }
     } catch (netErr: any) {
       console.warn('Weather fetch network error', netErr);

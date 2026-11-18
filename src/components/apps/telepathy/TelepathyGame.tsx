@@ -53,6 +53,7 @@ import {
 } from 'lucide-react';
 
 import { DEFAULT_AI_AVATAR } from '../../../lib/storage';
+import { PressableButton, AnimatedCheckbox } from '../../ui/interaction';
 
 interface TelepathyGameProps {
   onBack: () => void;
@@ -421,48 +422,49 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
     <div className="w-full h-full flex flex-col bg-zinc-950 text-white font-sans overflow-hidden select-none">
       {/* Top Header */}
       <div className="h-12 px-3 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between shrink-0 z-20">
-        <button
+        <PressableButton
           onClick={gameState === 'lobby' ? onBack : () => setGameState('lobby')}
-          className="flex items-center gap-1 text-xs text-rose-400 hover:text-rose-300 font-medium px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-750 transition"
+          className="flex items-center gap-1 text-xs telepathy-stat-rose font-medium px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-750 transition"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>{gameState === 'lobby' ? '游戏中心' : '退出本局'}</span>
-        </button>
+        </PressableButton>
 
         <div className="flex items-center gap-1.5 font-bold text-sm tracking-tight text-zinc-100">
           <Heart className="w-4 h-4 text-rose-500 fill-rose-500 animate-pulse" />
           <span>心有灵犀 (默契大考验)</span>
         </div>
 
-        <button
+        <PressableButton
           onClick={toggleSound}
+          expandHitArea
           className="p-1.5 rounded-xl bg-zinc-800 text-zinc-300 hover:text-white transition"
           title={soundEnabled ? '静音音效' : '开启音效'}
         >
           {soundEnabled ? <Volume2 className="w-4 h-4 text-rose-400" /> : <VolumeX className="w-4 h-4 text-zinc-500" />}
-        </button>
+        </PressableButton>
       </div>
 
       {/* ===================== VIEW 1: LOBBY (游戏大厅与角色配置) ===================== */}
       {gameState === 'lobby' && (
         <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
           {/* Hero Banner Card */}
-          <div className="p-4 rounded-3xl bg-gradient-to-br from-rose-950/90 via-zinc-900 to-pink-950/60 border border-rose-500/50 shadow-2xl relative overflow-hidden space-y-3">
+          <div className="telepathy-hero-card p-4 rounded-3xl border shadow-2xl relative overflow-hidden space-y-3">
             <div className="absolute -right-4 -top-4 w-32 h-32 bg-rose-500/15 rounded-full blur-2xl pointer-events-none" />
 
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-rose-500 to-pink-600 flex items-center justify-center text-white text-xl shadow-lg shadow-rose-500/25">
+                <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-rose-500 to-pink-600 flex items-center justify-center telepathy-btn-primary text-xl shadow-lg shadow-rose-500/25">
                   ❤️
                 </div>
                 <div>
                   <h3 className="font-extrabold text-sm text-zinc-100 flex items-center gap-1.5">
                     <span>心有灵犀 · 默契测试</span>
-                    <span className="px-1.5 py-0.2 rounded-full bg-rose-500/30 text-rose-300 font-mono text-[9px] border border-rose-500/40 animate-pulse">
+                    <span className="px-1.5 py-0.2 rounded-full bg-rose-500/20 telepathy-stat-rose font-mono text-[9px] border border-rose-500/40 animate-pulse">
                       NEW
                     </span>
                   </h3>
-                  <p className="text-[10px] text-rose-300/80 font-medium">
+                  <p className="text-[10px] telepathy-hero-subtitle font-medium">
                     AI推测玩家选择 · 测算灵魂默契度与羁绊
                   </p>
                 </div>
@@ -479,8 +481,8 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
             </div>
 
             {/* Core Game Rules Pill */}
-            <div className="p-2.5 rounded-2xl bg-rose-950/40 border border-rose-500/30 flex items-center gap-2 text-rose-200 text-[10px]">
-              <Sparkles className="w-4 h-4 text-rose-400 shrink-0" />
+            <div className="telepathy-rules-pill p-2.5 rounded-2xl border flex items-center gap-2 text-[10px]">
+              <Sparkles className="w-4 h-4 text-rose-500 shrink-0" />
               <span>
                 向你和AI提出同一个问题。双方秘密选择后同时公布，答案一致则获得“默契 +1”！
               </span>
@@ -488,28 +490,28 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
 
             {/* Sub Tabs: Play / Records */}
             <div className="flex bg-zinc-900/90 p-1 rounded-2xl border border-zinc-800 text-[11px]">
-              <button
+              <PressableButton
                 onClick={() => setLobbySubTab('play')}
                 className={`flex-1 py-1.5 rounded-xl font-bold transition flex items-center justify-center gap-1.5 ${
                   lobbySubTab === 'play'
-                    ? 'bg-rose-500 text-white shadow'
+                    ? 'bg-rose-500 telepathy-btn-primary shadow'
                     : 'text-zinc-400 hover:text-white'
                 }`}
               >
                 <Zap className="w-3.5 h-3.5" />
                 <span>开局挑战</span>
-              </button>
-              <button
+              </PressableButton>
+              <PressableButton
                 onClick={() => setLobbySubTab('records')}
                 className={`flex-1 py-1.5 rounded-xl font-bold transition flex items-center justify-center gap-1.5 ${
                   lobbySubTab === 'records'
-                    ? 'bg-rose-500 text-white shadow'
+                    ? 'bg-rose-500 telepathy-btn-primary shadow'
                     : 'text-zinc-400 hover:text-white'
                 }`}
               >
                 <History className="w-3.5 h-3.5" />
                 <span>专属默契榜 & 历史 ({charSpecificRecords.length})</span>
-              </button>
+              </PressableButton>
             </div>
           </div>
 
@@ -526,7 +528,7 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
                     const cStat = charStatsMap[char.id];
                     const isSelected = selectedCharId === char.id;
                     return (
-                      <button
+                      <PressableButton
                         key={char.id}
                         onClick={() => setSelectedCharId(char.id)}
                         className={`p-2 rounded-2xl border flex items-center gap-2 shrink-0 transition ${
@@ -553,7 +555,7 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
                             {char.tags?.[0] || 'AI伙伴'}
                           </div>
                         </div>
-                      </button>
+                      </PressableButton>
                     );
                   })}
                 </div>
@@ -592,15 +594,15 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
                   </div>
                   <div className="p-1.5 rounded-xl bg-zinc-800/80">
                     <div className="text-zinc-400 text-[9px]">猜中次数</div>
-                    <div className="font-bold text-emerald-400">{activeCharStats.totalMatches} 次</div>
+                    <div className="font-bold telepathy-stat-emerald">{activeCharStats.totalMatches} 次</div>
                   </div>
                   <div className="p-1.5 rounded-xl bg-zinc-800/80">
                     <div className="text-zinc-400 text-[9px]">最高连中</div>
-                    <div className="font-bold text-amber-400">{activeCharStats.maxStreak} 次</div>
+                    <div className="font-bold telepathy-stat-amber">{activeCharStats.maxStreak} 次</div>
                   </div>
                   <div className="p-1.5 rounded-xl bg-zinc-800/80">
                     <div className="text-zinc-400 text-[9px]">单局最高分</div>
-                    <div className="font-bold text-rose-400">{activeCharStats.highestScore}%</div>
+                    <div className="font-bold telepathy-stat-rose">{activeCharStats.highestScore}%</div>
                   </div>
                 </div>
               </div>
@@ -611,78 +613,78 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
                   选择挑战题数模式
                 </label>
                 <div className="grid grid-cols-2 gap-2">
-                  <button
+                  <PressableButton
                     onClick={() => setGameMode('single')}
                     className={`p-2.5 rounded-2xl border text-left flex items-center gap-2 transition ${
                       gameMode === 'single'
-                        ? 'bg-rose-500/20 border-rose-500 text-rose-200 shadow-sm'
+                        ? 'telepathy-mode-card--active shadow-sm'
                         : 'bg-zinc-800/60 border-zinc-700/60 text-zinc-400 hover:text-zinc-200'
                     }`}
                   >
-                    <div className="w-7 h-7 rounded-xl bg-rose-500/20 flex items-center justify-center font-bold text-rose-400 text-xs">
+                    <div className="w-7 h-7 rounded-xl bg-rose-500/20 flex items-center justify-center font-bold telepathy-stat-rose text-xs">
                       1
                     </div>
                     <div>
                       <div className="font-bold text-[11px]">单局快问</div>
                       <div className="text-[9px] text-zinc-400">1题快速测验</div>
                     </div>
-                  </button>
+                  </PressableButton>
 
-                  <button
+                  <PressableButton
                     onClick={() => setGameMode('5_rounds')}
                     className={`p-2.5 rounded-2xl border text-left flex items-center gap-2 transition ${
                       gameMode === '5_rounds'
-                        ? 'bg-rose-500/20 border-rose-500 text-rose-200 shadow-sm'
+                        ? 'telepathy-mode-card--active shadow-sm'
                         : 'bg-zinc-800/60 border-zinc-700/60 text-zinc-400 hover:text-zinc-200'
                     }`}
                   >
-                    <div className="w-7 h-7 rounded-xl bg-rose-500/20 flex items-center justify-center font-bold text-rose-400 text-xs">
+                    <div className="w-7 h-7 rounded-xl bg-rose-500/20 flex items-center justify-center font-bold telepathy-stat-rose text-xs">
                       5
                     </div>
                     <div>
                       <div className="font-bold text-[11px]">5题默契赛</div>
-                      <div className="text-[9px] text-rose-300 font-medium">推荐体验 · 标准赛</div>
+                      <div className="text-[9px] telepathy-stat-rose font-medium">推荐体验 · 标准赛</div>
                     </div>
-                  </button>
+                  </PressableButton>
 
-                  <button
+                  <PressableButton
                     onClick={() => setGameMode('10_rounds')}
                     className={`p-2.5 rounded-2xl border text-left flex items-center gap-2 transition ${
                       gameMode === '10_rounds'
-                        ? 'bg-rose-500/20 border-rose-500 text-rose-200 shadow-sm'
+                        ? 'telepathy-mode-card--active shadow-sm'
                         : 'bg-zinc-800/60 border-zinc-700/60 text-zinc-400 hover:text-zinc-200'
                     }`}
                   >
-                    <div className="w-7 h-7 rounded-xl bg-rose-500/20 flex items-center justify-center font-bold text-rose-400 text-xs">
+                    <div className="w-7 h-7 rounded-xl bg-rose-500/20 flex items-center justify-center font-bold telepathy-stat-rose text-xs">
                       10
                     </div>
                     <div>
                       <div className="font-bold text-[11px]">10题深度考验</div>
                       <div className="text-[9px] text-zinc-400">全方位全分类解析</div>
                     </div>
-                  </button>
+                  </PressableButton>
 
-                  <button
+                  <PressableButton
                     onClick={() => setGameMode('endless')}
                     className={`p-2.5 rounded-2xl border text-left flex items-center gap-2 transition ${
                       gameMode === 'endless'
-                        ? 'bg-rose-500/20 border-rose-500 text-rose-200 shadow-sm'
+                        ? 'telepathy-mode-card--active shadow-sm'
                         : 'bg-zinc-800/60 border-zinc-700/60 text-zinc-400 hover:text-zinc-200'
                     }`}
                   >
-                    <div className="w-7 h-7 rounded-xl bg-rose-500/20 flex items-center justify-center font-bold text-rose-400 text-xs">
+                    <div className="w-7 h-7 rounded-xl bg-rose-500/20 flex items-center justify-center font-bold telepathy-stat-rose text-xs">
                       ∞
                     </div>
                     <div>
                       <div className="font-bold text-[11px]">无限题挑战</div>
                       <div className="text-[9px] text-zinc-400">持续答题冲刺连中</div>
                     </div>
-                  </button>
+                  </PressableButton>
                 </div>
               </div>
 
               {/* Long-term Memory Permission Switch */}
-              <div className="p-3 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-between">
+              <div className="p-3 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <Brain className="w-4 h-4 text-purple-400 shrink-0" />
                   <div>
@@ -695,23 +697,25 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
                     </div>
                   </div>
                 </div>
-                <input
-                  type="checkbox"
+                <AnimatedCheckbox
                   checked={allowMemoryWrite}
-                  onChange={(e) => setAllowMemoryWrite(e.target.checked)}
-                  className="w-4 h-4 accent-rose-500 rounded cursor-pointer shrink-0"
+                  onChange={setAllowMemoryWrite}
+                  accent="rose"
+                  completedTextStyle={false}
+                  ariaLabel="允许记录游戏专属长期记忆"
                 />
               </div>
 
               {/* Start Button */}
               <div className="pt-2">
-                <button
+                <PressableButton
                   onClick={handleStartGame}
-                  className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-rose-500 via-pink-500 to-rose-600 hover:from-rose-600 hover:to-pink-600 text-white font-extrabold text-sm flex items-center justify-center gap-2 shadow-xl shadow-rose-500/25 transition active:scale-98"
+                  withRipple
+                  className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-rose-500 via-pink-500 to-rose-600 hover:from-rose-600 hover:to-pink-600 telepathy-btn-primary font-extrabold text-sm flex items-center justify-center gap-2 shadow-xl shadow-rose-500/25 transition overflow-hidden"
                 >
                   <Play className="w-4 h-4 fill-white" />
                   <span>与 {activeChar.name} 开启心有灵犀大考验</span>
-                </button>
+                </PressableButton>
               </div>
             </>
           ) : (
@@ -720,7 +724,7 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
               {/* All Characters Affinity Comparison */}
               <div className="p-3.5 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-2.5">
                 <h4 className="font-bold text-xs text-zinc-200 flex items-center gap-1.5">
-                  <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                  <Trophy className="w-3.5 h-3.5 telepathy-stat-amber" />
                   <span>各 AI 角色专属默契榜单</span>
                 </h4>
                 <div className="space-y-2">
@@ -745,7 +749,7 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
                         className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition ${
                           selectedCharId === char.id
                             ? 'bg-rose-500/15 border-rose-500/50'
-                            : 'bg-zinc-800/40 border-zinc-800 hover:bg-zinc-800'
+                            : 'telepathy-surface-sub'
                         }`}
                       >
                         <div className="flex items-center gap-2 min-w-0">
@@ -800,7 +804,7 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
                         <span className="text-zinc-400">
                           {new Date(rec.timestamp).toLocaleDateString()} {new Date(rec.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
-                        <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 font-bold">
+                        <span className="px-2 py-0.5 rounded-md telepathy-pill-rose border font-bold">
                           {rec.affinityLevelTitle}
                         </span>
                       </div>
@@ -810,19 +814,19 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
                           <span className="font-bold text-zinc-200">
                             猜中 {rec.matchCount} / {rec.totalRounds} 题
                           </span>
-                          <span className="text-[10px] text-amber-400 font-medium">
+                          <span className="text-[10px] telepathy-stat-amber font-medium">
                             最高连中 {rec.maxStreak}
                           </span>
                         </div>
-                        <div className="font-extrabold text-rose-400 font-mono text-sm">
+                        <div className="font-extrabold telepathy-stat-rose font-mono text-sm">
                           {rec.matchRate}%
                         </div>
                       </div>
 
                       {/* Memory generated if any */}
                       {rec.generatedMemory && (
-                        <div className="text-[10px] text-purple-300/90 bg-purple-950/30 border border-purple-500/30 p-2 rounded-xl flex items-start gap-1.5">
-                          <Brain className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5" />
+                        <div className="telepathy-memory-box text-[10px] border p-2 rounded-xl flex items-start gap-1.5">
+                          <Brain className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                           <span>已沉淀记忆：{rec.generatedMemory}</span>
                         </div>
                       )}
@@ -842,7 +846,7 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">
               <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded-lg bg-rose-500/20 text-rose-300 font-bold text-[10px]">
+                <span className="px-2 py-0.5 rounded-lg telepathy-pill-rose border font-bold text-[10px]">
                   第 {currentRoundIdx + 1} / {questions.length} 题
                 </span>
                 <span className="px-2 py-0.5 rounded-lg bg-zinc-800 text-zinc-300 text-[10px]">
@@ -851,11 +855,11 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
               </div>
 
               <div className="flex items-center gap-2 font-mono text-xs">
-                <div className="flex items-center gap-1 text-amber-400">
+                <div className="flex items-center gap-1 telepathy-stat-amber font-semibold">
                   <Flame className="w-3.5 h-3.5" />
                   <span>连中 {currentStreak}</span>
                 </div>
-                <div className="text-rose-400 font-bold">
+                <div className="telepathy-stat-rose font-bold">
                   默契分: {matchCount}
                 </div>
               </div>
@@ -873,12 +877,12 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
           </div>
 
           {/* Question Display Card */}
-          <div className="p-5 rounded-3xl bg-gradient-to-br from-zinc-900 to-zinc-900/90 border border-zinc-800 shadow-xl space-y-3">
-            <div className="flex items-center gap-2 text-zinc-400 text-[10px]">
-              <HelpCircle className="w-3.5 h-3.5 text-rose-400" />
+          <div className="telepathy-question-card p-5 rounded-3xl border shadow-xl space-y-3">
+            <div className="telepathy-question-label flex items-center gap-2 text-[11px] font-medium">
+              <HelpCircle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
               <span>请凭直觉选择你的真实想法：</span>
             </div>
-            <h3 className="font-extrabold text-base text-zinc-100 leading-snug">
+            <h3 className="telepathy-question-text font-extrabold text-base leading-snug">
               {currentQuestion.question}
             </h3>
           </div>
@@ -892,11 +896,13 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
 
             <div className="grid grid-cols-1 gap-2.5">
               {currentQuestion.options.map((opt) => (
-                <button
+                <PressableButton
                   key={opt.id}
                   onClick={() => handlePlayerChoose(opt.id)}
                   disabled={isAiThinking}
-                  className="w-full p-3.5 rounded-2xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-rose-500/50 text-left flex items-center justify-between gap-3 transition active:scale-98 group shadow-sm"
+                  pressScale={0.96}
+                  withRipple
+                  className="w-full p-3.5 rounded-2xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-rose-500/50 text-left flex items-center justify-between gap-3 transition group shadow-sm overflow-hidden"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="w-8 h-8 rounded-xl bg-zinc-800 group-hover:bg-rose-500/20 text-zinc-200 group-hover:text-rose-300 font-extrabold text-xs flex items-center justify-center shrink-0 border border-zinc-700/60">
@@ -907,20 +913,21 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
                     </span>
                   </div>
                   <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-rose-400 shrink-0 transition-transform group-hover:translate-x-0.5" />
-                </button>
+                </PressableButton>
               ))}
             </div>
           </div>
 
           {/* Bottom Opponent Status */}
-          <div className="p-2.5 rounded-2xl bg-zinc-900/60 border border-zinc-850 flex items-center gap-2.5 text-zinc-400 text-[10px]">
+          <div className="telepathy-opponent-status p-2.5 rounded-2xl border flex items-center gap-2.5 text-[11px]">
             <img
               src={activeChar.avatar}
               alt={activeChar.name}
-              className="w-6 h-6 rounded-full object-cover border border-rose-500/30"
+              className="telepathy-opponent-avatar w-6 h-6 rounded-full object-cover border shrink-0"
             />
             <span className="truncate">
-              {activeChar.name} 正在结合你的人设和记忆进行默契推演...
+              <span className="telepathy-opponent-name font-semibold">{activeChar.name}</span>{' '}
+              正在结合你的人设和记忆进行默契推演...
             </span>
           </div>
         </div>
@@ -932,7 +939,7 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
           <motion.div
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="w-20 h-20 rounded-3xl bg-gradient-to-br from-rose-500 to-pink-600 flex items-center justify-center text-white shadow-2xl shadow-rose-500/40 relative"
+            className="w-20 h-20 rounded-3xl bg-gradient-to-br from-rose-500 to-pink-600 flex items-center justify-center telepathy-btn-primary shadow-2xl shadow-rose-500/40 relative"
           >
             <Sparkles className="w-10 h-10 animate-spin" style={{ animationDuration: '3s' }} />
           </motion.div>
@@ -941,7 +948,7 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
             <h3 className="font-extrabold text-lg text-zinc-100">
               双方答案锁定，正在同步揭晓……
             </h3>
-            <p className="text-xs text-rose-300/80">
+            <p className="text-xs telepathy-hero-subtitle font-medium">
               来看看你和 {activeChar.name} 是否心有灵犀！
             </p>
           </div>
@@ -963,11 +970,11 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
         <div className="flex-1 overflow-y-auto p-4 flex flex-col justify-between space-y-4">
           <div className="space-y-3">
             {/* Round question display */}
-            <div className="p-3 rounded-2xl bg-zinc-900 border border-zinc-800 text-center">
-              <span className="text-[10px] text-zinc-400 block mb-1">
+            <div className="telepathy-question-card p-3 rounded-2xl border text-center">
+              <span className="telepathy-question-label text-[10px] block mb-1">
                 第 {lastRoundResult.roundIndex} 题 · {lastRoundResult.question.categoryLabel}
               </span>
-              <h4 className="font-bold text-xs text-zinc-200">
+              <h4 className="telepathy-question-text font-bold text-xs">
                 {lastRoundResult.question.question}
               </h4>
             </div>
@@ -975,7 +982,7 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
             {/* Both choices reveal card */}
             <div className={`p-4 rounded-3xl border shadow-xl relative overflow-hidden space-y-3 ${
               lastRoundResult.isMatch
-                ? 'bg-gradient-to-br from-rose-950/80 via-zinc-900 to-pink-950/60 border-rose-500/60'
+                ? 'telepathy-result-card--match'
                 : 'bg-zinc-900 border-zinc-800'
             }`}>
               {/* Match Header Badge */}
@@ -1037,7 +1044,7 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
                 </div>
               </div>
 
-              <p className="text-xs text-rose-200/90 leading-relaxed pl-1 italic">
+              <p className="telepathy-reaction-text text-xs leading-relaxed pl-1 italic">
                 “{lastRoundResult.aiReaction}”
               </p>
             </div>
@@ -1045,13 +1052,14 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
 
           {/* Next Button */}
           <div className="pt-2">
-            <button
+            <PressableButton
               onClick={handleNextRound}
-              className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 text-white font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg shadow-rose-500/20 transition active:scale-98"
+              withRipple
+              className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 telepathy-btn-primary font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg shadow-rose-500/20 transition overflow-hidden"
             >
               <span>继续下一题</span>
               <ChevronRight className="w-4 h-4" />
-            </button>
+            </PressableButton>
           </div>
         </div>
       )}
@@ -1061,8 +1069,8 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
         <div className="flex-1 overflow-y-auto p-4 flex flex-col justify-between space-y-4">
           <div className="space-y-3.5">
             {/* Victory Score Banner */}
-            <div className="p-5 rounded-3xl bg-gradient-to-br from-rose-950 via-zinc-900 to-pink-950 border border-rose-500/50 shadow-2xl text-center space-y-3 relative overflow-hidden">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-rose-500 to-pink-600 flex items-center justify-center text-white text-2xl mx-auto shadow-lg shadow-rose-500/30">
+            <div className="telepathy-summary-card p-5 rounded-3xl border shadow-2xl text-center space-y-3 relative overflow-hidden">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-rose-500 to-pink-600 flex items-center justify-center telepathy-btn-primary text-2xl mx-auto shadow-lg shadow-rose-500/30">
                 ❤️
               </div>
 
@@ -1070,17 +1078,17 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
                 <h3 className="font-black text-lg text-zinc-100">
                   心有灵犀 · 默契测试完成
                 </h3>
-                <p className="text-xs text-rose-300 font-medium">
+                <p className="text-xs telepathy-hero-subtitle font-medium">
                   你与 {activeChar.name} 的默契评估报告
                 </p>
               </div>
 
               {/* Main Score Big Display */}
               <div className="py-2">
-                <div className="text-4xl font-black font-mono text-transparent bg-clip-text bg-gradient-to-r from-rose-400 via-pink-400 to-amber-300">
+                <div className="telepathy-summary-score text-4xl font-black font-mono text-transparent bg-clip-text">
                   {completedRecord.matchRate}%
                 </div>
-                <div className="text-xs font-bold text-rose-300 mt-1">
+                <div className="text-xs font-bold telepathy-stat-rose mt-1">
                   默契等级：{completedRecord.affinityLevelTitle}
                 </div>
               </div>
@@ -1092,28 +1100,28 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
                   <div className="font-extrabold text-zinc-200">{completedRecord.totalRounds}</div>
                 </div>
                 <div className="p-2 rounded-2xl bg-zinc-900/80 border border-zinc-800">
-                  <div className="text-[10px] text-emerald-400">猜中次数</div>
-                  <div className="font-extrabold text-emerald-400">{completedRecord.matchCount}</div>
+                  <div className="text-[10px] telepathy-stat-emerald">猜中次数</div>
+                  <div className="font-extrabold telepathy-stat-emerald">{completedRecord.matchCount}</div>
                 </div>
                 <div className="p-2 rounded-2xl bg-zinc-900/80 border border-zinc-800">
-                  <div className="text-[10px] text-amber-400">本局最高连中</div>
-                  <div className="font-extrabold text-amber-400">{completedRecord.maxStreak}</div>
+                  <div className="text-[10px] telepathy-stat-amber">本局最高连中</div>
+                  <div className="font-extrabold telepathy-stat-amber">{completedRecord.maxStreak}</div>
                 </div>
                 <div className="p-2 rounded-2xl bg-zinc-900/80 border border-zinc-800">
-                  <div className="text-[10px] text-rose-400">历史最高分</div>
-                  <div className="font-extrabold text-rose-400">{activeCharStats.highestScore}%</div>
+                  <div className="text-[10px] telepathy-stat-rose">历史最高分</div>
+                  <div className="font-extrabold telepathy-stat-rose">{activeCharStats.highestScore}%</div>
                 </div>
               </div>
             </div>
 
             {/* Memory Sync Status */}
             {savedMemoryText && (
-              <div className="p-3.5 rounded-2xl bg-purple-950/40 border border-purple-500/40 space-y-1.5">
-                <div className="flex items-center gap-1.5 text-purple-300 text-xs font-bold">
-                  <Brain className="w-4 h-4 text-purple-400" />
+              <div className="telepathy-memory-box p-3.5 rounded-2xl border space-y-1.5">
+                <div className="flex items-center gap-1.5 text-xs font-bold">
+                  <Brain className="w-4 h-4 shrink-0" />
                   <span>已自动沉淀进 {activeChar.name} 的长期记忆</span>
                 </div>
-                <p className="text-[10px] text-purple-200 leading-relaxed">
+                <p className="text-[10px] leading-relaxed">
                   “{savedMemoryText}”
                 </p>
               </div>
@@ -1139,7 +1147,7 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
                       </div>
                     </div>
                     {r.isMatch ? (
-                      <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-400 font-bold text-[10px] shrink-0">
+                      <span className="px-2 py-0.5 rounded bg-rose-500/20 telepathy-stat-rose font-bold text-[10px] shrink-0">
                         +1 默契
                       </span>
                     ) : (
@@ -1155,30 +1163,31 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
 
           {/* Action Buttons */}
           <div className="space-y-2 pt-2">
-            <button
+            <PressableButton
               onClick={handleStartGame}
-              className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-lg transition active:scale-98"
+              withRipple
+              className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 telepathy-btn-primary font-extrabold text-xs flex items-center justify-center gap-2 shadow-lg transition overflow-hidden"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>与 {activeChar.name} 再玩一次</span>
-            </button>
+            </PressableButton>
 
             <div className="grid grid-cols-2 gap-2">
-              <button
+              <PressableButton
                 onClick={() => setGameState('lobby')}
                 className="py-2.5 px-3 rounded-2xl bg-zinc-800 hover:bg-zinc-750 text-zinc-200 font-bold text-xs flex items-center justify-center gap-1.5 transition"
               >
                 <User className="w-3.5 h-3.5" />
                 <span>换一个 AI 挑战</span>
-              </button>
+              </PressableButton>
 
-              <button
+              <PressableButton
                 onClick={onBack}
                 className="py-2.5 px-3 rounded-2xl bg-zinc-800 hover:bg-zinc-750 text-zinc-200 font-bold text-xs flex items-center justify-center gap-1.5 transition"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
                 <span>返回游戏主页</span>
-              </button>
+              </PressableButton>
             </div>
           </div>
         </div>

@@ -488,6 +488,624 @@ textarea,
   color: #EF4444 !important;
 }
 
+/* Interaction Components Light / Dark Theme Tokens */
+.ui-toggle-off {
+  background-color: #CBD5E1;
+}
+[data-theme="dark"] .ui-toggle-off,
+.theme-dark .ui-toggle-off {
+  background-color: #334155;
+}
+
+.ui-toggle-green {
+  background-color: #22C55E;
+}
+[data-theme="dark"] .ui-toggle-green,
+.theme-dark .ui-toggle-green {
+  background-color: #34D399;
+}
+
+.ui-toggle-sky {
+  background-color: #59B6E8;
+}
+[data-theme="dark"] .ui-toggle-sky,
+.theme-dark .ui-toggle-sky {
+  background-color: #38BDF8;
+}
+
+.ui-toggle-amber {
+  background-color: #F59E0B;
+}
+[data-theme="dark"] .ui-toggle-amber,
+.theme-dark .ui-toggle-amber {
+  background-color: #FBBF24;
+}
+
+.ui-toggle-indigo {
+  background-color: #4F46E5;
+}
+[data-theme="dark"] .ui-toggle-indigo,
+.theme-dark .ui-toggle-indigo {
+  background-color: #6366F1;
+}
+
+.ui-toggle-cyan {
+  background-color: #0891B2;
+}
+[data-theme="dark"] .ui-toggle-cyan,
+.theme-dark .ui-toggle-cyan {
+  background-color: #06B6D4;
+}
+
+.ui-checkbox-off {
+  background-color: #FFFFFF;
+  border-color: #CBD5E1;
+}
+.group:hover .ui-checkbox-off {
+  border-color: #9DD8F5;
+}
+[data-theme="dark"] .ui-checkbox-off,
+.theme-dark .ui-checkbox-off {
+  background-color: #151D28;
+  border-color: #475569;
+}
+[data-theme="dark"] .group:hover .ui-checkbox-off,
+.theme-dark .group:hover .ui-checkbox-off {
+  border-color: #64748B;
+}
+
+.ui-like-off {
+  background-color: #F7FBFF;
+  border-color: #D9EAF7;
+  color: #5B6B7C;
+}
+.ui-like-off:hover {
+  color: #F43F5E;
+  border-color: rgba(244, 63, 94, 0.35);
+}
+[data-theme="dark"] .ui-like-off,
+.theme-dark .ui-like-off {
+  background-color: #151D28;
+  border-color: rgba(141, 204, 244, 0.22);
+  color: #94A3B8;
+}
+[data-theme="dark"] .ui-like-off:hover,
+.theme-dark .ui-like-off:hover {
+  color: #FB7185;
+  border-color: rgba(244, 63, 94, 0.4);
+}
+
+.ui-like-on {
+  background-color: rgba(244, 63, 94, 0.12);
+  border-color: rgba(244, 63, 94, 0.45);
+  color: #E11D48;
+}
+[data-theme="dark"] .ui-like-on,
+.theme-dark .ui-like-on {
+  background-color: rgba(244, 63, 94, 0.16);
+  border-color: rgba(244, 63, 94, 0.45);
+  color: #FB7185;
+}
+
+/* ======================================================
+   GAME SEMANTIC ELEMENTS (Theme-Immune Chess Pieces & Marks)
+   ====================================================== */
+.gomoku-stone {
+  position: relative;
+  border-radius: 9999px;
+  pointer-events: none;
+  transition-property: transform, box-shadow;
+  transition-duration: 150ms;
+}
+
+.gomoku-stone--black,
+[data-theme="light"] .gomoku-stone--black,
+[data-theme="cloud_milk"] .gomoku-stone--black,
+[data-theme="default"] .gomoku-stone--black,
+[data-theme="dark"] .gomoku-stone--black,
+.theme-light .gomoku-stone--black,
+.theme-cloud-milk .gomoku-stone--black,
+.theme-default .gomoku-stone--black,
+.theme-dark .gomoku-stone--black {
+  background-color: #0B0B0D !important;
+  background-image: radial-gradient(circle at 30% 25%, #52525B 0%, #27272A 28%, #111113 62%, #020203 100%) !important;
+  color: #F4F4F5 !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow: 1px 2px 4px rgba(0, 0, 0, 0.65), inset -1px -1px 2px rgba(255, 255, 255, 0.18) !important;
+}
+
+.gomoku-stone--white,
+[data-theme="light"] .gomoku-stone--white,
+[data-theme="cloud_milk"] .gomoku-stone--white,
+[data-theme="default"] .gomoku-stone--white,
+[data-theme="dark"] .gomoku-stone--white,
+.theme-light .gomoku-stone--white,
+.theme-cloud-milk .gomoku-stone--white,
+.theme-default .gomoku-stone--white,
+.theme-dark .gomoku-stone--white {
+  background-color: #F8FAFC !important;
+  background-image: radial-gradient(circle at 30% 25%, #FFFFFF 0%, #F8FAFC 34%, #E2E8F0 70%, #CBD5E1 100%) !important;
+  color: #1E293B !important;
+  border: 1px solid rgba(71, 85, 105, 0.35) !important;
+  box-shadow: 1px 2px 4px rgba(0, 0, 0, 0.36), inset -1px -1px 2px rgba(0, 0, 0, 0.12) !important;
+}
+
+.gomoku-stone--black.gomoku-stone--win,
+[data-theme="light"] .gomoku-stone--black.gomoku-stone--win,
+[data-theme="cloud_milk"] .gomoku-stone--black.gomoku-stone--win,
+[data-theme="default"] .gomoku-stone--black.gomoku-stone--win,
+[data-theme="dark"] .gomoku-stone--black.gomoku-stone--win {
+  box-shadow: 0 0 0 2px #D5A768, 0 0 0 4px #FBBF24, 0 4px 10px rgba(245, 158, 11, 0.5) !important;
+}
+
+.gomoku-stone--white.gomoku-stone--win,
+[data-theme="light"] .gomoku-stone--white.gomoku-stone--win,
+[data-theme="cloud_milk"] .gomoku-stone--white.gomoku-stone--win,
+[data-theme="default"] .gomoku-stone--white.gomoku-stone--win,
+[data-theme="dark"] .gomoku-stone--white.gomoku-stone--win {
+  box-shadow: 0 0 0 2px #D5A768, 0 0 0 4px #FBBF24, 0 4px 10px rgba(245, 158, 11, 0.45) !important;
+}
+
+.gomoku-stone-gloss {
+  background-color: rgba(255, 255, 255, 0.42) !important;
+}
+
+.gomoku-last-dot--black,
+[data-theme="light"] .gomoku-last-dot--black,
+[data-theme="dark"] .gomoku-last-dot--black {
+  background-color: #FBBF24 !important;
+  border: 1px solid rgba(17, 17, 19, 0.75) !important;
+  box-shadow: 0 0 0 1.5px rgba(251, 191, 36, 0.32) !important;
+}
+
+.gomoku-last-dot--white,
+[data-theme="light"] .gomoku-last-dot--white,
+[data-theme="dark"] .gomoku-last-dot--white {
+  background-color: #E11D48 !important;
+  border: 1px solid rgba(255, 255, 255, 0.9) !important;
+  box-shadow: 0 0 0 1.5px rgba(225, 29, 72, 0.22) !important;
+}
+
+.gomoku-move-order--black,
+[data-theme="light"] .gomoku-move-order--black,
+[data-theme="cloud_milk"] .gomoku-move-order--black,
+[data-theme="default"] .gomoku-move-order--black,
+[data-theme="dark"] .gomoku-move-order--black {
+  color: #F4F4F5 !important;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.85);
+}
+
+.gomoku-move-order--white,
+[data-theme="light"] .gomoku-move-order--white,
+[data-theme="cloud_milk"] .gomoku-move-order--white,
+[data-theme="default"] .gomoku-move-order--white,
+[data-theme="dark"] .gomoku-move-order--white {
+  color: #1E293B !important;
+}
+
+.gomoku-preview--black {
+  background-color: rgba(17, 17, 19, 0.26) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+}
+
+.gomoku-preview--white {
+  background-color: rgba(255, 255, 255, 0.58) !important;
+  border: 1px solid rgba(71, 85, 105, 0.4) !important;
+}
+
+.gomoku-badge-black,
+[data-theme="light"] .gomoku-badge-black,
+[data-theme="dark"] .gomoku-badge-black {
+  background-color: #18181B !important;
+  border-color: #3F3F46 !important;
+  color: #FFFFFF !important;
+}
+
+.gomoku-badge-white,
+[data-theme="light"] .gomoku-badge-white,
+[data-theme="dark"] .gomoku-badge-white {
+  background-color: #F4F4F5 !important;
+  border-color: #CBD5E1 !important;
+  color: #18181B !important;
+}
+
+/* TicTacToe Semantic Marks & Badges */
+.ttt-badge-x,
+[data-theme="light"] .ttt-badge-x,
+[data-theme="dark"] .ttt-badge-x {
+  background-color: #0891B2 !important;
+  color: #FFFFFF !important;
+}
+
+.ttt-badge-o,
+[data-theme="light"] .ttt-badge-o,
+[data-theme="dark"] .ttt-badge-o {
+  background-color: #E11D48 !important;
+  color: #FFFFFF !important;
+}
+
+.ttt-mark-x {
+  color: #0891B2 !important;
+}
+[data-theme="dark"] .ttt-mark-x,
+.theme-dark .ttt-mark-x {
+  color: #22D3EE !important;
+}
+
+.ttt-mark-o {
+  color: #E11D48 !important;
+}
+[data-theme="dark"] .ttt-mark-o,
+.theme-dark .ttt-mark-o {
+  color: #FB7185 !important;
+}
+
+.ttt-mark-win {
+  color: #D97706 !important;
+}
+[data-theme="dark"] .ttt-mark-win,
+.theme-dark .ttt-mark-win {
+  color: #FCD34D !important;
+}
+
+/* ======================================================
+   TELEPATHY GAME SEMANTIC CARDS & CONTRAST PAIRS
+   ====================================================== */
+/* 1. Question Card (playing) */
+:root .telepathy-question-card,
+[data-theme="light"] .telepathy-question-card,
+[data-theme="cloud_milk"] .telepathy-question-card,
+[data-theme="default"] .telepathy-question-card,
+.theme-light .telepathy-question-card,
+.theme-cloud-milk .telepathy-question-card,
+.theme-default .telepathy-question-card {
+  background: linear-gradient(145deg, #FFFFFF 0%, #FFF5F8 100%) !important;
+  border-color: #F6C9D7 !important;
+  box-shadow: 0 8px 24px rgba(190, 80, 120, 0.10) !important;
+}
+
+:root .telepathy-question-label,
+[data-theme="light"] .telepathy-question-label,
+[data-theme="cloud_milk"] .telepathy-question-label,
+[data-theme="default"] .telepathy-question-label,
+.theme-light .telepathy-question-label,
+.theme-cloud-milk .telepathy-question-label,
+.theme-default .telepathy-question-label {
+  color: #5B6B7C !important;
+}
+
+:root .telepathy-question-text,
+[data-theme="light"] .telepathy-question-text,
+[data-theme="cloud_milk"] .telepathy-question-text,
+[data-theme="default"] .telepathy-question-text,
+.theme-light .telepathy-question-text,
+.theme-cloud-milk .telepathy-question-text,
+.theme-default .telepathy-question-text {
+  color: #243040 !important;
+}
+
+[data-theme="dark"] .telepathy-question-card,
+.theme-dark .telepathy-question-card {
+  background: linear-gradient(145deg, #18181B 0%, #27272A 100%) !important;
+  border-color: #3F3F46 !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.42) !important;
+}
+
+[data-theme="dark"] .telepathy-question-label,
+.theme-dark .telepathy-question-label {
+  color: #D4D4D8 !important;
+}
+
+[data-theme="dark"] .telepathy-question-text,
+.theme-dark .telepathy-question-text {
+  color: #FAFAFA !important;
+}
+
+/* 2. Bottom AI Deduction Status Bar */
+:root .telepathy-opponent-status,
+[data-theme="light"] .telepathy-opponent-status,
+[data-theme="cloud_milk"] .telepathy-opponent-status,
+[data-theme="default"] .telepathy-opponent-status,
+.theme-light .telepathy-opponent-status,
+.theme-cloud-milk .telepathy-opponent-status,
+.theme-default .telepathy-opponent-status {
+  background-color: #FFF7FA !important;
+  border-color: #F6C9D7 !important;
+  color: #475569 !important;
+}
+
+:root .telepathy-opponent-name,
+[data-theme="light"] .telepathy-opponent-name,
+[data-theme="cloud_milk"] .telepathy-opponent-name,
+[data-theme="default"] .telepathy-opponent-name,
+.theme-light .telepathy-opponent-name,
+.theme-cloud-milk .telepathy-opponent-name,
+.theme-default .telepathy-opponent-name {
+  color: #C24170 !important;
+}
+
+:root .telepathy-opponent-avatar,
+[data-theme="light"] .telepathy-opponent-avatar,
+[data-theme="cloud_milk"] .telepathy-opponent-avatar,
+[data-theme="default"] .telepathy-opponent-avatar,
+.theme-light .telepathy-opponent-avatar,
+.theme-cloud-milk .telepathy-opponent-avatar,
+.theme-default .telepathy-opponent-avatar {
+  border-color: rgba(194, 65, 112, 0.45) !important;
+}
+
+[data-theme="dark"] .telepathy-opponent-status,
+.theme-dark .telepathy-opponent-status {
+  background-color: rgba(24, 24, 27, 0.78) !important;
+  border-color: #27272A !important;
+  color: #D4D4D8 !important;
+}
+
+[data-theme="dark"] .telepathy-opponent-name,
+.theme-dark .telepathy-opponent-name {
+  color: #FDA4AF !important;
+}
+
+[data-theme="dark"] .telepathy-opponent-avatar,
+.theme-dark .telepathy-opponent-avatar {
+  border-color: rgba(244, 63, 94, 0.45) !important;
+}
+
+/* 3. Lobby Hero, Result & Summary Cards */
+:root .telepathy-hero-card,
+[data-theme="light"] .telepathy-hero-card,
+[data-theme="cloud_milk"] .telepathy-hero-card,
+[data-theme="default"] .telepathy-hero-card,
+.theme-light .telepathy-hero-card,
+.theme-cloud-milk .telepathy-hero-card,
+.theme-default .telepathy-hero-card {
+  background: linear-gradient(145deg, #FFFFFF 0%, #FFF5F8 58%, #FFEBF2 100%) !important;
+  border-color: #F6C9D7 !important;
+  box-shadow: 0 8px 24px rgba(190, 80, 120, 0.10) !important;
+}
+
+[data-theme="dark"] .telepathy-hero-card,
+.theme-dark .telepathy-hero-card {
+  background: linear-gradient(135deg, rgba(76, 5, 25, 0.9) 0%, #18181B 55%, rgba(80, 7, 36, 0.6) 100%) !important;
+  border-color: rgba(244, 63, 94, 0.5) !important;
+}
+
+:root .telepathy-hero-subtitle,
+[data-theme="light"] .telepathy-hero-subtitle,
+[data-theme="cloud_milk"] .telepathy-hero-subtitle,
+[data-theme="default"] .telepathy-hero-subtitle,
+.theme-light .telepathy-hero-subtitle,
+.theme-cloud-milk .telepathy-hero-subtitle,
+.theme-default .telepathy-hero-subtitle {
+  color: #9D174D !important;
+}
+
+[data-theme="dark"] .telepathy-hero-subtitle,
+.theme-dark .telepathy-hero-subtitle {
+  color: rgba(253, 164, 175, 0.9) !important;
+}
+
+:root .telepathy-rules-pill,
+[data-theme="light"] .telepathy-rules-pill,
+[data-theme="cloud_milk"] .telepathy-rules-pill,
+[data-theme="default"] .telepathy-rules-pill,
+.theme-light .telepathy-rules-pill,
+.theme-cloud-milk .telepathy-rules-pill,
+.theme-default .telepathy-rules-pill {
+  background-color: #FFF0F5 !important;
+  border-color: #F6C9D7 !important;
+  color: #475569 !important;
+}
+
+[data-theme="dark"] .telepathy-rules-pill,
+.theme-dark .telepathy-rules-pill {
+  background-color: rgba(76, 5, 25, 0.4) !important;
+  border-color: rgba(244, 63, 94, 0.3) !important;
+  color: #FECDD3 !important;
+}
+
+:root .telepathy-result-card--match,
+[data-theme="light"] .telepathy-result-card--match,
+[data-theme="cloud_milk"] .telepathy-result-card--match,
+[data-theme="default"] .telepathy-result-card--match,
+.theme-light .telepathy-result-card--match,
+.theme-cloud-milk .telepathy-result-card--match,
+.theme-default .telepathy-result-card--match {
+  background: linear-gradient(145deg, #FFFFFF 0%, #FFF1F5 100%) !important;
+  border-color: #F472B6 !important;
+  box-shadow: 0 8px 24px rgba(190, 80, 120, 0.12) !important;
+}
+
+[data-theme="dark"] .telepathy-result-card--match,
+.theme-dark .telepathy-result-card--match {
+  background: linear-gradient(135deg, rgba(76, 5, 25, 0.8) 0%, #18181B 55%, rgba(80, 7, 36, 0.6) 100%) !important;
+  border-color: rgba(244, 63, 94, 0.6) !important;
+}
+
+:root .telepathy-reaction-text,
+[data-theme="light"] .telepathy-reaction-text,
+[data-theme="cloud_milk"] .telepathy-reaction-text,
+[data-theme="default"] .telepathy-reaction-text,
+.theme-light .telepathy-reaction-text,
+.theme-cloud-milk .telepathy-reaction-text,
+.theme-default .telepathy-reaction-text {
+  color: #831843 !important;
+}
+
+[data-theme="dark"] .telepathy-reaction-text,
+.theme-dark .telepathy-reaction-text {
+  color: rgba(254, 205, 211, 0.92) !important;
+}
+
+:root .telepathy-summary-card,
+[data-theme="light"] .telepathy-summary-card,
+[data-theme="cloud_milk"] .telepathy-summary-card,
+[data-theme="default"] .telepathy-summary-card,
+.theme-light .telepathy-summary-card,
+.theme-cloud-milk .telepathy-summary-card,
+.theme-default .telepathy-summary-card {
+  background: linear-gradient(145deg, #FFFFFF 0%, #FFF5F8 55%, #FFE8F0 100%) !important;
+  border-color: #F6C9D7 !important;
+  box-shadow: 0 10px 28px rgba(190, 80, 120, 0.12) !important;
+}
+
+[data-theme="dark"] .telepathy-summary-card,
+.theme-dark .telepathy-summary-card {
+  background: linear-gradient(135deg, #4C0519 0%, #18181B 55%, #500724 100%) !important;
+  border-color: rgba(244, 63, 94, 0.5) !important;
+}
+
+:root .telepathy-summary-score,
+[data-theme="light"] .telepathy-summary-score,
+[data-theme="cloud_milk"] .telepathy-summary-score,
+[data-theme="default"] .telepathy-summary-score,
+.theme-light .telepathy-summary-score,
+.theme-cloud-milk .telepathy-summary-score,
+.theme-default .telepathy-summary-score {
+  background-image: linear-gradient(to right, #E11D48, #DB2777, #D97706) !important;
+}
+
+[data-theme="dark"] .telepathy-summary-score,
+.theme-dark .telepathy-summary-score {
+  background-image: linear-gradient(to right, #FB7185, #F472B6, #FCD34D) !important;
+}
+
+/* 4. Secondary Surfaces, Memory Boxes & Primary Buttons */
+:root .telepathy-surface-sub,
+[data-theme="light"] .telepathy-surface-sub,
+[data-theme="cloud_milk"] .telepathy-surface-sub,
+[data-theme="default"] .telepathy-surface-sub,
+.theme-light .telepathy-surface-sub,
+.theme-cloud-milk .telepathy-surface-sub,
+.theme-default .telepathy-surface-sub {
+  background-color: #F7FBFF !important;
+  border-color: #D9EAF7 !important;
+}
+
+[data-theme="dark"] .telepathy-surface-sub,
+.theme-dark .telepathy-surface-sub {
+  background-color: rgba(39, 39, 42, 0.45) !important;
+  border-color: #27272A !important;
+}
+
+:root .telepathy-memory-box,
+[data-theme="light"] .telepathy-memory-box,
+[data-theme="cloud_milk"] .telepathy-memory-box,
+[data-theme="default"] .telepathy-memory-box,
+.theme-light .telepathy-memory-box,
+.theme-cloud-milk .telepathy-memory-box,
+.theme-default .telepathy-memory-box {
+  background-color: #F5F3FF !important;
+  border-color: #DDD6FE !important;
+  color: #5B21B6 !important;
+}
+
+[data-theme="dark"] .telepathy-memory-box,
+.theme-dark .telepathy-memory-box {
+  background-color: rgba(59, 7, 100, 0.35) !important;
+  border-color: rgba(168, 85, 247, 0.4) !important;
+  color: #E9D5FF !important;
+}
+
+:root .telepathy-btn-primary,
+[data-theme="light"] .telepathy-btn-primary,
+[data-theme="cloud_milk"] .telepathy-btn-primary,
+[data-theme="default"] .telepathy-btn-primary,
+[data-theme="dark"] .telepathy-btn-primary,
+.theme-light .telepathy-btn-primary,
+.theme-dark .telepathy-btn-primary {
+  color: #FFFFFF !important;
+}
+
+:root .telepathy-stat-emerald,
+[data-theme="light"] .telepathy-stat-emerald,
+[data-theme="cloud_milk"] .telepathy-stat-emerald,
+[data-theme="default"] .telepathy-stat-emerald {
+  color: #047857 !important;
+}
+[data-theme="dark"] .telepathy-stat-emerald,
+.theme-dark .telepathy-stat-emerald {
+  color: #34D399 !important;
+}
+
+:root .telepathy-stat-amber,
+[data-theme="light"] .telepathy-stat-amber,
+[data-theme="cloud_milk"] .telepathy-stat-amber,
+[data-theme="default"] .telepathy-stat-amber {
+  color: #B45309 !important;
+}
+[data-theme="dark"] .telepathy-stat-amber,
+.theme-dark .telepathy-stat-amber {
+  color: #FBBF24 !important;
+}
+
+:root .telepathy-stat-rose,
+[data-theme="light"] .telepathy-stat-rose,
+[data-theme="cloud_milk"] .telepathy-stat-rose,
+[data-theme="default"] .telepathy-stat-rose {
+  color: #BE123C !important;
+}
+[data-theme="dark"] .telepathy-stat-rose,
+.theme-dark .telepathy-stat-rose {
+  color: #FB7185 !important;
+}
+
+:root .telepathy-pill-rose,
+[data-theme="light"] .telepathy-pill-rose,
+[data-theme="cloud_milk"] .telepathy-pill-rose,
+[data-theme="default"] .telepathy-pill-rose {
+  background-color: #FFEBF2 !important;
+  color: #BE123C !important;
+  border-color: #F6C9D7 !important;
+}
+[data-theme="dark"] .telepathy-pill-rose,
+.theme-dark .telepathy-pill-rose {
+  background-color: rgba(244, 63, 94, 0.2) !important;
+  color: #FDA4AF !important;
+  border-color: rgba(244, 63, 94, 0.35) !important;
+}
+
+:root .telepathy-mode-card--active,
+[data-theme="light"] .telepathy-mode-card--active,
+[data-theme="cloud_milk"] .telepathy-mode-card--active,
+[data-theme="default"] .telepathy-mode-card--active {
+  background-color: #FFF1F5 !important;
+  border-color: #FB7185 !important;
+  color: #881337 !important;
+}
+[data-theme="dark"] .telepathy-mode-card--active,
+.theme-dark .telepathy-mode-card--active {
+  background-color: rgba(244, 63, 94, 0.2) !important;
+  border-color: #F43F5E !important;
+  color: #FECDD3 !important;
+}
+
+/* 5. Affinity Level Badges & Scores */
+:root .telepathy-lvl-0-bg, [data-theme="light"] .telepathy-lvl-0-bg, [data-theme="cloud_milk"] .telepathy-lvl-0-bg, [data-theme="default"] .telepathy-lvl-0-bg { background-color: #F1F5F9 !important; }
+:root .telepathy-lvl-0-text, [data-theme="light"] .telepathy-lvl-0-text, [data-theme="cloud_milk"] .telepathy-lvl-0-text, [data-theme="default"] .telepathy-lvl-0-text { color: #475569 !important; }
+[data-theme="dark"] .telepathy-lvl-0-bg, .theme-dark .telepathy-lvl-0-bg { background-color: #27272A !important; }
+[data-theme="dark"] .telepathy-lvl-0-text, .theme-dark .telepathy-lvl-0-text { color: #A1A1AA !important; }
+
+:root .telepathy-lvl-1-bg, [data-theme="light"] .telepathy-lvl-1-bg, [data-theme="cloud_milk"] .telepathy-lvl-1-bg, [data-theme="default"] .telepathy-lvl-1-bg { background-color: #EFF6FF !important; }
+:root .telepathy-lvl-1-text, [data-theme="light"] .telepathy-lvl-1-text, [data-theme="cloud_milk"] .telepathy-lvl-1-text, [data-theme="default"] .telepathy-lvl-1-text { color: #1D4ED8 !important; }
+[data-theme="dark"] .telepathy-lvl-1-bg, .theme-dark .telepathy-lvl-1-bg { background-color: rgba(23, 37, 84, 0.65) !important; }
+[data-theme="dark"] .telepathy-lvl-1-text, .theme-dark .telepathy-lvl-1-text { color: #60A5FA !important; }
+
+:root .telepathy-lvl-2-bg, [data-theme="light"] .telepathy-lvl-2-bg, [data-theme="cloud_milk"] .telepathy-lvl-2-bg, [data-theme="default"] .telepathy-lvl-2-bg { background-color: #F5F3FF !important; }
+:root .telepathy-lvl-2-text, [data-theme="light"] .telepathy-lvl-2-text, [data-theme="cloud_milk"] .telepathy-lvl-2-text, [data-theme="default"] .telepathy-lvl-2-text { color: #6D28D9 !important; }
+[data-theme="dark"] .telepathy-lvl-2-bg, .theme-dark .telepathy-lvl-2-bg { background-color: rgba(59, 7, 100, 0.65) !important; }
+[data-theme="dark"] .telepathy-lvl-2-text, .theme-dark .telepathy-lvl-2-text { color: #C084FC !important; }
+
+:root .telepathy-lvl-3-bg, [data-theme="light"] .telepathy-lvl-3-bg, [data-theme="cloud_milk"] .telepathy-lvl-3-bg, [data-theme="default"] .telepathy-lvl-3-bg { background-color: #FDF2F8 !important; }
+:root .telepathy-lvl-3-text, [data-theme="light"] .telepathy-lvl-3-text, [data-theme="cloud_milk"] .telepathy-lvl-3-text, [data-theme="default"] .telepathy-lvl-3-text { color: #BE185D !important; }
+[data-theme="dark"] .telepathy-lvl-3-bg, .theme-dark .telepathy-lvl-3-bg { background-color: rgba(80, 7, 36, 0.65) !important; }
+[data-theme="dark"] .telepathy-lvl-3-text, .theme-dark .telepathy-lvl-3-text { color: #F472B6 !important; }
+
+:root .telepathy-lvl-4-bg, [data-theme="light"] .telepathy-lvl-4-bg, [data-theme="cloud_milk"] .telepathy-lvl-4-bg, [data-theme="default"] .telepathy-lvl-4-bg { background-color: #FFF1F2 !important; }
+:root .telepathy-lvl-4-text, [data-theme="light"] .telepathy-lvl-4-text, [data-theme="cloud_milk"] .telepathy-lvl-4-text, [data-theme="default"] .telepathy-lvl-4-text { color: #BE123C !important; }
+[data-theme="dark"] .telepathy-lvl-4-bg, .theme-dark .telepathy-lvl-4-bg { background-color: rgba(76, 5, 25, 0.65) !important; }
+[data-theme="dark"] .telepathy-lvl-4-text, .theme-dark .telepathy-lvl-4-text { color: #FB7185 !important; }
+
 /* Smooth Theme Switch Transitions */
 * {
   transition-property: background-color, border-color, color;

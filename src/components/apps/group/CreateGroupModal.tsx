@@ -158,18 +158,18 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div className="w-full max-w-sm bg-white dark:bg-zinc-900 rounded-3xl overflow-hidden shadow-2xl border border-zinc-200 dark:border-zinc-800 flex flex-col max-h-[85vh]">
+      <div className="wx-modal-card w-full max-w-sm bg-white dark:bg-zinc-900 rounded-3xl overflow-hidden shadow-2xl border border-zinc-200 dark:border-zinc-800 flex flex-col max-h-[85vh]">
         {/* Header */}
-        <div className="px-4 py-3.5 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50 dark:bg-zinc-850">
+        <div className="wx-modal-header px-4 py-3.5 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50 dark:bg-zinc-850">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center wx-green-text">
               <Users className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+              <h3 className="wx-primary-text text-sm font-bold text-zinc-900 dark:text-zinc-100">
                 {step === 'select_members' ? '发起群聊 · 选择成员' : '完善群聊信息'}
               </h3>
-              <p className="text-[10px] text-zinc-500">
+              <p className="wx-muted-text text-[10px] text-zinc-500">
                 {step === 'select_members'
                   ? `已选 ${selectedCharacterIds.length} 位 AI 伙伴 + 1 位真人(我)`
                   : '设置群名称与群头像'}
@@ -178,7 +178,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="w-7 h-7 rounded-full flex items-center justify-center text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition"
+            className="wx-header-action wx-muted-text w-7 h-7 rounded-full flex items-center justify-center text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition"
           >
             <X className="w-4 h-4" />
           </button>
@@ -187,15 +187,15 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
         {step === 'select_members' ? (
           <>
             {/* Search Input */}
-            <div className="p-3 border-b border-zinc-100 dark:border-zinc-800/80 bg-white dark:bg-zinc-900">
+            <div className="wx-divider p-3 border-b border-zinc-100 dark:border-zinc-800/80 bg-white dark:bg-zinc-900">
               <div className="relative">
-                <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-zinc-400" />
+                <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-zinc-400 wx-muted-text" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="搜索 AI 伙伴名称、人设、标签..."
-                  className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  className="wx-modal-input w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
             </div>
@@ -254,7 +254,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
                   <div
                     key={char.id}
                     onClick={() => toggleSelectCharacter(char.id)}
-                    className={`p-2.5 rounded-2xl border cursor-pointer transition flex items-center justify-between ${
+                    className={`wx-sub-card p-2.5 rounded-2xl border cursor-pointer transition flex items-center justify-between ${
                       isSelected
                         ? 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-500/50 shadow-sm'
                         : 'bg-zinc-50/50 dark:bg-zinc-800/40 border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800'
@@ -264,11 +264,11 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
                       <img
                         src={char.avatar}
                         alt={char.name}
-                        className="w-9 h-9 rounded-full object-cover border border-zinc-200 dark:border-zinc-700 shrink-0"
+                        className="wx-avatar w-9 h-9 rounded-full object-cover border border-zinc-200 dark:border-zinc-700 shrink-0"
                       />
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-xs text-zinc-900 dark:text-zinc-100 truncate">
+                          <span className="wx-primary-text font-bold text-xs text-zinc-900 dark:text-zinc-100 truncate">
                             {char.name}
                           </span>
                           <span
@@ -281,7 +281,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
                             {char.isCustom ? '自定义AI' : '系统NPC'}
                           </span>
                         </div>
-                        <p className="text-[10px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
+                        <p className="wx-secondary-text text-[10px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
                           {char.persona || '暂无人设'}
                         </p>
                       </div>
@@ -302,14 +302,14 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
             </div>
 
             {/* Bottom Actions */}
-            <div className="p-3 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50 dark:bg-zinc-850">
-              <span className="text-[11px] text-zinc-500">
-                已选中 <strong className="text-emerald-600 dark:text-emerald-400">{selectedCharacterIds.length}</strong> 位 AI
+            <div className="wx-modal-footer p-3 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50 dark:bg-zinc-850">
+              <span className="wx-secondary-text text-[11px] text-zinc-500">
+                已选中 <strong className="wx-green-text text-emerald-600 dark:text-emerald-400">{selectedCharacterIds.length}</strong> 位 AI
               </span>
               <button
                 disabled={selectedCharacterIds.length === 0}
                 onClick={handleProceedToDetails}
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs shadow-md transition"
+                className="wx-btn-primary px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs shadow-md transition"
               >
                 下一步 ({selectedCharacterIds.length + 1}人)
               </button>
@@ -321,18 +321,18 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
             <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
               {/* Group Avatar Selection */}
               <div className="space-y-2">
-                <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300 flex items-center gap-1">
-                  <ImageIcon className="w-3.5 h-3.5 text-emerald-500" />
+                <label className="wx-primary-text text-[11px] font-bold text-zinc-700 dark:text-zinc-300 flex items-center gap-1">
+                  <ImageIcon className="w-3.5 h-3.5 text-emerald-500 wx-green-text" />
                   <span>群头像</span>
                 </label>
                 <div className="flex items-center gap-3">
                   <img
                     src={groupAvatar}
                     alt="Group Avatar Preview"
-                    className="w-14 h-14 rounded-2xl object-cover border-2 border-emerald-500 shadow-md shrink-0"
+                    className="wx-avatar w-14 h-14 rounded-2xl object-cover border-2 border-emerald-500 shadow-md shrink-0"
                   />
                   <div className="flex-1 space-y-1.5">
-                    <span className="text-[10px] text-zinc-400 block">选择预设群头像或输入自定义图片 URL</span>
+                    <span className="wx-muted-text text-[10px] text-zinc-400 block">选择预设群头像或输入自定义图片 URL</span>
                     <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
                       {PRESET_GROUP_AVATARS.map((url, idx) => (
                         <img
@@ -340,7 +340,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
                           src={url}
                           alt="Preset"
                           onClick={() => setGroupAvatar(url)}
-                          className={`w-7 h-7 rounded-lg object-cover cursor-pointer border-2 transition ${
+                          className={`wx-avatar w-7 h-7 rounded-lg object-cover cursor-pointer border-2 transition ${
                             groupAvatar === url ? 'border-emerald-500 scale-105' : 'border-transparent opacity-70 hover:opacity-100'
                           }`}
                         />
@@ -353,40 +353,40 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
                   value={groupAvatar}
                   onChange={(e) => setGroupAvatar(e.target.value)}
                   placeholder="或粘贴自定义头像图片 URL..."
-                  className="w-full px-3 py-1.5 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  className="wx-modal-input w-full px-3 py-1.5 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
 
               {/* Group Name */}
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300">群聊名称</label>
+                <label className="wx-primary-text text-[11px] font-bold text-zinc-700 dark:text-zinc-300">群聊名称</label>
                 <input
                   type="text"
                   value={groupName}
                   onChange={(e) => setGroupName(e.target.value)}
                   placeholder="给群聊起个响亮的名字..."
                   maxLength={30}
-                  className="w-full px-3 py-2 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-bold"
+                  className="wx-modal-input w-full px-3 py-2 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-bold"
                 />
               </div>
 
               {/* Group Notice */}
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300">群公告 (初始话题)</label>
+                <label className="wx-primary-text text-[11px] font-bold text-zinc-700 dark:text-zinc-300">群公告 (初始话题)</label>
                 <textarea
                   value={groupNotice}
                   onChange={(e) => setGroupNotice(e.target.value)}
                   placeholder="输入群公告或开场讨论主题..."
                   rows={2}
-                  className="w-full px-3 py-1.5 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none"
+                  className="wx-modal-input w-full px-3 py-1.5 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none"
                 />
               </div>
 
               {/* Summary of members */}
-              <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-750 space-y-2">
-                <div className="flex items-center justify-between font-bold text-[11px] text-zinc-700 dark:text-zinc-300">
+              <div className="wx-sub-card p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-750 space-y-2">
+                <div className="wx-primary-text flex items-center justify-between font-bold text-[11px] text-zinc-700 dark:text-zinc-300">
                   <span>群成员总计 ({selectedCharacterIds.length + 1}人)</span>
-                  <span className="text-emerald-500 text-[10px]">真人1人 · AI {selectedCharacterIds.length}人</span>
+                  <span className="wx-green-text text-emerald-500 text-[10px]">真人1人 · AI {selectedCharacterIds.length}人</span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   <span className="px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-semibold text-[10px] flex items-center gap-1">
@@ -398,7 +398,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
                     .map((c) => (
                       <span
                         key={c.id}
-                        className="px-2 py-0.5 rounded-lg bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-[10px] flex items-center gap-1"
+                        className="wx-card px-2 py-0.5 rounded-lg bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-[10px] flex items-center gap-1"
                       >
                         <Bot className="w-2.5 h-2.5 text-purple-400" />
                         <span>{c.name}</span>
@@ -409,16 +409,16 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
             </div>
 
             {/* Bottom Actions */}
-            <div className="p-3 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50 dark:bg-zinc-850">
+            <div className="wx-modal-footer p-3 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50 dark:bg-zinc-850">
               <button
                 onClick={() => setStep('select_members')}
-                className="px-3.5 py-1.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 text-xs font-semibold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition"
+                className="wx-btn-secondary px-3.5 py-1.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 text-xs font-semibold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition"
               >
                 返回修改成员
               </button>
               <button
                 onClick={handleFinishCreate}
-                className="px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold text-xs shadow-md transition"
+                className="wx-btn-primary px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold text-xs shadow-md transition"
               >
                 立即创建群聊 ✨
               </button>

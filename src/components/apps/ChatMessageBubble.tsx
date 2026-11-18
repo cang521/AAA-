@@ -23,7 +23,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
           id={`msg-bubble-${msg.id}`}
           className={`flex gap-2.5 transition-all duration-300 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}
         >
-          <img src={avatar} alt="" className="w-9 h-9 rounded-2xl object-cover border border-zinc-700 shrink-0" />
+          <img src={avatar} alt="" className="wx-avatar w-9 h-9 rounded-2xl object-cover border border-zinc-700 shrink-0" />
           <OfflineShareCard
             sessionId={msg.offlineCardData.sessionId}
             sceneName={msg.offlineCardData.sceneName}
@@ -52,7 +52,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
               onOpenCoT(msg.id);
             }
           }}
-          className="relative shrink-0 w-9 h-9 rounded-2xl overflow-hidden border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          className="wx-avatar relative shrink-0 w-9 h-9 rounded-2xl overflow-hidden border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
           title={!isUser ? '点击查看 AI 思考链 (CoT)' : name}
         >
           <img src={avatar} alt="" className="w-full h-full object-cover" loading="lazy" />
@@ -70,15 +70,15 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
               e.preventDefault();
               onContextMenu(msg);
             }}
-            className={`relative rounded-2xl px-3.5 py-2.5 text-xs shadow-xs whitespace-pre-wrap leading-relaxed ${
+            className={`wx-message-bubble relative rounded-2xl px-3.5 py-2.5 text-xs shadow-xs whitespace-pre-wrap leading-relaxed ${
               isUser
-                ? 'bg-emerald-600 text-white rounded-tr-xs chat-bubble-user'
-                : 'bg-zinc-800 text-zinc-100 border border-zinc-750 rounded-tl-xs chat-bubble-ai'
+                ? 'bg-emerald-600 text-white rounded-tr-xs chat-bubble-user wx-message-bubble-user'
+                : 'bg-zinc-800 text-zinc-100 border border-zinc-750 rounded-tl-xs chat-bubble-ai wx-message-bubble-ai'
             }`}
           >
             {/* Quote Preview */}
             {quoteText && (
-              <div className="mb-1.5 p-1.5 rounded-lg bg-black/25 text-[10px] text-zinc-300 border-l-2 border-emerald-400 truncate">
+              <div className="wx-quote-preview mb-1.5 p-1.5 rounded-lg bg-black/25 text-[10px] text-zinc-300 border-l-2 border-emerald-400 truncate">
                 引述消息: {quoteText}
               </div>
             )}
@@ -102,10 +102,6 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
               <span className="block text-[9px] text-rose-300 font-mono mt-1 opacity-90">
                 ⚠️ 图片识别调用未能完成 (消息与图片已保存)
               </span>
-            )}
-
-            {msg.isRefreshed && (
-              <span className="block text-[9px] text-amber-300 font-mono mt-1 opacity-80">已刷新回答</span>
             )}
           </div>
         </div>

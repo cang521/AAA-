@@ -49,6 +49,58 @@ import {
   Globe,
 } from 'lucide-react';
 import { ImagePickerModal } from './ImagePickerModal';
+import { motion, useReducedMotion } from 'motion/react';
+import { PressableButton } from './ui/interaction';
+
+const DesktopIconPressLayer: React.FC<{
+  disabled: boolean;
+  children: React.ReactNode;
+}> = ({ disabled, children }) => {
+  const prefersReducedMotion = useReducedMotion();
+  const [isPressed, setIsPressed] = useState(false);
+  const startPosRef = useRef<{ x: number; y: number } | null>(null);
+
+  const cancelPress = () => {
+    startPosRef.current = null;
+    if (isPressed) setIsPressed(false);
+  };
+
+  return (
+    <motion.div
+      onPointerDown={(e) => {
+        if (disabled) return;
+        startPosRef.current = { x: e.clientX, y: e.clientY };
+        setIsPressed(true);
+      }}
+      onPointerMove={(e) => {
+        if (!startPosRef.current || !isPressed) return;
+        const dx = Math.abs(e.clientX - startPosRef.current.x);
+        const dy = Math.abs(e.clientY - startPosRef.current.y);
+        if (dx > 6 || dy > 6) {
+          cancelPress();
+        }
+      }}
+      onPointerUp={cancelPress}
+      onPointerCancel={cancelPress}
+      onPointerLeave={cancelPress}
+      animate={
+        disabled || !isPressed || prefersReducedMotion
+          ? { scale: 1 }
+          : { scale: 0.92 }
+      }
+      transition={
+        prefersReducedMotion
+          ? { duration: 0.08 }
+          : isPressed
+          ? { duration: 0.08, ease: [0.22, 1, 0.36, 1] }
+          : { type: 'spring', stiffness: 280, damping: 14, mass: 0.85 }
+      }
+      className="relative"
+    >
+      {children}
+    </motion.div>
+  );
+};
 
 interface LauncherHomeProps {
   icons: AppIconConfig[];
@@ -668,37 +720,38 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
             <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
               ✏️ 编辑模式
             </span>
-            <button
+            <PressableButton
               onClick={() => setShowAppLibraryModal(true)}
               className="px-2.5 py-1 text-[11px] rounded-lg bg-emerald-500/30 border border-emerald-400/40 text-emerald-300 font-medium hover:bg-emerald-500/40 transition flex items-center gap-1"
             >
               <Grid className="w-3.5 h-3.5" />
               <span>系统应用库</span>
-            </button>
+            </PressableButton>
           </div>
 
           <div className="flex items-center gap-1.5">
-            <button
+            <PressableButton
               onClick={() =>
                 onUpdatePagesCount && onUpdatePagesCount(Math.max(1, pagesCount - 1))
               }
               className="px-2 py-0.5 text-[11px] rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700"
             >
               - 删页
-            </button>
+            </PressableButton>
             <span className="text-xs text-zinc-300 font-medium">{pagesCount}页</span>
-            <button
+            <PressableButton
               onClick={() => onUpdatePagesCount && onUpdatePagesCount(pagesCount + 1)}
               className="px-2 py-0.5 text-[11px] rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700"
             >
               + 加页
-            </button>
-            <button
+            </PressableButton>
+            <PressableButton
               onClick={() => setIsEditMode(false)}
-              className="px-3 py-1 text-xs rounded-xl bg-emerald-500 text-white font-medium shadow-sm ml-1 hover:bg-emerald-600"
+              withRipple
+              className="px-3 py-1 text-xs rounded-xl bg-emerald-500 text-white font-medium shadow-sm ml-1 hover:bg-emerald-600 overflow-hidden"
             >
               完成
-            </button>
+            </PressableButton>
           </div>
         </div>
       ) : (
@@ -763,12 +816,13 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                   {pageWidgets.map((widget) => (
                     <div key={widget.id} className="relative group">
                       {isEditMode && (
-                        <button
+                        <PressableButton
                           onClick={() => handleDeleteWidget(widget.id)}
+                          expandHitArea
                           className="absolute -top-2 -right-2 z-30 w-6 h-6 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-md hover:bg-rose-600 transition"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        </PressableButton>
                       )}
 
                       {/* Weather Widget */}
@@ -949,7 +1003,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                               <FileText className="w-4 h-4 text-sky-500" />
                               <span>桌面备忘录</span>
                             </div>
-                            <button
+                            <PressableButton
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleOpenApp('memo');
@@ -957,7 +1011,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                               className="text-[10px] font-semibold bg-sky-100/80 text-sky-700 border border-sky-200/80 px-2.5 py-0.5 rounded-full hover:bg-sky-200/80 transition"
                             >
                               所有便签
-                            </button>
+                            </PressableButton>
                           </div>
                           <div className="space-y-1.5 max-h-24 overflow-y-auto pr-1">
                             {memos.slice(0, 2).map((m) => (
@@ -1015,13 +1069,15 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
 
                   {/* Add Widget Button in Edit Mode */}
                   {isEditMode && pageIdx === currentPage && (
-                    <button
+                    <PressableButton
                       onClick={() => setShowAddWidgetModal(true)}
-                      className="w-full py-2.5 rounded-2xl border-2 border-dashed border-sky-300/80 bg-white/70 hover:bg-white/90 text-sky-700 text-xs font-semibold flex items-center justify-center gap-2 backdrop-blur-sm transition shadow-2xs"
+                      withRipple
+                      rippleTone="dark"
+                      className="w-full py-2.5 rounded-2xl border-2 border-dashed border-sky-300/80 bg-white/70 hover:bg-white/90 text-sky-700 text-xs font-semibold flex items-center justify-center gap-2 backdrop-blur-sm transition shadow-2xs overflow-hidden"
                     >
                       <PlusCircle className="w-4 h-4 text-sky-500" />
                       <span>添加桌面小组件</span>
-                    </button>
+                    </PressableButton>
                   )}
                 </div>
 
@@ -1043,11 +1099,13 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                           }}
                           onMouseEnter={() => setDragTargetPosIndex(slotIdx)}
                           className={`group flex flex-col items-center cursor-pointer transition relative touch-none ${
-                            isBeingDragged ? 'opacity-30 scale-90' : 'active:scale-95'
+                            isBeingDragged ? 'opacity-30 scale-90' : ''
                           }`}
                         >
-                          {/* Custom Image or Cloud Milk Built-in Icon */}
-                          <div className="relative">
+                          {/* Custom Image or Cloud Milk Built-in Icon (Tap rebound isolated to visual icon box) */}
+                          <DesktopIconPressLayer
+                            disabled={isEditMode || isPageDragging || Boolean(draggingIcon)}
+                          >
                             <CloudMilkIcon
                               appId={icon.appId}
                               customImage={icon.customImage}
@@ -1057,18 +1115,19 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
 
                             {/* Edit Mode Delete Badge */}
                             {isEditMode && (
-                              <button
+                              <PressableButton
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleDeleteIcon(icon.id);
                                 }}
+                                expandHitArea
                                 className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-md hover:bg-rose-600 z-20"
                                 title="删除图标"
                               >
                                 <Trash2 className="w-3 h-3" />
-                              </button>
+                              </PressableButton>
                             )}
-                          </div>
+                          </DesktopIconPressLayer>
 
                           {/* App Label */}
                           <span className="mt-1.5 text-[11px] font-semibold text-[#243040] dark:text-zinc-100 tracking-tight truncate max-w-[68px] text-center">
@@ -1085,7 +1144,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                           className="flex flex-col items-center justify-center touch-none h-[76px]"
                         >
                           {isEditMode ? (
-                            <button
+                            <PressableButton
                               onClick={() => setShowAppLibraryModal(true)}
                               className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl border-2 border-dashed transition ${
                                 isFirstEmptySlot
@@ -1095,7 +1154,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                               title="从系统应用库添加应用"
                             >
                               <Plus className={`w-5 h-5 ${isFirstEmptySlot ? 'text-emerald-400' : 'text-white/40'}`} />
-                            </button>
+                            </PressableButton>
                           ) : (
                             <div className="w-14 h-14" />
                           )}
@@ -1139,9 +1198,11 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
             : 'bg-black/25 border border-white/10'
         }`}>
           {[...Array(pagesCount)].map((_, idx) => (
-            <button
+            <PressableButton
               key={idx}
               onClick={() => handleSetCurrentPage(idx)}
+              pressScale={0.85}
+              expandHitArea
               className={`h-2 rounded-full transition-all ${
                 currentPage === idx
                   ? isLightMode ? 'w-5 bg-[#59B6E8]' : 'w-5 bg-emerald-400'
@@ -1167,12 +1228,12 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                 <Grid className="w-5 h-5 text-emerald-400" />
                 <h3 className="font-bold text-sm">系统应用库</h3>
               </div>
-              <button
+              <PressableButton
                 onClick={() => setShowAppLibraryModal(false)}
                 className="text-xs text-zinc-400 hover:text-white px-2 py-1 rounded-lg bg-zinc-800"
               >
                 关闭
-              </button>
+              </PressableButton>
             </div>
 
             <p className="text-[11px] text-zinc-400 mb-3">
@@ -1201,13 +1262,14 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                         已在桌面
                       </span>
                     ) : (
-                      <button
+                      <PressableButton
                         onClick={() => handleRestoreAppToDesktop(app)}
-                        className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 shadow-md flex items-center gap-1 transition"
+                        withRipple
+                        className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 shadow-md flex items-center gap-1 transition overflow-hidden"
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
                         添加至桌面
-                      </button>
+                      </PressableButton>
                     )}
                   </div>
                 );
@@ -1241,40 +1303,44 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
             </div>
 
             <div className="space-y-1 text-xs">
-              <button
+              <PressableButton
                 onClick={() => {
                   setImagePickerTargetIcon(activeIconMenu);
                   setActiveIconMenu(null);
                 }}
-                className="w-full p-2.5 rounded-xl hover:bg-zinc-800 flex items-center gap-2.5 text-zinc-200 transition"
+                pressScale={0.97}
+                className="w-full p-2.5 rounded-xl hover:bg-zinc-800 flex items-center gap-2.5 text-zinc-200 transition text-left"
               >
                 <ImageIcon className="w-4 h-4 text-emerald-400" />
                 <span>更换图标图片</span>
-              </button>
+              </PressableButton>
 
-              <button
+              <PressableButton
                 onClick={() => setIsEditingName(true)}
-                className="w-full p-2.5 rounded-xl hover:bg-zinc-800 flex items-center gap-2.5 text-zinc-200 transition"
+                pressScale={0.97}
+                className="w-full p-2.5 rounded-xl hover:bg-zinc-800 flex items-center gap-2.5 text-zinc-200 transition text-left"
               >
                 <Edit3 className="w-4 h-4 text-amber-400" />
                 <span>修改应用显示名称</span>
-              </button>
+              </PressableButton>
 
-              <button
+              <PressableButton
                 onClick={() => handleMoveIconNextPage(activeIconMenu)}
-                className="w-full p-2.5 rounded-xl hover:bg-zinc-800 flex items-center gap-2.5 text-zinc-200 transition"
+                pressScale={0.97}
+                className="w-full p-2.5 rounded-xl hover:bg-zinc-800 flex items-center gap-2.5 text-zinc-200 transition text-left"
               >
                 <Move className="w-4 h-4 text-blue-400" />
                 <span>跨页移动 (移至下页)</span>
-              </button>
+              </PressableButton>
 
-              <button
+              <PressableButton
                 onClick={() => handleDeleteIcon(activeIconMenu.id)}
-                className="w-full p-2.5 rounded-xl hover:bg-rose-900/30 flex items-center gap-2.5 text-rose-400 transition"
+                pressScale={0.97}
+                className="w-full p-2.5 rounded-xl hover:bg-rose-900/30 flex items-center gap-2.5 text-rose-400 transition text-left"
               >
                 <Trash2 className="w-4 h-4" />
                 <span>从桌面移除图标</span>
-              </button>
+              </PressableButton>
             </div>
           </div>
         </div>
@@ -1292,18 +1358,19 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
               className="w-full px-3 py-2 text-xs rounded-xl bg-zinc-800 border border-zinc-700 text-white mb-3 focus:outline-none focus:border-emerald-500"
             />
             <div className="flex gap-2 justify-end">
-              <button
+              <PressableButton
                 onClick={() => setIsEditingName(false)}
                 className="px-3 py-1.5 text-xs rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
               >
                 取消
-              </button>
-              <button
+              </PressableButton>
+              <PressableButton
                 onClick={handleSaveIconName}
-                className="px-3 py-1.5 text-xs font-medium rounded-xl bg-emerald-500 text-white hover:bg-emerald-600"
+                withRipple
+                className="px-3 py-1.5 text-xs font-medium rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 overflow-hidden"
               >
                 保存
-              </button>
+              </PressableButton>
             </div>
           </div>
         </div>
@@ -1334,8 +1401,9 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
               选择添加桌面小组件
             </h3>
             <div className="grid grid-cols-2 gap-2 text-xs mb-4">
-              <button
+              <PressableButton
                 onClick={() => handleAddWidget('weather')}
+                pressScale={0.97}
                 className="p-3 rounded-2xl bg-sky-50/80 border border-sky-200/80 text-sky-900 font-medium hover:bg-sky-100/90 text-left col-span-2 transition shadow-2xs"
               >
                 <CloudSun className="w-5 h-5 mb-1 text-sky-500" />
@@ -1343,54 +1411,59 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                 <div className="text-[10px] text-slate-500">
                   显示气温、天气、降雨预测与灾害预警
                 </div>
-              </button>
-              <button
+              </PressableButton>
+              <PressableButton
                 onClick={() => handleAddWidget('menstrual')}
+                pressScale={0.97}
                 className="p-3 rounded-2xl bg-sky-50/80 border border-sky-200/80 text-slate-800 font-medium hover:bg-sky-100/90 text-left transition shadow-2xs"
               >
                 <HeartPulse className="w-5 h-5 mb-1 text-sky-500" />
                 <div className="font-semibold">经期预测</div>
                 <div className="text-[10px] text-slate-500">女性健康数据</div>
-              </button>
-              <button
+              </PressableButton>
+              <PressableButton
                 onClick={() => handleAddWidget('time')}
+                pressScale={0.97}
                 className="p-3 rounded-2xl bg-sky-50/80 border border-sky-200/80 text-slate-800 font-medium hover:bg-sky-100/90 text-left transition shadow-2xs"
               >
                 <Clock className="w-5 h-5 mb-1 text-sky-500" />
                 <div className="font-semibold">世界时间</div>
                 <div className="text-[10px] text-slate-500">多时区时钟</div>
-              </button>
-              <button
+              </PressableButton>
+              <PressableButton
                 onClick={() => handleAddWidget('calendar')}
+                pressScale={0.97}
                 className="p-3 rounded-2xl bg-sky-50/80 border border-sky-200/80 text-slate-800 font-medium hover:bg-sky-100/90 text-left transition shadow-2xs"
               >
                 <CalendarIcon className="w-5 h-5 mb-1 text-sky-500" />
                 <div className="font-semibold">月历日程</div>
                 <div className="text-[10px] text-slate-500">日期状态视图</div>
-              </button>
-              <button
+              </PressableButton>
+              <PressableButton
                 onClick={() => handleAddWidget('memo')}
+                pressScale={0.97}
                 className="p-3 rounded-2xl bg-sky-50/80 border border-sky-200/80 text-slate-800 font-medium hover:bg-sky-100/90 text-left transition shadow-2xs"
               >
                 <FileText className="w-5 h-5 mb-1 text-sky-500" />
                 <div className="font-semibold">桌面备忘录</div>
                 <div className="text-[10px] text-slate-500">快捷便签浏览</div>
-              </button>
-              <button
+              </PressableButton>
+              <PressableButton
                 onClick={() => handleAddWidget('sticker')}
+                pressScale={0.97}
                 className="p-3 rounded-2xl bg-sky-50/80 border border-sky-200/80 text-slate-800 font-medium hover:bg-sky-100/90 text-left col-span-2 transition shadow-2xs"
               >
                 <Tag className="w-5 h-5 mb-1 text-sky-500" />
                 <div className="font-semibold">倒计时贴纸</div>
                 <div className="text-[10px] text-slate-500">目标日期与纪念日累积</div>
-              </button>
+              </PressableButton>
             </div>
-            <button
+            <PressableButton
               onClick={() => setShowAddWidgetModal(false)}
               className="w-full py-2 text-xs rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium transition"
             >
               取消
-            </button>
+            </PressableButton>
           </div>
         </div>
       )}
@@ -1428,7 +1501,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
             <div className="flex items-center justify-between text-xs py-1">
               <span className="text-slate-600 font-medium">模式选择</span>
               <div className="flex items-center gap-2">
-                <button
+                <PressableButton
                   type="button"
                   onClick={() => setStickerIsCountdownInput(true)}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition ${
@@ -1438,8 +1511,8 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                   }`}
                 >
                   目标倒计时
-                </button>
-                <button
+                </PressableButton>
+                <PressableButton
                   type="button"
                   onClick={() => setStickerIsCountdownInput(false)}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition ${
@@ -1449,18 +1522,18 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                   }`}
                 >
                   起始已累计
-                </button>
+                </PressableButton>
               </div>
             </div>
 
             <div className="flex gap-2 justify-end pt-2 border-t border-sky-100">
-              <button
+              <PressableButton
                 onClick={() => setEditingStickerWidget(null)}
                 className="px-3 py-1.5 text-xs rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 transition"
               >
                 取消
-              </button>
-              <button
+              </PressableButton>
+              <PressableButton
                 onClick={() => {
                   onUpdateWidgets(
                     widgets.map((w) =>
@@ -1476,10 +1549,11 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                   );
                   setEditingStickerWidget(null);
                 }}
-                className="px-4 py-1.5 text-xs font-semibold rounded-xl bg-sky-500 text-white hover:bg-sky-600 shadow-sm transition"
+                withRipple
+                className="px-4 py-1.5 text-xs font-semibold rounded-xl bg-sky-500 text-white hover:bg-sky-600 shadow-sm transition overflow-hidden"
               >
                 保存贴纸
-              </button>
+              </PressableButton>
             </div>
           </div>
         </div>
@@ -1510,8 +1584,9 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                 const currentOffset = editingClockWidget.timeOffset ?? 8;
                 const isSelected = currentOffset === region.offset;
                 return (
-                  <button
+                  <PressableButton
                     key={region.city}
+                    pressScale={0.97}
                     onClick={() => {
                       onUpdateWidgets(
                         widgets.map((w) =>
@@ -1530,17 +1605,17 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                   >
                     <span>{region.city}</span>
                     <span className="text-[10px] text-slate-500">{getCityTime(region.offset).timeStr}</span>
-                  </button>
+                  </PressableButton>
                 );
               })}
             </div>
 
-            <button
+            <PressableButton
               onClick={() => setEditingClockWidget(null)}
               className="w-full py-2 text-xs rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 transition mt-2 font-medium"
             >
               取消
-            </button>
+            </PressableButton>
           </div>
         </div>
       )}

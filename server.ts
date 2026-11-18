@@ -1274,43 +1274,12 @@ app.get('/api/weather/reverse-geocode', async (req, res) => {
       return res.status(400).json({ success: false, error: '无效的经纬度格式' });
     }
 
-    // 1. Try BigDataCloud open reverse geocoding API (Fast, Free, Supports Worldwide Locality in Chinese)
-    try {
-      const bdcUrl = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=zh`;
-      const bdcResp = await fetch(bdcUrl, { signal: AbortSignal.timeout(6000) });
-      if (bdcResp.ok) {
-        const bdcData = await bdcResp.json();
-        const city = bdcData.city || bdcData.locality || bdcData.principalSubdivision || '当前位置';
-        const district = bdcData.locality || '';
-        const province = bdcData.principalSubdivision || '';
-        const country = bdcData.countryName || '中国';
-
-        // Construct friendly display name
-        const displayParts = [country, province, city, district].filter((p, i, arr) => p && arr.indexOf(p) === i);
-        const displayName = displayParts.join(' ');
-
-        return res.json({
-          success: true,
-          latitude: lat,
-          longitude: lon,
-          city,
-          district,
-          province,
-          country,
-          displayName: displayName || city,
-          source: 'BigDataCloud',
-        });
-      }
-    } catch (e) {
-      console.warn('BigDataCloud reverse geocode error, trying OSM fallback:', e);
-    }
-
-    // 2. Fallback to OpenStreetMap Nominatim reverse geocode
+    // 1. Use OpenStreetMap Nominatim reverse geocode (Server-side friendly, supports Chinese locality names)
     try {
       const osmUrl = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=zh`;
       const osmResp = await fetch(osmUrl, {
-        headers: { 'User-Agent': 'SimulatedAndroidPhone/2.0' },
-        signal: AbortSignal.timeout(6000),
+        headers: { 'User-Agent': 'SimulatedAndroidPhone/2.0 (weather-app)' },
+        signal: AbortSignal.timeout(5500),
       });
       if (osmResp.ok) {
         const osmData = await osmResp.json();
@@ -1320,6 +1289,8 @@ app.get('/api/weather/reverse-geocode', async (req, res) => {
         const province = addr.state || '';
         const country = addr.country || '中国';
 
+        const displayParts = [country, province, city, district].filter((p, i, arr) => p && arr.indexOf(p) === i);
+
         return res.json({
           success: true,
           latitude: lat,
@@ -1328,13 +1299,38 @@ app.get('/api/weather/reverse-geocode', async (req, res) => {
           district,
           province,
           country,
-          displayName: osmData.display_name || `${country} ${province} ${city}`,
+          displayName: displayParts.join(' ') || osmData.display_name || `${country} ${province} ${city}`,
           source: 'OpenStreetMap',
         });
       }
     } catch (e) {
       console.warn('OSM reverse geocode error:', e);
     }
+
+    // 2. Try Open-Meteo / BigDataCloud fallback if OSM failed
+    try {
+      const bdcUrl = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=zh`;
+      const bdcResp = await fetch(bdcUrl, { signal: AbortSignal.timeout(4000) });
+      if (bdcResp.ok) {
+        const bdcData = await bdcResp.json();
+        const city = bdcData.city || bdcData.locality || bdcData.principalSubdivision || '当前位置';
+        const district = bdcData.locality || '';
+        const province = bdcData.principalSubdivision || '';
+        const country = bdcData.countryName || '中国';
+        const displayParts = [country, province, city, district].filter((p, i, arr) => p && arr.indexOf(p) === i);
+        return res.json({
+          success: true,
+          latitude: lat,
+          longitude: lon,
+          city,
+          district,
+          province,
+          country,
+          displayName: displayParts.join(' ') || city,
+          source: 'BigDataCloud',
+        });
+      }
+    } catch {}
 
     // 3. Fallback coordinates representation
     return res.json({
@@ -1519,7 +1515,528 @@ function getWindScaleText(speedKmH: number): string {
   return '9级以上 (狂风)';
 }
 
-// 0.1 Real-time Weather Endpoint (Zero Hardcoded Cities, 100% Real Live Coordinates & Weather Data)
+// Multi-provider live weather cache & Open-Meteo reachability circuit-breaker
+const weatherServerCache = new Map<string, { weather: any; fetchedAt: number }>();
+let openMeteoBlockedUntil = 0;
+
+async function firstNonNull<T>(promises: Promise<T | null>[]): Promise<T | null> {
+  if (promises.length === 0) return null;
+  return new Promise((resolve) => {
+    let remaining = promises.length;
+    let settled = false;
+    for (const p of promises) {
+      p.then((val) => {
+        if (!settled && val !== null && val !== undefined) {
+          settled = true;
+          resolve(val);
+        } else {
+          remaining -= 1;
+          if (!settled && remaining <= 0) {
+            settled = true;
+            resolve(null);
+          }
+        }
+      }).catch(() => {
+        remaining -= 1;
+        if (!settled && remaining <= 0) {
+          settled = true;
+          resolve(null);
+        }
+      });
+    }
+  });
+}
+
+function mapMetSymbolToWmoCode(symbolCode: string = ''): number {
+  const s = symbolCode.toLowerCase();
+  if (s.includes('thunder')) return 95;
+  if (s.includes('heavyrain')) return 65;
+  if (s.includes('rainshowers')) return 80;
+  if (s.includes('lightrain')) return 61;
+  if (s.includes('rain')) return 63;
+  if (s.includes('sleet')) return 66;
+  if (s.includes('heavysnow')) return 75;
+  if (s.includes('snowshowers')) return 85;
+  if (s.includes('lightsnow') || s.includes('snow')) return 71;
+  if (s.includes('fog')) return 45;
+  if (s.includes('clearsky')) return 0;
+  if (s.includes('fair')) return 1;
+  if (s.includes('partlycloudy')) return 2;
+  if (s.includes('cloudy')) return 3;
+  return 2;
+}
+
+function mapWttrCodeToWmoCode(wttrCodeRaw: string | number): number {
+  const code = Number(wttrCodeRaw);
+  switch (code) {
+    case 113:
+      return 0;
+    case 116:
+      return 2;
+    case 119:
+    case 122:
+      return 3;
+    case 143:
+    case 248:
+    case 260:
+      return 45;
+    case 176:
+    case 263:
+    case 266:
+    case 293:
+    case 296:
+    case 353:
+      return 61;
+    case 299:
+    case 302:
+    case 356:
+      return 63;
+    case 305:
+    case 308:
+    case 359:
+      return 65;
+    case 179:
+    case 182:
+    case 185:
+    case 281:
+    case 284:
+    case 311:
+    case 314:
+    case 317:
+    case 320:
+    case 362:
+    case 365:
+      return 66;
+    case 227:
+    case 323:
+    case 326:
+    case 368:
+      return 71;
+    case 230:
+    case 329:
+    case 332:
+    case 335:
+    case 338:
+    case 371:
+      return 75;
+    case 200:
+    case 386:
+    case 389:
+    case 392:
+    case 395:
+      return 95;
+    default:
+      return 2;
+  }
+}
+
+function computeApparentTemp(tempC: number, humidityPct: number, windKmH: number): number {
+  const windMs = Math.max(0, windKmH / 3.6);
+  const vaporPressure = (humidityPct / 100) * 6.105 * Math.exp((17.27 * tempC) / (237.7 + tempC));
+  return Math.round(tempC + 0.33 * vaporPressure - 0.7 * windMs - 4.0);
+}
+
+function buildWeatherMetaAndAlerts(params: {
+  currentCode: number;
+  curTemp: number;
+  todayMax: number;
+  todayMin: number;
+  windSpeed: number;
+  currentPrecip: number;
+  hourlyList: any[];
+  aqiData: any;
+}) {
+  const { currentCode, curTemp, todayMax, todayMin, windSpeed, currentPrecip, hourlyList, aqiData } = params;
+
+  let rainForecastSummary = '未来几小时无明显降水，适宜外出';
+  const upcomingRainHour = hourlyList.slice(0, 6).find((h) => h.precipProbability >= 60 || h.precipitation >= 0.5);
+  if (upcomingRainHour) {
+    rainForecastSummary = `预计 ${upcomingRainHour.time} 开始降水，降水概率 ${upcomingRainHour.precipProbability}%`;
+  } else {
+    const moderateRainHour = hourlyList.slice(0, 6).find((h) => h.precipProbability >= 35);
+    if (moderateRainHour) {
+      rainForecastSummary = `未来数小时有 ${moderateRainHour.precipProbability}% 阵雨可能，出门备把伞更安心`;
+    }
+  }
+
+  const alerts: any[] = [];
+  if (todayMax >= 37 || curTemp >= 37) {
+    alerts.push({
+      id: 'alert_heat_orange',
+      title: '高温橙色预警',
+      level: 'orange',
+      levelText: '橙色预警',
+      description: `预计最高气温将升至 ${todayMax}°C，请尽量减少午后室外作业与烈日暴晒，多补充电解质水分。`,
+      pubTime: '气象预警中心',
+    });
+  } else if (todayMax >= 35 || curTemp >= 35) {
+    alerts.push({
+      id: 'alert_heat_yellow',
+      title: '高温黄色预警',
+      level: 'yellow',
+      levelText: '黄色预警',
+      description: `今日最高气温可达 ${todayMax}°C，天气炎热，请注意做好防晒与降温防暑措施。`,
+      pubTime: '气象预警中心',
+    });
+  }
+
+  if (todayMin <= 0 || curTemp <= 0) {
+    alerts.push({
+      id: 'alert_cold_blue',
+      title: '低温道路结冰预警',
+      level: 'blue',
+      levelText: '蓝色预警',
+      description: `当前气温较低 (${curTemp}°C)，路面及桥梁易出现湿滑结冰，早晚出行请注意防风保暖与交通安全。`,
+      pubTime: '气象预警中心',
+    });
+  }
+
+  if ([95, 96, 99].includes(currentCode) || hourlyList.slice(0, 4).some((h) => [95, 96, 99].includes(h.conditionCode))) {
+    alerts.push({
+      id: 'alert_thunder_yellow',
+      title: '雷电与强对流预警',
+      level: 'yellow',
+      levelText: '黄色预警',
+      description: '受局地对流云团影响，可能出现雷暴大风与短时强降水，户外请切勿在树下或开阔地逗留。',
+      pubTime: '气象预警中心',
+    });
+  }
+
+  if (windSpeed >= 35) {
+    alerts.push({
+      id: 'alert_wind_blue',
+      title: '大风蓝色预警',
+      level: 'blue',
+      levelText: '蓝色预警',
+      description: `当前最大阵风可达 ${windSpeed} km/h (${getWindScaleText(windSpeed)})，请注意关好门窗，收起阳台易坠物品。`,
+      pubTime: '气象预警中心',
+    });
+  }
+
+  if (currentPrecip >= 20 || hourlyList.slice(0, 4).some((h) => h.precipitation >= 15)) {
+    alerts.push({
+      id: 'alert_rain_orange',
+      title: '暴雨橙色预警',
+      level: 'orange',
+      levelText: '橙色预警',
+      description: '累积雨量已达暴雨级别，低洼路段易出现积水，行车注意减速慢行。',
+      pubTime: '气象预警中心',
+    });
+  }
+
+  let airQuality: any = undefined;
+  if (aqiData && aqiData.current) {
+    const curAqi = aqiData.current;
+    const usAqi = curAqi.us_aqi !== undefined ? Math.round(curAqi.us_aqi) : undefined;
+    const europeanAqi = curAqi.european_aqi !== undefined ? Math.round(curAqi.european_aqi) : undefined;
+    const pm25 = curAqi.pm2_5 !== undefined ? Math.round(curAqi.pm2_5) : undefined;
+    const pm10 = curAqi.pm10 !== undefined ? Math.round(curAqi.pm10) : undefined;
+
+    const effectiveAqi = usAqi !== undefined ? usAqi : pm25 !== undefined ? Math.round(pm25 * 1.5) : europeanAqi;
+    if (effectiveAqi !== undefined) {
+      const aqiLabel =
+        effectiveAqi <= 50 ? '优' : effectiveAqi <= 100 ? '良' : effectiveAqi <= 150 ? '轻度污染' : effectiveAqi <= 200 ? '中度污染' : '重度污染';
+      airQuality = {
+        aqi: effectiveAqi,
+        label: aqiLabel,
+        pm25,
+        pm10,
+      };
+    }
+  }
+
+  return { rainForecastSummary, alerts, airQuality };
+}
+
+function buildWeatherFromMetNorway(params: {
+  metData: any;
+  lat: number;
+  lon: number;
+  city: string;
+  isAuto: boolean;
+  aqiData: any;
+  reqStart: number;
+}) {
+  const { metData, lat, lon, city, isAuto, aqiData, reqStart } = params;
+  const timeseries: any[] = metData?.properties?.timeseries || [];
+  if (timeseries.length === 0) return null;
+
+  const utcOffsetHours = Math.round(lon / 15);
+  const utcOffsetMs = utcOffsetHours * 3600 * 1000;
+  const formatLocal = (isoStr: string) => {
+    const d = new Date(new Date(isoStr).getTime() + utcOffsetMs);
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mi = String(d.getUTCMinutes()).padStart(2, '0');
+    return { date: `${yyyy}-${mm}-${dd}`, time: `${hh}:${mi}`, hour: d.getUTCHours(), ts: new Date(isoStr).getTime() };
+  };
+
+  const first = timeseries[0];
+  const curInstant = first.data?.instant?.details || {};
+  const curSymbol =
+    first.data?.next_1_hours?.summary?.symbol_code ||
+    first.data?.next_6_hours?.summary?.symbol_code ||
+    first.data?.next_12_hours?.summary?.symbol_code ||
+    'partlycloudy';
+  const currentCode = mapMetSymbolToWmoCode(curSymbol);
+  const { condition } = mapWmoWeatherCode(currentCode);
+  const curTemp = Math.round(curInstant.air_temperature ?? 22);
+  const curHumidity = Math.round(curInstant.relative_humidity ?? 60);
+  const windSpeed = Math.round((curInstant.wind_speed ?? 2) * 3.6);
+  const windDir = `${getWindDirectionText(curInstant.wind_from_direction ?? 0)} ${getWindScaleText(windSpeed)}`;
+  const currentPrecip = Number((first.data?.next_1_hours?.details?.precipitation_amount ?? 0).toFixed(1));
+  const feelsLike = computeApparentTemp(curTemp, curHumidity, windSpeed);
+
+  const hourlyList: any[] = [];
+  for (let i = 0; i < Math.min(24, timeseries.length); i++) {
+    const item = timeseries[i];
+    const inst = item.data?.instant?.details || {};
+    const sym =
+      item.data?.next_1_hours?.summary?.symbol_code ||
+      item.data?.next_6_hours?.summary?.symbol_code ||
+      'partlycloudy';
+    const hCode = mapMetSymbolToWmoCode(sym);
+    const hCond = mapWmoWeatherCode(hCode);
+    const hPrecip = Number((item.data?.next_1_hours?.details?.precipitation_amount ?? 0).toFixed(1));
+    const hTemp = Math.round(inst.air_temperature ?? curTemp);
+    const hHum = Math.round(inst.relative_humidity ?? curHumidity);
+    const hWind = Math.round((inst.wind_speed ?? 2) * 3.6);
+    const prob =
+      hPrecip >= 2 ? 85 : hPrecip >= 0.3 ? 65 : hPrecip > 0 ? 45 : sym.includes('rain') || sym.includes('snow') || sym.includes('thunder') ? 40 : 10;
+    const loc = formatLocal(item.time);
+
+    hourlyList.push({
+      time: i === 0 ? '现在' : loc.time,
+      timestamp: loc.ts,
+      temp: hTemp,
+      feelsLike: computeApparentTemp(hTemp, hHum, hWind),
+      condition: hCond.condition,
+      conditionCode: hCode,
+      precipProbability: prob,
+      precipitation: hPrecip,
+      windSpeed: hWind,
+    });
+  }
+
+  // Group timeseries into daily forecasts
+  const daysOfWeek = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const dayBuckets = new Map<string, { temps: number[]; codes: number[]; probs: number[] }>();
+  for (const item of timeseries) {
+    const loc = formatLocal(item.time);
+    const t = item.data?.instant?.details?.air_temperature;
+    if (typeof t !== 'number') continue;
+    const sym =
+      item.data?.next_6_hours?.summary?.symbol_code ||
+      item.data?.next_1_hours?.summary?.symbol_code ||
+      item.data?.next_12_hours?.summary?.symbol_code ||
+      'partlycloudy';
+    const c = mapMetSymbolToWmoCode(sym);
+    const pAmt = item.data?.next_6_hours?.details?.precipitation_amount ?? item.data?.next_1_hours?.details?.precipitation_amount ?? 0;
+    const pProb = pAmt >= 2 ? 85 : pAmt > 0.2 ? 60 : sym.includes('rain') || sym.includes('snow') || sym.includes('thunder') ? 45 : 10;
+
+    if (!dayBuckets.has(loc.date)) {
+      dayBuckets.set(loc.date, { temps: [], codes: [], probs: [] });
+    }
+    const bucket = dayBuckets.get(loc.date)!;
+    bucket.temps.push(t);
+    if (loc.hour >= 9 && loc.hour <= 18) {
+      bucket.codes.push(c);
+    }
+    bucket.probs.push(pProb);
+  }
+
+  const dailyList: any[] = [];
+  let idx = 0;
+  for (const [dateStr, bucket] of dayBuckets.entries()) {
+    if (idx >= 7) break;
+    const parts = dateStr.split('-').map(Number);
+    const localDateObj = new Date(parts[0], (parts[1] || 1) - 1, parts[2] || 1);
+    const dayLabel = idx === 0 ? '今天' : idx === 1 ? '明天' : daysOfWeek[localDateObj.getDay()];
+    const dCode = bucket.codes.length > 0 ? bucket.codes[Math.floor(bucket.codes.length / 2)] : currentCode;
+    const dCond = mapWmoWeatherCode(dCode);
+    dailyList.push({
+      date: dateStr,
+      dayOfWeek: dayLabel,
+      tempMin: Math.round(Math.min(...bucket.temps)),
+      tempMax: Math.round(Math.max(...bucket.temps)),
+      condition: dCond.condition,
+      conditionCode: dCode,
+      precipProbability: Math.max(...bucket.probs, 0),
+    });
+    idx++;
+  }
+
+  const todayMax = dailyList[0]?.tempMax ?? curTemp;
+  const todayMin = dailyList[0]?.tempMin ?? curTemp;
+  const { rainForecastSummary, alerts, airQuality } = buildWeatherMetaAndAlerts({
+    currentCode,
+    curTemp,
+    todayMax,
+    todayMin,
+    windSpeed,
+    currentPrecip,
+    hourlyList,
+    aqiData,
+  });
+
+  return {
+    city: city || '当前位置',
+    country: '',
+    latitude: lat,
+    longitude: lon,
+    temp: curTemp,
+    feelsLike,
+    tempMin: todayMin,
+    tempMax: todayMax,
+    condition,
+    conditionCode: currentCode,
+    humidity: curHumidity,
+    windSpeed,
+    windDirection: windDir,
+    precipProbability: hourlyList[0]?.precipProbability ?? 0,
+    precipitation: currentPrecip,
+    uvIndex: 3.5,
+    airQuality,
+    hourly: hourlyList,
+    daily: dailyList,
+    alerts,
+    updatedAt: Date.now(),
+    isAutoLocation: isAuto,
+    rainForecastSummary,
+    dataSourceInfo: {
+      serviceName: 'MET Norway (Yr.no) 全球高精气象预报',
+      geocodingService: 'Open-Meteo & OpenStreetMap Nominatim 逆地理编码',
+      airQualityService: aqiData ? 'Open-Meteo 欧洲哥白尼大气监测服务 (CAMS)' : '暂未提供',
+      requestTimestamp: reqStart,
+      responseTimestamp: Date.now(),
+      networkLatencyMs: Date.now() - reqStart,
+      isFromCache: false,
+      timezone: `UTC${utcOffsetHours >= 0 ? '+' : ''}${utcOffsetHours}`,
+      coordinates: { latitude: lat, longitude: lon },
+    },
+  };
+}
+
+function buildWeatherFromWttr(params: {
+  wttrData: any;
+  lat: number;
+  lon: number;
+  city: string;
+  isAuto: boolean;
+  aqiData: any;
+  reqStart: number;
+}) {
+  const { wttrData, lat, lon, city, isAuto, aqiData, reqStart } = params;
+  const cur = wttrData?.current_condition?.[0];
+  const days: any[] = wttrData?.weather || [];
+  if (!cur) return null;
+
+  const currentCode = mapWttrCodeToWmoCode(cur.weatherCode);
+  const { condition } = mapWmoWeatherCode(currentCode);
+  const curTemp = Math.round(Number(cur.temp_C ?? 22));
+  const feelsLike = Math.round(Number(cur.FeelsLikeC ?? curTemp));
+  const curHumidity = Math.round(Number(cur.humidity ?? 60));
+  const windSpeed = Math.round(Number(cur.windspeedKmph ?? 8));
+  const windDir = `${getWindDirectionText(Number(cur.winddirDegree ?? 0))} ${getWindScaleText(windSpeed)}`;
+  const currentPrecip = Number(cur.precipMM ?? 0);
+  const uvIndex = Number(cur.uvIndex ?? 3);
+
+  const hourlyList: any[] = [];
+  const todayHourly = days[0]?.hourly || [];
+  const nowHour = new Date().getHours();
+  for (let i = 0; i < todayHourly.length; i++) {
+    const h = todayHourly[i];
+    const hNum = Math.floor(Number(h.time || 0) / 100);
+    if (hNum + 3 < nowHour && i < todayHourly.length - 1) continue;
+    const hCode = mapWttrCodeToWmoCode(h.weatherCode);
+    const hCond = mapWmoWeatherCode(hCode);
+    hourlyList.push({
+      time: hourlyList.length === 0 ? '现在' : `${String(hNum).padStart(2, '0')}:00`,
+      timestamp: Date.now() + hourlyList.length * 3 * 3600 * 1000,
+      temp: Math.round(Number(h.tempC ?? curTemp)),
+      feelsLike: Math.round(Number(h.FeelsLikeC ?? feelsLike)),
+      condition: hCond.condition,
+      conditionCode: hCode,
+      precipProbability: Math.round(Number(h.chanceofrain ?? 0)),
+      precipitation: Number(h.precipMM ?? 0),
+      windSpeed: Math.round(Number(h.windspeedKmph ?? windSpeed)),
+    });
+  }
+
+  const daysOfWeek = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const dailyList = days.slice(0, 7).map((d: any, idx: number) => {
+    const dateParts = String(d.date || '').split('-').map(Number);
+    const localDateObj = new Date(dateParts[0] || 2026, (dateParts[1] || 1) - 1, dateParts[2] || 1);
+    const dayLabel = idx === 0 ? '今天' : idx === 1 ? '明天' : daysOfWeek[localDateObj.getDay()];
+    const noonSlot = d.hourly?.[Math.floor((d.hourly?.length || 1) / 2)] || d.hourly?.[0];
+    const dCode = mapWttrCodeToWmoCode(noonSlot?.weatherCode ?? cur.weatherCode);
+    const dCond = mapWmoWeatherCode(dCode);
+    const maxProb = Math.max(...(d.hourly || []).map((h: any) => Number(h.chanceofrain ?? 0)), 0);
+    return {
+      date: d.date,
+      dayOfWeek: dayLabel,
+      tempMin: Math.round(Number(d.mintempC ?? curTemp - 3)),
+      tempMax: Math.round(Number(d.maxtempC ?? curTemp + 3)),
+      condition: dCond.condition,
+      conditionCode: dCode,
+      precipProbability: Math.round(maxProb),
+    };
+  });
+
+  const todayMax = dailyList[0]?.tempMax ?? curTemp;
+  const todayMin = dailyList[0]?.tempMin ?? curTemp;
+  const { rainForecastSummary, alerts, airQuality } = buildWeatherMetaAndAlerts({
+    currentCode,
+    curTemp,
+    todayMax,
+    todayMin,
+    windSpeed,
+    currentPrecip,
+    hourlyList,
+    aqiData,
+  });
+
+  return {
+    city: city || '当前位置',
+    country: '',
+    latitude: lat,
+    longitude: lon,
+    temp: curTemp,
+    feelsLike,
+    tempMin: todayMin,
+    tempMax: todayMax,
+    condition,
+    conditionCode: currentCode,
+    humidity: curHumidity,
+    windSpeed,
+    windDirection: windDir,
+    precipProbability: hourlyList[0]?.precipProbability ?? 0,
+    precipitation: currentPrecip,
+    uvIndex,
+    airQuality,
+    hourly: hourlyList,
+    daily: dailyList,
+    alerts,
+    updatedAt: Date.now(),
+    isAutoLocation: isAuto,
+    rainForecastSummary,
+    dataSourceInfo: {
+      serviceName: 'Wttr.in 全球实时气象服务',
+      geocodingService: 'Open-Meteo & OpenStreetMap Nominatim 逆地理编码',
+      airQualityService: aqiData ? 'Open-Meteo 欧洲哥白尼大气监测服务 (CAMS)' : '暂未提供',
+      requestTimestamp: reqStart,
+      responseTimestamp: Date.now(),
+      networkLatencyMs: Date.now() - reqStart,
+      isFromCache: false,
+      timezone: 'Asia/Shanghai',
+      coordinates: { latitude: lat, longitude: lon },
+    },
+  };
+}
+
+// 0.1 Real-time Weather Endpoint (Zero Hardcoded Cities, Multi-Provider Real Live Weather Data)
 app.get('/api/weather', async (req, res) => {
   const reqStart = Date.now();
   try {
@@ -1527,35 +2044,42 @@ app.get('/api/weather', async (req, res) => {
     let lat: number | undefined = req.query.lat ? parseFloat(req.query.lat as string) : undefined;
     let lon: number | undefined = req.query.lon ? parseFloat(req.query.lon as string) : undefined;
     const isAuto = req.query.auto === 'true';
+    const forceRefresh = req.query.force === 'true';
 
     // If city is specified but no lat/lon, geocode the city first
     if ((lat === undefined || lon === undefined || isNaN(lat) || isNaN(lon)) && city) {
       try {
         const geoRes = await fetch(
           `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=zh`,
-          { signal: AbortSignal.timeout(6000) }
+          { signal: AbortSignal.timeout(5000) }
         );
-        const geoData = await geoRes.json();
-        if (geoData.results && geoData.results.length > 0) {
-          lat = geoData.results[0].latitude;
-          lon = geoData.results[0].longitude;
-          city = geoData.results[0].name || city;
+        if (geoRes.ok) {
+          const geoData = await geoRes.json();
+          if (geoData.results && geoData.results.length > 0) {
+            lat = geoData.results[0].latitude;
+            lon = geoData.results[0].longitude;
+            city = geoData.results[0].name || city;
+          }
         }
       } catch (geoErr) {
         console.warn('Geocoding city query failed:', geoErr);
       }
     }
 
-    // If coordinates are provided but no city name, reverse geocode to get actual city
+    // If coordinates are provided but no city name, reverse geocode via Nominatim first
     if (lat !== undefined && lon !== undefined && !isNaN(lat) && !isNaN(lon) && (!city || city === '当前位置' || city === '本地')) {
       try {
-        const bdcResp = await fetch(
-          `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=zh`,
-          { signal: AbortSignal.timeout(4000) }
+        const osmResp = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=zh`,
+          {
+            headers: { 'User-Agent': 'SimulatedAndroidPhone/2.0 (weather-app)' },
+            signal: AbortSignal.timeout(4000),
+          }
         );
-        if (bdcResp.ok) {
-          const bdcData = await bdcResp.json();
-          city = bdcData.city || bdcData.locality || bdcData.principalSubdivision || `经纬度 (${lat.toFixed(2)}, ${lon.toFixed(2)})`;
+        if (osmResp.ok) {
+          const osmData = await osmResp.json();
+          const addr = osmData.address || {};
+          city = addr.city || addr.town || addr.county || addr.district || addr.state || `经纬度 (${lat.toFixed(2)}, ${lon.toFixed(2)})`;
         }
       } catch {}
     }
@@ -1569,32 +2093,92 @@ app.get('/api/weather', async (req, res) => {
       });
     }
 
-    // Parallel fetch from Open-Meteo Forecast API & Real Open-Meteo Air Quality API
-    const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,showers,snowfall,weather_code,wind_speed_10m,wind_direction_10m,uv_index&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_probability_max,precipitation_sum&timezone=auto`;
+    const cacheKey = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+    const existingCache = weatherServerCache.get(cacheKey);
+    if (!forceRefresh && existingCache && Date.now() - existingCache.fetchedAt < 2 * 60 * 1000) {
+      return res.json({
+        success: true,
+        weather: {
+          ...existingCache.weather,
+          city: city || existingCache.weather.city,
+          isAutoLocation: isAuto,
+        },
+      });
+    }
+
+    // Start Air Quality API request in parallel
     const aqiUrl = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&current=pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone,european_aqi,us_aqi&timezone=auto`;
+    const aqiPromise = fetch(aqiUrl, { signal: AbortSignal.timeout(4000) })
+      .then(async (r) => (r.ok ? r.json() : null))
+      .catch(() => null);
 
-    const [weatherFetchResult, aqiFetchResult] = await Promise.allSettled([
-      fetch(weatherUrl, { signal: AbortSignal.timeout(9000) }),
-      fetch(aqiUrl, { signal: AbortSignal.timeout(8000) }),
-    ]);
-
-    let data: any = null;
-    if (weatherFetchResult.status === 'fulfilled' && weatherFetchResult.value.ok) {
-      data = await weatherFetchResult.value.json();
-    } else {
-      const errReason = weatherFetchResult.status === 'rejected' ? weatherFetchResult.reason : 'HTTP status ' + (weatherFetchResult as any).value?.status;
-      throw new Error(`Open-Meteo weather fetch failed: ${errReason}`);
-    }
-
-    let aqiData: any = null;
-    if (aqiFetchResult.status === 'fulfilled' && aqiFetchResult.value.ok) {
+    const now = Date.now();
+    const fetchOpenMeteoRaw = async (): Promise<{ provider: 'open-meteo'; data: any } | null> => {
+      const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,showers,snowfall,weather_code,wind_speed_10m,wind_direction_10m,uv_index&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_probability_max,precipitation_sum&timezone=auto`;
       try {
-        aqiData = await aqiFetchResult.value.json();
-      } catch {}
+        const omRes = await fetch(weatherUrl, { signal: AbortSignal.timeout(2800) });
+        if (omRes.ok) {
+          const json = await omRes.json();
+          if (json && json.current) {
+            return { provider: 'open-meteo', data: json };
+          }
+        }
+        openMeteoBlockedUntil = Date.now() + 30 * 60 * 1000;
+        return null;
+      } catch {
+        // Silently circuit-break Open-Meteo for 30 minutes when unreachable/timed out
+        openMeteoBlockedUntil = Date.now() + 30 * 60 * 1000;
+        return null;
+      }
+    };
+
+    const fetchMetNorwayRaw = async (): Promise<{ provider: 'met-norway'; data: any } | null> => {
+      try {
+        const metUrl = `https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}`;
+        const metRes = await fetch(metUrl, {
+          headers: { 'User-Agent': 'SimulatedAndroidPhone/2.0 (weather@local.app)' },
+          signal: AbortSignal.timeout(6500),
+        });
+        if (metRes.ok) {
+          const metData = await metRes.json();
+          if (metData?.properties?.timeseries?.length > 0) {
+            return { provider: 'met-norway', data: metData };
+          }
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    };
+
+    type WeatherPrimaryResult =
+      | { provider: 'open-meteo'; data: any }
+      | { provider: 'met-norway'; data: any };
+
+    let primaryResult: WeatherPrimaryResult | null = null;
+
+    if (now >= openMeteoBlockedUntil) {
+      // Try Open-Meteo first; if it doesn't answer within 700ms, hedge with MET Norway in parallel
+      const omPromise: Promise<WeatherPrimaryResult | null> = fetchOpenMeteoRaw();
+      const fastOpenMeteo = await Promise.race([
+        omPromise,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 700)),
+      ]);
+      if (fastOpenMeteo) {
+        primaryResult = fastOpenMeteo;
+      } else {
+        const metPromise: Promise<WeatherPrimaryResult | null> = fetchMetNorwayRaw();
+        primaryResult = await firstNonNull<WeatherPrimaryResult>([omPromise, metPromise]);
+      }
+    } else {
+      primaryResult = await fetchMetNorwayRaw();
     }
 
-    // Parse structured weather object from real response
-    if (data && data.current) {
+    const aqiData = await aqiPromise;
+
+    // Parse Open-Meteo response if it won
+    if (primaryResult?.provider === 'open-meteo') {
+      const data = primaryResult.data;
       const current = data.current;
       const hourly = data.hourly || {};
       const daily = data.daily || {};
@@ -1604,26 +2188,20 @@ app.get('/api/weather', async (req, res) => {
       const windSpeed = Math.round(current.wind_speed_10m || 0);
       const windDir = `${getWindDirectionText(current.wind_direction_10m || 0)} ${getWindScaleText(windSpeed)}`;
 
-      // Calculate hourly forecasts with accurate timezone alignment
       const hourlyList: any[] = [];
       const currentLocalTimeStr = current.time || '';
-      const currentLocalHour = currentLocalTimeStr.slice(0, 13); // e.g. "2026-08-19T08"
+      const currentLocalHour = currentLocalTimeStr.slice(0, 13);
       const timeArr: string[] = hourly.time || [];
 
       let startIndex = timeArr.findIndex((t) => t.slice(0, 13) === currentLocalHour);
-      if (startIndex === -1) {
-        startIndex = timeArr.findIndex((t) => t >= currentLocalHour);
-      }
+      if (startIndex === -1) startIndex = timeArr.findIndex((t) => t >= currentLocalHour);
       if (startIndex === -1) startIndex = 0;
 
       for (let i = startIndex; i < Math.min(startIndex + 24, timeArr.length); i++) {
         const hTimeStr = timeArr[i];
-        // Parse local time cleanly from "YYYY-MM-DDTHH:MM"
         const timeFormatted = hTimeStr.includes('T') ? hTimeStr.split('T')[1].slice(0, 5) : hTimeStr;
         const hCode = hourly.weather_code ? hourly.weather_code[i] ?? 0 : 0;
         const hCond = mapWmoWeatherCode(hCode);
-
-        // Approximate UTC timestamp using local string + timezone offset
         const approximateTimestamp = new Date(hTimeStr + (data.utc_offset_seconds !== undefined ? '' : 'Z')).getTime();
 
         hourlyList.push({
@@ -1639,10 +2217,9 @@ app.get('/api/weather', async (req, res) => {
         });
       }
 
-      // Calculate daily forecasts with accurate date indexing
       const dailyList: any[] = [];
       const daysOfWeek = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-      const currentLocalDate = currentLocalTimeStr.slice(0, 10); // e.g. "2026-08-19"
+      const currentLocalDate = currentLocalTimeStr.slice(0, 10);
       const dTimeArr: string[] = daily.time || [];
 
       let dStartIndex = dTimeArr.findIndex((d) => d >= currentLocalDate);
@@ -1667,117 +2244,26 @@ app.get('/api/weather', async (req, res) => {
         });
       }
 
-      // Short-term Rain Forecast Summary derived purely from real forecast data
-      let rainForecastSummary = '未来几小时无明显降水，适宜外出';
-      const upcomingRainHour = hourlyList.slice(0, 6).find((h) => h.precipProbability >= 60 || h.precipitation >= 0.5);
-      if (upcomingRainHour) {
-        rainForecastSummary = `预计 ${upcomingRainHour.time} 开始降水，降水概率 ${upcomingRainHour.precipProbability}%`;
-      } else {
-        const moderateRainHour = hourlyList.slice(0, 6).find((h) => h.precipProbability >= 35);
-        if (moderateRainHour) {
-          rainForecastSummary = `未来数小时有 ${moderateRainHour.precipProbability}% 阵雨可能，出门备把伞更安心`;
-        }
-      }
-
-      // Real Meteorological Warning Alerts based strictly on real measurement data
-      const alerts: any[] = [];
       const curTemp = Math.round(current.temperature_2m ?? 26);
       const todayMax = dailyList[0]?.tempMax ?? curTemp;
       const todayMin = dailyList[0]?.tempMin ?? curTemp;
-
-      if (todayMax >= 37 || curTemp >= 37) {
-        alerts.push({
-          id: 'alert_heat_orange',
-          title: '高温橙色预警',
-          level: 'orange',
-          levelText: '橙色预警',
-          description: `预计最高气温将升至 ${todayMax}°C，请尽量减少午后室外作业与烈日暴晒，多补充电解质水分。`,
-          pubTime: '气象预警中心',
-        });
-      } else if (todayMax >= 35 || curTemp >= 35) {
-        alerts.push({
-          id: 'alert_heat_yellow',
-          title: '高温黄色预警',
-          level: 'yellow',
-          levelText: '黄色预警',
-          description: `今日最高气温可达 ${todayMax}°C，天气炎热，请注意做好防晒与降温防暑措施。`,
-          pubTime: '气象预警中心',
-        });
-      }
-
-      if (todayMin <= 0 || curTemp <= 0) {
-        alerts.push({
-          id: 'alert_cold_blue',
-          title: '低温道路结冰预警',
-          level: 'blue',
-          levelText: '蓝色预警',
-          description: `当前气温较低 (${curTemp}°C)，路面及桥梁易出现湿滑结冰，早晚出行请注意防风保暖与交通安全。`,
-          pubTime: '气象预警中心',
-        });
-      }
-
-      if ([95, 96, 99].includes(currentCode) || hourlyList.slice(0, 4).some((h) => [95, 96, 99].includes(h.conditionCode))) {
-        alerts.push({
-          id: 'alert_thunder_yellow',
-          title: '雷电与强对流预警',
-          level: 'yellow',
-          levelText: '黄色预警',
-          description: '受局地对流云团影响，可能出现雷暴大风与短时强降水，户外请切勿在树下或开阔地逗留。',
-          pubTime: '气象预警中心',
-        });
-      }
-
-      if (windSpeed >= 35) {
-        alerts.push({
-          id: 'alert_wind_blue',
-          title: '大风蓝色预警',
-          level: 'blue',
-          levelText: '蓝色预警',
-          description: `当前最大阵风可达 ${windSpeed} km/h (${getWindScaleText(windSpeed)})，请注意关好门窗，收起阳台易坠物品。`,
-          pubTime: '气象预警中心',
-        });
-      }
-
-      if (current.precipitation >= 20 || hourlyList.slice(0, 4).some((h) => h.precipitation >= 15)) {
-        alerts.push({
-          id: 'alert_rain_orange',
-          title: '暴雨橙色预警',
-          level: 'orange',
-          levelText: '橙色预警',
-          description: '累积雨量已达暴雨级别，低洼路段易出现积水，行车注意减速慢行。',
-          pubTime: '气象预警中心',
-        });
-      }
-
-      // Real Air Quality (from Open-Meteo Air Quality API or undefined if unserved)
-      let airQuality: any = undefined;
-      if (aqiData && aqiData.current) {
-        const curAqi = aqiData.current;
-        const usAqi = curAqi.us_aqi !== undefined ? Math.round(curAqi.us_aqi) : undefined;
-        const europeanAqi = curAqi.european_aqi !== undefined ? Math.round(curAqi.european_aqi) : undefined;
-        const pm25 = curAqi.pm2_5 !== undefined ? Math.round(curAqi.pm2_5) : undefined;
-        const pm10 = curAqi.pm10 !== undefined ? Math.round(curAqi.pm10) : undefined;
-
-        const effectiveAqi = usAqi !== undefined ? usAqi : pm25 !== undefined ? Math.round(pm25 * 1.5) : europeanAqi;
-
-        if (effectiveAqi !== undefined) {
-          const aqiLabel =
-            effectiveAqi <= 50 ? '优' : effectiveAqi <= 100 ? '良' : effectiveAqi <= 150 ? '轻度污染' : effectiveAqi <= 200 ? '中度污染' : '重度污染';
-          airQuality = {
-            aqi: effectiveAqi,
-            label: aqiLabel,
-            pm25,
-            pm10,
-          };
-        }
-      }
+      const { rainForecastSummary, alerts, airQuality } = buildWeatherMetaAndAlerts({
+        currentCode,
+        curTemp,
+        todayMax,
+        todayMin,
+        windSpeed,
+        currentPrecip: current.precipitation ?? 0,
+        hourlyList,
+        aqiData,
+      });
 
       const weatherResult = {
         city: city || '当前位置',
         country: '',
         latitude: lat,
         longitude: lon,
-        temp: Math.round(current.temperature_2m ?? 26),
+        temp: curTemp,
         feelsLike: Math.round(current.apparent_temperature ?? current.temperature_2m ?? 26),
         tempMin: todayMin,
         tempMax: todayMax,
@@ -1798,7 +2284,7 @@ app.get('/api/weather', async (req, res) => {
         rainForecastSummary,
         dataSourceInfo: {
           serviceName: 'Open-Meteo WMO / ECMWF 全球高精气象模型',
-          geocodingService: 'Open-Meteo & BigDataCloud / Nominatim 逆地理编码',
+          geocodingService: 'Open-Meteo & OpenStreetMap Nominatim 逆地理编码',
           airQualityService: aqiData ? 'Open-Meteo 欧洲哥白尼大气监测服务 (CAMS)' : '暂未提供',
           requestTimestamp: reqStart,
           responseTimestamp: Date.now(),
@@ -1810,13 +2296,73 @@ app.get('/api/weather', async (req, res) => {
         },
       };
 
+      weatherServerCache.set(cacheKey, { weather: weatherResult, fetchedAt: Date.now() });
       return res.json({ success: true, weather: weatherResult });
     }
 
-    return res.status(500).json({ success: false, error: '未能获取有效气象响应数据' });
+    // Parse MET Norway response if it won
+    if (primaryResult?.provider === 'met-norway') {
+      const metWeather = buildWeatherFromMetNorway({
+        metData: primaryResult.data,
+        lat,
+        lon,
+        city,
+        isAuto,
+        aqiData,
+        reqStart,
+      });
+      if (metWeather) {
+        weatherServerCache.set(cacheKey, { weather: metWeather, fetchedAt: Date.now() });
+        return res.json({ success: true, weather: metWeather });
+      }
+    }
+
+    // Provider 3: Wttr.in JSON API
+    try {
+      const wttrUrl = `https://wttr.in/${lat.toFixed(3)},${lon.toFixed(3)}?format=j1`;
+      const wttrRes = await fetch(wttrUrl, {
+        headers: { 'User-Agent': 'SimulatedAndroidPhone/2.0' },
+        signal: AbortSignal.timeout(6500),
+      });
+      if (wttrRes.ok) {
+        const wttrData = await wttrRes.json();
+        const wttrWeather = buildWeatherFromWttr({ wttrData, lat, lon, city, isAuto, aqiData, reqStart });
+        if (wttrWeather) {
+          weatherServerCache.set(cacheKey, { weather: wttrWeather, fetchedAt: Date.now() });
+          return res.json({ success: true, weather: wttrWeather });
+        }
+      }
+    } catch {}
+
+    // Provider 4: Stale server cache fallback (up to 24h)
+    if (existingCache && Date.now() - existingCache.fetchedAt < 24 * 60 * 60 * 1000) {
+      return res.json({
+        success: true,
+        weather: {
+          ...existingCache.weather,
+          city: city || existingCache.weather.city,
+          isAutoLocation: isAuto,
+          dataSourceInfo: {
+            ...existingCache.weather.dataSourceInfo,
+            isFromCache: true,
+            cacheTimestamp: existingCache.fetchedAt,
+          },
+        },
+      });
+    }
+
+    return res.status(200).json({
+      success: false,
+      status: 'upstream_timeout',
+      error: '实时气象数据源响应超时，请稍后点击刷新重试。',
+    });
   } catch (error: any) {
-    console.error('Weather error:', error);
-    res.status(500).json({ success: false, error: error.message || '获取天气数据失败' });
+    console.warn('Weather endpoint handled error:', error?.message || error);
+    return res.status(200).json({
+      success: false,
+      status: 'error',
+      error: error?.message || '获取天气数据失败',
+    });
   }
 });
 

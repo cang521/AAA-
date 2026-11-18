@@ -1,0 +1,685 @@
+/* ============================================================================
+   CLASSIC WECHAT THEME — STRICTLY SCOPED TO .wechat-app[data-wechat-theme="classic"]
+   Never touches global Tailwind classes or non-WeChat screens.
+   ============================================================================ */
+
+.wechat-app[data-wechat-theme="classic"] {
+  --wx-page-bg: #F5F5F5;
+  --wx-chat-bg: #EDEDED;
+  --wx-surface: #FFFFFF;
+  --wx-surface-hover: #ECECEC;
+  --wx-surface-pinned: #F2F2F2;
+  --wx-nav-bg: #F7F7F7;
+  --wx-text: #191919;
+  --wx-text-secondary: #7A7A7A;
+  --wx-text-muted: #999999;
+  --wx-divider: #E5E5E5;
+  --wx-green: #07C160;
+  --wx-green-pressed: #06AD56;
+  --wx-user-bubble: #95EC69;
+  --wx-ai-bubble: #FFFFFF;
+  --wx-danger: #FA5151;
+  --wx-badge: #FA5151;
+  --wx-input-bg: #FFFFFF;
+  --wx-link: #576B95;
+  --wx-overlay: rgba(255, 255, 255, 0.24);
+  --wx-pill-bg: rgba(0, 0, 0, 0.06);
+  --wx-pill-text: #7A7A7A;
+  --wx-sub-card-bg: #F7F7F7;
+  --wx-btn-disabled-bg: #E5E5E5;
+  --wx-btn-disabled-text: #9E9E9E;
+}
+
+html[data-theme="dark"] .wechat-app[data-wechat-theme="classic"],
+.theme-dark .wechat-app[data-wechat-theme="classic"] {
+  --wx-page-bg: #111111;
+  --wx-chat-bg: #111111;
+  --wx-surface: #191919;
+  --wx-surface-hover: #242424;
+  --wx-surface-pinned: #202020;
+  --wx-nav-bg: #191919;
+  --wx-text: #F5F5F5;
+  --wx-text-secondary: #C5C5C5;
+  --wx-text-muted: #8A8A8A;
+  --wx-divider: #2C2C2C;
+  --wx-green: #07C160;
+  --wx-green-pressed: #06AD56;
+  --wx-user-bubble: #3B7F47;
+  --wx-ai-bubble: #2C2C2C;
+  --wx-danger: #FA5151;
+  --wx-badge: #FA5151;
+  --wx-input-bg: #2C2C2C;
+  --wx-link: #7D90A9;
+  --wx-overlay: rgba(0, 0, 0, 0.30);
+  --wx-pill-bg: rgba(255, 255, 255, 0.08);
+  --wx-pill-text: #A0A0A0;
+  --wx-sub-card-bg: #222222;
+  --wx-btn-disabled-bg: #2E2E2E;
+  --wx-btn-disabled-text: #757575;
+}
+
+/* 1. Root Shell */
+.wechat-app[data-wechat-theme="classic"].wx-shell,
+.wechat-app[data-wechat-theme="classic"] .wx-shell {
+  background-color: var(--wx-page-bg) !important;
+  color: var(--wx-text) !important;
+}
+
+/* 2. Top Navigation Bar */
+.wechat-app[data-wechat-theme="classic"] .wx-header {
+  background-color: var(--wx-nav-bg) !important;
+  border-bottom-color: var(--wx-divider) !important;
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-header-title {
+  color: var(--wx-text) !important;
+  font-weight: 600;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-header-back {
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-header-action {
+  background-color: transparent !important;
+  color: var(--wx-text) !important;
+  border-radius: 0.5rem;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-header-action:hover {
+  background-color: var(--wx-surface-hover) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-header-cta {
+  background-color: var(--wx-green) !important;
+  color: #FFFFFF !important;
+  border-radius: 0.375rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-header-cta:hover {
+  background-color: var(--wx-green-pressed) !important;
+}
+
+/* 3. Text & Divider Utilities */
+.wechat-app[data-wechat-theme="classic"] .wx-primary-text {
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-secondary-text {
+  color: var(--wx-text-secondary) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-muted-text {
+  color: var(--wx-text-muted) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-link-text {
+  color: var(--wx-link) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-green-text {
+  color: var(--wx-green) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-green-dot {
+  background-color: var(--wx-green) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-divider {
+  border-color: var(--wx-divider) !important;
+}
+
+/* 4. Bottom Navigation Bar */
+.wechat-app[data-wechat-theme="classic"] .wx-bottom-nav {
+  background-color: var(--wx-nav-bg) !important;
+  border-top-color: var(--wx-divider) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-bottom-tab {
+  color: var(--wx-text-secondary) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-bottom-tab--active {
+  color: var(--wx-green) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-unread-badge {
+  background-color: var(--wx-badge) !important;
+  color: #FFFFFF !important;
+}
+
+/* 5. Lists & Conversation Rows */
+.wechat-app[data-wechat-theme="classic"] .wx-list {
+  background-color: var(--wx-page-bg) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-list > * {
+  border-color: var(--wx-divider) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-search-bar-wrap {
+  background-color: var(--wx-nav-bg) !important;
+  border-bottom: 1px solid var(--wx-divider) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-search-input {
+  background-color: var(--wx-input-bg) !important;
+  color: var(--wx-text) !important;
+  border-color: var(--wx-divider) !important;
+  border-radius: 0.375rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-conversation-row {
+  background-color: var(--wx-surface) !important;
+  border-bottom: 1px solid var(--wx-divider) !important;
+  min-height: 70px;
+  padding: 0.65rem 0.875rem !important;
+  border-radius: 0 !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-conversation-row--pinned {
+  background-color: var(--wx-surface-pinned) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-conversation-row:hover,
+.wechat-app[data-wechat-theme="classic"] .wx-conversation-row:active {
+  background-color: var(--wx-surface-hover) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-avatar {
+  border-radius: 0.4rem !important;
+  border-color: var(--wx-divider) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-group-tag {
+  background-color: var(--wx-green) !important;
+  color: #FFFFFF !important;
+  border-radius: 0.25rem !important;
+}
+
+/* 6. Contacts Page */
+.wechat-app[data-wechat-theme="classic"] .wx-contacts-page {
+  background-color: var(--wx-page-bg) !important;
+  padding: 0 !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-settings-group {
+  background-color: var(--wx-surface) !important;
+  border-top: 1px solid var(--wx-divider) !important;
+  border-bottom: 1px solid var(--wx-divider) !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-settings-row {
+  background-color: var(--wx-surface) !important;
+  color: var(--wx-text) !important;
+  border-bottom: 1px solid var(--wx-divider) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-settings-row:last-child {
+  border-bottom: none !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-settings-row:active {
+  background-color: var(--wx-surface-hover) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-contact-swipe-wrap {
+  background-color: var(--wx-surface) !important;
+  border-radius: 0 !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-top: none !important;
+  border-bottom: 1px solid var(--wx-divider) !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  box-shadow: none !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-contact-swipe-content {
+  background-color: var(--wx-surface) !important;
+  padding: 0.65rem 0.875rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-contact-swipe-content:hover {
+  background-color: var(--wx-surface-hover) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-contact-tag {
+  background-color: var(--wx-sub-card-bg) !important;
+  color: var(--wx-text-secondary) !important;
+  border-color: var(--wx-divider) !important;
+}
+
+/* 7. Me / Profile Hub & Subviews */
+.wechat-app[data-wechat-theme="classic"] .wx-me-page {
+  background-color: var(--wx-page-bg) !important;
+  padding: 0 !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-profile-header {
+  background-color: var(--wx-surface) !important;
+  border-bottom: 1px solid var(--wx-divider) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-invite-pill {
+  background-color: var(--wx-sub-card-bg) !important;
+  color: var(--wx-text-secondary) !important;
+  border-color: var(--wx-divider) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-card {
+  background-color: var(--wx-surface) !important;
+  border-color: var(--wx-divider) !important;
+  border-radius: 0.5rem !important;
+  box-shadow: none !important;
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-sub-card {
+  background-color: var(--wx-sub-card-bg) !important;
+  border-color: var(--wx-divider) !important;
+  border-radius: 0.375rem !important;
+  color: var(--wx-text) !important;
+}
+
+/* 8. Moments Page */
+.wechat-app[data-wechat-theme="classic"] .wx-moments-page {
+  background-color: var(--wx-surface) !important;
+  padding: 0 !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-moment-card {
+  background-color: var(--wx-surface) !important;
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-bottom: 1px solid var(--wx-divider) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0.875rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-moment-meta-box {
+  background-color: var(--wx-sub-card-bg) !important;
+  border-radius: 0.25rem !important;
+  color: var(--wx-text-secondary) !important;
+}
+
+/* 9. Chat Viewport, Time Dividers, Bubbles & Tails */
+.wechat-app[data-wechat-theme="classic"] .wx-chat-viewport {
+  background-color: var(--wx-chat-bg) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-chat-bg-overlay {
+  background-color: var(--wx-overlay) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-time-divider {
+  background-color: transparent !important;
+  color: var(--wx-text-muted) !important;
+  box-shadow: none !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-history-pill {
+  background-color: var(--wx-pill-bg) !important;
+  color: var(--wx-pill-text) !important;
+  border-color: transparent !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-message-bubble {
+  border-radius: 0.375rem !important;
+  box-shadow: none !important;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  padding: 0.5rem 0.75rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-message-bubble-user {
+  background-color: var(--wx-user-bubble) !important;
+  color: var(--wx-text) !important;
+  border: none !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-message-bubble-user::after {
+  content: '';
+  position: absolute;
+  top: 10px;
+  right: -5px;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 6px solid var(--wx-user-bubble);
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-message-bubble-ai {
+  background-color: var(--wx-ai-bubble) !important;
+  color: var(--wx-text) !important;
+  border: 1px solid var(--wx-divider) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-message-bubble-ai::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  left: -6px;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-right: 6px solid var(--wx-ai-bubble);
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-quote-preview {
+  background-color: rgba(0, 0, 0, 0.06) !important;
+  color: var(--wx-text-secondary) !important;
+  border-left-color: var(--wx-green) !important;
+}
+
+html[data-theme="dark"] .wechat-app[data-wechat-theme="classic"] .wx-quote-preview,
+.theme-dark .wechat-app[data-wechat-theme="classic"] .wx-quote-preview {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* 10. Composer / Input Bar */
+.wechat-app[data-wechat-theme="classic"] .wx-composer {
+  background-color: var(--wx-nav-bg) !important;
+  border-top-color: var(--wx-divider) !important;
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-composer-quote {
+  background-color: var(--wx-surface) !important;
+  border-top-color: var(--wx-divider) !important;
+  color: var(--wx-text-secondary) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-composer-plus {
+  background-color: transparent !important;
+  color: var(--wx-text) !important;
+  border: 1.5px solid var(--wx-text-secondary) !important;
+  border-radius: 9999px !important;
+  width: 32px;
+  height: 32px;
+  padding: 0 !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-composer-plus:hover {
+  background-color: var(--wx-surface-hover) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-composer-input {
+  background-color: var(--wx-input-bg) !important;
+  color: var(--wx-text) !important;
+  border-color: var(--wx-divider) !important;
+  border-radius: 0.375rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-composer-input::placeholder {
+  color: var(--wx-text-muted) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-composer-input:focus {
+  border-color: var(--wx-green) !important;
+  box-shadow: none !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-send-button {
+  background-color: var(--wx-btn-disabled-bg) !important;
+  color: var(--wx-btn-disabled-text) !important;
+  border-radius: 0.375rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-send-button--active {
+  background-color: var(--wx-green) !important;
+  color: #FFFFFF !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-send-button--active:hover,
+.wechat-app[data-wechat-theme="classic"] .wx-send-button--active:active {
+  background-color: var(--wx-green-pressed) !important;
+}
+
+/* 11. Menus, Dropdowns & Modals Inside WeChat */
+.wechat-app[data-wechat-theme="classic"] .wx-dropdown {
+  background-color: var(--wx-surface) !important;
+  border-color: var(--wx-divider) !important;
+  border-radius: 0.5rem !important;
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-dropdown-item {
+  background-color: transparent !important;
+  color: var(--wx-text) !important;
+  border-color: transparent !important;
+  border-radius: 0.375rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-dropdown-item:hover {
+  background-color: var(--wx-surface-hover) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-modal-card {
+  background-color: var(--wx-surface) !important;
+  border-color: var(--wx-divider) !important;
+  color: var(--wx-text) !important;
+  border-radius: 0.75rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-modal-header {
+  background-color: var(--wx-nav-bg) !important;
+  border-bottom-color: var(--wx-divider) !important;
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-modal-footer {
+  background-color: var(--wx-nav-bg) !important;
+  border-top-color: var(--wx-divider) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-modal-input {
+  background-color: var(--wx-input-bg) !important;
+  border-color: var(--wx-divider) !important;
+  color: var(--wx-text) !important;
+  border-radius: 0.375rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-modal-input:focus {
+  border-color: var(--wx-green) !important;
+  box-shadow: none !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-btn-primary {
+  background-color: var(--wx-green) !important;
+  background-image: none !important;
+  color: #FFFFFF !important;
+  border-radius: 0.375rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-btn-primary:hover {
+  background-color: var(--wx-green-pressed) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-btn-secondary {
+  background-color: var(--wx-sub-card-bg) !important;
+  border-color: var(--wx-divider) !important;
+  color: var(--wx-text) !important;
+  border-radius: 0.375rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-btn-secondary:hover {
+  background-color: var(--wx-surface-hover) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-btn-danger {
+  background-color: var(--wx-danger) !important;
+  color: #FFFFFF !important;
+  border-radius: 0.375rem !important;
+}
+
+/* 12. Theme Center Inside Classic Theme */
+.wechat-app[data-wechat-theme="classic"] .wx-theme-center {
+  background-color: var(--wx-page-bg) !important;
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-theme-card {
+  background-color: var(--wx-surface) !important;
+  border-color: var(--wx-divider) !important;
+  border-radius: 0.625rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-theme-card--active {
+  border-color: var(--wx-green) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-theme-status-badge {
+  background-color: rgba(7, 193, 96, 0.14) !important;
+  color: var(--wx-green) !important;
+  border-color: rgba(7, 193, 96, 0.32) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-theme-apply-btn {
+  background-color: var(--wx-green) !important;
+  color: #FFFFFF !important;
+  border-radius: 0.375rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-theme-apply-btn--active {
+  background-color: var(--wx-btn-disabled-bg) !important;
+  color: var(--wx-btn-disabled-text) !important;
+  border-radius: 0.375rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-toast-success {
+  background-color: rgba(7, 193, 96, 0.12) !important;
+  border-color: rgba(7, 193, 96, 0.35) !important;
+  color: var(--wx-green) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-toast-float {
+  background-color: var(--wx-surface) !important;
+  border-color: var(--wx-divider) !important;
+  color: var(--wx-text) !important;
+}
+
+/* 13. Group Chat Specific Elements */
+.wechat-app[data-wechat-theme="classic"] .wx-group-notice {
+  background-color: var(--wx-surface) !important;
+  border-bottom-color: var(--wx-divider) !important;
+  color: var(--wx-text-secondary) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-group-tag-ai {
+  background-color: rgba(7, 193, 96, 0.12) !important;
+  color: var(--wx-green) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-group-tag-human {
+  background-color: var(--wx-sub-card-bg) !important;
+  color: var(--wx-text-secondary) !important;
+}
+
+/* 14. Modal Tabs, Pills, Dropzones, Alerts & Icon Buttons */
+.wechat-app[data-wechat-theme="classic"] .wx-tab-bar {
+  background-color: var(--wx-sub-card-bg) !important;
+  border-color: var(--wx-divider) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-tab-btn {
+  color: var(--wx-text-secondary) !important;
+  background-color: transparent !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-tab-btn--active {
+  background-color: var(--wx-surface) !important;
+  color: var(--wx-green) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-tab-underline {
+  color: var(--wx-text-secondary) !important;
+  border-bottom-color: transparent !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-tab-underline--active {
+  color: var(--wx-green) !important;
+  border-bottom-color: var(--wx-green) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-pill-badge {
+  background-color: rgba(7, 193, 96, 0.12) !important;
+  border-color: rgba(7, 193, 96, 0.3) !important;
+  color: var(--wx-green) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-dropzone {
+  background-color: var(--wx-sub-card-bg) !important;
+  border-color: var(--wx-divider) !important;
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-dropzone:hover {
+  border-color: var(--wx-green) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-icon-btn {
+  background-color: var(--wx-sub-card-bg) !important;
+  border-color: var(--wx-divider) !important;
+  color: var(--wx-text-secondary) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-icon-btn:hover {
+  background-color: var(--wx-surface-hover) !important;
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-alert-success {
+  background-color: rgba(7, 193, 96, 0.1) !important;
+  border-color: rgba(7, 193, 96, 0.32) !important;
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-alert-warn {
+  background-color: rgba(245, 158, 11, 0.1) !important;
+  border-color: rgba(245, 158, 11, 0.32) !important;
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-alert-danger {
+  background-color: rgba(250, 81, 81, 0.1) !important;
+  border-color: rgba(250, 81, 81, 0.32) !important;
+  color: var(--wx-danger) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-alert-info {
+  background-color: var(--wx-sub-card-bg) !important;
+  border-color: var(--wx-divider) !important;
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-option-active {
+  background-color: rgba(7, 193, 96, 0.1) !important;
+  border-color: var(--wx-green) !important;
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-toggle-on {
+  background-color: var(--wx-green) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-toggle-off {
+  background-color: var(--wx-btn-disabled-bg) !important;
+}

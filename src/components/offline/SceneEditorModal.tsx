@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Sparkles, MapPin, Smile, BookOpen, Check, MessageSquare } from 'lucide-react';
 import { SceneTemplate } from '../../lib/offline/OfflineSessionDb';
 import { saveSceneTemplate } from '../../lib/offline/SceneTemplateService';
+import { AnimatedCheckbox, PressableButton } from '../ui/interaction';
 
 interface SceneEditorModalProps {
   isOpen: boolean;
@@ -143,25 +144,27 @@ export const SceneEditorModal: React.FC<SceneEditorModalProps> = ({
           </div>
 
           {/* Favorite Toggle */}
-          <label className="flex items-center gap-2 cursor-pointer pt-1">
-            <input
-              type="checkbox"
+          <div className="pt-1">
+            <AnimatedCheckbox
               checked={isFavorite}
-              onChange={(e) => setIsFavorite(e.target.checked)}
-              className="w-4 h-4 accent-indigo-500 rounded"
+              onChange={setIsFavorite}
+              accent="indigo"
+              completedTextStyle={false}
+              label={<span className="text-zinc-300 font-medium">设为常用优先显示的场景</span>}
             />
-            <span className="text-zinc-300 font-medium">设为常用优先显示的场景</span>
-          </label>
+          </div>
 
           {/* Submit */}
-          <button
+          <PressableButton
             type="submit"
+            withRipple
+            loading={isSaving}
             disabled={isSaving}
             className="w-full py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs transition shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2"
           >
             <Check className="w-4 h-4" />
             <span>{isSaving ? '保存中...' : '保存场景模板'}</span>
-          </button>
+          </PressableButton>
         </form>
       </div>
     </div>

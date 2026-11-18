@@ -466,15 +466,15 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
         onChange={handleExecuteReplace}
       />
 
-      <div className="w-full max-w-xl max-h-[90vh] flex flex-col rounded-3xl bg-zinc-900 border border-zinc-700/80 shadow-2xl text-zinc-100 overflow-hidden">
+      <div className="wx-modal-card w-full max-w-xl max-h-[90vh] flex flex-col rounded-3xl bg-zinc-900 border border-zinc-700/80 shadow-2xl text-zinc-100 overflow-hidden">
         {/* Modal Header */}
-        <div className="p-4 border-b border-zinc-800 bg-zinc-950/70 flex items-center justify-between">
+        <div className="wx-modal-header p-4 border-b border-zinc-800 bg-zinc-950/70 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="relative">
               <img
                 src={activeChar.avatar}
                 alt={activeChar.name}
-                className="w-10 h-10 rounded-2xl object-cover border border-emerald-500/40"
+                className="wx-avatar w-10 h-10 rounded-2xl object-cover border border-emerald-500/40"
               />
               <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 border-2 border-zinc-900 flex items-center justify-center text-[9px] text-white">
                 <Database className="w-2.5 h-2.5" />
@@ -483,14 +483,14 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
 
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                <h3 className="wx-primary-text text-sm font-bold text-white flex items-center gap-1.5">
                   <span>{activeChar.name} 专属记忆空间</span>
                 </h3>
-                <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                <span className="wx-pill-badge px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                   本地隔离
                 </span>
               </div>
-              <p className="text-[11px] text-zinc-400">
+              <p className="wx-secondary-text text-[11px] text-zinc-400">
                 独立离线存储文件夹 · AI随时按需调阅 · 绝不污染聊天列表
               </p>
             </div>
@@ -498,7 +498,7 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
 
           <button
             onClick={onClose}
-            className="p-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-white transition cursor-pointer"
+            className="wx-icon-btn p-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-white transition cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -506,8 +506,8 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
 
         {/* AI Character Switcher Bar (if multiple characters) */}
         {allCharacters.length > 1 && (
-          <div className="px-4 py-2 bg-zinc-900/90 border-b border-zinc-800/70 flex items-center gap-2 overflow-x-auto scrollbar-none">
-            <span className="text-[11px] text-zinc-400 shrink-0 flex items-center gap-1">
+          <div className="wx-sub-card wx-divider px-4 py-2 bg-zinc-900/90 border-b border-zinc-800/70 flex items-center gap-2 overflow-x-auto scrollbar-none">
+            <span className="wx-secondary-text text-[11px] text-zinc-400 shrink-0 flex items-center gap-1">
               <Bot className="w-3.5 h-3.5 text-zinc-500" />
               切换AI空间:
             </span>
@@ -523,8 +523,8 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                     }}
                     className={`px-2.5 py-1 rounded-xl text-xs font-medium transition cursor-pointer flex items-center gap-1.5 shrink-0 ${
                       isCurrent
-                        ? 'bg-emerald-600 text-white shadow-sm'
-                        : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-750'
+                        ? 'wx-btn-primary bg-emerald-600 text-white shadow-sm'
+                        : 'wx-btn-secondary bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-750'
                     }`}
                   >
                     <img src={c.avatar} alt="" className="w-3.5 h-3.5 rounded-full object-cover" />
@@ -537,33 +537,33 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
         )}
 
         {/* Vault Stats Bar */}
-        <div className="px-4 py-2.5 bg-zinc-850/60 border-b border-zinc-800 grid grid-cols-3 gap-2 text-center text-xs">
-          <div className="p-1.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
-            <span className="text-[10px] text-zinc-400 block">已存记忆文件</span>
-            <span className="font-bold text-white text-xs">{files.length} 个</span>
+        <div className="wx-sub-card wx-divider px-4 py-2.5 bg-zinc-850/60 border-b border-zinc-800 grid grid-cols-3 gap-2 text-center text-xs">
+          <div className="wx-card p-1.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+            <span className="wx-secondary-text text-[10px] text-zinc-400 block">已存记忆文件</span>
+            <span className="wx-primary-text font-bold text-white text-xs">{files.length} 个</span>
           </div>
-          <div className="p-1.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
-            <span className="text-[10px] text-zinc-400 block">空间总占用</span>
-            <span className="font-bold text-emerald-400 text-xs">
+          <div className="wx-card p-1.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+            <span className="wx-secondary-text text-[10px] text-zinc-400 block">空间总占用</span>
+            <span className="wx-green-text font-bold text-emerald-400 text-xs">
               {formatSize(vault?.totalSizeBytes || 0)}
             </span>
           </div>
-          <div className="p-1.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
-            <span className="text-[10px] text-zinc-400 block">可调阅切片</span>
-            <span className="font-bold text-cyan-400 text-xs">
+          <div className="wx-card p-1.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+            <span className="wx-secondary-text text-[10px] text-zinc-400 block">可调阅切片</span>
+            <span className="wx-link-text font-bold text-cyan-400 text-xs">
               {files.reduce((acc, f) => acc + (f.chunkCount || 0), 0)} 片段
             </span>
           </div>
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex border-b border-zinc-800 bg-zinc-900 px-4 pt-2">
+        <div className="wx-divider flex border-b border-zinc-800 bg-zinc-900 px-4 pt-2">
           <button
             onClick={() => setActiveTab('files')}
             className={`pb-2 px-3 text-xs font-medium border-b-2 transition cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'files'
-                ? 'border-emerald-500 text-emerald-400'
-                : 'border-transparent text-zinc-400 hover:text-zinc-300'
+                ? 'wx-tab-underline--active border-emerald-500 text-emerald-400'
+                : 'wx-tab-underline border-transparent text-zinc-400 hover:text-zinc-300'
             }`}
           >
             <Folder className="w-3.5 h-3.5" />
@@ -573,8 +573,8 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
             onClick={() => setActiveTab('import')}
             className={`pb-2 px-3 text-xs font-medium border-b-2 transition cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'import'
-                ? 'border-emerald-500 text-emerald-400'
-                : 'border-transparent text-zinc-400 hover:text-zinc-300'
+                ? 'wx-tab-underline--active border-emerald-500 text-emerald-400'
+                : 'wx-tab-underline border-transparent text-zinc-400 hover:text-zinc-300'
             }`}
           >
             <Upload className="w-3.5 h-3.5" />
@@ -584,8 +584,8 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
             onClick={() => setActiveTab('test')}
             className={`pb-2 px-3 text-xs font-medium border-b-2 transition cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'test'
-                ? 'border-emerald-500 text-emerald-400'
-                : 'border-transparent text-zinc-400 hover:text-zinc-300'
+                ? 'wx-tab-underline--active border-emerald-500 text-emerald-400'
+                : 'wx-tab-underline border-transparent text-zinc-400 hover:text-zinc-300'
             }`}
           >
             <Sparkles className="w-3.5 h-3.5" />
@@ -607,12 +607,12 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                     value={searchFilter}
                     onChange={(e) => setSearchFilter(e.target.value)}
                     placeholder={`在 ${activeChar.name} 的记忆文件中搜索...`}
-                    className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+                    className="wx-modal-input w-full pl-8 pr-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer shrink-0 transition"
+                  className="wx-btn-primary px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer shrink-0 transition"
                 >
                   <Upload className="w-3.5 h-3.5" />
                   <span>添加文件</span>
@@ -620,9 +620,9 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
               </div>
 
               {/* Notice Card */}
-              <div className="p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/20 text-[11px] text-emerald-300/90 leading-relaxed flex items-start gap-2">
-                <Lock className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                <span>
+              <div className="wx-alert-success p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/20 text-[11px] text-emerald-300/90 leading-relaxed flex items-start gap-2">
+                <Lock className="wx-green-text w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                <span className="wx-primary-text">
                   <b>独立存储保护</b>：导入的文件仅属于【{activeChar.name}
                   】，其他AI绝无权限查看。聊天时AI将按需检索，无需把历史消息塞入聊天界面。
                 </span>
@@ -630,27 +630,27 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
 
               {/* Files Table / List */}
               {isLoading ? (
-                <div className="py-12 text-center text-zinc-400 text-xs flex items-center justify-center gap-2">
-                  <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" />
+                <div className="py-12 text-center text-zinc-400 wx-secondary-text text-xs flex items-center justify-center gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin text-emerald-400 wx-green-text" />
                   <span>正在读取 {activeChar.name} 专属记忆库...</span>
                 </div>
               ) : filteredFiles.length === 0 ? (
-                <div className="py-12 text-center rounded-2xl bg-zinc-850/40 border border-zinc-800/80 p-6 space-y-3">
-                  <div className="w-12 h-12 rounded-2xl bg-zinc-800 mx-auto flex items-center justify-center text-zinc-400">
+                <div className="wx-sub-card py-12 text-center rounded-2xl bg-zinc-850/40 border border-zinc-800/80 p-6 space-y-3">
+                  <div className="wx-card w-12 h-12 rounded-2xl bg-zinc-800 border mx-auto flex items-center justify-center text-zinc-400">
                     <FolderOpen className="w-6 h-6 text-zinc-500" />
                   </div>
                   <div>
-                    <h4 className="text-xs font-semibold text-zinc-300">
+                    <h4 className="wx-primary-text text-xs font-semibold text-zinc-300">
                       {searchFilter ? '未找到匹配的记忆文件' : '记忆文件夹还是空的'}
                     </h4>
-                    <p className="text-[11px] text-zinc-500 mt-1 max-w-xs mx-auto leading-relaxed">
+                    <p className="wx-secondary-text text-[11px] text-zinc-500 mt-1 max-w-xs mx-auto leading-relaxed">
                       支持导入 ZIP、JSON、JSONL、TXT、MD
                       等各种大型文件，完整保存在本地，供AI随时回忆调阅。
                     </p>
                   </div>
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer transition shadow-md"
+                    className="wx-btn-primary px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer transition shadow-md"
                   >
                     <Upload className="w-4 h-4" />
                     <span>立即导入第一个记忆文件</span>
@@ -661,19 +661,19 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                   {filteredFiles.map((file) => (
                     <div
                       key={file.id}
-                      className="p-3 rounded-2xl bg-zinc-850 border border-zinc-750 hover:border-zinc-650 transition space-y-2"
+                      className="wx-card p-3 rounded-2xl bg-zinc-850 border border-zinc-750 hover:border-zinc-650 transition space-y-2"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-start gap-2.5 min-w-0">
-                          <div className="p-2 rounded-xl bg-zinc-900 border border-zinc-750 shrink-0 mt-0.5">
+                          <div className="wx-sub-card p-2 rounded-xl bg-zinc-900 border border-zinc-750 shrink-0 mt-0.5">
                             {getFileIcon(file.fileType)}
                           </div>
                           <div className="min-w-0">
-                            <h4 className="text-xs font-semibold text-zinc-200 truncate" title={file.fileName}>
+                            <h4 className="wx-primary-text text-xs font-semibold text-zinc-200 truncate" title={file.fileName}>
                               {file.fileName}
                             </h4>
-                            <div className="flex items-center gap-2 mt-0.5 text-[10px] text-zinc-400">
-                              <span className="uppercase font-mono px-1 rounded bg-zinc-800 text-zinc-300">
+                            <div className="wx-secondary-text flex items-center gap-2 mt-0.5 text-[10px] text-zinc-400">
+                              <span className="wx-sub-card uppercase font-mono px-1 rounded bg-zinc-800 text-zinc-300">
                                 {file.fileType}
                               </span>
                               <span>{formatSize(file.fileSizeBytes)}</span>
@@ -690,7 +690,7 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                           <button
                             onClick={() => handleOpenPreview(file)}
                             title="查看切片与预览"
-                            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition cursor-pointer"
+                            className="wx-icon-btn p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition cursor-pointer"
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
@@ -699,7 +699,7 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                           <button
                             onClick={() => handleTriggerReplace(file.id)}
                             title="更换新文件内容"
-                            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-emerald-900/40 text-zinc-300 hover:text-emerald-300 transition cursor-pointer"
+                            className="wx-icon-btn p-1.5 rounded-lg bg-zinc-800 hover:bg-emerald-900/40 text-zinc-300 hover:text-emerald-300 transition cursor-pointer"
                           >
                             <RefreshCw className="w-3.5 h-3.5" />
                           </button>
@@ -708,7 +708,7 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                           <button
                             onClick={() => handleDownloadFile(file)}
                             title="下载原始文件"
-                            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition cursor-pointer"
+                            className="wx-icon-btn p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition cursor-pointer"
                           >
                             <Download className="w-3.5 h-3.5" />
                           </button>
@@ -717,7 +717,7 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                           <button
                             onClick={() => handleDeleteFile(file)}
                             title="从专属空间删除"
-                            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-rose-950/60 text-zinc-400 hover:text-rose-400 transition cursor-pointer"
+                            className="wx-icon-btn p-1.5 rounded-lg bg-zinc-800 hover:bg-rose-950/60 text-zinc-400 hover:text-rose-400 transition cursor-pointer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -726,7 +726,7 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
 
                       {/* File preview snippet (first few words) */}
                       {file.previewSnippet && (
-                        <div className="p-2 rounded-xl bg-zinc-900/60 border border-zinc-800 text-[11px] text-zinc-400 font-mono leading-relaxed line-clamp-2">
+                        <div className="wx-sub-card wx-secondary-text p-2 rounded-xl bg-zinc-900/60 border border-zinc-800 text-[11px] text-zinc-400 font-mono leading-relaxed line-clamp-2">
                           {file.previewSnippet}
                         </div>
                       )}
@@ -741,33 +741,33 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
           {activeTab === 'import' && (
             <div className="space-y-4">
               {/* Feature Highlights */}
-              <div className="p-3.5 rounded-2xl bg-zinc-850 border border-zinc-750 space-y-2.5">
-                <h4 className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
-                  <Database className="w-4 h-4 text-emerald-400" />
+              <div className="wx-card p-3.5 rounded-2xl bg-zinc-850 border border-zinc-750 space-y-2.5">
+                <h4 className="wx-green-text text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
+                  <Database className="wx-green-text w-4 h-4 text-emerald-400" />
                   <span>独立本地空间导入规则</span>
                 </h4>
-                <div className="grid grid-cols-2 gap-2 text-[11px] text-zinc-300">
-                  <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex items-start gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                    <span>
+                <div className="wx-secondary-text grid grid-cols-2 gap-2 text-[11px] text-zinc-300">
+                  <div className="wx-sub-card p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex items-start gap-2">
+                    <CheckCircle2 className="wx-green-text w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                    <span className="wx-primary-text">
                       <b>支持各类大文件</b>：ZIP 归档、JSON、JSONL 对话集、TXT、MD 设定集、LOG 日志。
                     </span>
                   </div>
-                  <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex items-start gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                    <span>
+                  <div className="wx-sub-card p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex items-start gap-2">
+                    <CheckCircle2 className="wx-green-text w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                    <span className="wx-primary-text">
                       <b>不污染聊天界面</b>：导入内容完全存储在独立数据库中，不会塞进聊天 messages 导致卡顿。
                     </span>
                   </div>
-                  <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex items-start gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                    <span>
+                  <div className="wx-sub-card p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex items-start gap-2">
+                    <CheckCircle2 className="wx-green-text w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                    <span className="wx-primary-text">
                       <b>离线隐私安全</b>：浏览器纯本地解析 (IndexedDB)，原始数据绝不上传服务器。
                     </span>
                   </div>
-                  <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex items-start gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                    <span>
+                  <div className="wx-sub-card p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex items-start gap-2">
+                    <CheckCircle2 className="wx-green-text w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                    <span className="wx-primary-text">
                       <b>按需回忆调阅</b>：自动建立语义检索切片，AI 聊天需要时才精准提取几句话。
                     </span>
                   </div>
@@ -775,7 +775,7 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
               </div>
 
               {/* Optional 7-Day History Chat Restoration Checkbox */}
-              <div className="p-3.5 rounded-2xl bg-zinc-850/90 border border-zinc-750 flex items-start gap-3 transition hover:border-zinc-700">
+              <div className="wx-card p-3.5 rounded-2xl bg-zinc-850/90 border border-zinc-750 flex items-start gap-3 transition hover:border-zinc-700">
                 <input
                   type="checkbox"
                   id="restore-recent-chat-checkbox"
@@ -784,15 +784,15 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                   className="mt-0.5 w-4 h-4 rounded text-emerald-500 border-zinc-600 bg-zinc-900 focus:ring-emerald-500 cursor-pointer"
                 />
                 <div className="flex-1 cursor-pointer" onClick={() => setRestoreRecentChat(!restoreRecentChat)}>
-                  <label htmlFor="restore-recent-chat-checkbox" className="text-xs font-semibold text-zinc-200 cursor-pointer flex items-center gap-2">
+                  <label htmlFor="restore-recent-chat-checkbox" className="wx-primary-text text-xs font-semibold text-zinc-200 cursor-pointer flex items-center gap-2">
                     <span>同时恢复该文件最后一次真实对话结束前7天的聊天记录</span>
                     {restoreRecentChat && (
-                      <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-500/20 text-emerald-300 font-normal">
+                      <span className="wx-pill-badge px-1.5 py-0.2 rounded text-[10px] bg-emerald-500/20 text-emerald-300 font-normal">
                         已开启
                       </span>
                     )}
                   </label>
-                  <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">
+                  <p className="wx-secondary-text text-[11px] text-zinc-400 mt-1 leading-relaxed">
                     从原始文件中提取真实聊天，恢复到该 AI 的微信会话。不勾选则仅导入记忆资料。
                   </p>
                 </div>
@@ -800,18 +800,18 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
 
               {/* AI-Assisted Format Analysis Confirmation Dialog */}
               {pendingAiAssist && (
-                <div className="p-4 rounded-2xl bg-amber-950/40 border border-amber-500/40 space-y-3 animate-in fade-in duration-200">
+                <div className="wx-alert-warn p-4 rounded-2xl bg-amber-950/40 border border-amber-500/40 space-y-3 animate-in fade-in duration-200">
                   <div className="flex items-start gap-2.5">
                     <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                     <div className="space-y-1.5 flex-1">
-                      <h4 className="text-xs font-semibold text-amber-200">
+                      <h4 className="wx-primary-text text-xs font-semibold text-amber-200">
                         当前文件结构较特殊，是否使用 AI 辅助分析格式？
                       </h4>
-                      <p className="text-[11px] text-zinc-300 leading-relaxed">
-                        文件「<span className="font-mono text-amber-300">{pendingAiAssist.unrecognizedFileName}</span>」本地多层级解析未识别到标准对话字段。您可以选择调用已配置的 AI API 协助推断字段结构与映射规则。
+                      <p className="wx-secondary-text text-[11px] text-zinc-300 leading-relaxed">
+                        文件「<span className="font-mono text-amber-300 wx-primary-text">{pendingAiAssist.unrecognizedFileName}</span>」本地多层级解析未识别到标准对话字段。您可以选择调用已配置的 AI API 协助推断字段结构与映射规则。
                       </p>
-                      <div className="text-[10px] text-zinc-400 bg-zinc-900/90 p-2.5 rounded-xl border border-zinc-800 leading-relaxed space-y-1">
-                        <div className="text-zinc-300 font-medium">🔒 隐私与额度保护承诺：</div>
+                      <div className="wx-sub-card wx-secondary-text text-[10px] text-zinc-400 bg-zinc-900/90 p-2.5 rounded-xl border border-zinc-800 leading-relaxed space-y-1">
+                        <div className="wx-primary-text text-zinc-300 font-medium">🔒 隐私与额度保护承诺：</div>
                         <div>• 仅发送脱敏后的字段键名及极简骨架结构示例（&lt;1500字符），绝不上传完整原始文件。</div>
                         <div>• 绝不上传无关图片或 Base64 内容。</div>
                         <div>• API 仅分析字段结构并返回映射建议，由本地代码执行真实数据提取与保存，绝不凭空编造聊天内容。</div>
@@ -822,14 +822,14 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                     <button
                       onClick={() => handleConfirmAiAssist(false)}
                       disabled={isAnalyzingStructure}
-                      className="px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium cursor-pointer transition disabled:opacity-50"
+                      className="wx-btn-secondary px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium cursor-pointer transition disabled:opacity-50"
                     >
                       【仅使用本地解析】
                     </button>
                     <button
                       onClick={() => handleConfirmAiAssist(true)}
                       disabled={isAnalyzingStructure}
-                      className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer transition flex items-center gap-1.5 disabled:opacity-50"
+                      className="wx-btn-primary px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer transition flex items-center gap-1.5 disabled:opacity-50"
                     >
                       {isAnalyzingStructure ? (
                         <>
@@ -850,33 +850,33 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
               {/* Upload Drop Zone */}
               <div
                 onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-zinc-700 hover:border-emerald-500 rounded-2xl p-8 text-center bg-zinc-850/40 hover:bg-zinc-800/50 transition cursor-pointer space-y-3"
+                className="wx-dropzone border-2 border-dashed border-zinc-700 hover:border-emerald-500 rounded-2xl p-8 text-center bg-zinc-850/40 hover:bg-zinc-800/50 transition cursor-pointer space-y-3"
               >
-                <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 mx-auto flex items-center justify-center">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 wx-green-text mx-auto flex items-center justify-center">
                   <Upload className="w-6 h-6" />
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-zinc-200">
+                  <p className="wx-primary-text text-xs font-semibold text-zinc-200">
                     点击选择文件 或 拖拽文件到这里
                   </p>
-                  <p className="text-[11px] text-zinc-400 mt-1">
+                  <p className="wx-secondary-text text-[11px] text-zinc-400 mt-1">
                     支持 ZIP、JSON、JSONL、TXT、MD、CSV、LOG 等各种大型文件
                   </p>
                 </div>
                 <div className="flex items-center justify-center gap-1.5 pt-1">
-                  <span className="px-2 py-0.5 rounded text-[10px] bg-zinc-800 text-zinc-300 font-mono">
+                  <span className="wx-card wx-secondary-text px-2 py-0.5 rounded border text-[10px] bg-zinc-800 text-zinc-300 font-mono">
                     .zip
                   </span>
-                  <span className="px-2 py-0.5 rounded text-[10px] bg-zinc-800 text-zinc-300 font-mono">
+                  <span className="wx-card wx-secondary-text px-2 py-0.5 rounded border text-[10px] bg-zinc-800 text-zinc-300 font-mono">
                     .json
                   </span>
-                  <span className="px-2 py-0.5 rounded text-[10px] bg-zinc-800 text-zinc-300 font-mono">
+                  <span className="wx-card wx-secondary-text px-2 py-0.5 rounded border text-[10px] bg-zinc-800 text-zinc-300 font-mono">
                     .jsonl
                   </span>
-                  <span className="px-2 py-0.5 rounded text-[10px] bg-zinc-800 text-zinc-300 font-mono">
+                  <span className="wx-card wx-secondary-text px-2 py-0.5 rounded border text-[10px] bg-zinc-800 text-zinc-300 font-mono">
                     .txt
                   </span>
-                  <span className="px-2 py-0.5 rounded text-[10px] bg-zinc-800 text-zinc-300 font-mono">
+                  <span className="wx-card wx-secondary-text px-2 py-0.5 rounded border text-[10px] bg-zinc-800 text-zinc-300 font-mono">
                     .md
                   </span>
                 </div>
@@ -884,8 +884,8 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
 
               {/* Progress Indicator */}
               {isImporting && (
-                <div className="p-3.5 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 space-y-2">
-                  <div className="flex items-center justify-between text-xs text-emerald-300">
+                <div className="wx-alert-success p-3.5 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 space-y-2">
+                  <div className="wx-green-text flex items-center justify-between text-xs text-emerald-300">
                     <span className="flex items-center gap-1.5">
                       <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-400" />
                       <span>{importProgress.msg}</span>
@@ -903,21 +903,21 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
 
               {/* Success Alert */}
               {importSuccessAlert && (
-                <div className="p-3 rounded-xl bg-emerald-900/40 border border-emerald-500/30 text-xs text-emerald-200 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>{importSuccessAlert}</span>
+                <div className="wx-alert-success p-3 rounded-xl bg-emerald-900/40 border border-emerald-500/30 text-xs text-emerald-200 flex items-center gap-2">
+                  <CheckCircle2 className="wx-green-text w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="wx-primary-text">{importSuccessAlert}</span>
                 </div>
               )}
 
               {/* Chat Restoration Verification Audit Card */}
               {chatAuditReport && (
-                <div className={`p-3.5 rounded-2xl border text-xs space-y-2.5 ${chatAuditReport.hasChatMessages ? 'bg-zinc-850/90 border-emerald-500/40' : 'bg-amber-950/20 border-amber-500/30'}`}>
-                  <div className="flex items-center justify-between border-b border-zinc-700/60 pb-2">
-                    <span className="font-semibold text-zinc-100 flex items-center gap-1.5">
-                      <Database className={`w-3.5 h-3.5 ${chatAuditReport.hasChatMessages ? 'text-emerald-400' : 'text-amber-400'}`} />
+                <div className={`wx-card p-3.5 rounded-2xl border text-xs space-y-2.5 ${chatAuditReport.hasChatMessages ? 'bg-zinc-850/90 border-emerald-500/40' : 'wx-alert-warn bg-amber-950/20 border-amber-500/30'}`}>
+                  <div className="wx-divider flex items-center justify-between border-b border-zinc-700/60 pb-2">
+                    <span className="wx-primary-text font-semibold text-zinc-100 flex items-center gap-1.5">
+                      <Database className={`w-3.5 h-3.5 ${chatAuditReport.hasChatMessages ? 'text-emerald-400 wx-green-text' : 'text-amber-400'}`} />
                       <span>历史聊天恢复核对报告</span>
                     </span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${chatAuditReport.syncedCount > 0 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-400'}`}>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${chatAuditReport.syncedCount > 0 ? 'wx-pill-badge bg-emerald-500/20 text-emerald-300' : 'wx-sub-card wx-secondary-text bg-zinc-800 text-zinc-400'}`}>
                       {chatAuditReport.syncedCount > 0 ? `已成功恢复 ${chatAuditReport.syncedCount} 条` : chatAuditReport.hasChatMessages ? '已同步/无需新增' : '未检测到原始聊天'}
                     </span>
                   </div>
@@ -925,55 +925,55 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                   {chatAuditReport.hasChatMessages ? (
                     <div className="space-y-2 text-[11px]">
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-zinc-300">
-                        <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
-                          <span className="text-zinc-400">原始聊天消息总数:</span>
-                          <span className="font-mono font-semibold text-zinc-100">{chatAuditReport.totalExtracted + chatAuditReport.unrecognizedCount}</span>
+                        <div className="wx-sub-card p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
+                          <span className="wx-secondary-text text-zinc-400">原始聊天消息总数:</span>
+                          <span className="wx-primary-text font-mono font-semibold text-zinc-100">{chatAuditReport.totalExtracted + chatAuditReport.unrecognizedCount}</span>
                         </div>
-                        <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
-                          <span className="text-zinc-400">真实提取成功:</span>
-                          <span className="font-mono font-semibold text-emerald-400">{chatAuditReport.totalExtracted}</span>
+                        <div className="wx-sub-card p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
+                          <span className="wx-secondary-text text-zinc-400">真实提取成功:</span>
+                          <span className="wx-green-text font-mono font-semibold text-emerald-400">{chatAuditReport.totalExtracted}</span>
                         </div>
-                        <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
-                          <span className="text-zinc-400">处于最后七天窗口内:</span>
-                          <span className="font-mono font-semibold text-emerald-300">{chatAuditReport.windowTotalCount}</span>
+                        <div className="wx-sub-card p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
+                          <span className="wx-secondary-text text-zinc-400">处于最后七天窗口内:</span>
+                          <span className="wx-green-text font-mono font-semibold text-emerald-300">{chatAuditReport.windowTotalCount}</span>
                         </div>
-                        <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
-                          <span className="text-zinc-400">实际新增恢复:</span>
-                          <span className="font-mono font-semibold text-teal-300">{chatAuditReport.syncedCount}</span>
+                        <div className="wx-sub-card p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
+                          <span className="wx-secondary-text text-zinc-400">实际新增恢复:</span>
+                          <span className="wx-green-text font-mono font-semibold text-teal-300">{chatAuditReport.syncedCount}</span>
                         </div>
-                        <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
-                          <span className="text-zinc-400">已存在而跳过:</span>
-                          <span className="font-mono font-semibold text-zinc-400">{chatAuditReport.skippedCount}</span>
+                        <div className="wx-sub-card p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
+                          <span className="wx-secondary-text text-zinc-400">已存在而跳过:</span>
+                          <span className="wx-secondary-text font-mono font-semibold text-zinc-400">{chatAuditReport.skippedCount}</span>
                         </div>
-                        <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
-                          <span className="text-zinc-400">无法识别:</span>
-                          <span className="font-mono font-semibold text-amber-300">{chatAuditReport.unrecognizedCount}</span>
+                        <div className="wx-sub-card p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex justify-between">
+                          <span className="wx-secondary-text text-zinc-400">无法识别:</span>
+                          <span className="wx-primary-text font-mono font-semibold text-amber-300">{chatAuditReport.unrecognizedCount}</span>
                         </div>
                       </div>
 
-                      <div className="p-2.5 rounded-xl bg-zinc-900/90 border border-zinc-800 text-zinc-300 space-y-1">
+                      <div className="wx-sub-card p-2.5 rounded-xl bg-zinc-900/90 border border-zinc-800 text-zinc-300 space-y-1">
                         <div className="flex justify-between text-[10px]">
-                          <span className="text-zinc-400">原始对话结束时间:</span>
-                          <span className="font-mono text-zinc-200">{chatAuditReport.formattedEndTime || '无'}</span>
+                          <span className="wx-secondary-text text-zinc-400">原始对话结束时间:</span>
+                          <span className="wx-primary-text font-mono text-zinc-200">{chatAuditReport.formattedEndTime || '无'}</span>
                         </div>
                         <div className="flex justify-between text-[10px]">
-                          <span className="text-zinc-400">恢复起始时间 (结束前7天):</span>
-                          <span className="font-mono text-zinc-200">{chatAuditReport.formattedStartTime || '无'}</span>
+                          <span className="wx-secondary-text text-zinc-400">恢复起始时间 (结束前7天):</span>
+                          <span className="wx-primary-text font-mono text-zinc-200">{chatAuditReport.formattedStartTime || '无'}</span>
                         </div>
                         <div className="flex justify-between text-[10px]">
-                          <span className="text-zinc-400">恢复结束时间:</span>
-                          <span className="font-mono text-emerald-300">{chatAuditReport.formattedEndTime || '无'}</span>
+                          <span className="wx-secondary-text text-zinc-400">恢复结束时间:</span>
+                          <span className="wx-green-text font-mono text-emerald-300">{chatAuditReport.formattedEndTime || '无'}</span>
                         </div>
                       </div>
 
                       {chatAuditReport.explanation && (
-                        <div className="text-[11px] text-zinc-400 italic px-1">
+                        <div className="wx-secondary-text text-[11px] text-zinc-400 italic px-1">
                           ℹ️ {chatAuditReport.explanation}
                         </div>
                       )}
                     </div>
                   ) : (
-                    <div className="p-2.5 rounded-xl bg-amber-950/30 border border-amber-500/20 text-amber-200 text-[11px] leading-relaxed">
+                    <div className="wx-alert-warn p-2.5 rounded-xl bg-amber-950/30 border border-amber-500/20 text-amber-200 wx-primary-text text-[11px] leading-relaxed">
                       ⚠️ {chatAuditReport.explanation || '该文件未包含可恢复的原始聊天记录，无法自动还原最近七天的真实对话。请导入包含原始消息的聊天记录文件。'}
                     </div>
                   )}
@@ -982,7 +982,7 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
 
               {/* Error Alert */}
               {importErrorAlert && (
-                <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2">
+                <div className="wx-alert-danger p-3 rounded-xl bg-rose-950/40 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
                   <span>{importErrorAlert}</span>
                 </div>
@@ -993,12 +993,12 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
           {/* TAB 3: RETRIEVAL TEST (按需检索测试) */}
           {activeTab === 'test' && (
             <div className="space-y-4">
-              <div className="p-3 rounded-2xl bg-zinc-850 border border-zinc-750 space-y-2">
-                <h4 className="text-xs font-semibold text-cyan-400 flex items-center gap-1.5">
-                  <Sparkles className="w-4 h-4 text-cyan-400" />
+              <div className="wx-card p-3 rounded-2xl bg-zinc-850 border border-zinc-750 space-y-2">
+                <h4 className="wx-green-text text-xs font-semibold text-cyan-400 flex items-center gap-1.5">
+                  <Sparkles className="wx-green-text w-4 h-4 text-cyan-400" />
                   <span>测试 {activeChar.name} 的独立记忆检索</span>
                 </h4>
-                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                <p className="wx-secondary-text text-[11px] text-zinc-400 leading-relaxed">
                   在下方输入任意话题或关键词（例如“上次约定的事情”、“喜欢的食物”、“世界法则”），系统将仅从【
                   {activeChar.name}
                   】的专属记忆文件中精准召回最相关的片段，展示 AI 实际调阅的效果。
@@ -1011,12 +1011,12 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                     onChange={(e) => setTestQuery(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleRunTestQuery()}
                     placeholder="输入测试话题关键词..."
-                    className="flex-1 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-cyan-500"
+                    className="wx-modal-input flex-1 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-cyan-500"
                   />
                   <button
                     onClick={handleRunTestQuery}
                     disabled={isTestingRecall || !testQuery.trim()}
-                    className="px-4 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer transition"
+                    className="wx-btn-primary px-4 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer transition"
                   >
                     {isTestingRecall ? (
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -1031,20 +1031,20 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
               {/* Test Results Display */}
               {testResults && (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between text-xs text-zinc-400">
+                  <div className="wx-secondary-text flex items-center justify-between text-xs text-zinc-400">
                     <span>
                       从 {files.length} 个专属文件中检索到{' '}
-                      <b className="text-cyan-400">{testResults.matchedChunks.length}</b> 处匹配记忆
+                      <b className="wx-green-text text-cyan-400">{testResults.matchedChunks.length}</b> 处匹配记忆
                     </span>
                     {testResults.matchedFileNames.length > 0 && (
-                      <span className="text-[10px] text-zinc-500">
+                      <span className="wx-muted-text text-[10px] text-zinc-500">
                         来源文件: {testResults.matchedFileNames.join(', ')}
                       </span>
                     )}
                   </div>
 
                   {testResults.matchedChunks.length === 0 ? (
-                    <div className="p-4 rounded-xl bg-zinc-850/50 border border-zinc-800 text-center text-xs text-zinc-500">
+                    <div className="wx-sub-card wx-secondary-text p-4 rounded-xl bg-zinc-850/50 border border-zinc-800 text-center text-xs text-zinc-500">
                       在该 AI 的记忆空间中未匹配到相关片段。可尝试更换其他关键词，或在「导入资料」中补充更多相关文件。
                     </div>
                   ) : (
@@ -1052,29 +1052,29 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                       {testResults.matchedChunks.map((match, idx) => (
                         <div
                           key={idx}
-                          className="p-3 rounded-xl bg-zinc-850 border border-zinc-750 text-xs space-y-1.5"
+                          className="wx-card p-3 rounded-xl bg-zinc-850 border border-zinc-750 text-xs space-y-1.5"
                         >
                           <div className="flex items-center justify-between">
-                            <span className="font-semibold text-emerald-400 text-[11px] flex items-center gap-1">
-                              <FileText className="w-3 h-3 text-emerald-400" />
+                            <span className="wx-green-text font-semibold text-emerald-400 text-[11px] flex items-center gap-1">
+                              <FileText className="wx-green-text w-3 h-3 text-emerald-400" />
                               {match.fileName} (片段 #{match.chunkIndex + 1})
                             </span>
-                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-cyan-500/20 text-cyan-300 font-mono">
+                            <span className="wx-pill-badge px-1.5 py-0.5 rounded text-[10px] bg-cyan-500/20 text-cyan-300 font-mono">
                               相关度得分: {match.score}
                             </span>
                           </div>
-                          <p className="text-zinc-200 text-[11px] leading-relaxed bg-zinc-900/60 p-2 rounded-lg border border-zinc-800">
+                          <p className="wx-sub-card wx-primary-text text-zinc-200 text-[11px] leading-relaxed bg-zinc-900/60 p-2 rounded-lg border border-zinc-800">
                             {match.text}
                           </p>
                         </div>
                       ))}
 
                       {/* Prompt Format Preview */}
-                      <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-400 space-y-1">
-                        <span className="text-zinc-500 font-semibold block">
+                      <div className="wx-sub-card p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-400 space-y-1">
+                        <span className="wx-secondary-text text-zinc-500 font-semibold block">
                           AI 聊天时实际注入给模型的上下文格式：
                         </span>
-                        <pre className="whitespace-pre-wrap font-mono text-zinc-300">
+                        <pre className="wx-primary-text whitespace-pre-wrap font-mono text-zinc-300">
                           {testResults.recalledText}
                         </pre>
                       </div>
@@ -1087,14 +1087,14 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-3 border-t border-zinc-800 bg-zinc-950/70 flex items-center justify-between text-xs text-zinc-400">
-          <div className="flex items-center gap-1.5">
-            <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+        <div className="wx-modal-footer p-3 border-t border-zinc-800 bg-zinc-950/70 flex items-center justify-between text-xs text-zinc-400">
+          <div className="wx-secondary-text flex items-center gap-1.5">
+            <HardDrive className="wx-green-text w-3.5 h-3.5 text-emerald-400" />
             <span>存储引擎: 本地 IndexedDB (完全离线隔离)</span>
           </div>
           <button
             onClick={onClose}
-            className="px-4 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition cursor-pointer"
+            className="wx-btn-secondary px-4 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition cursor-pointer"
           >
             完成并返回
           </button>
@@ -1104,20 +1104,20 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
       {/* SUB-MODAL: Chunk Preview Drawer */}
       {previewFileMeta && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-3xl bg-zinc-900 border border-zinc-700 shadow-2xl text-zinc-100 overflow-hidden">
-            <div className="p-3.5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
+          <div className="wx-modal-card w-full max-w-lg max-h-[85vh] flex flex-col rounded-3xl bg-zinc-900 border border-zinc-700 shadow-2xl text-zinc-100 overflow-hidden">
+            <div className="wx-modal-header p-3.5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
               <div className="min-w-0">
-                <h4 className="text-xs font-bold text-white truncate flex items-center gap-1.5">
-                  <FileText className="w-4 h-4 text-emerald-400" />
+                <h4 className="wx-primary-text text-xs font-bold text-white truncate flex items-center gap-1.5">
+                  <FileText className="wx-green-text w-4 h-4 text-emerald-400" />
                   <span>{previewFileMeta.fileName}</span>
                 </h4>
-                <p className="text-[10px] text-zinc-400 mt-0.5">
+                <p className="wx-secondary-text text-[10px] text-zinc-400 mt-0.5">
                   共 {previewTotalChunks} 个切片 · 占用 {formatSize(previewFileMeta.fileSizeBytes)}
                 </p>
               </div>
               <button
                 onClick={() => setPreviewFileMeta(null)}
-                className="p-1.5 rounded-xl bg-zinc-800 text-zinc-400 hover:text-white"
+                className="wx-icon-btn p-1.5 rounded-xl bg-zinc-800 text-zinc-400 hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1126,23 +1126,23 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
             {/* Chunk List Body */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {isLoadingPreview ? (
-                <div className="py-12 text-center text-zinc-400 text-xs flex items-center justify-center gap-2">
-                  <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" />
+                <div className="py-12 text-center text-zinc-400 wx-secondary-text text-xs flex items-center justify-center gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin text-emerald-400 wx-green-text" />
                   <span>正在分页加载切片...</span>
                 </div>
               ) : (
                 previewChunks.map((chunk) => (
                   <div
                     key={chunk.id}
-                    className="p-3 rounded-2xl bg-zinc-850 border border-zinc-750 text-xs space-y-1.5"
+                    className="wx-card p-3 rounded-2xl bg-zinc-850 border border-zinc-750 text-xs space-y-1.5"
                   >
-                    <div className="flex items-center justify-between text-[10px] text-zinc-400">
-                      <span className="font-mono text-emerald-400">
+                    <div className="wx-secondary-text flex items-center justify-between text-[10px] text-zinc-400">
+                      <span className="wx-green-text font-mono text-emerald-400">
                         片段索引 #{chunk.chunkIndex + 1}
                       </span>
                       <span>约 {chunk.tokenEstimated || Math.round(chunk.text.length / 2)} tokens</span>
                     </div>
-                    <p className="text-zinc-200 text-[11px] leading-relaxed whitespace-pre-wrap font-sans bg-zinc-900/60 p-2.5 rounded-xl border border-zinc-800">
+                    <p className="wx-sub-card wx-primary-text text-zinc-200 text-[11px] leading-relaxed whitespace-pre-wrap font-sans bg-zinc-900/60 p-2.5 rounded-xl border border-zinc-800">
                       {chunk.text}
                     </p>
                   </div>
@@ -1151,15 +1151,15 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
             </div>
 
             {/* Pagination Controls */}
-            <div className="p-3 border-t border-zinc-800 bg-zinc-950 flex items-center justify-between text-xs">
-              <span className="text-zinc-400 text-[11px]">
+            <div className="wx-modal-footer p-3 border-t border-zinc-800 bg-zinc-950 flex items-center justify-between text-xs">
+              <span className="wx-secondary-text text-zinc-400 text-[11px]">
                 第 {previewPage} / {Math.max(1, Math.ceil(previewTotalChunks / 6))} 页
               </span>
               <div className="flex items-center gap-1.5">
                 <button
                   disabled={previewPage <= 1}
                   onClick={() => handlePageChange(previewPage - 1)}
-                  className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-750 disabled:opacity-40 text-zinc-300 text-xs flex items-center gap-1 cursor-pointer"
+                  className="wx-btn-secondary px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-750 disabled:opacity-40 text-zinc-300 text-xs flex items-center gap-1 cursor-pointer"
                 >
                   <ChevronLeft className="w-3.5 h-3.5" />
                   <span>上一页</span>
@@ -1167,7 +1167,7 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                 <button
                   disabled={previewPage >= Math.ceil(previewTotalChunks / 6)}
                   onClick={() => handlePageChange(previewPage + 1)}
-                  className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-750 disabled:opacity-40 text-zinc-300 text-xs flex items-center gap-1 cursor-pointer"
+                  className="wx-btn-secondary px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-750 disabled:opacity-40 text-zinc-300 text-xs flex items-center gap-1 cursor-pointer"
                 >
                   <span>下一页</span>
                   <ChevronRight className="w-3.5 h-3.5" />

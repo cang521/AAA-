@@ -40,18 +40,18 @@ export const ChatBackgroundModal: React.FC<ChatBackgroundModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-      <div className="w-full max-w-sm rounded-3xl bg-zinc-900 border border-zinc-800 p-4 text-white shadow-2xl space-y-4 max-h-[88vh] overflow-y-auto">
+      <div className="wx-modal-card w-full max-w-sm rounded-3xl bg-zinc-900 border border-zinc-800 p-4 text-white shadow-2xl space-y-4 max-h-[88vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
+        <div className="wx-divider flex items-center justify-between border-b border-zinc-800 pb-2.5">
           <div className="flex items-center gap-2">
-            <Palette className="w-4 h-4 text-emerald-400" />
-            <h3 className="font-semibold text-sm text-zinc-100">
+            <Palette className="wx-green-text w-4 h-4 text-emerald-400" />
+            <h3 className="wx-primary-text font-semibold text-sm text-zinc-100">
               设置【{character.name}】的聊天背景
             </h3>
           </div>
           <button
             onClick={onClose}
-            className="w-7 h-7 rounded-full flex items-center justify-center text-zinc-400 hover:text-white hover:bg-zinc-800 transition cursor-pointer"
+            className="wx-secondary-text w-7 h-7 rounded-full flex items-center justify-center text-zinc-400 hover:text-white hover:bg-zinc-800 transition cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -59,14 +59,14 @@ export const ChatBackgroundModal: React.FC<ChatBackgroundModalProps> = ({
 
         {/* Custom URL or Photo Album */}
         <div className="space-y-3 text-xs">
-          <label className="block text-zinc-300 font-semibold">自定义背景图片与壁纸</label>
+          <label className="wx-primary-text block text-zinc-300 font-semibold">自定义背景图片与壁纸</label>
           <div className="flex gap-2">
             <input
               type="text"
               placeholder="输入在线图片 URL..."
               value={customInputUrl}
               onChange={(e) => setCustomInputUrl(e.target.value)}
-              className="flex-1 px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 text-xs"
+              className="wx-modal-input flex-1 px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 text-xs"
             />
             <button
               onClick={() => {
@@ -75,7 +75,7 @@ export const ChatBackgroundModal: React.FC<ChatBackgroundModalProps> = ({
                 }
               }}
               disabled={!customInputUrl.trim()}
-              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-medium text-xs cursor-pointer"
+              className="wx-btn-primary px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-medium text-xs cursor-pointer"
             >
               应用
             </button>
@@ -87,9 +87,9 @@ export const ChatBackgroundModal: React.FC<ChatBackgroundModalProps> = ({
                 onClose();
                 onOpenImagePicker();
               }}
-              className="w-full py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-emerald-400 border border-zinc-700 text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
+              className="wx-btn-secondary w-full py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-emerald-400 border border-zinc-700 text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
             >
-              <ImageIcon className="w-3.5 h-3.5" />
+              <ImageIcon className="wx-green-text w-3.5 h-3.5" />
               <span>从手机相册选择图片作为背景</span>
             </button>
           )}
@@ -97,18 +97,18 @@ export const ChatBackgroundModal: React.FC<ChatBackgroundModalProps> = ({
 
         {/* Reset / Clear Button */}
         {selectedUrl ? (
-          <div className="pt-2 border-t border-zinc-800 flex justify-between items-center text-xs">
-            <span className="text-zinc-400 text-[11px]">当前已启用自定义背景</span>
+          <div className="wx-divider pt-2 border-t border-zinc-800 flex justify-between items-center text-xs">
+            <span className="wx-secondary-text text-zinc-400 text-[11px]">当前已启用自定义背景</span>
             <button
               onClick={() => handleApply('')}
-              className="px-3 py-1.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-500/30 text-xs cursor-pointer"
+              className="wx-btn-danger px-3 py-1.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-500/30 text-xs cursor-pointer"
             >
               恢复默认纯色
             </button>
           </div>
         ) : (
-          <div className="pt-2 border-t border-zinc-800 text-[11px] text-zinc-500 text-center">
-            默认全黑/纯净壁纸已生效
+          <div className="wx-divider wx-muted-text pt-2 border-t border-zinc-800 text-[11px] text-zinc-500 text-center">
+            默认纯净壁纸已生效
           </div>
         )}
       </div>

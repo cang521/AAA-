@@ -24,6 +24,7 @@ import { IconCropperModal } from '../IconCropperModal';
 import { lockSecurityService, LockType } from '../../lib/lockScreenSecurity';
 import { GestureLock } from '../GestureLock';
 import { Shield, Grid3X3 } from 'lucide-react';
+import { PressableButton, ElasticToggle } from '../ui/interaction';
 
 interface BeautificationAppProps {
   onBackToLauncher: () => void;
@@ -130,13 +131,14 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
     <div className="relative w-full h-full flex flex-col bg-zinc-950 text-white font-sans overflow-hidden">
       {/* Header */}
       <div className="h-12 px-3 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between z-20 shrink-0">
-        <button
+        <PressableButton
+          expandHitArea
           onClick={onBackToLauncher}
           className="flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 font-medium px-2.5 py-1 rounded-xl bg-zinc-800 transition"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>⬅ 返回桌面</span>
-        </button>
+        </PressableButton>
         <span className="font-semibold text-sm text-zinc-100 flex items-center gap-1.5">
           <Palette className="w-4 h-4 text-purple-400" />
           界面美化与主题系统
@@ -273,7 +275,7 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
 
           {/* Wallpaper Source Selection Tabs */}
           <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-zinc-850 border border-zinc-750 text-[11px]">
-            <button
+            <PressableButton
               onClick={() => {
                 if (onUpdateWallpaperSource) onUpdateWallpaperSource('theme');
                 setSuccessMsg('已应用：主题配套云朵壁纸');
@@ -286,8 +288,8 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
               }`}
             >
               🌸 主题壁纸
-            </button>
-            <button
+            </PressableButton>
+            <PressableButton
               onClick={() => {
                 if (onUpdateWallpaperSource) onUpdateWallpaperSource('default');
                 setSuccessMsg('已恢复：默认静谧壁纸');
@@ -300,8 +302,8 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
               }`}
             >
               🌌 默认壁纸
-            </button>
-            <button
+            </PressableButton>
+            <PressableButton
               onClick={() => {
                 if (onUpdateWallpaperSource) onUpdateWallpaperSource('custom');
                 setSuccessMsg('已切换为：自定义壁纸');
@@ -314,7 +316,7 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
               }`}
             >
               🖼️ 自定义壁纸
-            </button>
+            </PressableButton>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -365,16 +367,17 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
           </div>
 
           {/* Master Lock Protection Switch */}
-          <div className="flex items-center justify-between p-3 rounded-2xl bg-zinc-850 border border-zinc-750">
+          <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-zinc-850 border border-zinc-750">
             <div>
               <div className="font-semibold text-xs text-zinc-100">开启模拟手机锁屏保护</div>
               <div className="text-[10px] text-zinc-400 mt-0.5">
                 支持数字 PIN 与九宫格手势连线解锁，密码均经 Salted SHA-256 加密保存
               </div>
             </div>
-            <button
-              onClick={() => {
-                if (isLockEnabled) {
+            <ElasticToggle
+              checked={isLockEnabled}
+              onChange={(next) => {
+                if (!next) {
                   // Prompt to verify before disabling lock
                   setVerifyAction('disable');
                   setShowVerifyCurrentModal(true);
@@ -386,16 +389,9 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
                   setTimeout(() => setSuccessMsg(''), 2500);
                 }
               }}
-              className={`w-11 h-6 rounded-full transition-colors relative shrink-0 ${
-                isLockEnabled ? 'bg-amber-500' : 'bg-zinc-700'
-              }`}
-            >
-              <div
-                className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
-                  isLockEnabled ? 'right-1' : 'left-1'
-                }`}
-              />
-            </button>
+              accent="amber"
+              ariaLabel="开启模拟手机锁屏保护"
+            />
           </div>
 
           {isLockEnabled && (
@@ -404,7 +400,7 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
               <div className="space-y-1.5">
                 <label className="text-[11px] font-semibold text-zinc-300 block">选择解锁方式</label>
                 <div className="grid grid-cols-2 gap-2">
-                  <button
+                  <PressableButton
                     onClick={() => {
                       lockSecurityService.setLockType('pin');
                       setLockType('pin');
@@ -422,9 +418,9 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
                       <div className="text-xs">数字 PIN 密码</div>
                       <div className="text-[9px] text-zinc-400 font-normal">4位极速数字键盘</div>
                     </div>
-                  </button>
+                  </PressableButton>
 
-                  <button
+                  <PressableButton
                     onClick={() => {
                       if (!lockSecurityService.hasPatternSet()) {
                         setShowGestureSetupModal(true);
@@ -446,7 +442,7 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
                       <div className="text-xs">九宫格手势密码</div>
                       <div className="text-[9px] text-zinc-400 font-normal">连线连点图样解锁</div>
                     </div>
-                  </button>
+                  </PressableButton>
                 </div>
               </div>
 
@@ -484,7 +480,9 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
                     </div>
                   </div>
 
-                  <button
+                  <PressableButton
+                    withRipple
+                    rippleTone="dark"
                     onClick={async () => {
                       if (newPinInput.length !== 4) {
                         alert('请输入 4 位纯数字密码！');
@@ -501,10 +499,10 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
                       setSuccessMsg('🎉 数字 PIN 密码已成功保存并安全加密！');
                       setTimeout(() => setSuccessMsg(''), 3000);
                     }}
-                    className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs shadow-md transition active:scale-95"
+                    className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs shadow-md transition"
                   >
                     保存加密数字密码
-                  </button>
+                  </PressableButton>
                 </div>
               )}
 
@@ -522,28 +520,31 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
                     手势密码需至少连接 4 个点。首次绘制后系统将要求您二次绘制进行确认。
                   </p>
 
-                  <button
+                  <PressableButton
+                    withRipple
+                    rippleTone="dark"
                     onClick={() => setShowGestureSetupModal(true)}
-                    className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs shadow-md transition active:scale-95 flex items-center justify-center gap-1.5"
+                    className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs shadow-md transition flex items-center justify-center gap-1.5"
                   >
                     <Grid3X3 className="w-4 h-4" />
                     <span>{lockSecurityService.hasPatternSet() ? '重新绘制并设置手势密码' : '立即设置九宫格手势密码'}</span>
-                  </button>
+                  </PressableButton>
                 </div>
               )}
 
               {/* Instant Lock Test Button */}
               {onLockPhone && (
-                <button
+                <PressableButton
+                  withRipple
                   onClick={() => {
                     lockSecurityService.setLockedState(true);
                     onLockPhone();
                   }}
-                  className="w-full py-2.5 rounded-2xl bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 text-amber-300 font-bold text-xs flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer"
+                  className="w-full py-2.5 rounded-2xl bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 text-amber-300 font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
                 >
                   <Lock className="w-4 h-4 text-amber-400" />
                   <span>🔒 立即锁定手机（测试当前锁屏效果）</span>
-                </button>
+                </PressableButton>
               )}
             </div>
           )}
@@ -573,14 +574,16 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
             className="w-full px-3 py-2 rounded-xl bg-zinc-850 border border-zinc-700 font-mono text-xs text-emerald-300 focus:outline-none focus:border-purple-500"
           />
 
-          <button
+          <PressableButton
+            withRipple
+            loading={isFixingCss}
             onClick={handleFixCssWithAi}
             disabled={isFixingCss || !cssCode.trim()}
-            className="w-full py-3 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 disabled:opacity-40 text-white font-bold flex items-center justify-center gap-2 shadow-lg shadow-purple-500/20 active:scale-95 transition"
+            className="w-full py-3 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 disabled:opacity-40 text-white font-bold flex items-center justify-center gap-2 shadow-lg shadow-purple-500/20 transition"
           >
             <Sparkles className="w-4 h-4 text-yellow-300" />
             <span>{isFixingCss ? 'AI 智能分析并修复 CSS 中...' : '✨ 一键调用 API 修复 & 智能自适应 CSS'}</span>
-          </button>
+          </PressableButton>
         </div>
 
         {/* 4. App Name & Icon Beautification */}
@@ -654,18 +657,19 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
       {/* Requirement 3: Bottom Sticky "Save Settings" Action Bar */}
       <div className="p-3 bg-zinc-900 border-t border-zinc-800 z-20 shrink-0 flex items-center justify-between gap-3">
         <span className="text-[11px] text-zinc-400">已对壁纸、CSS与应用图标做出的美化修改</span>
-        <button
+        <PressableButton
+          withRipple
           onClick={() => {
             onUpdateCustomCss(cssCode);
             handleSavePin();
             setSuccessMsg('🎉 所有美化、应用图标与自适应设置已成功保存！');
             setTimeout(() => setSuccessMsg(''), 3000);
           }}
-          className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 active:scale-95 transition shrink-0"
+          className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 transition shrink-0"
         >
           <Save className="w-4 h-4" />
           <span>保存设置</span>
-        </button>
+        </PressableButton>
       </div>
 
       {/* Image Picker for Wallpapers */}
@@ -720,7 +724,8 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
             </p>
 
             <div className="space-y-2 pt-1">
-              <button
+              <PressableButton
+                withRipple
                 onClick={() => {
                   if (onUpdateTheme) onUpdateTheme('cloud_milk');
                   if (onUpdateWallpaperSource) onUpdateWallpaperSource('theme');
@@ -732,9 +737,9 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
               >
                 <Sparkles className="w-4 h-4" />
                 <span>应用主题 + 配套云朵壁纸</span>
-              </button>
+              </PressableButton>
 
-              <button
+              <PressableButton
                 onClick={() => {
                   if (onUpdateTheme) onUpdateTheme('cloud_milk');
                   setSuccessMsg('🎉 已成功应用【晴空牛奶蓝】界面主题（保留当前壁纸）！');
@@ -744,7 +749,7 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
                 className="w-full py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs border border-zinc-700 transition cursor-pointer"
               >
                 只更换界面主题（保留原有壁纸）
-              </button>
+              </PressableButton>
             </div>
           </div>
         </div>
@@ -818,7 +823,7 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
               />
 
               <div className="flex gap-2">
-                <button
+                <PressableButton
                   onClick={() => {
                     setShowVerifyCurrentModal(false);
                     setVerifyInput('');
@@ -826,8 +831,10 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
                   className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-300 font-semibold text-xs transition cursor-pointer"
                 >
                   取消
-                </button>
-                <button
+                </PressableButton>
+                <PressableButton
+                  withRipple
+                  rippleTone="rose"
                   onClick={async () => {
                     const isValid = await lockSecurityService.verifyPin(verifyInput);
                     if (isValid) {
@@ -845,7 +852,7 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
                   className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md transition cursor-pointer"
                 >
                   确认关闭
-                </button>
+                </PressableButton>
               </div>
             </div>
           </div>

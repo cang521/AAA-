@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { deviceService } from '../../lib/deviceService';
 import { AppUsageStatsView } from './permissions/AppUsageStatsView';
+import { PressableButton, ElasticToggle } from '../ui/interaction';
 
 interface PermissionsAppProps {
   onBackToLauncher: () => void;
@@ -392,24 +393,26 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
     <div className="relative w-full h-full flex flex-col bg-white dark:bg-zinc-950 text-[#243040] dark:text-white font-sans overflow-hidden select-none">
       {/* Header */}
       <div className="h-12 px-3 bg-white dark:bg-zinc-900 border-b border-[#D9EAF7] dark:border-zinc-800 flex items-center justify-between z-20 shrink-0 shadow-2xs">
-        <button
+        <PressableButton
           onClick={onBackToLauncher}
-          className="flex items-center gap-1 text-xs text-[#5B6B7C] dark:text-indigo-400 hover:text-[#243040] dark:hover:text-indigo-300 font-medium px-2.5 py-1 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800 border border-[#D9EAF7] dark:border-transparent transition"
+          expandHitArea
+          className="flex items-center gap-1 text-xs text-[#5B6B7C] dark:text-indigo-400 hover:text-[#243040] dark:hover:text-indigo-300 font-medium px-2.5 py-1 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800 border border-[#D9EAF7] dark:border-transparent transition cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>桌面</span>
-        </button>
+        </PressableButton>
         <span className="font-semibold text-sm text-[#243040] dark:text-zinc-100 flex items-center gap-1.5">
           <Shield className="w-4 h-4 text-[#59B6E8] dark:text-indigo-400" />
           AI 真实权限调度中心
         </span>
-        <button
+        <PressableButton
           onClick={checkRealPermissions}
+          expandHitArea
           className="p-1.5 rounded-xl text-[#5B6B7C] dark:text-zinc-400 hover:text-[#243040] dark:hover:text-indigo-300 hover:bg-[#F3FAFF] dark:hover:bg-zinc-800 transition cursor-pointer"
           title="重新检测真实权限"
         >
           <RefreshCw className="w-4 h-4" />
-        </button>
+        </PressableButton>
       </div>
 
       {/* Main Content Area */}
@@ -431,21 +434,26 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
           </p>
 
           <div className="flex gap-2">
-            <button
+            <PressableButton
               onClick={requestRealPermissions}
               disabled={isRequesting}
-              className="flex-1 py-2.5 px-3 rounded-2xl bg-[#59B6E8] dark:bg-white text-white dark:text-indigo-900 hover:bg-[#40A4DC] dark:hover:bg-indigo-50 font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs active:scale-95 transition disabled:opacity-50 cursor-pointer"
+              loading={isRequesting}
+              withRipple
+              rippleTone="light"
+              className="flex-1 py-2.5 px-3 rounded-2xl bg-[#59B6E8] dark:bg-white text-white dark:text-indigo-900 hover:bg-[#40A4DC] dark:hover:bg-indigo-50 font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition disabled:opacity-50 cursor-pointer"
             >
               <Sparkles className="w-4 h-4 text-amber-300 dark:text-amber-500" />
               <span>{isRequesting ? '正在拉取授权...' : '⚡ 一键拉取真实手机权限'}</span>
-            </button>
-            <button
+            </PressableButton>
+            <PressableButton
               onClick={() => setShowCreateModal(true)}
+              withRipple
+              rippleTone="accent"
               className="py-2.5 px-3 rounded-2xl bg-[#FFFFFF] dark:bg-indigo-900/60 hover:bg-[#F3FAFF] dark:hover:bg-indigo-900 border border-[#9DD8F5] dark:border-indigo-300/40 text-[#59B6E8] dark:text-white font-bold text-xs flex items-center gap-1 shadow-xs transition cursor-pointer"
             >
               <Send className="w-3.5 h-3.5" />
               <span>生成权限申请</span>
-            </button>
+            </PressableButton>
           </div>
 
           {statusMsg && (
@@ -469,13 +477,15 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                 </p>
               </div>
             </div>
-            <button
+            <PressableButton
               onClick={() => setShowAppUsageStats(true)}
-              className="px-3 py-1.5 rounded-xl bg-[#59B6E8] dark:bg-sky-600 hover:bg-[#40A4DC] dark:hover:bg-sky-500 active:scale-95 font-bold text-xs text-white shadow-xs transition cursor-pointer flex items-center gap-1 shrink-0"
+              withRipple
+              rippleTone="light"
+              className="px-3 py-1.5 rounded-xl bg-[#59B6E8] dark:bg-sky-600 hover:bg-[#40A4DC] dark:hover:bg-sky-500 font-bold text-xs text-white shadow-xs transition cursor-pointer flex items-center gap-1 shrink-0"
             >
               <span>进入统计</span>
               <ArrowLeft className="w-3.5 h-3.5 rotate-180" />
-            </button>
+            </PressableButton>
           </div>
         </div>
 
@@ -502,13 +512,15 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                 </span>
               </div>
               <p className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">AI 聊天情绪波动时震动反馈</p>
-              <button
+              <PressableButton
                 onClick={testVibrate}
+                withRipple
+                rippleTone="light"
                 className="w-full py-1.5 px-2 rounded-xl bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white font-medium text-[11px] flex items-center justify-center gap-1 shadow-xs transition cursor-pointer"
               >
                 <Play className="w-3 h-3" />
                 <span>测试手机震动</span>
-              </button>
+              </PressableButton>
             </div>
 
             {/* TTS Voice */}
@@ -523,13 +535,15 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                 </span>
               </div>
               <p className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">AI 微信语音消息真实朗读</p>
-              <button
+              <PressableButton
                 onClick={testTts}
+                withRipple
+                rippleTone="light"
                 className="w-full py-1.5 px-2 rounded-xl bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white font-medium text-[11px] flex items-center justify-center gap-1 shadow-xs transition cursor-pointer"
               >
                 <Play className="w-3 h-3" />
                 <span>测试扬声器发音</span>
-              </button>
+              </PressableButton>
             </div>
 
             {/* Battery Status */}
@@ -544,13 +558,15 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                 </span>
               </div>
               <p className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">AI 实时关怀手机低电量状态</p>
-              <button
+              <PressableButton
                 onClick={checkRealPermissions}
+                withRipple
+                rippleTone="accent"
                 className="w-full py-1.5 px-2 rounded-xl bg-[#EAF7FF] hover:bg-[#D9EAF7] dark:bg-zinc-700 dark:hover:bg-zinc-650 text-[#243040] dark:text-zinc-200 font-medium text-[11px] flex items-center justify-center gap-1 transition cursor-pointer border border-[#9DD8F5] dark:border-transparent"
               >
                 <RefreshCw className="w-3 h-3 text-[#59B6E8] dark:text-zinc-300" />
                 <span>更新电量读数</span>
-              </button>
+              </PressableButton>
             </div>
 
             {/* Clipboard */}
@@ -565,13 +581,15 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                 </span>
               </div>
               <p className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">AI 写入与提取文本记录</p>
-              <button
+              <PressableButton
                 onClick={testClipboard}
+                withRipple
+                rippleTone="light"
                 className="w-full py-1.5 px-2 rounded-xl bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white font-medium text-[11px] flex items-center justify-center gap-1 shadow-xs transition cursor-pointer"
               >
                 <Play className="w-3 h-3" />
                 <span>测试写入剪贴板</span>
-              </button>
+              </PressableButton>
             </div>
 
             {/* Real Bluetooth BLE */}
@@ -588,7 +606,7 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
               <p className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">
                 调起系统原生蓝牙配对对话框，连接真实手环/音箱/灯泡并读取实际 GATT 特征与控制能力
               </p>
-              <button
+              <PressableButton
                 onClick={async () => {
                   try {
                     setStatusMsg('正在调起系统蓝牙设备选择框...');
@@ -605,11 +623,13 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                   }
                   setTimeout(() => setStatusMsg(''), 4000);
                 }}
+                withRipple
+                rippleTone="light"
                 className="w-full py-2 px-3 rounded-xl bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-blue-600 dark:hover:bg-blue-500 text-white font-medium text-xs flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
               >
                 <Bluetooth className="w-3.5 h-3.5" />
                 <span>立即拉起真实蓝牙硬件扫描配对</span>
-              </button>
+              </PressableButton>
             </div>
           </div>
         </div>
@@ -738,11 +758,10 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                   <span className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">AI 可读取经期倒计时并在微信中主动关怀</span>
                 </div>
               </div>
-              <input
-                type="checkbox"
+              <ElasticToggle
                 checked={permissions.appAccess.menstrualData}
                 onChange={() => toggleAppAccess('menstrualData')}
-                className="w-5 h-5 accent-[#59B6E8] dark:accent-emerald-500 cursor-pointer"
+                ariaLabel="经期健康预测数据"
               />
             </div>
 
@@ -754,11 +773,10 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                   <span className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">AI 可读取待办并在对话中协助提示</span>
                 </div>
               </div>
-              <input
-                type="checkbox"
+              <ElasticToggle
                 checked={permissions.appAccess.memosData}
                 onChange={() => toggleAppAccess('memosData')}
-                className="w-5 h-5 accent-[#59B6E8] dark:accent-emerald-500 cursor-pointer"
+                ariaLabel="桌面备忘录数据"
               />
             </div>
 
@@ -770,11 +788,10 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                   <span className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">AI 在聊天中可感知当前气温、降雨概率与天气状态</span>
                 </div>
               </div>
-              <input
-                type="checkbox"
+              <ElasticToggle
                 checked={permissions.appAccess.weatherData ?? true}
                 onChange={() => toggleAppAccess('weatherData')}
-                className="w-5 h-5 accent-[#59B6E8] dark:accent-emerald-500 cursor-pointer"
+                ariaLabel="实时天气数据感知"
               />
             </div>
 
@@ -786,11 +803,10 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                   <span className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">当检测到即将下雨、恶劣天气或剧烈温差时，AI主动发微信关怀</span>
                 </div>
               </div>
-              <input
-                type="checkbox"
+              <ElasticToggle
                 checked={permissions.appAccess.weatherCare ?? true}
                 onChange={() => toggleAppAccess('weatherCare')}
-                className="w-5 h-5 accent-[#59B6E8] dark:accent-emerald-500 cursor-pointer"
+                ariaLabel="AI 天气主动关心"
               />
             </div>
           </div>
@@ -813,11 +829,10 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                   <span className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">允许 AI 查看空调、灯光、音箱、门锁等设备的当前运行状态</span>
                 </div>
               </div>
-              <input
-                type="checkbox"
+              <ElasticToggle
                 checked={permissions.deviceAccess?.viewStatus ?? true}
                 onChange={() => toggleDeviceAccess('viewStatus')}
-                className="w-5 h-5 accent-[#59B6E8] dark:accent-cyan-500 cursor-pointer"
+                ariaLabel="查看设备状态"
               />
             </div>
 
@@ -830,11 +845,10 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                   <span className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">允许 AI 自动发起扫描并连接/断开蓝牙与局域网设备</span>
                 </div>
               </div>
-              <input
-                type="checkbox"
+              <ElasticToggle
                 checked={permissions.deviceAccess?.connectDevice ?? true}
                 onChange={() => toggleDeviceAccess('connectDevice')}
-                className="w-5 h-5 accent-[#59B6E8] dark:accent-cyan-500 cursor-pointer"
+                ariaLabel="连接或断开设备"
               />
             </div>
 
@@ -847,11 +861,10 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                   <span className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">允许 AI 根据用户意图调节开关、温度、亮度、音量与模式</span>
                 </div>
               </div>
-              <input
-                type="checkbox"
+              <ElasticToggle
                 checked={permissions.deviceAccess?.controlDevice ?? true}
                 onChange={() => toggleDeviceAccess('controlDevice')}
-                className="w-5 h-5 accent-[#59B6E8] dark:accent-cyan-500 cursor-pointer"
+                ariaLabel="控制设备"
               />
             </div>
 
@@ -864,11 +877,10 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                   <span className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">开启后低风险指令自动生效；关闭时每次控制均需用户确认</span>
                 </div>
               </div>
-              <input
-                type="checkbox"
+              <ElasticToggle
                 checked={permissions.deviceAccess?.autoExecute ?? true}
                 onChange={() => toggleDeviceAccess('autoExecute')}
-                className="w-5 h-5 accent-[#59B6E8] dark:accent-cyan-500 cursor-pointer"
+                ariaLabel="自动执行免确认"
               />
             </div>
 
@@ -881,11 +893,10 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
                   <span className="text-[10px] text-[#5B6B7C] dark:text-zinc-400">允许 AI 结合高温天气或作息主动关怀并联动开启家电设备</span>
                 </div>
               </div>
-              <input
-                type="checkbox"
+              <ElasticToggle
                 checked={permissions.deviceAccess?.proactiveUse ?? true}
                 onChange={() => toggleDeviceAccess('proactiveUse')}
-                className="w-5 h-5 accent-[#59B6E8] dark:accent-cyan-500 cursor-pointer"
+                ariaLabel="AI 主动使用设备"
               />
             </div>
           </div>
@@ -918,18 +929,20 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
             </div>
 
             <div className="space-y-2 pt-1">
-              <button
+              <PressableButton
                 onClick={() => handleAuthorizeDialog(true)}
-                className="w-full py-2.5 rounded-2xl bg-[#59B6E8] dark:bg-emerald-500 hover:bg-[#40A4DC] dark:hover:bg-emerald-600 font-bold text-xs text-white shadow-xs transition active:scale-98 cursor-pointer"
+                withRipple
+                rippleTone="light"
+                className="w-full py-2.5 rounded-2xl bg-[#59B6E8] dark:bg-emerald-500 hover:bg-[#40A4DC] dark:hover:bg-emerald-600 font-bold text-xs text-white shadow-xs transition cursor-pointer"
               >
                 仅在使用中允许 / 确认授权
-              </button>
-              <button
+              </PressableButton>
+              <PressableButton
                 onClick={() => handleAuthorizeDialog(false)}
                 className="w-full py-2 rounded-2xl bg-[#F3FAFF] dark:bg-zinc-800 hover:bg-[#EAF7FF] dark:hover:bg-zinc-750 text-[#5B6B7C] dark:text-zinc-400 hover:text-[#243040] dark:hover:text-zinc-200 text-xs font-medium border border-[#D9EAF7] dark:border-transparent transition cursor-pointer"
               >
                 拒绝
-              </button>
+              </PressableButton>
             </div>
           </div>
         </div>
@@ -974,18 +987,20 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
             </div>
 
             <div className="flex justify-end gap-2 pt-2 border-t border-[#D9EAF7] dark:border-zinc-800">
-              <button
+              <PressableButton
                 onClick={() => setShowCreateModal(false)}
                 className="px-3 py-1.5 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800 text-[#5B6B7C] dark:text-zinc-300 border border-[#D9EAF7] dark:border-transparent cursor-pointer"
               >
                 取消
-              </button>
-              <button
+              </PressableButton>
+              <PressableButton
                 onClick={handleCreateDynamicPerm}
+                withRipple
+                rippleTone="light"
                 className="px-4 py-1.5 rounded-xl bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-amber-500 dark:hover:bg-amber-600 font-bold text-white dark:text-zinc-950 shadow-xs cursor-pointer"
               >
                 立即生成并触发申请
-              </button>
+              </PressableButton>
             </div>
           </div>
         </div>

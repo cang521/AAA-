@@ -10,11 +10,11 @@ import {
 import { apiFetch } from '../../../lib/localBackend';
 
 export const TELEPATHY_LEVELS = [
-  { min: 0, max: 20, title: '刚认识', desc: '初识阶段，彼此还在互相了解摸索中~', color: 'text-zinc-400', bg: 'bg-zinc-800' },
-  { min: 21, max: 40, title: '有点默契', desc: '偶尔能想到一块去，开始产生奇妙共鸣！', color: 'text-blue-400', bg: 'bg-blue-950/60' },
-  { min: 41, max: 60, title: '挺有默契', desc: '越来越懂对方的心思，经常不谋而合！', color: 'text-purple-400', bg: 'bg-purple-950/60' },
-  { min: 61, max: 80, title: '非常默契', desc: '心意相通，一个眼神/举动就能猜中！', color: 'text-pink-400', bg: 'bg-pink-950/60' },
-  { min: 81, max: 100, title: '心有灵犀 ❤️', desc: '灵魂契合，无与伦比的极致默契！', color: 'text-rose-400', bg: 'bg-rose-950/60' },
+  { min: 0, max: 20, title: '刚认识', desc: '初识阶段，彼此还在互相了解摸索中~', color: 'telepathy-lvl-0-text', bg: 'telepathy-lvl-0-bg' },
+  { min: 21, max: 40, title: '有点默契', desc: '偶尔能想到一块去，开始产生奇妙共鸣！', color: 'telepathy-lvl-1-text', bg: 'telepathy-lvl-1-bg' },
+  { min: 41, max: 60, title: '挺有默契', desc: '越来越懂对方的心思，经常不谋而合！', color: 'telepathy-lvl-2-text', bg: 'telepathy-lvl-2-bg' },
+  { min: 61, max: 80, title: '非常默契', desc: '心意相通，一个眼神/举动就能猜中！', color: 'telepathy-lvl-3-text', bg: 'telepathy-lvl-3-bg' },
+  { min: 81, max: 100, title: '心有灵犀 ❤️', desc: '灵魂契合，无与伦比的极致默契！', color: 'telepathy-lvl-4-text', bg: 'telepathy-lvl-4-bg' },
 ];
 
 export const getAffinityLevel = (score: number) => {

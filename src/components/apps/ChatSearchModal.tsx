@@ -135,28 +135,28 @@ export const ChatSearchModal: React.FC<ChatSearchModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex flex-col justify-start animate-in fade-in duration-150 pl-safe pr-safe pb-safe">
+    <div className="wx-shell fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex flex-col justify-start animate-in fade-in duration-150 pl-safe pr-safe pb-safe">
       {/* Search Header Bar */}
       <div
-        className="w-full bg-zinc-900 border-b border-zinc-800 px-3 pb-3 flex items-center gap-3 shrink-0"
+        className="wx-header w-full bg-zinc-900 border-b border-zinc-800 px-3 pb-3 flex items-center gap-3 shrink-0"
         style={{
           paddingTop: 'calc(var(--safe-area-top, 0px) + 0.75rem)',
         }}
       >
         <div className="flex-1 relative flex items-center">
-          <Search className="w-4 h-4 text-zinc-400 absolute left-3 pointer-events-none" />
+          <Search className="wx-muted-text w-4 h-4 text-zinc-400 absolute left-3 pointer-events-none" />
           <input
             type="text"
             autoFocus
             placeholder={`在与【${character.name}】的聊天记录中搜索...`}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="w-full pl-9 pr-8 py-2 rounded-2xl bg-zinc-800 border border-zinc-700 text-white text-xs placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+            className="wx-modal-input w-full pl-9 pr-8 py-2 rounded-2xl bg-zinc-800 border border-zinc-700 text-white text-xs placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
           />
           {query && (
             <button
               onClick={() => setQuery('')}
-              className="absolute right-2.5 text-zinc-400 hover:text-white cursor-pointer"
+              className="wx-secondary-text absolute right-2.5 text-zinc-400 hover:text-white cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -164,7 +164,7 @@ export const ChatSearchModal: React.FC<ChatSearchModalProps> = ({
         </div>
         <button
           onClick={onClose}
-          className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium cursor-pointer"
+          className="wx-btn-secondary px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium cursor-pointer"
         >
           取消
         </button>
@@ -173,33 +173,33 @@ export const ChatSearchModal: React.FC<ChatSearchModalProps> = ({
       {/* Search Results List */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2 max-w-xl mx-auto w-full">
         {isSearching && (
-          <div className="text-center py-8 text-xs text-zinc-500 flex items-center justify-center gap-2">
+          <div className="wx-secondary-text text-center py-8 text-xs text-zinc-500 flex items-center justify-center gap-2">
             <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
             <span>正在检索结构化本地记忆数据库...</span>
           </div>
         )}
 
         {!isSearching && query.trim() && results.length === 0 && (
-          <div className="text-center py-12 text-zinc-500 text-xs space-y-1">
+          <div className="wx-secondary-text text-center py-12 text-zinc-500 text-xs space-y-1">
             <MessageSquare className="w-8 h-8 mx-auto text-zinc-600 mb-2 opacity-60" />
-            <p className="font-semibold text-zinc-400">未找到相关聊天记录</p>
+            <p className="wx-primary-text font-semibold text-zinc-400">未找到相关聊天记录</p>
             <p className="text-[11px]">可以尝试换一个词或缩短搜索关键词</p>
           </div>
         )}
 
         {!query.trim() && (
-          <div className="text-center py-12 text-zinc-500 text-xs space-y-2">
+          <div className="wx-secondary-text text-center py-12 text-zinc-500 text-xs space-y-2">
             <Search className="w-8 h-8 mx-auto text-zinc-600 mb-2 opacity-50" />
-            <p className="text-zinc-400 font-medium">输入字词快速检索任意时期的对话记忆</p>
-            <p className="text-[10px] text-zinc-500">点击检索结果可一键跳转至上下文所在位置并高亮显示</p>
+            <p className="wx-primary-text text-zinc-400 font-medium">输入字词快速检索任意时期的对话记忆</p>
+            <p className="text-[10px] wx-muted-text text-zinc-500">点击检索结果可一键跳转至上下文所在位置并高亮显示</p>
           </div>
         )}
 
         {!isSearching && results.length > 0 && (
           <div className="space-y-2">
-            <div className="px-1 text-[11px] text-zinc-400 flex items-center justify-between">
+            <div className="wx-secondary-text px-1 text-[11px] text-zinc-400 flex items-center justify-between">
               <span>找到包含 "{query}" 的消息记录 ({results.length}{totalMatchCount > results.length ? `/${totalMatchCount}` : ''})</span>
-              <span className="text-[10px] text-zinc-500 font-mono">点击跳转</span>
+              <span className="text-[10px] wx-muted-text text-zinc-500 font-mono">点击跳转</span>
             </div>
 
             {results.map((msg) => {
@@ -214,30 +214,30 @@ export const ChatSearchModal: React.FC<ChatSearchModalProps> = ({
                     onSelectMessage(msg.id);
                     onClose();
                   }}
-                  className="p-3 rounded-2xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-750 hover:border-emerald-500/50 cursor-pointer transition shadow-xs group"
+                  className="wx-card p-3 rounded-2xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-750 hover:border-emerald-500/50 cursor-pointer transition shadow-xs group"
                 >
                   <div className="flex items-center justify-between mb-1.5">
                     <div className="flex items-center gap-2">
                       <img
                         src={senderAvatar}
                         alt=""
-                        className="w-5 h-5 rounded-lg object-cover border border-zinc-700"
+                        className="wx-avatar w-5 h-5 rounded-lg object-cover border border-zinc-700"
                       />
-                      <span className={`text-xs font-semibold ${isUser ? 'text-zinc-200' : 'text-emerald-400'}`}>
+                      <span className={`text-xs font-semibold ${isUser ? 'wx-primary-text text-zinc-200' : 'wx-green-text text-emerald-400'}`}>
                         {senderName}
                       </span>
                     </div>
-                    <span className="text-[10px] text-zinc-500 flex items-center gap-1 font-mono">
+                    <span className="wx-muted-text text-[10px] text-zinc-500 flex items-center gap-1 font-mono">
                       <Clock className="w-3 h-3" />
                       {new Date(msg.timestamp).toLocaleString()}
                     </span>
                   </div>
 
-                  <div className="text-xs text-zinc-300 leading-relaxed pl-7">
+                  <div className="wx-primary-text text-xs text-zinc-300 leading-relaxed pl-7">
                     {renderHighlightedText(msg.text, query)}
                   </div>
 
-                  <div className="mt-2 pl-7 flex items-center gap-1 text-[10px] text-emerald-400/80 group-hover:text-emerald-300 font-medium">
+                  <div className="wx-green-text mt-2 pl-7 flex items-center gap-1 text-[10px] text-emerald-400/80 group-hover:text-emerald-300 font-medium">
                     <span>定位至该消息</span>
                     <ArrowRight className="w-3 h-3 transition group-hover:translate-x-0.5" />
                   </div>
@@ -251,7 +251,7 @@ export const ChatSearchModal: React.FC<ChatSearchModalProps> = ({
                 <button
                   onClick={handleLoadMore}
                   disabled={isLoadingMore}
-                  className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 text-xs text-zinc-300 font-medium cursor-pointer transition flex items-center gap-1.5 mx-auto active:scale-95"
+                  className="wx-btn-secondary px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 text-xs text-zinc-300 font-medium cursor-pointer transition flex items-center gap-1.5 mx-auto active:scale-95"
                 >
                   {isLoadingMore ? (
                     <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />

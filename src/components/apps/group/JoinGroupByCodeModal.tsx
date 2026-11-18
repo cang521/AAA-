@@ -149,34 +149,34 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div className="w-full max-w-sm bg-white dark:bg-zinc-900 rounded-3xl overflow-hidden shadow-2xl border border-zinc-200 dark:border-zinc-800 flex flex-col max-h-[85vh]">
+      <div className="wx-modal-card w-full max-w-sm bg-white dark:bg-zinc-900 rounded-3xl overflow-hidden shadow-2xl border border-zinc-200 dark:border-zinc-800 flex flex-col max-h-[85vh]">
         {/* Header */}
-        <div className="px-4 py-3.5 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50 dark:bg-zinc-850">
+        <div className="wx-modal-header px-4 py-3.5 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50 dark:bg-zinc-850">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center">
               <KeyRound className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">群聊邀请码加入</h3>
-              <p className="text-[10px] text-zinc-400">使用 8 位群邀请码加入群聊</p>
+              <h3 className="wx-primary-text text-sm font-bold text-zinc-900 dark:text-zinc-100">群聊邀请码加入</h3>
+              <p className="wx-muted-text text-[10px] text-zinc-400">使用 8 位群邀请码加入群聊</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="w-7 h-7 rounded-full flex items-center justify-center text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition"
+            className="wx-header-action wx-muted-text w-7 h-7 rounded-full flex items-center justify-center text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Tab switcher */}
-        <div className="flex border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100/60 dark:bg-zinc-800/40 p-1">
+        <div className="wx-sub-card wx-divider flex border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100/60 dark:bg-zinc-800/40 p-1">
           <button
             onClick={() => setActiveTab('my_join')}
             className={`flex-1 py-1.5 rounded-xl text-xs font-bold transition ${
               activeTab === 'my_join'
-                ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
-                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                ? 'wx-card wx-primary-text bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                : 'wx-secondary-text text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
             }`}
           >
             输入邀请码加入
@@ -185,8 +185,8 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
             onClick={() => setActiveTab('simulate_others')}
             className={`flex-1 py-1.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
               activeTab === 'simulate_others'
-                ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
-                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                ? 'wx-card wx-primary-text bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                : 'wx-secondary-text text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
             }`}
           >
             <Sparkles className="w-3 h-3 text-amber-500" />
@@ -199,7 +199,7 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
             <>
               {/* Input Code */}
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300">
+                <label className="wx-primary-text text-[11px] font-bold text-zinc-700 dark:text-zinc-300">
                   请输入 8 位群聊邀请码
                 </label>
                 <div className="flex gap-2">
@@ -212,11 +212,11 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
                     }}
                     onKeyDown={(e) => e.key === 'Enter' && handleSearchCode()}
                     placeholder="例如: WX-GRP-892401"
-                    className="flex-1 px-3 py-2 text-xs uppercase tracking-wider font-mono rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    className="wx-modal-input flex-1 px-3 py-2 text-xs uppercase tracking-wider font-mono rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-amber-500"
                   />
                   <button
                     onClick={handleSearchCode}
-                    className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs transition flex items-center gap-1 shadow-sm"
+                    className="wx-btn-primary px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs transition flex items-center gap-1 shadow-sm"
                   >
                     <Search className="w-3.5 h-3.5" />
                     <span>查询</span>
@@ -232,8 +232,8 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
 
               {/* Quick Preset Sample Codes */}
               {groupChats.length > 0 && (
-                <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-750 space-y-1.5">
-                  <span className="text-[10px] font-bold text-zinc-400 block">快捷测试现有群聊邀请码：</span>
+                <div className="wx-sub-card p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-750 space-y-1.5">
+                  <span className="wx-muted-text text-[10px] font-bold text-zinc-400 block">快捷测试现有群聊邀请码：</span>
                   <div className="flex flex-wrap gap-1.5">
                     {groupChats.map((g) => (
                       <button
@@ -243,7 +243,7 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
                           setMatchedGroup(g);
                           setErrorMsg('');
                         }}
-                        className="px-2 py-1 rounded-lg bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-mono text-[10px] hover:bg-amber-500/20 hover:text-amber-600 transition"
+                        className="wx-card wx-secondary-text px-2 py-1 rounded-lg bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-mono text-[10px] hover:bg-amber-500/20 hover:text-amber-600 transition"
                       >
                         {g.name}: {g.inviteCode}
                       </button>
@@ -254,21 +254,21 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
 
               {/* Matched Group Card */}
               {matchedGroup && (
-                <div className="p-3.5 rounded-2xl bg-amber-500/5 dark:bg-amber-500/10 border border-amber-500/20 space-y-3">
+                <div className="wx-sub-card p-3.5 rounded-2xl bg-amber-500/5 dark:bg-amber-500/10 border border-amber-500/20 space-y-3">
                   <div className="flex items-center gap-3">
                     <img
                       src={matchedGroup.avatar}
                       alt={matchedGroup.name}
-                      className="w-12 h-12 rounded-2xl object-cover border border-amber-400/40 shadow-sm"
+                      className="wx-avatar w-12 h-12 rounded-2xl object-cover border border-amber-400/40 shadow-sm"
                     />
                     <div className="min-w-0 flex-1">
-                      <h4 className="font-bold text-xs text-zinc-900 dark:text-zinc-100 truncate">
+                      <h4 className="wx-primary-text font-bold text-xs text-zinc-900 dark:text-zinc-100 truncate">
                         {matchedGroup.name}
                       </h4>
-                      <p className="text-[10px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
+                      <p className="wx-secondary-text text-[10px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
                         公告：{matchedGroup.notice || '欢迎加入！'}
                       </p>
-                      <div className="text-[9px] text-amber-600 dark:text-amber-400 font-semibold pt-0.5">
+                      <div className="wx-green-text text-[9px] text-amber-600 dark:text-amber-400 font-semibold pt-0.5">
                         当前群成员：{matchedGroup.members.length} 人
                       </div>
                     </div>
@@ -277,7 +277,7 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
                   <button
                     disabled={appliedSuccess}
                     onClick={handleApplyToJoin}
-                    className="w-full py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-md transition flex items-center justify-center gap-1"
+                    className="wx-btn-primary w-full py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-md transition flex items-center justify-center gap-1"
                   >
                     {appliedSuccess ? (
                       <>
@@ -298,39 +298,39 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
             <>
               {/* Simulate Incoming Applicants */}
               <div className="space-y-3">
-                <div className="p-3 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-purple-800 dark:text-purple-300">
-                  <p className="text-[11px] font-bold flex items-center gap-1">
+                <div className="wx-sub-card p-3 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-purple-800 dark:text-purple-300">
+                  <p className="wx-primary-text text-[11px] font-bold flex items-center gap-1">
                     <Sparkles className="w-3.5 h-3.5" />
                     <span>单机拟真模拟：测试邀请码审核流程</span>
                   </p>
-                  <p className="text-[10px] opacity-80 pt-1 leading-relaxed">
+                  <p className="wx-secondary-text text-[10px] opacity-80 pt-1 leading-relaxed">
                     点击下方模拟的真人好友，即可模拟对方在另一台设备上输入您的群邀请码并提交入群申请。
                   </p>
                 </div>
 
                 <div className="space-y-2">
-                  <span className="text-[10px] font-bold text-zinc-400">选择模拟申请人：</span>
+                  <span className="wx-muted-text text-[10px] font-bold text-zinc-400">选择模拟申请人：</span>
                   {PRESET_SIMULATED_HUMANS.map((human, idx) => (
                     <div
                       key={idx}
-                      className="p-2.5 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-750 flex items-center justify-between"
+                      className="wx-sub-card p-2.5 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-750 flex items-center justify-between"
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
                         <img
                           src={human.avatar}
                           alt={human.name}
-                          className="w-9 h-9 rounded-full object-cover border border-zinc-300 dark:border-zinc-700"
+                          className="wx-avatar w-9 h-9 rounded-full object-cover border border-zinc-300 dark:border-zinc-700"
                         />
                         <div className="min-w-0">
-                          <div className="font-bold text-xs text-zinc-900 dark:text-zinc-100 truncate">
+                          <div className="wx-primary-text font-bold text-xs text-zinc-900 dark:text-zinc-100 truncate">
                             {human.name}
                           </div>
-                          <div className="text-[10px] text-zinc-400 line-clamp-1">{human.bio}</div>
+                          <div className="wx-muted-text text-[10px] text-zinc-400 line-clamp-1">{human.bio}</div>
                         </div>
                       </div>
                       <button
                         onClick={() => handleTriggerSimulatedApplicant(human)}
-                        className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-[10px] shrink-0 ml-2 transition"
+                        className="wx-btn-primary px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-[10px] shrink-0 ml-2 transition"
                       >
                         模拟申请
                       </button>
@@ -343,10 +343,10 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-3 border-t border-zinc-200 dark:border-zinc-800 flex justify-end bg-zinc-50 dark:bg-zinc-850">
+        <div className="wx-modal-footer p-3 border-t border-zinc-200 dark:border-zinc-800 flex justify-end bg-zinc-50 dark:bg-zinc-850">
           <button
             onClick={onClose}
-            className="px-4 py-1.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 text-xs font-semibold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition"
+            className="wx-btn-secondary px-4 py-1.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 text-xs font-semibold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition"
           >
             关闭
           </button>

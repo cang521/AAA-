@@ -53,6 +53,7 @@ import {
   RefreshCw,
   SlidersHorizontal,
 } from 'lucide-react';
+import { PressableButton, ElasticToggle } from '../ui/interaction';
 
 interface ConnectivityAppProps {
   onBackToLauncher: () => void;
@@ -418,13 +419,14 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
       {/* Header */}
       <div className="bg-white/95 backdrop-blur-md border-b border-zinc-200/80 px-4 py-3 flex items-center justify-between shadow-xs z-20 shrink-0">
         <div className="flex items-center gap-2.5">
-          <button
+          <PressableButton
+            expandHitArea
             onClick={onBackToLauncher}
-            className="w-8 h-8 flex items-center justify-center rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-700 active:scale-95 transition-all"
+            className="w-8 h-8 flex items-center justify-center rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-700 transition-all"
             title="返回桌面"
           >
             <ArrowLeft className="w-4 h-4" />
-          </button>
+          </PressableButton>
           <div>
             <h1 className="text-base font-bold text-zinc-900 flex items-center gap-2">
               设备中心
@@ -436,13 +438,14 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
           </div>
         </div>
 
-        <button
+        <PressableButton
+          withRipple
           onClick={() => setShowScanModal(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg active:scale-95 transition-all shadow-xs"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-all shadow-xs"
         >
           <Plus className="w-3.5 h-3.5" />
           <span>添加设备</span>
-        </button>
+        </PressableButton>
       </div>
 
       {/* Main Content Area based on Tab */}
@@ -467,7 +470,7 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
               </div>
 
               <div className="flex items-center gap-1.5">
-                <button
+                <PressableButton
                   onClick={() => setShowSearchBox(!showSearchBox)}
                   className={`p-2 rounded-lg border text-xs transition-colors ${
                     showSearchBox || searchQuery
@@ -477,13 +480,14 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
                   title="搜索设备"
                 >
                   <Search className="w-4 h-4" />
-                </button>
-                <button
+                </PressableButton>
+                <PressableButton
+                  withRipple
                   onClick={() => setShowScanModal(true)}
                   className="px-3 py-1.5 bg-zinc-900 text-white text-xs font-medium rounded-lg hover:bg-zinc-800 transition-colors shrink-0"
                 >
                   扫描设备
-                </button>
+                </PressableButton>
               </div>
             </div>
 
@@ -518,7 +522,7 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
                 { id: 'interactive', label: '互动设备' },
                 { id: 'other', label: '其他' },
               ].map((tab) => (
-                <button
+                <PressableButton
                   key={tab.id}
                   onClick={() => setCategoryFilter(tab.id as any)}
                   className={`flex-1 min-w-[64px] py-1.5 px-2 rounded-lg text-center transition-all whitespace-nowrap ${
@@ -528,7 +532,7 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
                   }`}
                 >
                   {tab.label}
-                </button>
+                </PressableButton>
               ))}
             </div>
 
@@ -537,12 +541,14 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
               <div className="text-xs font-bold text-zinc-500 tracking-wider px-1 flex items-center justify-between">
                 <span>已连接设备 ({connectedDevices.length})</span>
                 {connectedDevices.length > 0 && (
-                  <button
+                  <PressableButton
+                    withRipple
+                    rippleTone="rose"
                     onClick={() => deviceService.emergencyStopAll('user')}
                     className="text-[11px] font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 border border-rose-200/80 px-2 py-0.5 rounded-md"
                   >
                     一键急停
-                  </button>
+                  </PressableButton>
                 )}
               </div>
 
@@ -555,13 +561,15 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
                   <p className="text-[11px] text-zinc-400 max-w-[240px] mx-auto">
                     开启外部硬件广播模式，点击“添加设备”进行蓝牙配对
                   </p>
-                  <button
+                  <PressableButton
+                    withRipple
+                    rippleTone="emerald"
                     onClick={() => setShowScanModal(true)}
                     className="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200/80 rounded-xl text-xs font-semibold hover:bg-emerald-100 transition-all inline-flex items-center gap-1 mt-1"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     去扫描添加
-                  </button>
+                  </PressableButton>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-2.5">
@@ -903,14 +911,16 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
                   onKeyDown={(e) => e.key === 'Enter' && handleRunNlpCommand()}
                   className="flex-1 px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                 />
-                <button
+                <PressableButton
+                  withRipple
+                  loading={isExecutingNlp}
                   onClick={() => handleRunNlpCommand()}
                   disabled={isExecutingNlp || !nlpCommand.trim()}
                   className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-xl text-xs flex items-center gap-1 shrink-0 transition-all"
                 >
                   <Send className="w-3.5 h-3.5" />
                   <span>执行</span>
-                </button>
+                </PressableButton>
               </div>
 
               {nlpFeedback && (
@@ -986,16 +996,16 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
                 </span>
               </div>
 
-              <div className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl border border-zinc-200/60 text-xs">
+              <div className="flex items-center justify-between gap-3 p-3 bg-zinc-50 rounded-xl border border-zinc-200/60 text-xs">
                 <div>
                   <div className="font-semibold text-zinc-800">自动重连掉线设备</div>
                   <div className="text-[11px] text-zinc-500">外部硬件断开后尝试唤醒重连</div>
                 </div>
-                <input
-                  type="checkbox"
+                <ElasticToggle
                   checked={autoReconnect}
-                  onChange={(e) => setAutoReconnect(e.target.checked)}
-                  className="w-4 h-4 accent-emerald-600 rounded"
+                  onChange={setAutoReconnect}
+                  accent="green"
+                  ariaLabel="自动重连掉线设备"
                 />
               </div>
 
@@ -1003,7 +1013,7 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
                 <div className="font-semibold text-zinc-800">设备 Keepalive 保活间隔</div>
                 <div className="flex items-center gap-2">
                   {[15, 30, 60].map((sec) => (
-                    <button
+                    <PressableButton
                       key={sec}
                       onClick={() => setKeepaliveInterval(sec)}
                       className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
@@ -1013,7 +1023,7 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
                       }`}
                     >
                       {sec} 秒
-                    </button>
+                    </PressableButton>
                   ))}
                 </div>
               </div>
@@ -1026,25 +1036,28 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
                 开发者与调试选项 (Developer Options)
               </h3>
 
-              <div className="flex items-center justify-between p-3 bg-purple-50/50 border border-purple-100 rounded-xl text-xs">
+              <div className="flex items-center justify-between gap-3 p-3 bg-purple-50/50 border border-purple-100 rounded-xl text-xs">
                 <div>
                   <div className="font-bold text-purple-900">允许加载模拟设备 (仅测试)</div>
                   <div className="text-[11px] text-purple-700/80 mt-0.5">
                     默认关闭。开启后将允许加载虚拟智能家电及测试模组
                   </div>
                 </div>
-                <button
-                  onClick={() => handleToggleAllowSimulation(!allowSimulation)}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                    allowSimulation ? 'bg-purple-600 text-white' : 'bg-zinc-200 text-zinc-600'
-                  }`}
-                >
-                  {allowSimulation ? '已开启' : '已关闭'}
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`text-[11px] font-semibold ${allowSimulation ? 'text-indigo-600' : 'text-zinc-500'}`}>
+                    {allowSimulation ? '已开启' : '已关闭'}
+                  </span>
+                  <ElasticToggle
+                    checked={allowSimulation}
+                    onChange={handleToggleAllowSimulation}
+                    accent="indigo"
+                    ariaLabel="允许加载模拟设备"
+                  />
+                </div>
               </div>
 
               <div className="flex items-center gap-2 pt-1">
-                <button
+                <PressableButton
                   onClick={() => {
                     deviceService.clearOperationLogs();
                     setLogs([]);
@@ -1053,13 +1066,15 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
                   className="flex-1 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-semibold rounded-xl border border-zinc-200/60"
                 >
                   清空日志
-                </button>
-                <button
+                </PressableButton>
+                <PressableButton
+                  withRipple
+                  rippleTone="dark"
                   onClick={() => setShowAddCustomModal(true)}
                   className="flex-1 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-semibold rounded-xl border border-zinc-200/60"
                 >
                   添加自定义硬件
-                </button>
+                </PressableButton>
               </div>
             </div>
           </div>
@@ -1074,8 +1089,9 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
           { id: 'ai_hub', label: 'AI 联动', icon: <Sparkles className="w-4 h-4" /> },
           { id: 'settings', label: '设置', icon: <Settings className="w-4 h-4" /> },
         ].map((item) => (
-          <button
+          <PressableButton
             key={item.id}
+            pressScale={0.93}
             onClick={() => setMainTab(item.id as any)}
             className={`flex flex-col items-center gap-0.5 py-1 px-4 rounded-xl transition-all ${
               mainTab === item.id
@@ -1085,7 +1101,7 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
           >
             {item.icon}
             <span className="text-[10px]">{item.label}</span>
-          </button>
+          </PressableButton>
         ))}
       </div>
 
@@ -1120,17 +1136,20 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
             </div>
 
             <div className="space-y-2">
-              <button
+              <PressableButton
+                withRipple
+                loading={isRealBleScanning}
                 onClick={handleScanRealBluetooth}
                 disabled={isRealBleScanning}
                 className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center justify-center gap-2"
               >
                 <Bluetooth className="w-4 h-4" />
                 <span>{isRealBleScanning ? '扫描中...' : '启动系统蓝牙配对'}</span>
-              </button>
+              </PressableButton>
 
               {allowSimulation && (
-                <button
+                <PressableButton
+                  withRipple
                   onClick={async () => {
                     await deviceService.scanSimulationDevices();
                     showToast('已载入测试模拟设备', 'success');
@@ -1139,7 +1158,7 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
                   className="w-full py-2 bg-purple-50 text-purple-700 hover:bg-purple-100 rounded-xl text-xs font-semibold transition-all border border-purple-200"
                 >
                   [开发者模式] 扫描测试模拟设备
-                </button>
+                </PressableButton>
               )}
             </div>
 
@@ -1271,13 +1290,14 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
               </div>
             </div>
 
-            <button
+            <PressableButton
+              withRipple
               onClick={handleCreateCustomDevice}
               disabled={!customName.trim()}
               className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all"
             >
               确定添加
-            </button>
+            </PressableButton>
           </div>
         </div>
       )}

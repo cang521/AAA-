@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DEFAULT_AI_AVATAR } from '../../../lib/storage';
+import { PressableButton } from '../../ui/interaction';
 import {
   AiCharacter,
   ApiConfig,
@@ -533,14 +534,15 @@ export const RpsGame: React.FC<RpsGameProps> = ({
       {/* Top Navigation Bar */}
       <header className="relative z-20 flex items-center justify-between px-3.5 py-2.5 bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80 shrink-0">
         <div className="flex items-center gap-2">
-          <button
+          <PressableButton
             id="rps-btn-back"
             onClick={onBack}
-            className="p-1.5 rounded-full hover:bg-slate-800 text-slate-300 hover:text-white transition-colors active:scale-95"
+            expandHitArea
+            className="p-1.5 rounded-full hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
             title="返回游戏中心"
           >
             <ArrowLeft className="w-5 h-5" />
-          </button>
+          </PressableButton>
           <div>
             <h1 className="text-base font-bold text-slate-100 flex items-center gap-1.5">
               <span>石头剪刀布</span>
@@ -555,7 +557,7 @@ export const RpsGame: React.FC<RpsGameProps> = ({
         <div className="flex items-center gap-1.5">
           {/* Mode Switch */}
           <div className="flex items-center bg-slate-800 p-0.5 rounded-xl border border-slate-700/60">
-            <button
+            <PressableButton
               id="rps-mode-pve"
               onClick={() => {
                 setMode('pve');
@@ -568,8 +570,8 @@ export const RpsGame: React.FC<RpsGameProps> = ({
               }`}
             >
               玩家对战
-            </button>
-            <button
+            </PressableButton>
+            <PressableButton
               id="rps-mode-eve"
               onClick={() => {
                 setMode('eve');
@@ -582,28 +584,30 @@ export const RpsGame: React.FC<RpsGameProps> = ({
               }`}
             >
               AI观战
-            </button>
+            </PressableButton>
           </div>
 
           {/* Sound Toggle */}
-          <button
+          <PressableButton
             id="rps-btn-sound"
             onClick={() => setIsMuted(!isMuted)}
+            expandHitArea
             className="p-1.5 rounded-full hover:bg-slate-800 text-slate-300 transition-colors"
             title={isMuted ? '开启音效' : '静音'}
           >
             {isMuted ? <VolumeX className="w-4 h-4 text-slate-500" /> : <Volume2 className="w-4 h-4 text-rose-400" />}
-          </button>
+          </PressableButton>
 
           {/* History / Stats */}
-          <button
+          <PressableButton
             id="rps-btn-history"
             onClick={() => setShowHistoryModal(true)}
+            expandHitArea
             className="p-1.5 rounded-full hover:bg-slate-800 text-slate-300 transition-colors"
             title="战绩与问答记录"
           >
             <History className="w-4 h-4 text-amber-400" />
-          </button>
+          </PressableButton>
         </div>
       </header>
 
@@ -628,7 +632,7 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                 <div>
                   <div className="flex items-center gap-1.5">
                     <span className="font-semibold text-sm text-slate-100">{opponent.name}</span>
-                    <button
+                    <PressableButton
                       id="rps-change-char-btn"
                       onClick={() => {
                         setSelectingCharacterSlot('ai1');
@@ -637,7 +641,7 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                       className="text-[11px] px-1.5 py-0.5 rounded bg-slate-700/80 hover:bg-slate-700 text-rose-300 transition-colors"
                     >
                       切换对手
-                    </button>
+                    </PressableButton>
                   </div>
                   <p className="text-[11px] text-slate-400 truncate max-w-[160px]">
                     {opponent.persona}
@@ -673,7 +677,7 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                 />
                 <div>
                   <div className="text-xs font-semibold text-rose-300">{opponent.name}</div>
-                  <button
+                  <PressableButton
                     onClick={() => {
                       setSelectingCharacterSlot('ai1');
                       setShowCharacterModal(true);
@@ -681,7 +685,7 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                     className="text-[10px] text-slate-400 hover:text-white"
                   >
                     更换 AI 1
-                  </button>
+                  </PressableButton>
                 </div>
               </div>
               <div className="text-xs font-bold text-amber-400 px-2 py-0.5 bg-slate-900 rounded-full border border-slate-700">
@@ -690,7 +694,7 @@ export const RpsGame: React.FC<RpsGameProps> = ({
               <div className="flex items-center gap-2 text-right">
                 <div>
                   <div className="text-xs font-semibold text-indigo-300">{ai2.name}</div>
-                  <button
+                  <PressableButton
                     onClick={() => {
                       setSelectingCharacterSlot('ai2');
                       setShowCharacterModal(true);
@@ -698,7 +702,7 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                     className="text-[10px] text-slate-400 hover:text-white"
                   >
                     更换 AI 2
-                  </button>
+                  </PressableButton>
                 </div>
                 <img
                   src={ai2.avatar}
@@ -863,16 +867,22 @@ export const RpsGame: React.FC<RpsGameProps> = ({
 
           {/* Quick Draw / Next Button when Draw */}
           {phase === 'revealed' && roundResult === 'draw' && (
-            <motion.button
+            <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              id="rps-draw-retry-btn"
-              onClick={handleNextRound}
-              className="mt-4 px-6 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-slate-900 font-bold text-xs shadow-lg shadow-amber-500/20 flex items-center gap-2 active:scale-95 transition-transform"
+              className="mt-4"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>平局，再来一次！</span>
-            </motion.button>
+              <PressableButton
+                id="rps-draw-retry-btn"
+                onClick={handleNextRound}
+                withRipple
+                rippleTone="dark"
+                className="px-6 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-slate-900 font-bold text-xs shadow-lg shadow-amber-500/20 flex items-center gap-2 overflow-hidden"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>平局，再来一次！</span>
+              </PressableButton>
+            </motion.div>
           )}
         </section>
 
@@ -886,14 +896,16 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                   {(['rock', 'scissors', 'paper'] as RpsGesture[]).map((g) => {
                     const item = GESTURE_ICONS[g];
                     return (
-                      <button
+                      <PressableButton
                         key={g}
                         id={`rps-gesture-btn-${g}`}
                         disabled={phase === 'shaking'}
                         onClick={() => handlePlayerChoose(g)}
+                        pressScale={0.93}
+                        withRipple
                         className={`group relative flex flex-col items-center justify-center p-3.5 rounded-2xl bg-gradient-to-b from-slate-800 to-slate-800/90 border-2 ${
                           item.border
-                        } shadow-lg active:scale-95 hover:border-rose-400/70 transition-all ${
+                        } shadow-lg hover:border-rose-400/70 transition-all overflow-hidden ${
                           phase === 'shaking' ? 'opacity-50 cursor-not-allowed' : ''
                         }`}
                       >
@@ -901,22 +913,23 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                           {item.emoji}
                         </span>
                         <span className={`text-xs font-bold ${item.text}`}>{item.name}</span>
-                      </button>
+                      </PressableButton>
                     );
                   })}
                 </div>
               ) : (
                 /* EvE Controls */
                 <div className="flex items-center justify-center gap-3">
-                  <button
+                  <PressableButton
                     id="rps-eve-play-btn"
                     disabled={phase === 'shaking'}
                     onClick={handleEvePlayRound}
-                    className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-sm shadow-lg shadow-purple-500/20 flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50"
+                    withRipple
+                    className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-sm shadow-lg shadow-purple-500/20 flex items-center justify-center gap-2 transition-all disabled:opacity-50 overflow-hidden"
                   >
                     <Play className="w-4 h-4 fill-white" />
                     <span>开始本轮 AI 猜拳对弈</span>
-                  </button>
+                  </PressableButton>
                 </div>
               )}
             </div>
@@ -962,8 +975,9 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                   {phase === 'qa_session' && (
                     <div className="flex flex-wrap gap-1.5 max-h-16 overflow-y-auto">
                       {PRESET_QUESTIONS.map((pq, idx) => (
-                        <button
+                        <PressableButton
                           key={idx}
+                          pressScale={0.95}
                           onClick={() => {
                             setPlayerQuestionInput(pq);
                             handlePlayerSubmitQuestion(pq);
@@ -971,7 +985,7 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                           className="text-[11px] px-2 py-1 rounded-lg bg-slate-700/70 hover:bg-rose-500/20 hover:text-rose-300 text-slate-300 border border-slate-600/60 transition-colors truncate max-w-full text-left"
                         >
                           {pq}
-                        </button>
+                        </PressableButton>
                       ))}
                     </div>
                   )}
@@ -988,15 +1002,16 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                         placeholder={`向 ${opponent.name} 提问...`}
                         className="flex-1 bg-slate-900/90 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 transition-colors"
                       />
-                      <button
+                      <PressableButton
                         id="rps-submit-question-btn"
                         disabled={!playerQuestionInput.trim() || isAiAnswering}
                         onClick={() => handlePlayerSubmitQuestion()}
-                        className="px-3.5 py-2 rounded-xl bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white font-medium text-xs flex items-center gap-1 shadow-md shadow-rose-500/20 active:scale-95 transition-all shrink-0"
+                        withRipple
+                        className="px-3.5 py-2 rounded-xl bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white font-medium text-xs flex items-center gap-1 shadow-md shadow-rose-500/20 transition-all shrink-0 overflow-hidden"
                       >
                         <Send className="w-3.5 h-3.5" />
                         <span>提问</span>
-                      </button>
+                      </PressableButton>
                     </div>
                   ) : (
                     /* Display answered Q&A result */
@@ -1065,20 +1080,21 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                           placeholder="输入你的诚实回答..."
                           className="flex-1 bg-slate-900/90 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 transition-colors"
                         />
-                        <button
+                        <PressableButton
                           id="rps-submit-answer-btn"
                           disabled={!playerAnswerInput.trim()}
                           onClick={() => handlePlayerSubmitAnswer(false)}
-                          className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium text-xs flex items-center gap-1 shadow-md shadow-emerald-600/20 active:scale-95 transition-all shrink-0"
+                          withRipple
+                          className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium text-xs flex items-center gap-1 shadow-md shadow-emerald-600/20 transition-all shrink-0 overflow-hidden"
                         >
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           <span>回答</span>
-                        </button>
+                        </PressableButton>
                       </div>
 
                       {/* Utility Action Buttons: Change question & Skip question */}
                       <div className="flex items-center justify-between pt-1">
-                        <button
+                        <PressableButton
                           id="rps-change-question-btn"
                           disabled={isQuestionGenerating}
                           onClick={handleChangeQuestion}
@@ -1086,15 +1102,15 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                         >
                           <RefreshCw className={`w-3 h-3 ${isQuestionGenerating ? 'animate-spin' : ''}`} />
                           <span>换一个问题</span>
-                        </button>
-                        <button
+                        </PressableButton>
+                        <PressableButton
                           id="rps-skip-question-btn"
                           onClick={() => handlePlayerSubmitAnswer(true)}
                           className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1 py-1 transition-colors"
                         >
                           <SkipForward className="w-3 h-3" />
                           <span>跳过问题</span>
-                        </button>
+                        </PressableButton>
                       </div>
                     </div>
                   ) : (
@@ -1128,14 +1144,15 @@ export const RpsGame: React.FC<RpsGameProps> = ({
               {/* Next Round Button after answering */}
               {phase === 'qa_answered' && (
                 <div className="mt-3 pt-2.5 border-t border-slate-700/60 flex items-center justify-end">
-                  <button
+                  <PressableButton
                     id="rps-next-round-btn"
                     onClick={handleNextRound}
-                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-500 to-amber-500 hover:from-rose-600 hover:to-amber-600 text-white font-bold text-xs shadow-lg shadow-rose-500/20 flex items-center gap-1.5 active:scale-95 transition-all"
+                    withRipple
+                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-500 to-amber-500 hover:from-rose-600 hover:to-amber-600 text-white font-bold text-xs shadow-lg shadow-rose-500/20 flex items-center gap-1.5 transition-all overflow-hidden"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
                     <span>再来一局</span>
-                  </button>
+                  </PressableButton>
                 </div>
               )}
             </motion.div>
@@ -1158,12 +1175,12 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                   <UserPlus className="w-4 h-4 text-rose-400" />
                   <span>选择对弈 AI 角色</span>
                 </h3>
-                <button
+                <PressableButton
                   onClick={() => setShowCharacterModal(false)}
                   className="text-xs text-slate-400 hover:text-white px-2 py-1"
                 >
                   关闭
-                </button>
+                </PressableButton>
               </div>
 
               <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
@@ -1173,8 +1190,9 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                       ? opponent.id === c.id
                       : ai2.id === c.id;
                   return (
-                    <button
+                    <PressableButton
                       key={c.id}
+                      pressScale={0.97}
                       onClick={() => {
                         if (selectingCharacterSlot === 'ai1') {
                           setOpponent(c);
@@ -1202,7 +1220,7 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                       {isSelected && (
                         <span className="text-xs text-rose-400 font-bold">对战中</span>
                       )}
-                    </button>
+                    </PressableButton>
                   );
                 })}
               </div>
@@ -1227,12 +1245,12 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                   <Trophy className="w-5 h-5 text-amber-400" />
                   <h3 className="text-sm font-bold text-white">猜拳战绩与问答记录</h3>
                 </div>
-                <button
+                <PressableButton
                   onClick={() => setShowHistoryModal(false)}
                   className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded-lg bg-slate-700/50"
                 >
                   关闭
-                </button>
+                </PressableButton>
               </div>
 
               {/* Overall Statistics Grid */}

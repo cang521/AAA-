@@ -21,6 +21,7 @@ import {
 import { AppUsageDetail, AppUsageMonitoringConfig } from '../../../types';
 import { androidPermissionBridgeClient } from '../../../lib/agent/AndroidPermissionBridgeClient';
 import { loadFromStorage, saveToStorage } from '../../../lib/storage';
+import { PressableButton, ElasticToggle } from '../../ui/interaction';
 
 const CONFIG_STORAGE_KEY = 'phone_app_usage_monitoring_config_v1';
 
@@ -165,12 +166,13 @@ export const AppUsageStatsView: React.FC<AppUsageStatsViewProps> = ({ onBack }) 
       {/* Top Header Bar */}
       <div className="px-4 py-3 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-md border-b border-sky-100 dark:border-zinc-800 flex items-center justify-between shrink-0 shadow-xs z-10">
         <div className="flex items-center gap-2.5">
-          <button
+          <PressableButton
             onClick={onBack}
-            className="p-2 rounded-xl bg-sky-50 dark:bg-zinc-800 text-sky-700 dark:text-zinc-300 hover:bg-sky-100 dark:hover:bg-zinc-700 active:scale-95 transition cursor-pointer"
+            expandHitArea
+            className="p-2 rounded-xl bg-sky-50 dark:bg-zinc-800 text-sky-700 dark:text-zinc-300 hover:bg-sky-100 dark:hover:bg-zinc-700 transition cursor-pointer"
           >
             <ArrowLeft className="w-5 h-5" />
-          </button>
+          </PressableButton>
           <div>
             <h1 className="text-base font-bold text-slate-900 dark:text-zinc-100 flex items-center gap-1.5">
               <BarChart3 className="w-5 h-5 text-sky-600 dark:text-sky-400" />
@@ -182,14 +184,16 @@ export const AppUsageStatsView: React.FC<AppUsageStatsViewProps> = ({ onBack }) 
           </div>
         </div>
 
-        <button
+        <PressableButton
           onClick={checkPermissionAndFetchData}
           disabled={isLoading}
-          className="p-2 rounded-xl bg-sky-50 dark:bg-zinc-800 text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-zinc-700 active:scale-95 transition cursor-pointer disabled:opacity-50"
+          loading={isLoading}
+          expandHitArea
+          className="p-2 rounded-xl bg-sky-50 dark:bg-zinc-800 text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-zinc-700 transition cursor-pointer disabled:opacity-50"
           title="刷新真实统计"
         >
           <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-        </button>
+        </PressableButton>
       </div>
 
       {/* Main Content Body */}
@@ -266,13 +270,15 @@ export const AppUsageStatsView: React.FC<AppUsageStatsViewProps> = ({ onBack }) 
           </div>
 
           {!hasUsagePermission && (
-            <button
+            <PressableButton
               onClick={handleOpenSystemSettings}
-              className="w-full py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-98 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
+              withRipple
+              rippleTone="light"
+              className="w-full py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
             >
               <ExternalLink className="w-4 h-4" />
               <span>前往 Android 系统设置授权【使用情况访问】</span>
-            </button>
+            </PressableButton>
           )}
         </div>
 
@@ -292,15 +298,12 @@ export const AppUsageStatsView: React.FC<AppUsageStatsViewProps> = ({ onBack }) 
             </div>
           </div>
 
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={config.enabled}
-              onChange={(e) => handleToggleGlobalMonitoring(e.target.checked)}
-              className="sr-only peer"
-            />
-            <div className="w-11 h-6 bg-slate-200 dark:bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-600"></div>
-          </label>
+          <ElasticToggle
+            checked={config.enabled}
+            onChange={handleToggleGlobalMonitoring}
+            accent="sky"
+            ariaLabel="开启应用使用情况监测"
+          />
         </div>
 
         {/* Filter & Search Bar */}
@@ -426,8 +429,9 @@ export const AppUsageStatsView: React.FC<AppUsageStatsViewProps> = ({ onBack }) 
                     </div>
                   </div>
 
-                  <button
+                  <PressableButton
                     onClick={() => handleToggleAppMonitored(app.packageName)}
+                    pressScale={0.94}
                     className={`px-2.5 py-1 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shrink-0 ${
                       app.isMonitored
                         ? 'bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800/50'
@@ -436,7 +440,7 @@ export const AppUsageStatsView: React.FC<AppUsageStatsViewProps> = ({ onBack }) 
                   >
                     {app.isMonitored ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
                     <span>{app.isMonitored ? '已允许监测' : '允许监测'}</span>
-                  </button>
+                  </PressableButton>
                 </div>
 
                 {/* Stats Row */}

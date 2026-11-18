@@ -50,6 +50,7 @@ import {
 } from '../../lib/agent/PermissionManager';
 import { loadCharacters } from '../../lib/storage';
 import { AiCharacter } from '../../types';
+import { PressableButton, ElasticToggle } from '../ui/interaction';
 
 interface AiPermissionsAppProps {
   onBackToLauncher: () => void;
@@ -231,13 +232,14 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
 
       {/* Header */}
       <div className="h-13 px-3 bg-white dark:bg-zinc-900/95 border-b border-[#D9EAF7] dark:border-zinc-800/80 flex items-center justify-between shrink-0 z-20 shadow-2xs">
-        <button
+        <PressableButton
           onClick={onBackToLauncher}
-          className="flex items-center gap-1.5 text-xs text-[#5B6B7C] dark:text-zinc-300 hover:text-[#243040] dark:hover:text-white font-medium px-2.5 py-1.5 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800/80 hover:bg-[#EAF7FF] dark:hover:bg-zinc-800 border border-[#D9EAF7] dark:border-transparent transition active:scale-95 cursor-pointer"
+          expandHitArea
+          className="flex items-center gap-1.5 text-xs text-[#5B6B7C] dark:text-zinc-300 hover:text-[#243040] dark:hover:text-white font-medium px-2.5 py-1.5 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800/80 hover:bg-[#EAF7FF] dark:hover:bg-zinc-800 border border-[#D9EAF7] dark:border-transparent transition cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>桌面</span>
-        </button>
+        </PressableButton>
 
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-xl bg-[#EAF7FF] dark:bg-indigo-500/20 border border-[#9DD8F5] dark:border-indigo-500/30 flex items-center justify-center text-[#59B6E8] dark:text-indigo-400">
@@ -251,22 +253,24 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
 
         <div className="flex items-center gap-1.5">
           {onOpenActivityLogs && (
-            <button
+            <PressableButton
               onClick={onOpenActivityLogs}
+              expandHitArea
               className="p-1.5 rounded-xl text-[#5B6B7C] dark:text-zinc-400 hover:text-[#243040] dark:hover:text-indigo-300 hover:bg-[#F3FAFF] dark:hover:bg-zinc-800/80 transition cursor-pointer"
               title="查看 AI 活动审计记录"
             >
               <FileText className="w-4 h-4" />
-            </button>
+            </PressableButton>
           )}
-          <button
+          <PressableButton
             onClick={handleRecheckAll}
             disabled={isCheckingAll}
+            expandHitArea
             className="p-1.5 rounded-xl text-[#5B6B7C] dark:text-zinc-400 hover:text-[#243040] dark:hover:text-indigo-300 hover:bg-[#F3FAFF] dark:hover:bg-zinc-800/80 transition cursor-pointer"
             title="重新检测系统能力"
           >
             <RefreshCw className={`w-4 h-4 ${isCheckingAll ? 'animate-spin text-[#59B6E8] dark:text-indigo-400' : ''}`} />
-          </button>
+          </PressableButton>
         </div>
       </div>
 
@@ -294,18 +298,12 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
           </div>
 
           {/* Toggle Switch */}
-          <button
-            onClick={handleToggleDnd}
-            className={`w-11 h-6 rounded-full transition-colors relative shrink-0 p-0.5 cursor-pointer ${
-              dndToday ? 'bg-amber-500' : 'bg-slate-300 dark:bg-zinc-700'
-            }`}
-          >
-            <div
-              className={`w-5 h-5 rounded-full bg-white transition-transform shadow-xs ${
-                dndToday ? 'translate-x-5' : 'translate-x-0'
-              }`}
-            />
-          </button>
+          <ElasticToggle
+            checked={dndToday}
+            onChange={() => handleToggleDnd()}
+            accent="amber"
+            ariaLabel="今天别管我静默模式"
+          />
         </div>
 
         {/* One-Click Check System Capability Bar */}
@@ -325,20 +323,24 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
             </p>
           </div>
 
-          <button
+          <PressableButton
             onClick={handleRecheckAll}
             disabled={isCheckingAll}
-            className="px-3 py-1.5 rounded-xl bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-indigo-600 dark:hover:bg-indigo-500 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition shrink-0 cursor-pointer"
+            loading={isCheckingAll}
+            withRipple
+            rippleTone="light"
+            className="px-3 py-1.5 rounded-xl bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition shrink-0 cursor-pointer disabled:opacity-60"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isCheckingAll ? 'animate-spin' : ''}`} />
             <span>一键全面检测</span>
-          </button>
+          </PressableButton>
         </div>
 
         {/* 3 Main Navigation Tabs */}
         <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-[#F3FAFF] dark:bg-zinc-900/90 border border-[#D9EAF7] dark:border-zinc-800">
-          <button
+          <PressableButton
             onClick={() => setActiveTab('system')}
+            pressScale={0.96}
             className={`py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'system'
                 ? 'bg-[#59B6E8] dark:bg-zinc-800 text-white dark:text-indigo-300 shadow-xs'
@@ -347,9 +349,10 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
           >
             <Smartphone className="w-3.5 h-3.5" />
             <span>1. 系统权限</span>
-          </button>
-          <button
+          </PressableButton>
+          <PressableButton
             onClick={() => setActiveTab('ai')}
+            pressScale={0.96}
             className={`py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'ai'
                 ? 'bg-[#59B6E8] dark:bg-zinc-800 text-white dark:text-indigo-300 shadow-xs'
@@ -358,9 +361,10 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
           >
             <Sparkles className="w-3.5 h-3.5" />
             <span>2. AI权限</span>
-          </button>
-          <button
+          </PressableButton>
+          <PressableButton
             onClick={() => setActiveTab('scene')}
+            pressScale={0.96}
             className={`py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'scene'
                 ? 'bg-[#59B6E8] dark:bg-zinc-800 text-white dark:text-indigo-300 shadow-xs'
@@ -369,7 +373,7 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
           >
             <Sliders className="w-3.5 h-3.5" />
             <span>3. 场景规则</span>
-          </button>
+          </PressableButton>
         </div>
       </div>
 
@@ -409,14 +413,14 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                         <p className="text-[10px] text-[#5B6B7C] dark:text-zinc-400 font-mono truncate">{cap.androidApiName}</p>
                       </div>
 
-                      <button
+                      <PressableButton
                         onClick={() => handleOpenDiagnostics(cap.id)}
                         className="px-2 py-1 rounded-lg bg-[#F3FAFF] dark:bg-zinc-800 hover:bg-[#EAF7FF] dark:hover:bg-zinc-750 text-[#5B6B7C] dark:text-zinc-300 text-[10px] font-medium border border-[#D9EAF7] dark:border-zinc-700/60 flex items-center gap-1 shrink-0 transition cursor-pointer"
                         title="查看环境兼容性与底层诊断"
                       >
                         <Search className="w-3 h-3 text-[#59B6E8] dark:text-indigo-400" />
                         <span>诊断</span>
-                      </button>
+                      </PressableButton>
                     </div>
 
                     {/* Description */}
@@ -456,59 +460,65 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                       )}
 
                       {isDenied && (
-                        <button
+                        <PressableButton
                           onClick={() => handleRequestCapability(cap.id)}
-                          className="px-3 py-1.5 rounded-xl bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white text-[11px] font-bold transition shadow-xs active:scale-95 cursor-pointer"
+                          withRipple
+                          rippleTone="light"
+                          className="px-3 py-1.5 rounded-xl bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white text-[11px] font-bold transition shadow-xs cursor-pointer"
                         >
                           获取权限
-                        </button>
+                        </PressableButton>
                       )}
 
                       {isFailed && (
                         <>
                           {/* CRITICAL USER REQUIREMENT: 重新获取权限 is ALWAYS enabled and visible! */}
-                          <button
+                          <PressableButton
                             onClick={() => handleRequestCapability(cap.id)}
-                            className="px-3 py-1.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-bold transition active:scale-95 cursor-pointer"
+                            withRipple
+                            rippleTone="light"
+                            className="px-3 py-1.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-bold transition cursor-pointer"
                           >
                             重新获取权限
-                          </button>
-                          <button
+                          </PressableButton>
+                          <PressableButton
                             onClick={() => handleOpenFallbackDrawer(cap)}
                             className="px-2.5 py-1.5 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800 hover:bg-[#EAF7FF] dark:hover:bg-zinc-700 text-[#5B6B7C] dark:text-zinc-200 text-[11px] font-medium border border-[#D9EAF7] dark:border-transparent transition cursor-pointer"
                           >
                             系统设置入口
-                          </button>
+                          </PressableButton>
                         </>
                       )}
 
                       {isGranted && (
                         <>
-                          <button
+                          <PressableButton
                             onClick={() => handleRequestCapability(cap.id)}
                             className="px-2.5 py-1 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800 hover:bg-[#EAF7FF] dark:hover:bg-zinc-700 text-[#5B6B7C] dark:text-zinc-300 text-[11px] font-medium border border-[#D9EAF7] dark:border-transparent transition cursor-pointer"
                           >
                             重新检测
-                          </button>
-                          <button
+                          </PressableButton>
+                          <PressableButton
                             onClick={() => handleOpenFallbackDrawer(cap)}
                             className="px-2.5 py-1 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800 hover:bg-[#EAF7FF] dark:hover:bg-zinc-700 text-[#5B6B7C] dark:text-zinc-300 text-[11px] font-medium border border-[#D9EAF7] dark:border-transparent transition flex items-center gap-1 cursor-pointer"
                           >
                             <span>系统设置</span>
                             <ExternalLink className="w-3 h-3 text-[#73869A] dark:text-zinc-400" />
-                          </button>
+                          </PressableButton>
                         </>
                       )}
 
                       {isSettings && (
                         <>
-                          <button
+                          <PressableButton
                             onClick={() => handleOpenFallbackDrawer(cap)}
+                            withRipple
+                            rippleTone="light"
                             className="px-3 py-1.5 rounded-xl bg-[#59B6E8] hover:bg-[#40A4DC] dark:bg-blue-600 dark:hover:bg-blue-500 text-white text-[11px] font-bold transition cursor-pointer"
                           >
                             前往设置
-                          </button>
-                          <button
+                          </PressableButton>
+                          <PressableButton
                             onClick={async () => {
                               await systemCapabilityManager.recheckAll();
                               triggerToast('已重新检测系统真实状态');
@@ -516,7 +526,7 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                             className="px-2.5 py-1.5 rounded-xl bg-[#F3FAFF] dark:bg-zinc-800 hover:bg-[#EAF7FF] dark:hover:bg-zinc-700 text-[#5B6B7C] dark:text-zinc-200 text-[11px] font-medium border border-[#D9EAF7] dark:border-transparent transition cursor-pointer"
                           >
                             已在系统开启 · 重新检测
-                          </button>
+                          </PressableButton>
                         </>
                       )}
                     </div>
@@ -574,23 +584,15 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                       开启后，权限被你调整时，AI 可在后续对话中感知到变化（但绝无法绕过新权限）。
                     </p>
                   </div>
-                  <button
-                    onClick={() =>
-                      permissionManager.setAllowAwarePermissionChanges(
-                        currentAi.id,
-                        !currentAiConfig.allowAwarePermissionChanges
-                      )
+                  <ElasticToggle
+                    checked={currentAiConfig.allowAwarePermissionChanges}
+                    onChange={(next) =>
+                      permissionManager.setAllowAwarePermissionChanges(currentAi.id, next)
                     }
-                    className={`w-10 h-5 rounded-full transition-colors relative shrink-0 p-0.5 cursor-pointer ${
-                      currentAiConfig.allowAwarePermissionChanges ? 'bg-[#59B6E8] dark:bg-indigo-600' : 'bg-slate-300 dark:bg-zinc-700'
-                    }`}
-                  >
-                    <div
-                      className={`w-4 h-4 rounded-full bg-white transition-transform shadow-2xs ${
-                        currentAiConfig.allowAwarePermissionChanges ? 'translate-x-5' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
+                    accent="sky"
+                    size="sm"
+                    ariaLabel="允许 AI 感知自己的权限变化"
+                  />
                 </div>
               )}
             </div>
@@ -816,22 +818,17 @@ export const AiPermissionsApp: React.FC<AiPermissionsAppProps> = ({
                           <div className="text-[10px] text-zinc-400">{dim.desc}</div>
                         </div>
 
-                        <button
-                          onClick={() => {
+                        <ElasticToggle
+                          checked={isChecked}
+                          onChange={(next) => {
                             permissionManager.updateSceneRule(selectedSceneId, {
-                              [dim.key]: !isChecked,
+                              [dim.key]: next,
                             });
                           }}
-                          className={`w-10 h-5 rounded-full transition-colors relative shrink-0 p-0.5 ${
-                            isChecked ? 'bg-indigo-600' : 'bg-zinc-700'
-                          }`}
-                        >
-                          <div
-                            className={`w-4 h-4 rounded-full bg-white transition-transform ${
-                              isChecked ? 'translate-x-5' : 'translate-x-0'
-                            }`}
-                          />
-                        </button>
+                          size="sm"
+                          accent="indigo"
+                          ariaLabel={dim.label}
+                        />
                       </div>
                     );
                   })}

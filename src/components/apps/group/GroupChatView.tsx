@@ -34,6 +34,7 @@ import {
 } from '../../../types';
 import { GroupSettingsModal } from './GroupSettingsModal';
 import { syncGroupToServer } from '../../../lib/groupService';
+import { PressableButton } from '../../ui/interaction';
 
 interface GroupChatViewProps {
   group: GroupChat;
@@ -305,21 +306,21 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#EDEDED] dark:bg-zinc-950 select-none relative overflow-hidden font-sans">
+    <div className="wx-chat-viewport flex flex-col h-full bg-[#EDEDED] dark:bg-zinc-950 select-none relative overflow-hidden font-sans">
       {/* Top Header */}
-      <div className="h-12 bg-[#EDEDED] dark:bg-zinc-900 border-b border-zinc-300/70 dark:border-zinc-800 px-3 flex items-center justify-between shrink-0 z-20">
+      <div className="wx-header h-12 bg-[#EDEDED] dark:bg-zinc-900 border-b border-zinc-300/70 dark:border-zinc-800 px-3 flex items-center justify-between shrink-0 z-20">
         <div className="flex items-center gap-1 min-w-0">
           <button
             onClick={onBack}
-            className="p-1 -ml-1 text-zinc-800 dark:text-zinc-200 hover:text-emerald-600 transition flex items-center"
+            className="wx-header-back p-1 -ml-1 text-zinc-800 dark:text-zinc-200 hover:text-emerald-600 transition flex items-center"
           >
             <ChevronLeft className="w-6 h-6" />
           </button>
           <div className="min-w-0 flex items-center gap-1.5">
-            <h2 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate max-w-[180px]">
+            <h2 className="wx-header-title text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate max-w-[180px]">
               {group.name}
             </h2>
-            <span className="text-xs font-semibold text-zinc-500">
+            <span className="wx-muted-text text-xs font-semibold text-zinc-500">
               ({group.members.length})
             </span>
           </div>
@@ -329,14 +330,14 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
           <button
             onClick={handleSummonDiscussion}
             title="召唤群内AI讨论"
-            className="p-1.5 rounded-full text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 transition flex items-center gap-1 text-[11px] font-bold"
+            className="wx-header-action wx-green-text p-1.5 rounded-full text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 transition flex items-center gap-1 text-[11px] font-bold"
           >
             <Sparkles className="w-4 h-4" />
             <span className="hidden sm:inline">召唤讨论</span>
           </button>
           <button
             onClick={() => setShowSettingsModal(true)}
-            className="p-1.5 rounded-full text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition"
+            className="wx-header-action p-1.5 rounded-full text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition"
           >
             <MoreHorizontal className="w-5 h-5" />
           </button>
@@ -345,7 +346,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
 
       {/* Group Notice Bar */}
       {group.notice && (
-        <div className="px-3 py-1.5 bg-amber-500/10 dark:bg-amber-500/15 border-b border-amber-500/20 text-[10px] text-amber-800 dark:text-amber-300 flex items-center justify-between shrink-0">
+        <div className="wx-group-notice px-3 py-1.5 bg-amber-500/10 dark:bg-amber-500/15 border-b border-amber-500/20 text-[10px] text-amber-800 dark:text-amber-300 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="font-bold shrink-0">群公告:</span>
             <span className="truncate">{group.notice}</span>
@@ -372,7 +373,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
           if (isSystem) {
             return (
               <div key={msg.id} className="flex justify-center my-2 select-none">
-                <span className="px-2.5 py-0.5 rounded-full bg-zinc-200/80 dark:bg-zinc-800/80 text-[10px] text-zinc-500 dark:text-zinc-400">
+                <span className="wx-history-pill px-2.5 py-0.5 rounded-full bg-zinc-200/80 dark:bg-zinc-800/80 text-[10px] text-zinc-500 dark:text-zinc-400">
                   {msg.text}
                 </span>
               </div>
@@ -387,7 +388,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
             <React.Fragment key={msg.id}>
               {showDivider && ts && (
                 <div className="flex justify-center my-2 select-none">
-                  <span className="px-2.5 py-0.5 rounded-md bg-zinc-200/80 dark:bg-zinc-800/80 text-[10px] font-medium text-zinc-600 dark:text-zinc-400 shadow-2xs">
+                  <span className="wx-time-divider px-2.5 py-0.5 rounded-md bg-zinc-200/80 dark:bg-zinc-800/80 text-[10px] font-medium text-zinc-600 dark:text-zinc-400 shadow-2xs">
                     {formatMessageTimeDivider(ts)}
                   </span>
                 </div>
@@ -412,7 +413,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
                 <img
                   src={msg.senderAvatar}
                   alt={msg.senderName}
-                  className="w-9 h-9 rounded-lg object-cover shadow-sm border border-black/5 dark:border-white/10"
+                  className="wx-avatar w-9 h-9 rounded-lg object-cover shadow-sm border border-black/5 dark:border-white/10"
                 />
                 {(msg.senderType === 'ai' || msg.thinkingProcess) && (
                   <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-amber-400 rounded-full border border-zinc-900 flex items-center justify-center shadow-xs">
@@ -425,19 +426,19 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
               <div className={`flex flex-col max-w-[76%] ${isMe ? 'items-end' : 'items-start'}`}>
                 {/* Sender Name & Role Tag */}
                 <div className="flex items-center gap-1 mb-0.5 px-0.5">
-                  <span className="text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
+                  <span className="wx-secondary-text text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
                     {msg.senderName}
                   </span>
                   {msg.senderType === 'ai' ? (
-                    <span className="px-1 rounded bg-purple-500/20 text-purple-600 dark:text-purple-300 text-[8px] font-bold leading-tight">
+                    <span className="wx-group-tag-ai px-1 rounded bg-purple-500/20 text-purple-600 dark:text-purple-300 text-[8px] font-bold leading-tight">
                       AI
                     </span>
                   ) : msg.senderType === 'npc' ? (
-                    <span className="px-1 rounded bg-blue-500/20 text-blue-600 dark:text-blue-300 text-[8px] font-bold leading-tight">
+                    <span className="wx-group-tag-ai px-1 rounded bg-blue-500/20 text-blue-600 dark:text-blue-300 text-[8px] font-bold leading-tight">
                       NPC
                     </span>
                   ) : (
-                    <span className="px-1 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 text-[8px] font-bold leading-tight">
+                    <span className="wx-group-tag-human px-1 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 text-[8px] font-bold leading-tight">
                       真人
                     </span>
                   )}
@@ -446,7 +447,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
                 {/* Quoted Message Preview */}
                 {msg.quoteMessage && (
                   <div
-                    className={`mb-1 p-1.5 rounded-lg text-[10px] border line-clamp-2 max-w-full ${
+                    className={`wx-quote-preview mb-1 p-1.5 rounded-lg text-[10px] border line-clamp-2 max-w-full ${
                       isMe
                         ? 'bg-emerald-600/10 border-emerald-500/20 text-emerald-800 dark:text-emerald-300'
                         : 'bg-zinc-200/80 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300'
@@ -463,12 +464,12 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
                     e.preventDefault();
                     setActiveLongPressMsg(msg);
                   }}
-                  className={`relative px-3.5 py-2 rounded-2xl text-[13px] leading-relaxed break-words shadow-sm ${
+                  className={`wx-message-bubble relative px-3.5 py-2 rounded-2xl text-[13px] leading-relaxed break-words shadow-sm ${
                     isMe
-                      ? 'bg-[#95EC69] dark:bg-emerald-600 text-black dark:text-white rounded-tr-none'
+                      ? 'wx-message-bubble-user bg-[#95EC69] dark:bg-emerald-600 text-black dark:text-white rounded-tr-none'
                       : hasMentionMe
-                      ? 'bg-amber-50 dark:bg-amber-950/40 text-zinc-900 dark:text-zinc-100 border border-amber-400 rounded-tl-none ring-1 ring-amber-400/40'
-                      : 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-black/5 dark:border-white/5 rounded-tl-none'
+                      ? 'wx-message-bubble-ai bg-amber-50 dark:bg-amber-950/40 text-zinc-900 dark:text-zinc-100 border border-amber-400 rounded-tl-none ring-1 ring-amber-400/40'
+                      : 'wx-message-bubble-ai bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-black/5 dark:border-white/5 rounded-tl-none'
                   }`}
                 >
                   {/* Mention Badge if targeting user */}
@@ -500,7 +501,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
 
       {/* Quote Preview in Input Bar */}
       {quoteMsg && (
-        <div className="px-3 py-1.5 bg-zinc-200/80 dark:bg-zinc-850 border-t border-zinc-300 dark:border-zinc-800 flex items-center justify-between text-xs">
+        <div className="wx-composer-quote px-3 py-1.5 bg-zinc-200/80 dark:bg-zinc-850 border-t border-zinc-300 dark:border-zinc-800 flex items-center justify-between text-xs">
           <div className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300 truncate">
             <Quote className="w-3 h-3 text-emerald-600" />
             <span className="font-bold text-[11px]">{quoteMsg.senderName}:</span>
@@ -508,7 +509,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
           </div>
           <button
             onClick={() => setQuoteMsg(null)}
-            className="text-zinc-400 hover:text-zinc-600 p-0.5"
+            className="wx-muted-text text-zinc-400 hover:text-zinc-600 p-0.5"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -517,8 +518,8 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
 
       {/* Mention Picker Popover */}
       {showMentionPicker && (
-        <div className="absolute bottom-14 left-3 right-3 bg-white dark:bg-zinc-850 rounded-2xl shadow-xl border border-zinc-200 dark:border-zinc-700 p-2 z-30 space-y-1 max-h-48 overflow-y-auto animate-in slide-in-from-bottom-2">
-          <div className="text-[10px] font-bold text-zinc-400 px-2 py-0.5 flex items-center justify-between">
+        <div className="wx-dropdown absolute bottom-14 left-3 right-3 bg-white dark:bg-zinc-850 rounded-2xl shadow-xl border border-zinc-200 dark:border-zinc-700 p-2 z-30 space-y-1 max-h-48 overflow-y-auto animate-in slide-in-from-bottom-2">
+          <div className="wx-muted-text text-[10px] font-bold text-zinc-400 px-2 py-0.5 flex items-center justify-between">
             <span>选择要 @ 提醒的群成员</span>
             <button onClick={() => setShowMentionPicker(false)}>
               <X className="w-3 h-3" />
@@ -526,7 +527,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
           </div>
           <button
             onClick={() => handleInsertMention('all')}
-            className="w-full px-2.5 py-1.5 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2 text-xs font-bold text-amber-600 dark:text-amber-400 text-left"
+            className="wx-dropdown-item w-full px-2.5 py-1.5 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2 text-xs font-bold text-amber-600 dark:text-amber-400 text-left"
           >
             <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center">
               <Users className="w-3.5 h-3.5" />
@@ -539,15 +540,15 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
               <button
                 key={member.id}
                 onClick={() => handleInsertMention(member)}
-                className="w-full px-2.5 py-1.5 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2 text-xs text-zinc-800 dark:text-zinc-200 text-left"
+                className="wx-dropdown-item w-full px-2.5 py-1.5 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2 text-xs text-zinc-800 dark:text-zinc-200 text-left"
               >
                 <img
                   src={member.avatar}
                   alt={member.name}
-                  className="w-6 h-6 rounded-full object-cover"
+                  className="wx-avatar w-6 h-6 rounded-full object-cover"
                 />
                 <span className="font-bold">{member.name}</span>
-                <span className="text-[9px] text-zinc-400 ml-auto">
+                <span className="wx-muted-text text-[9px] text-zinc-400 ml-auto">
                   {member.memberType === 'ai' ? 'AI' : member.memberType === 'npc' ? 'NPC' : '真人'}
                 </span>
               </button>
@@ -556,14 +557,14 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
       )}
 
       {/* Input Bar */}
-      <div className="p-2.5 bg-[#F7F7F7] dark:bg-zinc-900 border-t border-zinc-300/70 dark:border-zinc-800 flex items-center gap-2 shrink-0">
-        <button
+      <div className="wx-composer p-2.5 bg-[#F7F7F7] dark:bg-zinc-900 border-t border-zinc-300/70 dark:border-zinc-800 flex items-center gap-2 shrink-0">
+        <PressableButton
           onClick={() => setShowMentionPicker(!showMentionPicker)}
           title="@群成员"
-          className="w-8 h-8 rounded-full flex items-center justify-center text-zinc-500 hover:text-emerald-600 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition"
+          className="wx-header-action w-8 h-8 rounded-full flex items-center justify-center text-zinc-500 hover:text-emerald-600 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition cursor-pointer"
         >
           <AtSign className="w-5 h-5" />
-        </button>
+        </PressableButton>
 
         <input
           ref={inputRef}
@@ -608,17 +609,18 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
             }
           }}
           placeholder="发送群消息，输入 @ 提及成员..."
-          className="flex-1 px-3.5 py-2 text-xs rounded-xl bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-300/70 dark:border-zinc-700 focus:outline-none focus:border-emerald-500"
+          className="wx-composer-input flex-1 px-3.5 py-2 text-xs rounded-xl bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-300/70 dark:border-zinc-700 focus:outline-none focus:border-emerald-500"
         />
 
-        <button
+        <PressableButton
           onClick={handleSendMessage}
           disabled={!inputText.trim()}
+          withRipple={false}
           title="发送群消息"
-          className="px-3.5 py-2 rounded-xl bg-[#07C160] hover:bg-[#06ad56] disabled:opacity-40 disabled:pointer-events-none text-white font-bold text-xs shadow-sm transition flex items-center justify-center shrink-0 cursor-pointer"
+          className={`wx-send-button ${inputText.trim() ? 'wx-send-button--active' : ''} px-3.5 py-2 rounded-xl bg-[#07C160] hover:bg-[#06ad56] disabled:opacity-40 disabled:pointer-events-none text-white font-bold text-xs shadow-sm transition flex items-center justify-center shrink-0 cursor-pointer`}
         >
           <Send className="w-4 h-4" />
-        </button>
+        </PressableButton>
       </div>
 
       {/* Context / Long Press Menu Modal */}
@@ -628,7 +630,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
           onClick={() => setActiveLongPressMsg(null)}
         >
           <div
-            className="w-52 bg-white dark:bg-zinc-850 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-750 p-1.5 space-y-1 animate-in zoom-in-95 duration-150"
+            className="wx-dropdown w-52 bg-white dark:bg-zinc-850 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-750 p-1.5 space-y-1 animate-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
             <button
@@ -637,7 +639,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
                 setActiveLongPressMsg(null);
                 if (inputRef.current) inputRef.current.focus();
               }}
-              className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
+              className="wx-dropdown-item w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
             >
               <Quote className="w-3.5 h-3.5 text-emerald-600" />
               <span>引用回复</span>
@@ -648,21 +650,21 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
                 setActiveLongPressMsg(null);
                 if (inputRef.current) inputRef.current.focus();
               }}
-              className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
+              className="wx-dropdown-item w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
             >
               <AtSign className="w-3.5 h-3.5 text-purple-600" />
               <span>@{activeLongPressMsg.senderName}</span>
             </button>
             <button
               onClick={() => handleCopyMessage(activeLongPressMsg.text)}
-              className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
+              className="wx-dropdown-item w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
             >
               <Copy className="w-3.5 h-3.5 text-blue-600" />
               <span>复制文本</span>
             </button>
             <button
               onClick={() => handleDeleteMessage(activeLongPressMsg.id)}
-              className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 flex items-center gap-2"
+              className="wx-dropdown-item w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 flex items-center gap-2"
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>删除消息</span>
@@ -674,20 +676,20 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
       {/* Thinking Process Modal */}
       {showCoTModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="w-full max-w-xs bg-white dark:bg-zinc-900 rounded-3xl p-4 shadow-2xl border border-purple-500/30 space-y-3">
-            <div className="flex items-center justify-between font-bold text-xs text-purple-600 dark:text-purple-400">
+          <div className="wx-modal-card w-full max-w-xs bg-white dark:bg-zinc-900 rounded-3xl p-4 shadow-2xl border border-purple-500/30 space-y-3">
+            <div className="wx-primary-text flex items-center justify-between font-bold text-xs text-purple-600 dark:text-purple-400">
               <div className="flex items-center gap-1.5">
                 <Brain className="w-4 h-4" />
                 <span>AI 心理活动与推理决策</span>
               </div>
               <button
                 onClick={() => setShowCoTModal(null)}
-                className="text-zinc-400 hover:text-zinc-600"
+                className="wx-muted-text text-zinc-400 hover:text-zinc-600"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="p-3 rounded-2xl bg-purple-500/10 text-xs text-zinc-700 dark:text-zinc-300 leading-relaxed max-h-60 overflow-y-auto whitespace-pre-wrap">
+            <div className="wx-sub-card wx-primary-text p-3 rounded-2xl bg-purple-500/10 text-xs text-zinc-700 dark:text-zinc-300 leading-relaxed max-h-60 overflow-y-auto whitespace-pre-wrap">
               {showCoTModal}
             </div>
           </div>

@@ -76,6 +76,7 @@ import {
   addDiagnosticLog,
   getNextSettingsAppRenderIndex,
 } from '../../lib/inputTracker';
+import { PressableButton, ElasticToggle } from '../ui/interaction';
 
 interface SettingsAppProps {
   onBackToLauncher: () => void;
@@ -747,26 +748,29 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     <div className="flex flex-col h-full bg-black text-zinc-100 font-sans select-none overflow-hidden">
       {/* 顶部导航 */}
       <div className="h-12 px-3 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between z-20 shrink-0">
-        <button
+        <PressableButton
+          expandHitArea
           onClick={() => {
             onBackToLauncher();
           }}
-          className="flex items-center gap-1 text-xs text-zinc-300 hover:text-white font-medium px-2.5 py-1 rounded-xl bg-zinc-800 transition active:scale-95"
+          className="flex items-center gap-1 text-xs text-zinc-300 hover:text-white font-medium px-2.5 py-1 rounded-xl bg-zinc-800 transition"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           <span>返回桌面</span>
-        </button>
+        </PressableButton>
         <div className="flex items-center gap-1.5">
           <Settings className="w-4 h-4 text-zinc-400" />
           <span className="text-xs font-semibold text-zinc-100">系统与 API 设置</span>
         </div>
-        <button
+        <PressableButton
+          withRipple
+          rippleTone="dark"
           onClick={handleGlobalSave}
-          className="flex items-center gap-1 text-xs text-zinc-950 font-bold px-3 py-1 rounded-xl bg-white hover:bg-zinc-200 transition active:scale-95 shadow-sm"
+          className="flex items-center gap-1 text-xs text-zinc-950 font-bold px-3 py-1 rounded-xl bg-white hover:bg-zinc-200 transition shadow-sm"
         >
           <Save className="w-3.5 h-3.5" />
           <span>保存</span>
-        </button>
+        </PressableButton>
       </div>
 
       {/* 提示 Banner */}
@@ -826,29 +830,29 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           </div>
 
           <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-xs font-semibold text-zinc-200">启用 AI 后台思考与响应</div>
                 <div className="text-[11px] text-zinc-500">允许 AI 角色根据对话上下文维持后台思考机制</div>
               </div>
-              <input
-                type="checkbox"
+              <ElasticToggle
                 checked={controls.backgroundActive ?? true}
-                onChange={(e) => setControls({ ...controls, backgroundActive: e.target.checked })}
-                className="w-4 h-4 accent-white rounded cursor-pointer"
+                onChange={(checked) => setControls({ ...controls, backgroundActive: checked })}
+                accent="green"
+                ariaLabel="启用 AI 后台思考与响应"
               />
             </div>
 
-            <div className="flex items-center justify-between border-t border-zinc-850 pt-3">
+            <div className="flex items-center justify-between gap-3 border-t border-zinc-850 pt-3">
               <div>
                 <div className="text-xs font-semibold text-zinc-200">允许 AI 主动气泡与交互弹窗</div>
                 <div className="text-[11px] text-zinc-500">允许 AI 角色发起主动提醒与气泡提示</div>
               </div>
-              <input
-                type="checkbox"
+              <ElasticToggle
                 checked={controls.proactivePopups ?? true}
-                onChange={(e) => setControls({ ...controls, proactivePopups: e.target.checked })}
-                className="w-4 h-4 accent-white rounded cursor-pointer"
+                onChange={(checked) => setControls({ ...controls, proactivePopups: checked })}
+                accent="sky"
+                ariaLabel="允许 AI 主动气泡与交互弹窗"
               />
             </div>
           </div>
@@ -897,7 +901,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                     { id: 'monthly', label: '每月' },
                   ] as const
                 ).map((item) => (
-                  <button
+                  <PressableButton
                     key={item.id}
                     type="button"
                     onClick={() => handleUpdateFrequency(item.id)}
@@ -908,7 +912,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                     }`}
                   >
                     {item.label}
-                  </button>
+                  </PressableButton>
                 ))}
               </div>
             </div>
@@ -928,7 +932,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                     { id: 'deep', label: '深度检索', desc: '扩大搜索深度' },
                   ] as const
                 ).map((item) => (
-                  <button
+                  <PressableButton
                     key={item.id}
                     type="button"
                     onClick={() => handleUpdateSearchMode(item.id)}
@@ -940,7 +944,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                   >
                     <div className="font-semibold text-[11px]">{item.label}</div>
                     <div className="text-[10px] text-zinc-500">{item.desc}</div>
-                  </button>
+                  </PressableButton>
                 ))}
               </div>
             </div>
@@ -991,15 +995,17 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                 </div>
               )}
 
-              <button
+              <PressableButton
                 type="button"
+                withRipple
+                loading={isArchiving}
                 onClick={handleManualArchiveNow}
                 disabled={isArchiving}
-                className="w-full py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer mt-1"
+                className="w-full py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer mt-1"
               >
                 <Archive className="w-3.5 h-3.5" />
                 <span>{isArchiving ? '增量归档中...' : '立即增量归档'}</span>
-              </button>
+              </PressableButton>
             </div>
           </div>
         </section>
@@ -1013,49 +1019,53 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
           <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-3">
             <div className="grid grid-cols-2 gap-2">
-              <button
+              <PressableButton
                 type="button"
+                withRipple
                 onClick={() => {
                   setDataModalTab('export');
                   setShowDataModal(true);
                 }}
-                className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-200 flex items-center justify-center gap-1.5 transition active:scale-95"
+                className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-200 flex items-center justify-center gap-1.5 transition"
               >
                 <Download className="w-3.5 h-3.5 text-zinc-400" />
                 <span>导出全量备份</span>
-              </button>
+              </PressableButton>
 
-              <button
+              <PressableButton
                 type="button"
+                withRipple
                 onClick={() => {
                   setDataModalTab('import');
                   setShowDataModal(true);
                 }}
-                className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-200 flex items-center justify-center gap-1.5 transition active:scale-95"
+                className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-200 flex items-center justify-center gap-1.5 transition"
               >
                 <Upload className="w-3.5 h-3.5 text-zinc-400" />
                 <span>导入数据备份</span>
-              </button>
+              </PressableButton>
             </div>
 
             <div className="grid grid-cols-2 gap-2 pt-1 border-t border-zinc-850">
-              <button
+              <PressableButton
                 type="button"
                 onClick={handleOpenUpgradeLogsModal}
-                className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-300 flex items-center justify-center gap-1.5 transition active:scale-95"
+                className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-300 flex items-center justify-center gap-1.5 transition"
               >
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
                 <span>系统升级无损日志</span>
-              </button>
+              </PressableButton>
 
-              <button
+              <PressableButton
                 type="button"
+                withRipple
+                rippleTone="rose"
                 onClick={() => setShowResetConfirmModal(true)}
-                className="py-2.5 px-3 rounded-xl bg-rose-950/20 hover:bg-rose-950/40 border border-rose-900/30 text-xs font-medium text-rose-300 flex items-center justify-center gap-1.5 transition active:scale-95"
+                className="py-2.5 px-3 rounded-xl bg-rose-950/20 hover:bg-rose-950/40 border border-rose-900/30 text-xs font-medium text-rose-300 flex items-center justify-center gap-1.5 transition"
               >
                 <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
                 <span>恢复出厂设置</span>
-              </button>
+              </PressableButton>
             </div>
           </div>
         </section>
@@ -1076,15 +1086,17 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
               className="w-full p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
             />
 
-            <button
+            <PressableButton
               type="button"
+              withRipple
+              loading={isAdaptingJson}
               onClick={handleAdaptJsonConfig}
               disabled={isAdaptingJson || !rawJsonInput.trim()}
-              className="w-full py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50"
+              className="w-full py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 flex items-center justify-center gap-1.5 transition disabled:opacity-50"
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-400" />
               <span>{isAdaptingJson ? '解析适配中...' : '解析转换并标准化 JSON'}</span>
-            </button>
+            </PressableButton>
 
             {adaptedJsonOutput && (
               <pre className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-40">
@@ -1136,16 +1148,19 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
               </div>
             ) : (
               <div className="flex gap-2 pt-2">
-                <button
+                <PressableButton
                   type="button"
                   onClick={() => setShowResetConfirmModal(false)}
                   disabled={isResetting}
                   className="flex-1 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 transition"
                 >
                   取消
-                </button>
-                <button
+                </PressableButton>
+                <PressableButton
                   type="button"
+                  withRipple
+                  rippleTone="rose"
+                  loading={isResetting}
                   onClick={handleExecuteFactoryReset}
                   disabled={isResetting}
                   className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-lg shadow-rose-900/30"
@@ -1156,7 +1171,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                     <Trash2 className="w-3.5 h-3.5" />
                   )}
                   <span>{isResetting ? '清空中...' : '确定重置'}</span>
-                </button>
+                </PressableButton>
               </div>
             )}
           </div>
@@ -1203,13 +1218,13 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
             </div>
 
             <div className="pt-2 border-t border-zinc-850 text-right">
-              <button
+              <PressableButton
                 type="button"
                 onClick={() => setShowUpgradeLogsModal(false)}
                 className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 text-xs font-medium transition"
               >
                 关闭
-              </button>
+              </PressableButton>
             </div>
           </div>
         </div>

@@ -34,6 +34,7 @@ import { TicTacToeGame } from './tictactoe/TicTacToeGame';
 import { RpsGame } from './rps/RpsGame';
 import { TelepathyGame } from './telepathy/TelepathyGame';
 import { getAffinityLevel } from './telepathy/telepathyLogic';
+import { PressableButton } from '../ui/interaction';
 import {
   ArrowLeft,
   Gamepad2,
@@ -336,13 +337,13 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
     <div className="w-full h-full flex flex-col bg-zinc-950 text-white font-sans overflow-hidden select-none">
       {/* Top Header */}
       <div className="h-12 px-3 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between shrink-0 z-20">
-        <button
+        <PressableButton
           onClick={onBackToLauncher}
           className="flex items-center gap-1 text-xs text-rose-400 hover:text-rose-300 font-medium px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-750 transition"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>桌面</span>
-        </button>
+        </PressableButton>
 
         <div className="flex items-center gap-1.5 font-bold text-sm tracking-tight text-zinc-100">
           <Gamepad2 className="w-4 h-4 text-rose-400" />
@@ -354,7 +355,7 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
 
       {/* Navigation Tabs */}
       <div className="px-4 pt-3 pb-2 bg-zinc-900/60 border-b border-zinc-800/80 flex items-center gap-2 shrink-0">
-        <button
+        <PressableButton
           onClick={() => setActiveTab('featured')}
           className={`flex-1 py-1.5 text-xs rounded-xl font-semibold transition flex items-center justify-center gap-1 ${
             activeTab === 'featured'
@@ -364,9 +365,9 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
         >
           <Flame className="w-3.5 h-3.5" />
           <span>精选大厅</span>
-        </button>
+        </PressableButton>
 
-        <button
+        <PressableButton
           onClick={() => setActiveTab('records')}
           className={`flex-1 py-1.5 text-xs rounded-xl font-semibold transition flex items-center justify-center gap-1 ${
             activeTab === 'records'
@@ -376,9 +377,9 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
         >
           <History className="w-3.5 h-3.5" />
           <span>个人战绩</span>
-        </button>
+        </PressableButton>
 
-        <button
+        <PressableButton
           onClick={() => setActiveTab('achievements')}
           className={`flex-1 py-1.5 text-xs rounded-xl font-semibold transition flex items-center justify-center gap-1 ${
             activeTab === 'achievements'
@@ -388,7 +389,7 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
         >
           <Trophy className="w-3.5 h-3.5" />
           <span>成就榜</span>
-        </button>
+        </PressableButton>
       </div>
 
       {/* Main Tab Content */}
@@ -401,13 +402,13 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                 <Flame className="w-3.5 h-3.5 text-rose-400" />
                 <span>热门对局小游戏 ({safeCharacters.length} 位角色支持)</span>
               </span>
-              <button
+              <PressableButton
                 onClick={toggleAllCollapse}
                 className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-zinc-200 px-2 py-0.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700/80 transition"
               >
                 <ChevronsUpDown className="w-3 h-3" />
                 <span>{isAllCollapsed ? '展开全部' : '折叠全部'}</span>
-              </button>
+              </PressableButton>
             </div>
 
             {/* GAME 0: TELEPATHY (心有灵犀 · 默契大考验) */}
@@ -438,14 +439,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                     <span className="text-[10px] font-bold text-rose-400 block">{overallTelepathyRate}% 默契</span>
                     <span className="text-[9px] text-zinc-500">{totalTelepathyGames} 局已测</span>
                   </div>
-                  <button
+                  <PressableButton
                     onClick={() => toggleCollapse('telepathy')}
                     className="flex items-center gap-0.5 text-[10px] font-medium text-rose-300 hover:text-rose-200 bg-rose-950/60 hover:bg-rose-900/60 border border-rose-500/30 px-2 py-1 rounded-xl transition"
                     title={collapsedCards.telepathy ? '展开详细设置' : '折叠为精简卡片'}
                   >
                     <span>{collapsedCards.telepathy ? '展开' : '折叠'}</span>
                     {collapsedCards.telepathy ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
-                  </button>
+                  </PressableButton>
                 </div>
               </div>
 
@@ -466,13 +467,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                     </span>
                   </div>
 
-                  <button
+                  <PressableButton
                     onClick={() => setPlayingGameId('telepathy')}
-                    className="py-1.5 px-3.5 rounded-xl bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-md transition active:scale-95 shrink-0"
+                    withRipple
+                    className="py-1.5 px-3.5 rounded-xl bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-md transition shrink-0 overflow-hidden"
                   >
                     <Play className="w-3.5 h-3.5 fill-white" />
                     <span>快速开局</span>
-                  </button>
+                  </PressableButton>
                 </div>
               ) : (
                 /* EXPANDED DETAILED VIEW (详细版) */
@@ -596,13 +598,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                   </div>
 
                   {/* Start Button */}
-                  <button
+                  <PressableButton
                     onClick={() => setPlayingGameId('telepathy')}
-                    className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-rose-500 via-pink-500 to-rose-600 hover:from-rose-600 hover:to-pink-600 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-lg shadow-rose-500/25 transition active:scale-98"
+                    withRipple
+                    className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-rose-500 via-pink-500 to-rose-600 hover:from-rose-600 hover:to-pink-600 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-lg shadow-rose-500/25 transition overflow-hidden"
                   >
                     <Play className="w-4 h-4 fill-white" />
                     <span>与 {currentTelepathyOpponent.name} 开启默契大考验</span>
-                  </button>
+                  </PressableButton>
                 </>
               )}
             </div>
@@ -635,14 +638,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                     <span className="text-[10px] font-bold text-rose-400 block">{rpsWinRate}% 胜率</span>
                     <span className="text-[9px] text-zinc-500">{totalPveRpsGames} 局已战</span>
                   </div>
-                  <button
+                  <PressableButton
                     onClick={() => toggleCollapse('rps')}
                     className="flex items-center gap-0.5 text-[10px] font-medium text-rose-300 hover:text-rose-200 bg-rose-950/60 hover:bg-rose-900/60 border border-rose-500/30 px-2 py-1 rounded-xl transition"
                     title={collapsedCards.rps ? '展开详细设置' : '折叠为精简卡片'}
                   >
                     <span>{collapsedCards.rps ? '展开' : '折叠'}</span>
                     {collapsedCards.rps ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
-                  </button>
+                  </PressableButton>
                 </div>
               </div>
 
@@ -663,13 +666,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                     </span>
                   </div>
 
-                  <button
+                  <PressableButton
                     onClick={() => setPlayingGameId('rps')}
-                    className="py-1.5 px-3.5 rounded-xl bg-gradient-to-r from-rose-500 to-amber-500 hover:from-rose-600 hover:to-amber-600 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-md transition active:scale-95 shrink-0"
+                    withRipple
+                    className="py-1.5 px-3.5 rounded-xl bg-gradient-to-r from-rose-500 to-amber-500 hover:from-rose-600 hover:to-amber-600 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-md transition shrink-0 overflow-hidden"
                   >
                     <Play className="w-3.5 h-3.5 fill-white" />
                     <span>快速开局</span>
-                  </button>
+                  </PressableButton>
                 </div>
               ) : (
                 /* EXPANDED DETAILED VIEW (详细版) */
@@ -768,13 +772,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
 
                   {/* Start Button */}
                   <div className="pt-1">
-                    <button
+                    <PressableButton
                       onClick={() => setPlayingGameId('rps')}
-                      className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-rose-500 via-pink-500 to-amber-500 hover:from-rose-600 hover:to-amber-600 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-rose-500/20 transition active:scale-98"
+                      withRipple
+                      className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-rose-500 via-pink-500 to-amber-500 hover:from-rose-600 hover:to-amber-600 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-rose-500/20 transition overflow-hidden"
                     >
                       <Play className="w-4 h-4 fill-white" />
                       <span>立即开局猜拳 (石头剪刀布)</span>
-                    </button>
+                    </PressableButton>
                   </div>
                 </>
               )}
@@ -803,14 +808,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                     <span className="text-[10px] font-bold text-cyan-400 block">{tttWinRate}% 胜率</span>
                     <span className="text-[9px] text-zinc-500">{totalPveTttGames} 局已战</span>
                   </div>
-                  <button
+                  <PressableButton
                     onClick={() => toggleCollapse('tictactoe')}
                     className="flex items-center gap-0.5 text-[10px] font-medium text-cyan-300 hover:text-cyan-200 bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-500/30 px-2 py-1 rounded-xl transition"
                     title={collapsedCards.tictactoe ? '展开详细设置' : '折叠为精简卡片'}
                   >
                     <span>{collapsedCards.tictactoe ? '展开' : '折叠'}</span>
                     {collapsedCards.tictactoe ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
-                  </button>
+                  </PressableButton>
                 </div>
               </div>
 
@@ -837,13 +842,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                     </select>
                   </div>
 
-                  <button
+                  <PressableButton
                     onClick={() => setPlayingGameId('tictactoe')}
-                    className="py-1.5 px-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-md transition active:scale-95 shrink-0"
+                    withRipple
+                    className="py-1.5 px-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-md transition shrink-0 overflow-hidden"
                   >
                     <Play className="w-3.5 h-3.5 fill-white" />
                     <span>快速开局</span>
-                  </button>
+                  </PressableButton>
                 </div>
               ) : (
                 /* EXPANDED DETAILED VIEW (详细版) */
@@ -952,13 +958,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                       <option value="hard">难度: 困难</option>
                     </select>
 
-                    <button
+                    <PressableButton
                       onClick={() => setPlayingGameId('tictactoe')}
-                      className="flex-1 py-2.5 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition active:scale-98"
+                      withRipple
+                      className="flex-1 py-2.5 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition overflow-hidden"
                     >
                       <Play className="w-4 h-4 fill-white" />
                       <span>立即开局井字棋</span>
-                    </button>
+                    </PressableButton>
                   </div>
                 </>
               )}
@@ -987,14 +994,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                     <span className="text-[10px] font-bold text-orange-400 block">{winRate}% 胜率</span>
                     <span className="text-[9px] text-zinc-500">{totalPveGames} 局已战</span>
                   </div>
-                  <button
+                  <PressableButton
                     onClick={() => toggleCollapse('gomoku')}
                     className="flex items-center gap-0.5 text-[10px] font-medium text-orange-300 hover:text-orange-200 bg-orange-950/60 hover:bg-orange-900/60 border border-orange-500/30 px-2 py-1 rounded-xl transition"
                     title={collapsedCards.gomoku ? '展开详细设置' : '折叠为精简卡片'}
                   >
                     <span>{collapsedCards.gomoku ? '展开' : '折叠'}</span>
                     {collapsedCards.gomoku ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
-                  </button>
+                  </PressableButton>
                 </div>
               </div>
 
@@ -1021,13 +1028,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                     </select>
                   </div>
 
-                  <button
+                  <PressableButton
                     onClick={() => setPlayingGameId('gomoku')}
-                    className="py-1.5 px-3.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-md transition active:scale-95 shrink-0"
+                    withRipple
+                    className="py-1.5 px-3.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-md transition shrink-0 overflow-hidden"
                   >
                     <Play className="w-3.5 h-3.5 fill-white" />
                     <span>快速开局</span>
-                  </button>
+                  </PressableButton>
                 </div>
               ) : (
                 /* EXPANDED DETAILED VIEW (详细版) */
@@ -1136,13 +1144,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                       <option value="hard">难度: 困难</option>
                     </select>
 
-                    <button
+                    <PressableButton
                       onClick={() => setPlayingGameId('gomoku')}
-                      className="flex-1 py-2.5 px-4 rounded-2xl bg-gradient-to-r from-orange-500 via-amber-500 to-orange-600 hover:from-orange-600 hover:to-amber-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition active:scale-98"
+                      withRipple
+                      className="flex-1 py-2.5 px-4 rounded-2xl bg-gradient-to-r from-orange-500 via-amber-500 to-orange-600 hover:from-orange-600 hover:to-amber-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition overflow-hidden"
                     >
                       <Play className="w-4 h-4 fill-white" />
                       <span>立即开局对弈</span>
-                    </button>
+                    </PressableButton>
                   </div>
                 </>
               )}
@@ -1155,7 +1164,7 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
           <div className="space-y-4">
             {/* Game Selector for Records */}
             <div className="flex bg-zinc-900 p-1 rounded-2xl border border-zinc-800 text-xs">
-              <button
+              <PressableButton
                 onClick={() => setRecordsTabGame('telepathy')}
                 className={`flex-1 py-2 rounded-xl font-bold transition flex items-center justify-center gap-1 ${
                   recordsTabGame === 'telepathy'
@@ -1164,8 +1173,8 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                 }`}
               >
                 <span>❤️ 心有灵犀</span>
-              </button>
-              <button
+              </PressableButton>
+              <PressableButton
                 onClick={() => setRecordsTabGame('rps')}
                 className={`flex-1 py-2 rounded-xl font-bold transition flex items-center justify-center gap-1 ${
                   recordsTabGame === 'rps'
@@ -1174,8 +1183,8 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                 }`}
               >
                 <span>✊ 猜拳</span>
-              </button>
-              <button
+              </PressableButton>
+              <PressableButton
                 onClick={() => setRecordsTabGame('tictactoe')}
                 className={`flex-1 py-2 rounded-xl font-bold transition flex items-center justify-center gap-1 ${
                   recordsTabGame === 'tictactoe'
@@ -1185,8 +1194,8 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
               >
                 <Grid3X3 className="w-3.5 h-3.5" />
                 <span>井字棋</span>
-              </button>
-              <button
+              </PressableButton>
+              <PressableButton
                 onClick={() => setRecordsTabGame('gomoku')}
                 className={`flex-1 py-2 rounded-xl font-bold transition flex items-center justify-center gap-1 ${
                   recordsTabGame === 'gomoku'
@@ -1196,7 +1205,7 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
               >
                 <Swords className="w-3.5 h-3.5" />
                 <span>五子棋</span>
-              </button>
+              </PressableButton>
             </div>
 
             {recordsTabGame === 'telepathy' && (
@@ -1209,13 +1218,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                       心有灵犀 · 全局默契战绩
                     </h4>
                     {telepathyRecords.length > 0 && (
-                      <button
+                      <PressableButton
                         onClick={handleClearTelepathyRecords}
+                        expandHitArea
                         className="p-1 text-zinc-500 hover:text-rose-400 transition"
                         title="清空心有灵犀记录"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      </PressableButton>
                     )}
                   </div>
 
@@ -1366,13 +1376,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                       猜拳生涯数据与连胜
                     </h4>
                     {rpsRecords.length > 0 && (
-                      <button
+                      <PressableButton
                         onClick={handleClearRpsRecords}
+                        expandHitArea
                         className="p-1 text-zinc-500 hover:text-rose-400 transition"
                         title="清空猜拳记录"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      </PressableButton>
                     )}
                   </div>
 
@@ -1476,13 +1487,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                       井字棋生涯数据
                     </h4>
                     {tttRecords.length > 0 && (
-                      <button
+                      <PressableButton
                         onClick={handleClearTttRecords}
+                        expandHitArea
                         className="p-1 text-zinc-500 hover:text-rose-400 transition"
                         title="清空井字棋记录"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      </PressableButton>
                     )}
                   </div>
 
@@ -1578,13 +1590,14 @@ export const GameCenterApp: React.FC<GameCenterAppProps> = ({
                       五子棋个人生涯战绩
                     </h4>
                     {records.length > 0 && (
-                      <button
+                      <PressableButton
                         onClick={handleClearRecords}
+                        expandHitArea
                         className="p-1 text-zinc-500 hover:text-rose-400 transition"
                         title="清空五子棋记录"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      </PressableButton>
                     )}
                   </div>
 

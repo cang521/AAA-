@@ -120,7 +120,7 @@ export const ContactSwipeRow: React.FC<ContactSwipeRowProps> = ({
   };
 
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-zinc-900 border border-zinc-750/80 shadow-xs select-none my-1">
+    <div className="wx-contact-swipe-wrap relative overflow-hidden rounded-2xl bg-zinc-900 border border-zinc-750/80 shadow-xs select-none my-1">
       {/* Action Layer (Bottom Layer - fixed behind content layer at right edge) */}
       <div
         className={`absolute right-0 top-0 bottom-0 flex items-center z-0 h-full select-none transition-opacity duration-150 ${
@@ -188,7 +188,7 @@ export const ContactSwipeRow: React.FC<ContactSwipeRowProps> = ({
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onClick={handleContentClick}
-        className="relative z-10 w-full bg-zinc-800 p-3 flex items-center gap-3 cursor-pointer select-none transition-colors hover:bg-zinc-750/90"
+        className="wx-contact-swipe-content relative z-10 w-full bg-zinc-800 p-3 flex items-center gap-3 cursor-pointer select-none transition-colors hover:bg-zinc-750/90"
         style={{
           transform: `translateX(${dragOffset}px)`,
           transition: isDragging ? 'none' : 'transform 200ms cubic-bezier(0.16, 1, 0.3, 1)',
@@ -197,24 +197,24 @@ export const ContactSwipeRow: React.FC<ContactSwipeRowProps> = ({
         <img
           src={char.avatar}
           alt=""
-          className="w-12 h-12 rounded-2xl object-cover border border-zinc-700 shrink-0 shadow-xs pointer-events-none"
+          className="wx-avatar w-12 h-12 rounded-2xl object-cover border border-zinc-700 shrink-0 shadow-xs pointer-events-none"
         />
 
         <div className="flex-1 min-w-0 pointer-events-none">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <h4 className="font-semibold text-sm text-zinc-100">{char.name}</h4>
-            <span className="text-[10px] text-zinc-500 font-mono">({char.wxid})</span>
+            <h4 className="wx-primary-text font-semibold text-sm text-zinc-100">{char.name}</h4>
+            <span className="wx-muted-text text-[10px] text-zinc-500 font-mono">({char.wxid})</span>
             {char.isCustom ? (
-              <span className="px-1.5 py-0.2 text-[9px] rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              <span className="wx-contact-tag px-1.5 py-0.2 text-[9px] rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                 自定义
               </span>
             ) : (
-              <span className="px-1.5 py-0.2 text-[9px] rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+              <span className="wx-contact-tag px-1.5 py-0.2 text-[9px] rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
                 系统
               </span>
             )}
             {char.relationship && (
-              <span className="px-1.5 py-0.2 text-[9px] rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              <span className="wx-contact-tag px-1.5 py-0.2 text-[9px] rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 {char.relationship}
               </span>
             )}
@@ -224,9 +224,9 @@ export const ContactSwipeRow: React.FC<ContactSwipeRowProps> = ({
               </span>
             )}
           </div>
-          <p className="text-[11px] text-zinc-400 truncate mt-0.5">{char.persona}</p>
+          <p className="wx-secondary-text text-[11px] text-zinc-400 truncate mt-0.5">{char.persona}</p>
           {char.personality && (
-            <p className="text-[10px] text-zinc-500 truncate mt-0.5">
+            <p className="wx-muted-text text-[10px] text-zinc-500 truncate mt-0.5">
               性格: {char.personality}
             </p>
           )}
@@ -239,7 +239,7 @@ export const ContactSwipeRow: React.FC<ContactSwipeRowProps> = ({
             e.stopPropagation();
             onOpenMemoryVault(char);
           }}
-          className="p-1.5 rounded-xl bg-zinc-850 hover:bg-zinc-700 text-emerald-400 hover:text-emerald-300 transition cursor-pointer shrink-0 z-20"
+          className="wx-sub-card wx-green-text p-1.5 rounded-xl bg-zinc-850 hover:bg-zinc-700 text-emerald-400 hover:text-emerald-300 transition cursor-pointer shrink-0 z-20"
           title="进入该 AI 专属独立记忆空间"
         >
           <Database className="w-3.5 h-3.5" />
@@ -256,7 +256,7 @@ export const ContactSwipeRow: React.FC<ContactSwipeRowProps> = ({
               onOpen(char.id);
             }
           }}
-          className="p-1 text-zinc-400 hover:text-white cursor-pointer shrink-0 z-20 rounded-lg hover:bg-zinc-700/50"
+          className="wx-secondary-text p-1 text-zinc-400 hover:text-white cursor-pointer shrink-0 z-20 rounded-lg hover:bg-zinc-700/50"
           title="展开/收起快捷操作"
         >
           <MoreHorizontal className="w-4 h-4" />
