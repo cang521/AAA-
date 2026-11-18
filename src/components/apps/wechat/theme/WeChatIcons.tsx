@@ -12,6 +12,7 @@ export const WeChatPersonPlusIcon: React.FC<WeChatIconProps> = ({ className = 'w
   <svg
     viewBox="0 0 24 24"
     fill="currentColor"
+    stroke="none"
     aria-hidden="true"
     className={className}
   >
@@ -32,6 +33,7 @@ export const WeChatGroupIcon: React.FC<WeChatIconProps> = ({ className = 'w-5 h-
   <svg
     viewBox="0 0 24 24"
     fill="currentColor"
+    stroke="none"
     aria-hidden="true"
     className={className}
   >

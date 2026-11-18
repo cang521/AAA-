@@ -65,6 +65,8 @@ export type LauncherPresetId = 'default' | 'xiaoshouji' | 'cloud_milk' | 'starli
 export interface LauncherAppearanceStatus {
   isNativeAndroid: boolean;
   activePresetId: LauncherPresetId | string;
+  pendingPresetId?: string;
+  switchInProgress?: boolean;
   supportsPinShortcut: boolean;
   availablePresets: string[];
 }
@@ -73,6 +75,9 @@ export interface SetLauncherPresetResult {
   success: boolean;
   message?: string;
   activePresetId?: string;
+  pendingPresetId?: string;
+  alreadyActive?: boolean;
+  restarting?: boolean;
 }
 
 export interface CreateCustomShortcutResult {
@@ -80,6 +85,13 @@ export interface CreateCustomShortcutResult {
   supported?: boolean;
   message?: string;
   shortcutId?: string;
+}
+
+export interface SystemBarAppearanceOptions {
+  statusBarBackground: string;
+  statusBarIconStyle: 'light' | 'dark';
+  navigationBarBackground: string;
+  navigationBarIconStyle: 'light' | 'dark';
 }
 
 export interface AndroidPermissionBridgePlugin {
@@ -100,6 +112,21 @@ export interface AndroidPermissionBridgePlugin {
     iconDataUrl?: string;
     shortcutId?: string;
   }): Promise<CreateCustomShortcutResult>;
+  setSystemBarAppearance(options: SystemBarAppearanceOptions): Promise<{ success: boolean }>;
+  takeGroupPhotoWithCamera(): Promise<GroupPhotoPickResult>;
+  pickGroupPhotoFromGallery(): Promise<GroupPhotoPickResult>;
+}
+
+export interface GroupPhotoPickResult {
+  success: boolean;
+  cancelled?: boolean;
+  permissionDenied?: boolean;
+  isWebPreview?: boolean;
+  dataUrl?: string;
+  width?: number;
+  height?: number;
+  source?: string;
+  message?: string;
 }
 
 export class AndroidPermissionBridgeWeb extends WebPlugin implements AndroidPermissionBridgePlugin {
@@ -215,6 +242,26 @@ export class AndroidPermissionBridgeWeb extends WebPlugin implements AndroidPerm
       success: false,
       supported: false,
       message: '创建系统桌面快捷方式仅能在 Android APK 中验证。',
+    };
+  }
+
+  async setSystemBarAppearance(_options: SystemBarAppearanceOptions): Promise<{ success: boolean }> {
+    return { success: false };
+  }
+
+  async takeGroupPhotoWithCamera(): Promise<GroupPhotoPickResult> {
+    return {
+      success: false,
+      isWebPreview: true,
+      message: '当前为 Web 预览环境，无法调用 Android 原生相机拍摄，请使用本地文件上传或真机 APK。',
+    };
+  }
+
+  async pickGroupPhotoFromGallery(): Promise<GroupPhotoPickResult> {
+    return {
+      success: false,
+      isWebPreview: true,
+      message: '当前为 Web 预览环境，无法调用 Android 系统相册 Photo Picker，将改用浏览器本地文件选择。',
     };
   }
 }
@@ -543,6 +590,58 @@ export class AndroidPermissionBridgeClient {
         success: false,
         supported: false,
         message: e?.message || '创建系统桌面快捷方式失败',
+      };
+    }
+  }
+
+  public async setSystemBarAppearance(options: SystemBarAppearanceOptions): Promise<void> {
+    if (!this.isNativeAndroid()) {
+      return;
+    }
+
+    try {
+      await AndroidPermissionBridge.setSystemBarAppearance(options);
+    } catch (e) {
+      console.warn('[AndroidPermissionBridgeClient] setSystemBarAppearance error:', e);
+    }
+  }
+
+  public async takeGroupPhotoWithCamera(): Promise<GroupPhotoPickResult> {
+    if (!this.isNativeAndroid()) {
+      return {
+        success: false,
+        isWebPreview: true,
+        message: '真实相机拍摄仅能在 Android APK 中调用。',
+      };
+    }
+
+    try {
+      return await AndroidPermissionBridge.takeGroupPhotoWithCamera();
+    } catch (e: any) {
+      console.warn('[AndroidPermissionBridgeClient] takeGroupPhotoWithCamera error:', e);
+      return {
+        success: false,
+        message: e?.message || '调起 Android 相机失败',
+      };
+    }
+  }
+
+  public async pickGroupPhotoFromGallery(): Promise<GroupPhotoPickResult> {
+    if (!this.isNativeAndroid()) {
+      return {
+        success: false,
+        isWebPreview: true,
+        message: 'Android 系统 Photo Picker 仅能在真机 APK 中调用。',
+      };
+    }
+
+    try {
+      return await AndroidPermissionBridge.pickGroupPhotoFromGallery();
+    } catch (e: any) {
+      console.warn('[AndroidPermissionBridgeClient] pickGroupPhotoFromGallery error:', e);
+      return {
+        success: false,
+        message: e?.message || '调起 Android 系统相册失败',
       };
     }
   }

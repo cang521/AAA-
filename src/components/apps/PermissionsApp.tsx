@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AiPermissions } from '../../types';
+import { StableTextInput } from '../common/StableTextInput';
+import { StableTextarea } from '../common/StableTextarea';
 import {
   ArrowLeft,
   Shield,
@@ -1081,22 +1083,22 @@ export const PermissionsApp: React.FC<PermissionsAppProps> = ({
             <div className="space-y-2.5">
               <div>
                 <label className="block text-[#5B6B7C] dark:text-zinc-400 mb-1 font-semibold">申请的权限名称</label>
-                <input
+                <StableTextInput
                   type="text"
                   placeholder="例如: 手机步数读取 / 实时环境光感 / 智能日历日程写入"
                   value={customPermName}
-                  onChange={(e) => setCustomPermName(e.target.value)}
+                  onValueChange={setCustomPermName}
                   className="w-full px-3 py-2 rounded-xl bg-white dark:bg-zinc-800 border border-[#D9EAF7] dark:border-zinc-700 text-[#243040] dark:text-white focus:outline-none focus:border-[#69BEEA]"
                 />
               </div>
 
               <div>
                 <label className="block text-[#5B6B7C] dark:text-zinc-400 mb-1 font-semibold">申请理由与使用场景</label>
-                <textarea
+                <StableTextarea
                   rows={3}
                   placeholder="说明 AI 角色在什么情况下使用该权限..."
                   value={customPermReason}
-                  onChange={(e) => setCustomPermReason(e.target.value)}
+                  onValueChange={setCustomPermReason}
                   className="w-full px-3 py-2 rounded-xl bg-white dark:bg-zinc-800 border border-[#D9EAF7] dark:border-zinc-700 text-[#243040] dark:text-white focus:outline-none focus:border-[#69BEEA] leading-relaxed font-sans"
                 />
               </div>

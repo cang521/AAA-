@@ -42,6 +42,8 @@ import {
   RecognitionMode,
   ImportParseOptions,
 } from '../dataManagement';
+import { importSocialBundleNonDestructive } from '../social/socialDb';
+import { loadAiSocialSettings, saveAiSocialSettings } from '../social/socialSettings';
 
 const BATCH_SIZE = 1000; // Batch save every 1000 messages to prevent memory spike and DB lockups
 
@@ -408,6 +410,20 @@ export class LargeImportManager {
         // Small Entry (<5MB): Read entry text
         const entryText = await zipReader.readEntryText(entry);
         if (!entryText) continue;
+
+        const lowerEntryName = entry.filename.toLowerCase();
+        if (lowerEntryName.endsWith('social_data.json') || lowerEntryName.endsWith('backup.json')) {
+          try {
+            const parsedObj = JSON.parse(entryText);
+            const socialPayload = parsedObj?.socialData || (lowerEntryName.endsWith('social_data.json') ? parsedObj : null);
+            if (socialPayload && typeof socialPayload === 'object') {
+              await importSocialBundleNonDestructive(socialPayload).catch(() => {});
+            }
+            if (executionOptions.importSettings && parsedObj?.socialSettings && typeof parsedObj.socialSettings === 'object') {
+              saveAiSocialSettings({ ...loadAiSocialSettings(), ...parsedObj.socialSettings });
+            }
+          } catch {}
+        }
 
         const messages = this.parseMessagesFromText(entryText, targetCharacterId);
         for (const msg of messages) {

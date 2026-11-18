@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { CloudMilkIcon } from './CloudMilkIcon';
 import { WidgetCard } from './WidgetCard';
 import { CLOUD_MILK_DESKTOP_WALLPAPER } from '../lib/themeWallpapers';
+import { StableTextInput } from './common/StableTextInput';
 import {
   AppIconConfig,
   WidgetConfig,
@@ -1351,10 +1352,10 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="w-full max-w-xs rounded-2xl bg-zinc-900 border border-zinc-800 p-4 text-white">
             <h4 className="text-xs font-semibold text-zinc-300 mb-2">修改应用名称</h4>
-            <input
+            <StableTextInput
               type="text"
               value={editedName}
-              onChange={(e) => setEditedName(e.target.value)}
+              onValueChange={setEditedName}
               className="w-full px-3 py-2 text-xs rounded-xl bg-zinc-800 border border-zinc-700 text-white mb-3 focus:outline-none focus:border-emerald-500"
             />
             <div className="flex gap-2 justify-end">
@@ -1479,10 +1480,10 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
 
             <div className="space-y-1 text-xs">
               <label className="block text-slate-500 font-medium">贴纸标题 / 倒计时名称</label>
-              <input
+              <StableTextInput
                 type="text"
                 value={stickerTitleInput}
-                onChange={(e) => setStickerTitleInput(e.target.value)}
+                onValueChange={setStickerTitleInput}
                 placeholder="例如: 高考倒计时 / 恋爱纪念日"
                 className="w-full px-3 py-2 rounded-xl bg-sky-50/60 border border-sky-200/80 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-sky-500"
               />

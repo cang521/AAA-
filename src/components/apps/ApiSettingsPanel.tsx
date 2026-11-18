@@ -33,6 +33,7 @@ import {
   Plus,
   Bug,
 } from 'lucide-react';
+import { StableTextInput } from '../common/StableTextInput';
 
 export interface ProviderPreset {
   id: ProviderType;
@@ -531,7 +532,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <label className="text-xs text-zinc-300 font-medium block">
               1. 反代地址 (Proxy / Base URL)
             </label>
-            <input
+            <StableTextInput
               type="text"
               placeholder="https://api.openai.com/v1 或留空使用默认"
               value={currentTextBaseUrl}
@@ -615,7 +616,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               ) : null}
             </div>
             <div className="relative">
-              <input
+              <StableTextInput
                 type={showTextKey ? 'text' : 'password'}
                 placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
                 value={currentTextKey}
@@ -722,7 +723,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 ))}
               </select>
             )}
-            <input
+            <StableTextInput
               type="text"
               placeholder="手动输入模型名 (如: gemini-3.6-flash, deepseek-chat, gpt-4o)"
               value={settings.text.model || ''}
@@ -872,7 +873,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <label className="text-xs text-zinc-300 font-medium block">
               1. 图像 API 反代地址 (Proxy / Base URL)
             </label>
-            <input
+            <StableTextInput
               type="text"
               placeholder="https://api.openai.com/v1 或留空使用默认"
               value={currentImageBaseUrl}
@@ -933,7 +934,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               ) : null}
             </div>
             <div className="relative">
-              <input
+              <StableTextInput
                 type={showImageKey ? 'text' : 'password'}
                 placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
                 value={currentImageKey}
@@ -1016,7 +1017,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 ))}
               </select>
             )}
-            <input
+            <StableTextInput
               type="text"
               placeholder="dall-e-3, imagen-3.0-generate-002, flux-schnell..."
               value={settings.image.model || ''}
@@ -1177,7 +1178,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             <label className="text-xs text-zinc-300 font-medium block">
               1. 语音 API 反代地址 (Proxy / Base URL)
             </label>
-            <input
+            <StableTextInput
               type="text"
               placeholder="https://api.openai.com/v1 或留空使用默认"
               value={currentVoiceBaseUrl}
@@ -1238,7 +1239,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               ) : null}
             </div>
             <div className="relative">
-              <input
+              <StableTextInput
                 type={showVoiceKey ? 'text' : 'password'}
                 placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
                 value={currentVoiceKey}
@@ -1321,7 +1322,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 ))}
               </select>
             )}
-            <input
+            <StableTextInput
               type="text"
               placeholder="tts-1, tts-1-hd, whisper-1..."
               value={settings.voice.model || ''}
@@ -1498,11 +1499,11 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 将当前参数保存为新配置
               </label>
               <div className="flex gap-2">
-                <input
+                <StableTextInput
                   type="text"
                   placeholder="配置名称 (如: 我的反向代理 / 公司中转)"
                   value={newPresetName}
-                  onChange={(e) => setNewPresetName(e.target.value)}
+                  onValueChange={setNewPresetName}
                   className="flex-1 px-3 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100 text-xs focus:outline-none focus:border-zinc-500 min-w-0"
                 />
                 <button

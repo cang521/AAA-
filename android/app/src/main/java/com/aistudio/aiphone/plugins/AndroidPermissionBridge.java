@@ -2,6 +2,7 @@ package com.aistudio.aiphone.plugins;
 
 import android.Manifest;
 import android.accessibilityservice.AccessibilityServiceInfo;
+import android.app.Activity;
 import android.app.AppOpsManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -27,13 +28,16 @@ import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.PowerManager;
+import android.provider.MediaStore;
 import android.provider.Settings;
 import android.util.Base64;
 import android.util.Log;
 import android.view.accessibility.AccessibilityManager;
+import androidx.activity.result.ActivityResult;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 import androidx.core.content.pm.ShortcutInfoCompat;
 import androidx.core.content.pm.ShortcutManagerCompat;
 import androidx.core.graphics.drawable.IconCompat;
@@ -49,11 +53,14 @@ import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -93,8 +100,6 @@ public class AndroidPermissionBridge extends Plugin {
     public static final String CHANNEL_NAME = "AI消息提醒";
     public static final String CHANNEL_DESCRIPTION = "显示AI角色的新消息和主动关怀";
     public static final String PREFS_NAME = "aiphone_notification_prefs";
-    public static final String LAUNCHER_PREFS_NAME = "aiphone_launcher_prefs";
-    public static final String KEY_ACTIVE_PRESET_ID = "active_launcher_preset_id";
     public static final String KEY_PENDING_AI_ID = "pending_notification_ai_id";
     public static final String ACTION_OPEN_AI_CHAT = "OPEN_AI_CHAT";
     private static final int MAX_AVATAR_BYTES = 2 * 1024 * 1024;
@@ -102,16 +107,8 @@ public class AndroidPermissionBridge extends Plugin {
     private static final int NOTIF_AVATAR_SIZE = 128;
     private static final float NOTIF_AVATAR_CORNER_RADIUS = 12f;
 
-    private static final Map<String, String> LAUNCHER_PRESET_ALIASES = new LinkedHashMap<>();
-    static {
-        LAUNCHER_PRESET_ALIASES.put("default", ".LauncherDefault");
-        LAUNCHER_PRESET_ALIASES.put("xiaoshouji", ".LauncherXiaoshouji");
-        LAUNCHER_PRESET_ALIASES.put("cloud_milk", ".LauncherCloudMilk");
-        LAUNCHER_PRESET_ALIASES.put("starlight", ".LauncherStarlight");
-        LAUNCHER_PRESET_ALIASES.put("minimal", ".LauncherMinimal");
-    }
-
     private static final ExecutorService AVATAR_EXECUTOR = Executors.newFixedThreadPool(2);
+    private volatile String pendingCameraPhotoPath = null;
 
     @Override
     public void load() {
@@ -598,6 +595,26 @@ public class AndroidPermissionBridge extends Plugin {
         return PendingIntent.getActivity(context, notificationId, tapIntent, flags);
     }
 
+    private int resolveNotificationSmallIcon(Context context) {
+        String activePresetId = LauncherAppearanceManager.getConfirmedActivePresetId(context);
+        if ("xiaoshouji".equals(activePresetId)) {
+            return R.drawable.ic_stat_ai_message_xiaoshouji;
+        }
+        if ("cloud_milk".equals(activePresetId)) {
+            return R.drawable.ic_stat_ai_message_cloud_milk;
+        }
+        if ("starlight".equals(activePresetId)) {
+            return R.drawable.ic_stat_ai_message_starlight;
+        }
+        if ("minimal".equals(activePresetId)) {
+            return R.drawable.ic_stat_ai_message_minimal;
+        }
+        if ("default".equals(activePresetId)) {
+            return R.drawable.ic_stat_ai_message_default;
+        }
+        return R.drawable.ic_stat_ai_message;
+    }
+
     private Notification buildAiMessageNotification(
         Context context,
         String title,
@@ -608,8 +625,9 @@ public class AndroidPermissionBridge extends Plugin {
         Bitmap largeIcon,
         boolean onlyAlertOnce
     ) {
+        int smallIconResId = resolveNotificationSmallIcon(context);
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_ai_message)
+            .setSmallIcon(smallIconResId)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
@@ -631,9 +649,29 @@ public class AndroidPermissionBridge extends Plugin {
         return builder.build();
     }
 
+    private Drawable resolvePresetFallbackDrawable(Context context, String activePresetId) {
+        if ("xiaoshouji".equals(activePresetId)) {
+            return ContextCompat.getDrawable(context, R.drawable.ic_preset_xiaoshouji);
+        }
+        if ("cloud_milk".equals(activePresetId)) {
+            return ContextCompat.getDrawable(context, R.drawable.ic_preset_cloudmilk);
+        }
+        if ("starlight".equals(activePresetId)) {
+            return ContextCompat.getDrawable(context, R.drawable.ic_preset_starlight);
+        }
+        if ("minimal".equals(activePresetId)) {
+            return ContextCompat.getDrawable(context, R.drawable.ic_preset_minimal);
+        }
+        return null;
+    }
+
     private Bitmap loadDefaultAppIconBitmap(Context context) {
         try {
-            Drawable drawable = context.getPackageManager().getApplicationIcon(context.getPackageName());
+            String activePresetId = LauncherAppearanceManager.getConfirmedActivePresetId(context);
+            Drawable drawable = resolvePresetFallbackDrawable(context, activePresetId);
+            if (drawable == null) {
+                drawable = context.getPackageManager().getApplicationIcon(context.getPackageName());
+            }
             if (drawable instanceof BitmapDrawable && ((BitmapDrawable) drawable).getBitmap() != null) {
                 return ((BitmapDrawable) drawable).getBitmap();
             }
@@ -1290,108 +1328,24 @@ public class AndroidPermissionBridge extends Plugin {
     // Launcher Icon & App Name Beautification (Module C)
     // ==========================================
 
-    private String resolveActiveLauncherPresetId(Context context) {
-        PackageManager pm = context.getPackageManager();
-        String pkg = context.getPackageName();
-
-        for (Map.Entry<String, String> entry : LAUNCHER_PRESET_ALIASES.entrySet()) {
-            String presetId = entry.getKey();
-            String aliasClass = entry.getValue();
-            if ("default".equals(presetId)) {
-                continue;
-            }
-            try {
-                ComponentName cn = new ComponentName(pkg, pkg + aliasClass);
-                int state = pm.getComponentEnabledSetting(cn);
-                if (state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
-                    return presetId;
-                }
-            } catch (Exception ignored) {}
-        }
-
-        SharedPreferences prefs = context.getApplicationContext().getSharedPreferences(LAUNCHER_PREFS_NAME, Context.MODE_PRIVATE);
-        String saved = prefs.getString(KEY_ACTIVE_PRESET_ID, "default");
-        return LAUNCHER_PRESET_ALIASES.containsKey(saved) ? saved : "default";
-    }
-
-    private JSObject applyLauncherPresetInternal(Context context, String presetId) {
-        if (!LAUNCHER_PRESET_ALIASES.containsKey(presetId)) {
-            JSObject err = createResult(false, "无效的桌面预设方案: " + presetId);
-            err.put("activePresetId", resolveActiveLauncherPresetId(context));
-            return err;
-        }
-
-        PackageManager pm = context.getPackageManager();
-        String pkg = context.getPackageName();
-        String targetAlias = LAUNCHER_PRESET_ALIASES.get(presetId);
-
-        try {
-            // Step 1: Enable target launcher alias FIRST so the launcher never sees zero active entrypoints
-            ComponentName targetComponent = new ComponentName(pkg, pkg + targetAlias);
-            pm.setComponentEnabledSetting(
-                targetComponent,
-                PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                PackageManager.DONT_KILL_APP
-            );
-
-            // Step 2: Disable all other launcher aliases with DONT_KILL_APP
-            for (Map.Entry<String, String> entry : LAUNCHER_PRESET_ALIASES.entrySet()) {
-                if (entry.getKey().equals(presetId)) {
-                    continue;
-                }
-                ComponentName otherComponent = new ComponentName(pkg, pkg + entry.getValue());
-                pm.setComponentEnabledSetting(
-                    otherComponent,
-                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                    PackageManager.DONT_KILL_APP
-                );
-            }
-
-            SharedPreferences prefs = context.getApplicationContext().getSharedPreferences(LAUNCHER_PREFS_NAME, Context.MODE_PRIVATE);
-            prefs.edit().putString(KEY_ACTIVE_PRESET_ID, presetId).apply();
-            Log.i(LAUNCHER_TAG, "Switched launcher preset to " + presetId + " (" + targetAlias + ")");
-
-            JSObject ok = createResult(true, "已切换系统桌面图标与名称预设，系统桌面可能需要几秒或返回桌面后刷新图标缓存。");
-            ok.put("activePresetId", presetId);
-            return ok;
-        } catch (Exception e) {
-            Log.e(LAUNCHER_TAG, "Failed to switch launcher preset to " + presetId, e);
-            JSObject err = createResult(false, "切换桌面预设失败: " + e.getMessage());
-            err.put("activePresetId", resolveActiveLauncherPresetId(context));
-            return err;
-        }
-    }
-
     @PluginMethod
     public void getLauncherAppearanceStatus(PluginCall call) {
         Context context = getContext().getApplicationContext();
-        String activeId = resolveActiveLauncherPresetId(context);
         boolean supportsPinShortcut = ShortcutManagerCompat.isRequestPinShortcutSupported(context);
-
-        JSArray available = new JSArray();
-        for (String id : LAUNCHER_PRESET_ALIASES.keySet()) {
-            available.put(id);
-        }
-
-        JSObject ret = new JSObject();
-        ret.put("isNativeAndroid", true);
-        ret.put("activePresetId", activeId);
-        ret.put("supportsPinShortcut", supportsPinShortcut);
-        ret.put("availablePresets", available);
-        call.resolve(ret);
+        call.resolve(LauncherAppearanceManager.buildStatusResult(context, supportsPinShortcut));
     }
 
     @PluginMethod
     public void setLauncherPreset(PluginCall call) {
         String presetId = call.getString("presetId", "default");
-        Context context = getContext().getApplicationContext();
-        call.resolve(applyLauncherPresetInternal(context, presetId));
+        Context appContext = getContext().getApplicationContext();
+        call.resolve(LauncherAppearanceManager.startPresetSwitch(getActivity(), appContext, presetId));
     }
 
     @PluginMethod
     public void resetLauncherDefault(PluginCall call) {
-        Context context = getContext().getApplicationContext();
-        call.resolve(applyLauncherPresetInternal(context, "default"));
+        Context appContext = getContext().getApplicationContext();
+        call.resolve(LauncherAppearanceManager.startPresetSwitch(getActivity(), appContext, "default"));
     }
 
     @PluginMethod
@@ -1474,6 +1428,274 @@ public class AndroidPermissionBridge extends Plugin {
             res.put("supported", true);
             call.resolve(res);
         }
+    }
+
+    @PluginMethod
+    public void setSystemBarAppearance(PluginCall call) {
+        String statusBarBackground = call.getString("statusBarBackground", "#FFFFFF");
+        String statusBarIconStyle = call.getString("statusBarIconStyle", "dark");
+        String navigationBarIconStyle = call.getString("navigationBarIconStyle", statusBarIconStyle);
+
+        boolean lightStatusBars = "dark".equalsIgnoreCase(statusBarIconStyle);
+        boolean lightNavBars = "dark".equalsIgnoreCase(navigationBarIconStyle);
+
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).applySystemBarAppearance(
+                statusBarBackground,
+                lightStatusBars,
+                lightNavBars
+            );
+        }
+
+        JSObject res = new JSObject();
+        res.put("success", true);
+        call.resolve(res);
+    }
+
+    // ==========================================
+    // Real Android Camera & Photo Picker (Group Chat Media)
+    // ==========================================
+
+    @PluginMethod
+    public void takeGroupPhotoWithCamera(PluginCall call) {
+        Context context = getContext();
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissionForAlias("camera", call, "handleCameraPermissionForPhoto");
+            return;
+        }
+        launchSystemCameraCapture(call);
+    }
+
+    @PermissionCallback
+    private void handleCameraPermissionForPhoto(PluginCall call) {
+        if (call == null) return;
+        Context context = getContext();
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            JSObject res = createResult(false, "未授予相机权限，请在系统设置中允许拍照权限后重试");
+            res.put("cancelled", false);
+            res.put("permissionDenied", true);
+            call.resolve(res);
+            return;
+        }
+        launchSystemCameraCapture(call);
+    }
+
+    private void launchSystemCameraCapture(PluginCall call) {
+        try {
+            Context context = getContext();
+            File cacheDir = new File(context.getCacheDir(), "group_camera");
+            if (!cacheDir.exists()) {
+                cacheDir.mkdirs();
+            }
+            File photoFile = File.createTempFile("cam_" + System.currentTimeMillis() + "_", ".jpg", cacheDir);
+            pendingCameraPhotoPath = photoFile.getAbsolutePath();
+
+            Uri photoUri = FileProvider.getUriForFile(
+                context,
+                context.getPackageName() + ".fileprovider",
+                photoFile
+            );
+
+            Intent cameraIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoUri);
+            cameraIntent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+            if (cameraIntent.resolveActivity(context.getPackageManager()) == null) {
+                JSObject res = createResult(false, "当前设备未找到可用的系统相机应用");
+                res.put("cancelled", false);
+                call.resolve(res);
+                return;
+            }
+            startActivityForResult(call, cameraIntent, "handleCapturedPhotoResult");
+        } catch (Exception e) {
+            Log.e(TAG, "launchSystemCameraCapture failed", e);
+            JSObject res = createResult(false, "调起系统相机失败: " + e.getMessage());
+            res.put("cancelled", false);
+            call.resolve(res);
+        }
+    }
+
+    @ActivityCallback
+    private void handleCapturedPhotoResult(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        final String filePath = pendingCameraPhotoPath;
+        pendingCameraPhotoPath = null;
+
+        if (result == null || result.getResultCode() != Activity.RESULT_OK || filePath == null) {
+            cleanupTempFile(filePath);
+            JSObject res = createResult(false, "已取消拍照");
+            res.put("cancelled", true);
+            call.resolve(res);
+            return;
+        }
+
+        AVATAR_EXECUTOR.execute(() -> {
+            try {
+                File f = new File(filePath);
+                if (!f.exists() || f.length() == 0) {
+                    cleanupTempFile(filePath);
+                    JSObject res = createResult(false, "未能读取拍摄的照片文件");
+                    res.put("cancelled", true);
+                    call.resolve(res);
+                    return;
+                }
+                JSObject encoded = encodeBitmapStreamToDataUrl(() -> new FileInputStream(f), 1280, "android_camera");
+                cleanupTempFile(filePath);
+                call.resolve(encoded);
+            } catch (Exception e) {
+                cleanupTempFile(filePath);
+                Log.e(TAG, "handleCapturedPhotoResult decode error", e);
+                JSObject res = createResult(false, "处理相机照片失败: " + e.getMessage());
+                res.put("cancelled", false);
+                call.resolve(res);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void pickGroupPhotoFromGallery(PluginCall call) {
+        try {
+            Context context = getContext();
+            Intent intent;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent = new Intent(MediaStore.ACTION_PICK_IMAGES);
+                intent.setType("image/*");
+                if (intent.resolveActivity(context.getPackageManager()) == null) {
+                    intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("image/*");
+                }
+            } else {
+                intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("image/*");
+            }
+            startActivityForResult(call, intent, "handlePickedPhotoResult");
+        } catch (Exception e) {
+            Log.e(TAG, "pickGroupPhotoFromGallery failed", e);
+            JSObject res = createResult(false, "打开系统相册失败: " + e.getMessage());
+            res.put("cancelled", false);
+            call.resolve(res);
+        }
+    }
+
+    @ActivityCallback
+    private void handlePickedPhotoResult(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        if (result == null || result.getResultCode() != Activity.RESULT_OK || result.getData() == null || result.getData().getData() == null) {
+            JSObject res = createResult(false, "已取消选择图片");
+            res.put("cancelled", true);
+            call.resolve(res);
+            return;
+        }
+
+        final Uri imageUri = result.getData().getData();
+        final Context appContext = getContext().getApplicationContext();
+
+        AVATAR_EXECUTOR.execute(() -> {
+            try {
+                JSObject encoded = encodeBitmapStreamToDataUrl(
+                    () -> appContext.getContentResolver().openInputStream(imageUri),
+                    1280,
+                    "android_photo_picker"
+                );
+                call.resolve(encoded);
+            } catch (Exception e) {
+                Log.e(TAG, "handlePickedPhotoResult decode error", e);
+                JSObject res = createResult(false, "读取所选图片失败: " + e.getMessage());
+                res.put("cancelled", false);
+                call.resolve(res);
+            }
+        });
+    }
+
+    private interface StreamSupplier {
+        InputStream open() throws Exception;
+    }
+
+    private JSObject encodeBitmapStreamToDataUrl(StreamSupplier supplier, int maxDim, String sourceTag) throws Exception {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        InputStream probeStream = null;
+        try {
+            probeStream = supplier.open();
+            if (probeStream == null) {
+                JSObject err = createResult(false, "无法打开图片流");
+                err.put("cancelled", false);
+                return err;
+            }
+            BitmapFactory.decodeStream(probeStream, null, bounds);
+        } finally {
+            if (probeStream != null) {
+                try { probeStream.close(); } catch (Exception ignored) {}
+            }
+        }
+
+        int inSample = 1;
+        int w = bounds.outWidth;
+        int h = bounds.outHeight;
+        while ((w / inSample) > maxDim * 2 || (h / inSample) > maxDim * 2) {
+            inSample *= 2;
+        }
+
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inSampleSize = Math.max(1, inSample);
+        Bitmap bitmap = null;
+        InputStream decodeStream = null;
+        try {
+            decodeStream = supplier.open();
+            if (decodeStream != null) {
+                bitmap = BitmapFactory.decodeStream(decodeStream, null, opts);
+            }
+        } finally {
+            if (decodeStream != null) {
+                try { decodeStream.close(); } catch (Exception ignored) {}
+            }
+        }
+
+        if (bitmap == null) {
+            JSObject err = createResult(false, "图片格式不支持或文件为空");
+            err.put("cancelled", false);
+            return err;
+        }
+
+        int curW = bitmap.getWidth();
+        int curH = bitmap.getHeight();
+        if (curW > maxDim || curH > maxDim) {
+            float scale = Math.min((float) maxDim / curW, (float) maxDim / curH);
+            int targetW = Math.max(1, Math.round(curW * scale));
+            int targetH = Math.max(1, Math.round(curH * scale));
+            Bitmap scaled = Bitmap.createScaledBitmap(bitmap, targetW, targetH, true);
+            if (scaled != bitmap) {
+                bitmap.recycle();
+                bitmap = scaled;
+            }
+        }
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 82, baos);
+        int finalW = bitmap.getWidth();
+        int finalH = bitmap.getHeight();
+        bitmap.recycle();
+
+        String b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+        JSObject ok = createResult(true, "已获取图片");
+        ok.put("cancelled", false);
+        ok.put("dataUrl", "data:image/jpeg;base64," + b64);
+        ok.put("width", finalW);
+        ok.put("height", finalH);
+        ok.put("source", sourceTag);
+        return ok;
+    }
+
+    private void cleanupTempFile(String path) {
+        if (path == null) return;
+        try {
+            File f = new File(path);
+            if (f.exists()) {
+                f.delete();
+            }
+        } catch (Exception ignored) {}
     }
 
     private JSObject createResult(boolean success, String message) {

@@ -7,6 +7,7 @@ import { OfflineMemoryBridge, OfflineSessionSummary } from '../../lib/offline/Of
 import { OfflineStateMiniPanel } from './OfflineStateMiniPanel';
 import { OfflineEndModal } from './OfflineEndModal';
 import { AiCharacter, UserProfile, ApiConfig } from '../../types';
+import { useStableTextEditing } from '../../hooks/useStableTextEditing';
 
 interface OfflineSessionViewProps {
   session: OfflineSession;
@@ -47,7 +48,15 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const isComposingRef = useRef(false);
+  const composerEditor = useStableTextEditing<HTMLTextAreaElement>({
+    value: inputText,
+    onValueChange: setInputText,
+    externalRef: textareaRef,
+    disabled: isSending,
+    autoResize: true,
+    minHeightPx: 38,
+    maxHeightPx: 120,
+  });
 
   useEffect(() => {
     loadMessages(0);
@@ -111,7 +120,8 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !isComposingRef.current) {
+    composerEditor.eventProps.onKeyDown(e);
+    if (e.key === 'Enter' && !e.shiftKey && !composerEditor.isCompositionActive(e.nativeEvent)) {
       e.preventDefault();
       handleSend();
     }
@@ -119,14 +129,13 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
 
   const handleSend = async (e?: React.FormEvent, overrideText?: string) => {
     if (e) e.preventDefault();
-    const userText = (overrideText || inputText).trim();
+    const rawCurrent = overrideText ?? (textareaRef.current ? textareaRef.current.value : inputText);
+    const userText = rawCurrent.trim();
     if (!userText || isSending) return;
 
     if (!overrideText) {
+      composerEditor.clearValue('');
       setInputText('');
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto';
-      }
     }
     setSendError(null);
     setIsSending(true);
@@ -339,23 +348,11 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
           </button>
 
           <textarea
-            ref={textareaRef}
+            ref={composerEditor.mergedRef}
             rows={1}
             placeholder="输入你想说的话或做出的动作（支持多行输入与动作括号……）"
             value={inputText}
-            onChange={(e) => {
-              setInputText(e.target.value);
-              if (textareaRef.current) {
-                textareaRef.current.style.height = 'auto';
-                textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
-              }
-            }}
-            onCompositionStart={() => {
-              isComposingRef.current = true;
-            }}
-            onCompositionEnd={() => {
-              isComposingRef.current = false;
-            }}
+            {...composerEditor.eventProps}
             onKeyDown={handleKeyDown}
             disabled={isSending}
             className="flex-1 py-2.5 px-3.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-zinc-100 focus:outline-none focus:border-indigo-500 font-medium resize-none max-h-32 min-h-[38px] leading-relaxed"

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { MenstrualData, MenstrualRecord } from '../../types';
+import { StableTextInput } from '../common/StableTextInput';
 import {
   computeCycleStats,
   getMonthDayStatuses,
@@ -342,11 +343,11 @@ export const MenstrualApp: React.FC<MenstrualAppProps> = ({
           </div>
 
           <div className="flex gap-2 pt-1">
-            <input
+            <StableTextInput
               type="text"
               placeholder="记录当日身体感受/日记笔记..."
               value={noteInput}
-              onChange={(e) => setNoteInput(e.target.value)}
+              onValueChange={setNoteInput}
               className="flex-1 px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none text-xs"
             />
             <button onClick={handleSaveNote} className="px-3 py-2 rounded-xl bg-emerald-500 font-medium text-white text-xs">

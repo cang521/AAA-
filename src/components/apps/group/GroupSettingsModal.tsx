@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   X,
   Users,
@@ -20,12 +20,19 @@ import {
   CheckCircle2,
   XCircle,
   RefreshCw,
+  Upload,
+  RotateCcw,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { GroupChat, GroupMember, GroupJoinRequest, AiCharacter, UserProfile } from '../../../types';
 import { DEFAULT_AI_AVATAR } from '../../../lib/storage';
 import { generateGroupInviteCode } from '../../../lib/storage';
 import { syncGroupToServer } from '../../../lib/groupService';
+import { resolveGroupAvatarState } from '../../../lib/groupAvatar';
 import { EditGroupAiMemberModal } from './EditGroupAiMemberModal';
+import { GroupAvatar } from './GroupAvatar';
+import { StableTextInput } from '../../common/StableTextInput';
+import { StableTextarea } from '../../common/StableTextarea';
 
 interface GroupSettingsModalProps {
   isOpen: boolean;
@@ -48,16 +55,27 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
   onDeleteGroup,
   onClearHistory,
 }) => {
+  const resolvedAvatarState = resolveGroupAvatarState(group);
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [nameInput, setNameInput] = useState(group.name);
   const [noticeInput, setNoticeInput] = useState(group.notice || '');
-  const [avatarInput, setAvatarInput] = useState(group.avatar);
+  const [avatarInput, setAvatarInput] = useState(
+    resolvedAvatarState.mode === 'custom' ? resolvedAvatarState.customAvatar || '' : ''
+  );
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Sub-modals & states
   const [selectedMemberToEdit, setSelectedMemberToEdit] = useState<GroupMember | null>(null);
   const [showAddMemberSelector, setShowAddMemberSelector] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [activeTab, setActiveTab] = useState<'info' | 'requests' | 'network_notice'>('info');
+
+  useEffect(() => {
+    const nextState = resolveGroupAvatarState(group);
+    setNameInput(group.name);
+    setNoticeInput(group.notice || '');
+    setAvatarInput(nextState.mode === 'custom' ? nextState.customAvatar || '' : '');
+  }, [group.id, group.name, group.notice, group.avatar, group.avatarMode, group.customAvatar]);
 
   if (!isOpen) return null;
 
@@ -69,12 +87,47 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
     syncGroupToServer(updatedGroup);
   };
 
+  const handleUploadCustomAvatar = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string' && reader.result.trim()) {
+        const dataUrl = reader.result;
+        setAvatarInput(dataUrl);
+        handleUpdateGroupAndSync({
+          ...group,
+          avatar: dataUrl,
+          avatarMode: 'custom',
+          customAvatar: dataUrl,
+          updatedAt: Date.now(),
+        });
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleRestoreAutoAvatar = () => {
+    setAvatarInput('');
+    handleUpdateGroupAndSync({
+      ...group,
+      avatar: '',
+      avatarMode: 'auto',
+      updatedAt: Date.now(),
+    });
+  };
+
   const handleSaveInfo = () => {
+    const trimmedUrl = avatarInput.trim();
+    const shouldUseCustom = Boolean(trimmedUrl);
     handleUpdateGroupAndSync({
       ...group,
       name: nameInput.trim() || group.name,
       notice: noticeInput.trim(),
-      avatar: avatarInput.trim() || group.avatar,
+      avatar: shouldUseCustom ? trimmedUrl : '',
+      avatarMode: shouldUseCustom ? 'custom' : 'auto',
+      customAvatar: shouldUseCustom ? trimmedUrl : group.customAvatar,
       updatedAt: Date.now(),
     });
     setIsEditingInfo(false);
@@ -400,6 +453,68 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
                 </div>
               )}
 
+              {/* Group Avatar Management Card */}
+              <div className="wx-sub-card p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-750 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="wx-primary-text font-bold text-xs text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-emerald-500 wx-green-text" />
+                    <span>群头像</span>
+                  </span>
+                  <span className="wx-muted-text text-[10px] text-zinc-400">
+                    {resolvedAvatarState.mode === 'custom' ? '自定义群头像' : '自动组合（成员九宫格）'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <GroupAvatar
+                    members={group.members}
+                    avatarMode={group.avatarMode}
+                    customAvatar={group.customAvatar}
+                    legacyAvatar={group.avatar}
+                    allCharacters={allCharacters}
+                    userProfile={userProfile}
+                    size={56}
+                    alt={group.name}
+                    className="border border-zinc-300/70 dark:border-zinc-700 shadow-xs"
+                  />
+                  <div className="flex-1 space-y-2">
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="wx-btn-secondary px-2.5 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 text-[11px] font-semibold flex items-center gap-1 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition cursor-pointer"
+                      >
+                        <Upload className="w-3 h-3" />
+                        <span>上传自定义头像</span>
+                      </button>
+                      {resolvedAvatarState.mode === 'custom' && (
+                        <button
+                          type="button"
+                          onClick={handleRestoreAutoAvatar}
+                          className="wx-btn-secondary px-2.5 py-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[11px] font-semibold flex items-center gap-1 hover:bg-emerald-500/20 transition cursor-pointer"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>恢复自动组合头像</span>
+                        </button>
+                      )}
+                    </div>
+                    <p className="wx-muted-text text-[10px] text-zinc-400 leading-snug">
+                      {resolvedAvatarState.mode === 'custom'
+                        ? '增减群成员不会覆盖当前自定义头像，点击“恢复自动组合头像”可切回九宫格拼图。'
+                        : '增删群成员或修改成员头像时，群头像将实时自动同步更新。'}
+                    </p>
+                  </div>
+                </div>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleUploadCustomAvatar}
+                  className="hidden"
+                />
+              </div>
+
               {/* Group Info & Edit */}
               <div className="wx-sub-card p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-750 space-y-3">
                 <div className="flex items-center justify-between">
@@ -429,27 +544,28 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
                   <div className="space-y-2">
                     <div>
                       <label className="wx-secondary-text text-[10px] text-zinc-400 block mb-1">群名称</label>
-                      <input
+                      <StableTextInput
                         type="text"
                         value={nameInput}
-                        onChange={(e) => setNameInput(e.target.value)}
+                        onValueChange={setNameInput}
                         className="wx-modal-input w-full px-2.5 py-1.5 rounded-xl bg-zinc-100 dark:bg-zinc-750 text-xs text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700"
                       />
                     </div>
                     <div>
-                      <label className="wx-secondary-text text-[10px] text-zinc-400 block mb-1">群头像 URL</label>
-                      <input
+                      <label className="wx-secondary-text text-[10px] text-zinc-400 block mb-1">自定义群头像 URL（留空恢复自动组合）</label>
+                      <StableTextInput
                         type="text"
                         value={avatarInput}
-                        onChange={(e) => setAvatarInput(e.target.value)}
+                        onValueChange={setAvatarInput}
+                        placeholder="留空则使用成员自动组合九宫格头像"
                         className="wx-modal-input w-full px-2.5 py-1.5 rounded-xl bg-zinc-100 dark:bg-zinc-750 text-xs text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700"
                       />
                     </div>
                     <div>
                       <label className="wx-secondary-text text-[10px] text-zinc-400 block mb-1">群公告</label>
-                      <textarea
+                      <StableTextarea
                         value={noticeInput}
-                        onChange={(e) => setNoticeInput(e.target.value)}
+                        onValueChange={setNoticeInput}
                         rows={2}
                         className="wx-modal-input w-full px-2.5 py-1.5 rounded-xl bg-zinc-100 dark:bg-zinc-750 text-xs text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 resize-none"
                       />

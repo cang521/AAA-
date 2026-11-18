@@ -94,6 +94,12 @@ export interface AiCharacter {
   unreadAiCount?: number;
   lastViewedTimestamp?: number;
   autoExtractMemoryEnabled?: boolean;
+  romanticConfig?: {
+    romanticTargetId?: string | null;
+    romanticTargetLocked?: boolean;
+    allowNaturalRomance?: boolean;
+    status?: AiRomanticStatus;
+  };
 }
 
 export type HistorySourceType = 'live' | 'archived' | 'imported';
@@ -232,6 +238,63 @@ export interface GroupMember {
   isMuted?: boolean;
 }
 
+export type GroupMessageType = 'text' | 'image' | 'relay' | 'poll' | 'random_draw' | 'system';
+
+export interface GroupRelayEntry {
+  id: string;
+  memberId: string;
+  memberName: string;
+  memberAvatar?: string;
+  content: string;
+  timestamp: number;
+}
+
+export interface GroupRelayPayload {
+  title: string;
+  description?: string;
+  deadline?: number;
+  allowDuplicate: boolean;
+  entries: GroupRelayEntry[];
+  closed?: boolean;
+}
+
+export interface GroupPollOption {
+  id: string;
+  text: string;
+  voterIds: string[];
+  voterNames?: Record<string, string>;
+}
+
+export interface GroupPollPayload {
+  title: string;
+  options: GroupPollOption[];
+  multiSelect: boolean;
+  maxSelections?: number;
+  anonymous: boolean;
+  deadline?: number;
+  allowChange: boolean;
+  closed?: boolean;
+}
+
+export interface GroupRandomDrawWinner {
+  memberId: string;
+  memberName: string;
+  memberAvatar?: string;
+  memberType: GroupMemberType;
+  round: number;
+}
+
+export interface GroupRandomDrawPayload {
+  scope: 'all' | 'ai_only';
+  includeUser: boolean;
+  count: number;
+  allowDuplicate: boolean;
+  taskDescription?: string;
+  poolMemberIds: string[];
+  winners: GroupRandomDrawWinner[];
+  drawnAt: number;
+}
+
 export interface GroupChatMessage {
   id: string;
   groupId: string;
@@ -241,6 +304,10 @@ export interface GroupChatMessage {
   senderType: GroupMemberType;
   text: string;
   timestamp: number;
+  messageType?: GroupMessageType;
+  imageUrl?: string;
+  payload?: GroupRelayPayload | GroupPollPayload | GroupRandomDrawPayload;
+  isRecalled?: boolean;
   mentionedMemberIds?: string[]; // Member IDs or ['@all']
   quoteMessageId?: string;
   quoteMessage?: {
@@ -268,6 +335,8 @@ export interface GroupChat {
   id: string;
   name: string;
   avatar: string;
+  avatarMode?: 'auto' | 'custom';
+  customAvatar?: string;
   notice?: string;
   ownerId: string;
   members: GroupMember[];
@@ -1112,6 +1181,198 @@ export interface AiMemoryRecallResult {
   matchedChunks: AiMemoryRecallMatch[];
   matchedFileNames: string[];
 }
+
+// =========================================================================
+// AI 社会关系、真实私聊、查看AI手机与群聊互动系统
+// =========================================================================
+
+export const USER_ENTITY_ID = 'user_main' as const;
+
+export type AiRelationshipStatus =
+  | 'strangers'
+  | 'acquaintances'
+  | 'friend_request_pending'
+  | 'friends'
+  | 'close_friends'
+  | 'tense'
+  | 'unfriended'
+  | 'blocked';
+
+export type AiConflictStage =
+  | 'none'
+  | 'dissatisfied'
+  | 'bickering'
+  | 'tense'
+  | 'cold_war'
+  | 'serious_conflict'
+  | 'reconciled';
+
+export interface AiDirectionalAttitude {
+  familiarity: number; // 0-100 熟悉度
+  trust: number; // 0-100 信任度
+  affinity: number; // 0-100 好感度（普通/综合亲近）
+  romanticAffinity: number; // 0-100 喜欢/心动倾向（不得因普通友好自动转化为爱情）
+  tension: number; // 0-100 紧张/冷战/冲突度
+  jealousy: number; // 0-100 嫉妒/吃醋值
+  lastImpression?: string;
+  updatedAt: number;
+}
+
+export interface AiRelationshipEdge {
+  id: string; // canonical sorted `${minId}__${maxId}`
+  entityAId: string; // lexicographically smaller ID
+  entityBId: string; // lexicographically larger ID
+  status: AiRelationshipStatus;
+  previousStatus?: AiRelationshipStatus;
+  conflictStage?: AiConflictStage;
+  aToB: AiDirectionalAttitude;
+  bToA: AiDirectionalAttitude;
+  sharedRomanticTargetId?: string | null;
+  unfriendedByIds?: string[];
+  blockedByIds?: string[];
+  canViewMomentsAtoB?: boolean;
+  canViewMomentsBtoA?: boolean;
+  firstMetAt?: number;
+  firstMetSource?: string;
+  becameFriendsAt?: number;
+  lastInteractionAt: number;
+  lastMajorChangeAt?: number;
+  lastPrivateChatAt?: number;
+  cooldownUntil?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type AiFriendRequestStatus = 'pending' | 'accepted' | 'rejected' | 'cancelled' | 'expired';
+
+export interface AiFriendRequest {
+  id: string;
+  fromId: string;
+  toId: string;
+  pairId: string;
+  greeting: string;
+  reason: string;
+  sourceContext?: string;
+  status: AiFriendRequestStatus;
+  decisionReason?: string;
+  createdAt: number;
+  respondedAt?: number;
+  expiresAt?: number;
+}
+
+export interface AiPrivateThread {
+  id: string; // `pthread_${minId}__${maxId}`
+  participantIds: [string, string]; // sorted [entityAId, entityBId]
+  createdAt: number;
+  updatedAt: number;
+  lastMessageId?: string;
+  lastMessageText?: string;
+  lastSenderId?: string;
+  lastMessageAt?: number;
+  messageCount: number;
+  isArchived?: boolean;
+}
+
+export interface AiPrivateMessage {
+  id: string;
+  threadId: string;
+  senderId: string;
+  receiverId: string;
+  text: string;
+  timestamp: number;
+  triggerEventId?: string;
+  isRecalled?: boolean;
+  messageType?: 'text' | 'system' | 'confession';
+}
+
+export type AiSocialEventType =
+  | 'met_in_group'
+  | 'shared_interest'
+  | 'friend_request_sent'
+  | 'friend_request_accepted'
+  | 'friend_request_rejected'
+  | 'private_chat'
+  | 'moments_liked'
+  | 'moments_commented'
+  | 'moments_posted'
+  | 'helped'
+  | 'jealousy_sparked'
+  | 'bickering'
+  | 'cold_war_started'
+  | 'conflict_escalated'
+  | 'reconciled'
+  | 'unfriended'
+  | 're_added_friend'
+  | 'blocked'
+  | 'unblocked'
+  | 'confession_sent'
+  | 'confession_accepted'
+  | 'confession_rejected'
+  | 'group_random_event'
+  | 'api_failed';
+
+export interface AiSocialEvent {
+  id: string;
+  type: AiSocialEventType;
+  actorIds: string[];
+  targetId?: string;
+  pairId?: string;
+  threadId?: string;
+  groupId?: string;
+  momentId?: string;
+  summary: string; // 仅自然语言摘要，严禁暴露思维链或裸分
+  isMajor: boolean;
+  createdAt: number;
+  metadata?: Record<string, any>;
+}
+
+export type AiRomanticStatus =
+  | 'none'
+  | 'crush'
+  | 'confession_planned'
+  | 'confessed'
+  | 'dating'
+  | 'rejected'
+  | 'heartbroken';
+
+export interface AiRomanticState {
+  characterId: string;
+  romanticTargetId: string | null; // null | 'user_main' | AiCharacter.id
+  romanticTargetLocked: boolean;
+  allowNaturalRomance: boolean;
+  status: AiRomanticStatus;
+  intensity?: number; // 0-100 internal only
+  reason?: string;
+  updatedAt: number;
+}
+
+export interface AiSocialMomentPost extends MomentPost {
+  sourceType?: 'ai_social' | 'user';
+  relatedEventId?: string;
+}
+
+export type AiSocialFrequency = 'low' | 'medium' | 'high';
+
+export interface AiSocialActivitySettings {
+  paused: boolean;
+  frequency: AiSocialFrequency;
+  allowMeet: boolean;
+  allowFriendRequests: boolean;
+  allowPrivateChat: boolean;
+  allowMomentsInteraction: boolean;
+  allowGroupRandomEvents: boolean;
+  allowConflicts: boolean;
+  allowUnfriend: boolean;
+  allowNaturalRomance: boolean;
+  notifyMajorChanges: boolean;
+}
+
+export interface AiSocialMetaRecord {
+  key: string;
+  value: any;
+  updatedAt: number;
+}
+
 
 
 

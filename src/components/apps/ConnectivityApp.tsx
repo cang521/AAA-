@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../../lib/localBackend';
+import { StableTextInput } from '../common/StableTextInput';
 import {
   SmartDevice,
   AiPermissions,
@@ -495,11 +496,11 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
             {(showSearchBox || searchQuery) && (
               <div className="relative">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
-                <input
+                <StableTextInput
                   type="text"
                   placeholder="搜索设备名称、房间..."
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onValueChange={setSearchQuery}
                   className="w-full pl-9 pr-8 py-2 bg-white border border-zinc-200 rounded-xl text-xs text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                 />
                 {searchQuery && (
@@ -903,12 +904,18 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
                 自然语言语义调档测试
               </h3>
               <div className="flex items-center gap-2">
-                <input
+                <StableTextInput
                   type="text"
                   placeholder="输入指令（例如: 调整到2档震动 / 开启空调）"
                   value={nlpCommand}
-                  onChange={(e) => setNlpCommand(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleRunNlpCommand()}
+                  onValueChange={setNlpCommand}
+                  onKeyDown={(e) => {
+                    const nativeEvt = e.nativeEvent as KeyboardEvent;
+                    if (nativeEvt.isComposing || nativeEvt.keyCode === 229) return;
+                    if (e.key === 'Enter') {
+                      handleRunNlpCommand();
+                    }
+                  }}
                   className="flex-1 px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                 />
                 <PressableButton
@@ -1255,11 +1262,11 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
             <div className="space-y-3 text-xs">
               <div>
                 <label className="block text-zinc-600 font-semibold mb-1">设备名称</label>
-                <input
+                <StableTextInput
                   type="text"
                   placeholder="例如: 智能落地灯"
                   value={customName}
-                  onChange={(e) => setCustomName(e.target.value)}
+                  onValueChange={setCustomName}
                   className="w-full px-3 py-2 border border-zinc-200 rounded-xl text-xs text-zinc-900"
                 />
               </div>
@@ -1280,11 +1287,11 @@ export const ConnectivityApp: React.FC<ConnectivityAppProps> = ({
 
               <div>
                 <label className="block text-zinc-600 font-semibold mb-1">房间位置</label>
-                <input
+                <StableTextInput
                   type="text"
                   placeholder="客厅 / 卧室"
                   value={customRoom}
-                  onChange={(e) => setCustomRoom(e.target.value)}
+                  onValueChange={setCustomRoom}
                   className="w-full px-3 py-2 border border-zinc-200 rounded-xl text-xs text-zinc-900"
                 />
               </div>

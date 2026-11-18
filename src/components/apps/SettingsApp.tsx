@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch, pingBackendHealth } from '../../lib/localBackend';
 import { Capacitor } from '@capacitor/core';
+import { StableTextarea } from '../common/StableTextarea';
 import {
   AiControls,
   ApiLog,
@@ -1135,10 +1136,10 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           </div>
 
           <div className="settings-section-card p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-3">
-            <textarea
+            <StableTextarea
               placeholder="粘贴包含配置的任意原始 JSON 文本..."
               value={rawJsonInput}
-              onChange={(e) => setRawJsonInput(e.target.value)}
+              onValueChange={setRawJsonInput}
               rows={3}
               className="w-full p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
             />

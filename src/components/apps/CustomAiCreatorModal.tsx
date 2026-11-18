@@ -17,6 +17,8 @@ import { AiCharacter } from '../../types';
 import { ensureAiMemoryVault } from '../../lib/aiMemoryVaultDb';
 import { DEFAULT_AI_AVATAR } from '../../lib/storage';
 import { generateNotificationAvatarThumbnail } from '../../lib/notificationAvatar';
+import { StableTextInput } from '../common/StableTextInput';
+import { StableTextarea } from '../common/StableTextarea';
 
 interface CustomAiCreatorModalProps {
   isOpen: boolean;
@@ -235,13 +237,13 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
                 </div>
 
                 {activeAvatarTab === 'url' && (
-                  <input
+                  <StableTextInput
                     type="text"
                     placeholder="https://..."
                     value={customAvatarUrl}
-                    onChange={(e) => {
-                      setCustomAvatarUrl(e.target.value);
-                      if (e.target.value.trim()) setAvatar(e.target.value.trim());
+                    onValueChange={(nextUrl) => {
+                      setCustomAvatarUrl(nextUrl);
+                      if (nextUrl.trim()) setAvatar(nextUrl.trim());
                     }}
                     className="wx-modal-input w-full px-2.5 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white text-[11px] placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
                   />
@@ -256,14 +258,12 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
               <label className="wx-primary-text block text-[11px] font-semibold text-zinc-300 mb-1">
                 2. AI 昵称 / 姓名 <span className="text-rose-400">*</span>
               </label>
-              <input
+              <StableTextInput
                 ref={nameRef}
                 type="text"
                 placeholder="输入 AI 昵称"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
-                onInput={(e) => setName(e.currentTarget.value)}
-                onCompositionEnd={(e) => setName(e.currentTarget.value)}
+                onValueChange={setName}
                 className="wx-modal-input w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 text-xs"
               />
             </div>
@@ -279,14 +279,12 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
                   随机生成
                 </button>
               </div>
-              <input
+              <StableTextInput
                 ref={wxidRef}
                 type="text"
                 placeholder="输入微信号"
                 value={wxid}
-                onChange={(e) => setWxid(e.target.value)}
-                onInput={(e) => setWxid(e.currentTarget.value)}
-                onCompositionEnd={(e) => setWxid(e.currentTarget.value)}
+                onValueChange={setWxid}
                 className="wx-modal-input w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 text-xs font-mono"
               />
             </div>
@@ -296,28 +294,24 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="wx-primary-text block text-[11px] font-semibold text-zinc-300 mb-1">与用户的关系</label>
-              <input
+              <StableTextInput
                 ref={relationshipRef}
                 type="text"
                 placeholder="例如: 好友 / 导师 / 伙伴"
                 value={relationship}
-                onChange={(e) => setRelationship(e.target.value)}
-                onInput={(e) => setRelationship(e.currentTarget.value)}
-                onCompositionEnd={(e) => setRelationship(e.currentTarget.value)}
+                onValueChange={setRelationship}
                 className="wx-modal-input w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 text-xs"
               />
             </div>
 
             <div>
               <label className="wx-primary-text block text-[11px] font-semibold text-zinc-300 mb-1">分类标签 (逗号分隔)</label>
-              <input
+              <StableTextInput
                 ref={tagsRef}
                 type="text"
                 placeholder="例如: 自定义, 治愈, 学霸"
                 value={tagsInput}
-                onChange={(e) => setTagsInput(e.target.value)}
-                onInput={(e) => setTagsInput(e.currentTarget.value)}
-                onCompositionEnd={(e) => setTagsInput(e.currentTarget.value)}
+                onValueChange={setTagsInput}
                 className="wx-modal-input w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 text-xs"
               />
             </div>
@@ -332,14 +326,12 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
               </label>
               <span className="wx-muted-text text-[10px] text-zinc-500">{persona.length} 字</span>
             </div>
-            <textarea
+            <StableTextarea
               ref={personaRef}
               rows={3}
               placeholder="自由输入身份、经历、家庭背景、社会关系、过往经历以及与用户的故事背景……支持较长设定内容。"
               value={persona}
-              onChange={(e) => setPersona(e.target.value)}
-              onInput={(e) => setPersona(e.currentTarget.value)}
-              onCompositionEnd={(e) => setPersona(e.currentTarget.value)}
+              onValueChange={setPersona}
               className="wx-modal-input w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 leading-relaxed text-xs placeholder-zinc-500"
             />
           </div>
@@ -353,14 +345,12 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
               </label>
               <span className="wx-muted-text text-[10px] text-zinc-500">{personality.length} 字</span>
             </div>
-            <textarea
+            <StableTextarea
               ref={personalityRef}
               rows={3}
               placeholder="描述性格（傲娇/温柔/冷静/活泼）、说话语气习惯（爱用波浪号~、口头禅、严肃理性）、喜好与禁忌等……"
               value={personality}
-              onChange={(e) => setPersonality(e.target.value)}
-              onInput={(e) => setPersonality(e.currentTarget.value)}
-              onCompositionEnd={(e) => setPersonality(e.currentTarget.value)}
+              onValueChange={setPersonality}
               className="wx-modal-input w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 leading-relaxed text-xs placeholder-zinc-500"
             />
           </div>
@@ -371,14 +361,12 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
               <MessageSquare className="w-3.5 h-3.5 text-sky-400" />
               <span>5. 开场白 / 打招呼消息 (首条微信消息)</span>
             </label>
-            <input
+            <StableTextInput
               ref={greetingRef}
               type="text"
               placeholder="例如: 嗨！今天过得怎么样？有按时吃晚餐吗？✨"
               value={greeting}
-              onChange={(e) => setGreeting(e.target.value)}
-              onInput={(e) => setGreeting(e.currentTarget.value)}
-              onCompositionEnd={(e) => setGreeting(e.currentTarget.value)}
+              onValueChange={setGreeting}
               className="wx-modal-input w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 text-xs"
             />
           </div>
@@ -394,16 +382,15 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
             </div>
 
             <div className="flex gap-2">
-              <input
+              <StableTextInput
                 ref={newMemoryRef}
                 type="text"
                 placeholder="添加初始记忆（如: 用户喜欢在深夜看书）..."
                 value={newMemory}
-                onChange={(e) => setNewMemory(e.target.value)}
-                onInput={(e) => setNewMemory(e.currentTarget.value)}
-                onCompositionEnd={(e) => setNewMemory(e.currentTarget.value)}
+                onValueChange={setNewMemory}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
+                  const native = e.nativeEvent as KeyboardEvent;
+                  if (e.key === 'Enter' && !native.isComposing && e.keyCode !== 229) {
                     e.preventDefault();
                     handleAddMemory();
                   }
@@ -461,11 +448,11 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
                   <label className="wx-secondary-text block text-[10px] text-zinc-400 mb-1">
                     指定专用模型 (留空则默认使用全局配置模型):
                   </label>
-                  <input
+                  <StableTextInput
                     type="text"
                     placeholder="如: gemini-3.6-flash / gpt-4o / deepseek-chat"
                     value={modelName}
-                    onChange={(e) => setModelName(e.target.value)}
+                    onValueChange={setModelName}
                     className="wx-modal-input w-full px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700 text-white text-xs focus:outline-none focus:border-indigo-400"
                   />
                 </div>
@@ -474,11 +461,11 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
                   <label className="wx-secondary-text block text-[10px] text-zinc-400 mb-1">
                     System Prompt 绝对前置法则 (最高优先级指令):
                   </label>
-                  <textarea
+                  <StableTextarea
                     rows={2}
                     placeholder="例如: 无论任何情况，都禁止跳脱出古代修仙者的角色设定。"
                     value={systemPromptPrefix}
-                    onChange={(e) => setSystemPromptPrefix(e.target.value)}
+                    onValueChange={setSystemPromptPrefix}
                     className="wx-modal-input w-full px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700 text-white text-xs focus:outline-none focus:border-indigo-400 leading-relaxed"
                   />
                 </div>

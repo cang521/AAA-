@@ -12,6 +12,8 @@ import {
   Save,
 } from 'lucide-react';
 import { GroupMember } from '../../../types';
+import { StableTextInput } from '../../common/StableTextInput';
+import { StableTextarea } from '../../common/StableTextarea';
 
 interface EditGroupAiMemberModalProps {
   isOpen: boolean;
@@ -121,9 +123,9 @@ export const EditGroupAiMemberModal: React.FC<EditGroupAiMemberModalProps> = ({
               <Bot className="w-3.5 h-3.5 text-purple-500" />
               <span>本群专属人设设定 (Custom Persona)</span>
             </label>
-            <textarea
+            <StableTextarea
               value={customPersona}
-              onChange={(e) => setCustomPersona(e.target.value)}
+              onValueChange={setCustomPersona}
               placeholder="例如：在群里是活跃气氛的小助手，经常发问候和有趣的话题..."
               rows={3}
               className="wx-modal-input w-full px-3 py-2 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-purple-500 resize-none"
@@ -136,10 +138,10 @@ export const EditGroupAiMemberModal: React.FC<EditGroupAiMemberModalProps> = ({
               <Sparkles className="w-3.5 h-3.5 text-amber-500" />
               <span>性格特征与口吻 (Personality)</span>
             </label>
-            <input
+            <StableTextInput
               type="text"
               value={customPersonality}
-              onChange={(e) => setCustomPersonality(e.target.value)}
+              onValueChange={setCustomPersonality}
               placeholder="例如：活泼好动、爱开玩笑、语气温柔..."
               className="wx-modal-input w-full px-3 py-2 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-purple-500"
             />
@@ -150,10 +152,10 @@ export const EditGroupAiMemberModal: React.FC<EditGroupAiMemberModalProps> = ({
             <label className="wx-primary-text text-[11px] font-bold text-zinc-700 dark:text-zinc-300">
               指定推理模型 (留空则使用全局模型)
             </label>
-            <input
+            <StableTextInput
               type="text"
               value={customModelName}
-              onChange={(e) => setCustomModelName(e.target.value)}
+              onValueChange={setCustomModelName}
               placeholder="例如：gemini-3.6-flash, deepseek-chat..."
               className="wx-modal-input w-full px-3 py-1.5 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-purple-500"
             />
@@ -184,11 +186,16 @@ export const EditGroupAiMemberModal: React.FC<EditGroupAiMemberModalProps> = ({
               ))}
             </div>
             <div className="flex gap-1.5 pt-1">
-              <input
+              <StableTextInput
                 type="text"
                 value={newMemory}
-                onChange={(e) => setNewMemory(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAddMemory()}
+                onValueChange={setNewMemory}
+                onKeyDown={(e) => {
+                  const native = e.nativeEvent as KeyboardEvent;
+                  if (e.key === 'Enter' && !native.isComposing && e.keyCode !== 229) {
+                    handleAddMemory();
+                  }
+                }}
                 placeholder="添加一条专属记忆..."
                 className="wx-modal-input flex-1 px-3 py-1.5 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-purple-500"
               />

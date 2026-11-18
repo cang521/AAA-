@@ -33,6 +33,7 @@ import { proactiveGate } from '../../lib/proactive/ProactiveGate';
 import { proactiveScheduler } from '../../lib/proactive/ProactiveScheduler';
 import { loadCharacters, loadUserProfile, loadApiConfig } from '../../lib/storage';
 import { LifeStatePanel } from './LifeStatePanel';
+import { StableTextInput } from '../common/StableTextInput';
 
 interface ProactiveSettingsPanelProps {
   onBack: () => void;
@@ -747,11 +748,11 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
               {settings.followupTopics.enabled && (
                 <div className="pt-2 border-t border-zinc-800/80 space-y-2 text-xs">
                   <div className="flex gap-2">
-                    <input
+                    <StableTextInput
                       type="text"
                       placeholder="跟进事项（如：明天面试）"
                       value={newFollowupTitle}
-                      onChange={(e) => setNewFollowupTitle(e.target.value)}
+                      onValueChange={setNewFollowupTitle}
                       className="flex-1 px-2.5 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-white text-xs"
                     />
                     <input
@@ -1268,11 +1269,11 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
               </button>
             </div>
 
-            <input
+            <StableTextInput
               type="text"
               placeholder="事件名称（如：妈妈的生日）"
               value={newEventTitle}
-              onChange={(e) => setNewEventTitle(e.target.value)}
+              onValueChange={setNewEventTitle}
               className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white text-xs"
             />
 

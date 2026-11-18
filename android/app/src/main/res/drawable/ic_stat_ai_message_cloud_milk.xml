@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Monochrome fluffy cloud silhouette with sparkle cutout for cloud_milk preset -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M6.8,19L17.4,19A4.1,4.1 0 0,0 18.2,10.9A5.4,5.4 0 0,0 8.1,8.1A4.5,4.5 0 0,0 4.2,12.5A3.9,3.9 0 0,0 6.8,19ZM12,10.2L12.85,12.45L15.1,13.3L12.85,14.15L12,16.4L11.15,14.15L8.9,13.3L11.15,12.45Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M19.2,4.0L19.8,5.6L21.4,6.2L19.8,6.8L19.2,8.4L18.6,6.8L17.0,6.2L18.6,5.6Z" />
+</vector>

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Upload, ZoomIn, ZoomOut, RotateCw, Check, Image as ImageIcon } from 'lucide-react';
 import { CLOUD_MILK_DESKTOP_WALLPAPER, DEFAULT_AI_AVATAR, DEFAULT_USER_AVATAR } from '../lib/storage';
+import { StableTextInput } from './common/StableTextInput';
 
 interface IconCropperModalProps {
   isOpen: boolean;
@@ -136,14 +137,14 @@ export const IconCropperModal: React.FC<IconCropperModalProps> = ({
           {/* URL Input */}
           <div className="space-y-1">
             <span className="block text-[11px] text-zinc-400">或输入图片 URL:</span>
-            <input
+            <StableTextInput
               type="text"
               placeholder="https://..."
               value={customUrlInput}
-              onChange={(e) => {
-                setCustomUrlInput(e.target.value);
-                if (e.target.value.trim()) {
-                  setImageSrc(e.target.value.trim());
+              onValueChange={(nextVal) => {
+                setCustomUrlInput(nextVal);
+                if (nextVal.trim()) {
+                  setImageSrc(nextVal.trim());
                   setZoom(1);
                   setOffsetX(0);
                   setOffsetY(0);

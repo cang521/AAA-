@@ -28,6 +28,8 @@ import {
   Link,
   Unlink,
 } from 'lucide-react';
+import { StableTextInput } from '../common/StableTextInput';
+import { StableTextarea } from '../common/StableTextarea';
 
 interface WorldBookAppProps {
   onBackToLauncher: () => void;
@@ -344,11 +346,11 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
             {/* Search and Prompt Notice */}
             <div className="relative">
               <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-2.5" />
-              <input
+              <StableTextInput
                 type="text"
                 placeholder="搜索世界书名称、标签或描述..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onValueChange={setSearchQuery}
                 className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-zinc-900 border border-zinc-800 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
               />
             </div>
@@ -670,42 +672,36 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
             <div className="space-y-2.5 text-xs max-h-96 overflow-y-auto pr-1">
               <div>
                 <label className="block text-zinc-400 mb-1">世界书标题 / 名称</label>
-                <input
+                <StableTextInput
                   ref={formTitleRef}
                   type="text"
                   placeholder="例如: 赛博夜城·纪元2088 / 修真长生界"
                   value={formTitle}
-                  onChange={(e) => setFormTitle(e.target.value)}
-                  onInput={(e) => setFormTitle(e.currentTarget.value)}
-                  onCompositionEnd={(e) => setFormTitle(e.currentTarget.value)}
+                  onValueChange={setFormTitle}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
               <div>
                 <label className="block text-zinc-400 mb-1">类型标签 (以逗号分隔)</label>
-                <input
+                <StableTextInput
                   ref={formTagsRef}
                   type="text"
                   placeholder="例如: 赛博朋克, 科幻, 义体科技"
                   value={formTags}
-                  onChange={(e) => setFormTags(e.target.value)}
-                  onInput={(e) => setFormTags(e.currentTarget.value)}
-                  onCompositionEnd={(e) => setFormTags(e.currentTarget.value)}
+                  onValueChange={setFormTags}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
               <div>
                 <label className="block text-zinc-400 mb-1">一句话世界简介</label>
-                <input
+                <StableTextInput
                   ref={formDescriptionRef}
                   type="text"
                   placeholder="例如: 霓虹闪烁的巨型都会，大企业掌控一切的阴暗未来。"
                   value={formDescription}
-                  onChange={(e) => setFormDescription(e.target.value)}
-                  onInput={(e) => setFormDescription(e.currentTarget.value)}
-                  onCompositionEnd={(e) => setFormDescription(e.currentTarget.value)}
+                  onValueChange={setFormDescription}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -722,14 +718,12 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
                     <span>{isAiGenerating ? 'AI构想中...' : 'AI 一键扩写设定'}</span>
                   </button>
                 </div>
-                <textarea
+                <StableTextarea
                   ref={formWorldSettingRef}
                   rows={5}
                   placeholder="详细描述该世界观的历史背景、阶级阵营、超自然规则、科技水平与日常用语规范..."
                   value={formWorldSetting}
-                  onChange={(e) => setFormWorldSetting(e.target.value)}
-                  onInput={(e) => setFormWorldSetting(e.currentTarget.value)}
-                  onCompositionEnd={(e) => setFormWorldSetting(e.currentTarget.value)}
+                  onValueChange={setFormWorldSetting}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-indigo-500 leading-relaxed font-sans"
                 />
               </div>
@@ -835,28 +829,24 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
             <div className="space-y-2.5 text-xs">
               <div>
                 <label className="block text-zinc-400 mb-1">专有名词 / 关键词</label>
-                <input
+                <StableTextInput
                   ref={entryKeywordRef}
                   type="text"
                   placeholder="例如: 灵力结晶 / 义体过载 / 浮空城"
                   value={entryKeyword}
-                  onChange={(e) => setEntryKeyword(e.target.value)}
-                  onInput={(e) => setEntryKeyword(e.currentTarget.value)}
-                  onCompositionEnd={(e) => setEntryKeyword(e.currentTarget.value)}
+                  onValueChange={setEntryKeyword}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
               <div>
                 <label className="block text-zinc-400 mb-1">词条详细设定内容</label>
-                <textarea
+                <StableTextarea
                   ref={entryContentRef}
                   rows={4}
                   placeholder="解释此名词在世界观中的定义、来源、作用以及对人物的影响..."
                   value={entryContent}
-                  onChange={(e) => setEntryContent(e.target.value)}
-                  onInput={(e) => setEntryContent(e.currentTarget.value)}
-                  onCompositionEnd={(e) => setEntryContent(e.currentTarget.value)}
+                  onValueChange={setEntryContent}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-indigo-500 leading-relaxed font-sans"
                 />
               </div>

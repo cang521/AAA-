@@ -117,10 +117,15 @@ html[data-theme="dark"] .wechat-app[data-wechat-theme="classic"],
   background-color: var(--wx-surface-hover) !important;
 }
 
+.wechat-app[data-wechat-theme="classic"] .wx-header-cta,
+.wechat-app[data-wechat-theme="classic"] .wx-header-cta svg,
+.wechat-app[data-wechat-theme="classic"] .wx-header-cta span {
+  color: #FFFFFF !important;
+}
+
 .wechat-app[data-wechat-theme="classic"] .wx-header-cta {
   background-color: var(--wechat-green) !important;
   background-image: none !important;
-  color: #FFFFFF !important;
   border-radius: 0.375rem !important;
   box-shadow: none !important;
 }
@@ -254,6 +259,12 @@ html[data-theme="dark"] .wechat-app[data-wechat-theme="classic"],
   background-color: var(--wechat-green) !important;
   color: #FFFFFF !important;
   border-radius: 0.4375rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-icon-box-new-friend svg,
+.wechat-app[data-wechat-theme="classic"] .wx-icon-box-group svg {
+  color: #FFFFFF !important;
+  fill: currentColor;
 }
 
 /* 6. Contacts Page */
@@ -559,10 +570,15 @@ html[data-theme="dark"] .wechat-app[data-wechat-theme="classic"] .wx-quote-previ
   box-shadow: none !important;
 }
 
+.wechat-app[data-wechat-theme="classic"] .wx-btn-primary,
+.wechat-app[data-wechat-theme="classic"] .wx-btn-primary svg,
+.wechat-app[data-wechat-theme="classic"] .wx-btn-primary span {
+  color: #FFFFFF !important;
+}
+
 .wechat-app[data-wechat-theme="classic"] .wx-btn-primary {
   background-color: var(--wx-green) !important;
   background-image: none !important;
-  color: #FFFFFF !important;
   border-radius: 0.375rem !important;
 }
 

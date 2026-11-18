@@ -22,19 +22,36 @@ import {
   User,
   Shield,
   MessageCircle,
+  Plus,
 } from 'lucide-react';
 import {
   GroupChat,
   GroupChatMessage,
   GroupMember,
+  GroupPollPayload,
+  GroupRandomDrawPayload,
+  GroupRelayPayload,
   AiCharacter,
   UserProfile,
   ApiConfig,
   ApiLog,
 } from '../../../types';
 import { GroupSettingsModal } from './GroupSettingsModal';
+import { GroupAvatar } from './GroupAvatar';
 import { syncGroupToServer } from '../../../lib/groupService';
 import { PressableButton } from '../../ui/interaction';
+import { useStableTextEditing } from '../../../hooks/useStableTextEditing';
+import { compressImage } from '../../../lib/imageCompressor';
+import { appendGroupRelayEntry, castGroupPollVote } from '../../../lib/groupTools';
+import { onGroupInteractionSocialTick } from '../../../lib/social/socialEngine';
+import { GroupPlusMenuSheet } from './tools/GroupPlusMenuSheet';
+import { GroupRelayModal } from './tools/GroupRelayModal';
+import { GroupRelayCard } from './tools/GroupRelayCard';
+import { GroupPollModal } from './tools/GroupPollModal';
+import { GroupPollCard } from './tools/GroupPollCard';
+import { GroupRandomDrawModal } from './tools/GroupRandomDrawModal';
+import { GroupRandomDrawCard } from './tools/GroupRandomDrawCard';
+import { runAiPollVotesForGroup } from './tools/groupPollAiHelper';
 
 interface GroupChatViewProps {
   group: GroupChat;
@@ -65,17 +82,42 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   const [typingAiName, setTypingAiName] = useState<string | null>(null);
   const [activeLongPressMsg, setActiveLongPressMsg] = useState<GroupChatMessage | null>(null);
   const [showCoTModal, setShowCoTModal] = useState<string | null>(null);
+  const [showPlusMenu, setShowPlusMenu] = useState(false);
+  const [showRelayModal, setShowRelayModal] = useState(false);
+  const [showPollModal, setShowPollModal] = useState(false);
+  const [showRandomDrawModal, setShowRandomDrawModal] = useState(false);
+  const [aiVotingPollMsgId, setAiVotingPollMsgId] = useState<string | null>(null);
+  const [zoomedImageUrl, setZoomedImageUrl] = useState<string | null>(null);
 
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const isComposingRef = useRef(false);
-  const lastCompositionEndTimestampRef = useRef<number>(0);
+  const webPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const lastSendTimestampRef = useRef<number>(0);
-  const aiChainCountRef = useRef<number>(0);
+  const messagesRef = useRef<GroupChatMessage[]>(group.messages || []);
+
+  const syncInputValue = useCallback((nextValue: string) => {
+    setInputText((prev) => (prev === nextValue ? prev : nextValue));
+    if (nextValue.endsWith('@')) {
+      setShowMentionPicker(true);
+    }
+  }, []);
+
+  const composerEditor = useStableTextEditing<HTMLInputElement>({
+    value: inputText,
+    onValueChange: syncInputValue,
+    externalRef: inputRef,
+  });
+
+  const clearComposerInput = useCallback(() => {
+    composerEditor.clearValue('');
+    setInputText('');
+  }, [composerEditor]);
 
   // Sync messages from group prop if changed externally
   useEffect(() => {
-    setMessages(group.messages || []);
+    const next = group.messages || [];
+    messagesRef.current = next;
+    setMessages(next);
   }, [group.id, group.messages?.length]);
 
   const scrollToBottom = useCallback((smooth = false) => {
@@ -94,16 +136,53 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   }, [group.id]);
 
   // Save updated messages into group
-  const persistMessages = (newMessages: GroupChatMessage[]) => {
-    setMessages(newMessages);
-    const updatedGroup = {
-      ...group,
-      messages: newMessages,
-      updatedAt: Date.now(),
-    };
-    onUpdateGroup(updatedGroup);
-    syncGroupToServer(updatedGroup);
-  };
+  const persistMessages = useCallback(
+    (newMessages: GroupChatMessage[]) => {
+      messagesRef.current = newMessages;
+      setMessages(newMessages);
+      const updatedGroup = {
+        ...group,
+        messages: newMessages,
+        updatedAt: Date.now(),
+      };
+      onUpdateGroup(updatedGroup);
+      syncGroupToServer(updatedGroup);
+    },
+    [group, onUpdateGroup]
+  );
+
+  const scheduleGroupSocialTick = useCallback(
+    (triggerId: string, latestMessages: GroupChatMessage[]) => {
+      const updatedGroupSnapshot: GroupChat = {
+        ...group,
+        messages: latestMessages,
+      };
+      void onGroupInteractionSocialTick({
+        group: updatedGroupSnapshot,
+        triggerId,
+        allCharacters,
+        userProfile,
+        apiConfig,
+        onAddApiLog,
+        onGroupRandomMessage: (targetGroupId, aiChar, text) => {
+          if (targetGroupId !== group.id || !text.trim()) return;
+          const randomMsg: GroupChatMessage = {
+            id: 'gmsg_soc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            groupId: group.id,
+            senderId: aiChar.id,
+            senderName: aiChar.name,
+            senderAvatar: aiChar.avatar,
+            senderType: 'ai',
+            text,
+            timestamp: Date.now(),
+          };
+          persistMessages([...messagesRef.current, randomMsg]);
+          scrollToBottom(true);
+        },
+      });
+    },
+    [allCharacters, apiConfig, group, onAddApiLog, persistMessages, scrollToBottom, userProfile]
+  );
 
   // Helper to extract @mentions from message text
   const extractMentionedIds = (text: string): string[] => {
@@ -207,6 +286,11 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
         persistMessages(updated);
         scrollToBottom(true);
 
+        // Evaluate low-frequency AI-to-AI social progression when genuine group interaction occurred
+        if (chainDepth === 0) {
+          scheduleGroupSocialTick(`grp_tick_${aiMsg.id}`, updated);
+        }
+
         // Check if this AI @-mentioned another AI member in its response
         if (chainDepth < 1 && data.mentionedMemberIds && data.mentionedMemberIds.length > 0) {
           const nextTarget = data.mentionedMemberIds.find(
@@ -231,7 +315,8 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     const now = Date.now();
     if (now - lastSendTimestampRef.current < 400) return;
 
-    const text = inputText.trim();
+    const rawText = inputRef.current ? inputRef.current.value : inputText;
+    const text = rawText.trim();
     if (!text) return;
     lastSendTimestampRef.current = now;
 
@@ -260,7 +345,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
 
     const newHistory = [...messages, userMsg];
     persistMessages(newHistory);
-    setInputText('');
+    clearComposerInput();
     setQuoteMsg(null);
     setShowMentionPicker(false);
     scrollToBottom(true);
@@ -305,6 +390,200 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     setActiveLongPressMsg(null);
   };
 
+  // ==================== Group '+' Tool Handlers ====================
+  const createUserToolMessage = (
+    overrides: Partial<GroupChatMessage> & { text: string; messageType: GroupChatMessage['messageType'] }
+  ): GroupChatMessage => ({
+    id: 'gmsg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+    groupId: group.id,
+    senderId: 'user_main',
+    senderName: userProfile.name || '小清',
+    senderAvatar: userProfile.avatar || DEFAULT_USER_AVATAR,
+    senderType: 'human',
+    timestamp: Date.now(),
+    ...overrides,
+  });
+
+  const handlePublishRelay = (payload: GroupRelayPayload) => {
+    const msg = createUserToolMessage({
+      messageType: 'relay',
+      text: `[群接龙] ${payload.title}`,
+      payload,
+    });
+    const next = [...messagesRef.current, msg];
+    persistMessages(next);
+    scrollToBottom(true);
+    scheduleGroupSocialTick(`grp_relay_${msg.id}`, next);
+  };
+
+  const handleJoinRelay = (msgId: string, content: string) => {
+    const targetMsg = messagesRef.current.find((m) => m.id === msgId);
+    if (!targetMsg || targetMsg.messageType !== 'relay' || !targetMsg.payload) {
+      return { error: '未找到该群接龙' };
+    }
+    const res = appendGroupRelayEntry(
+      targetMsg.payload as GroupRelayPayload,
+      {
+        id: 'user_main',
+        name: userProfile.name || '小清',
+        avatar: userProfile.avatar || DEFAULT_USER_AVATAR,
+      },
+      content
+    );
+    if (res.error) return { error: res.error };
+
+    const next = messagesRef.current.map((m) =>
+      m.id === msgId ? { ...m, payload: res.payload } : m
+    );
+    persistMessages(next);
+    return {};
+  };
+
+  const handleCloseRelay = (msgId: string) => {
+    const next = messagesRef.current.map((m) => {
+      if (m.id === msgId && m.messageType === 'relay' && m.payload) {
+        return { ...m, payload: { ...(m.payload as GroupRelayPayload), closed: true } };
+      }
+      return m;
+    });
+    persistMessages(next);
+  };
+
+  const handlePublishPoll = (payload: GroupPollPayload) => {
+    const msg = createUserToolMessage({
+      messageType: 'poll',
+      text: `[群投票] ${payload.title}`,
+      payload,
+    });
+    const next = [...messagesRef.current, msg];
+    persistMessages(next);
+    scrollToBottom(true);
+    scheduleGroupSocialTick(`grp_poll_${msg.id}`, next);
+  };
+
+  const handleCastPollVote = (msgId: string, selectedOptionIds: string[]) => {
+    const targetMsg = messagesRef.current.find((m) => m.id === msgId);
+    if (!targetMsg || targetMsg.messageType !== 'poll' || !targetMsg.payload) {
+      return { error: '未找到该投票' };
+    }
+    const res = castGroupPollVote(
+      targetMsg.payload as GroupPollPayload,
+      { id: 'user_main', name: userProfile.name || '小清' },
+      selectedOptionIds
+    );
+    if (res.error) return { error: res.error };
+    const next = messagesRef.current.map((m) =>
+      m.id === msgId ? { ...m, payload: res.payload } : m
+    );
+    persistMessages(next);
+    return {};
+  };
+
+  const handleClosePoll = (msgId: string) => {
+    const next = messagesRef.current.map((m) => {
+      if (m.id === msgId && m.messageType === 'poll' && m.payload) {
+        return { ...m, payload: { ...(m.payload as GroupPollPayload), closed: true } };
+      }
+      return m;
+    });
+    persistMessages(next);
+  };
+
+  const handleRequestAiPollVotes = async (msgId: string) => {
+    if (aiVotingPollMsgId) return;
+    const targetMsg = messagesRef.current.find((m) => m.id === msgId);
+    if (!targetMsg || targetMsg.messageType !== 'poll' || !targetMsg.payload) return;
+
+    setAiVotingPollMsgId(msgId);
+    try {
+      const { updatedPayload, comments } = await runAiPollVotesForGroup({
+        group,
+        pollPayload: targetMsg.payload as GroupPollPayload,
+        allCharacters,
+        userProfile,
+        apiConfig,
+        onAddApiLog,
+      });
+
+      const updatedMsgs = messagesRef.current.map((m) =>
+        m.id === msgId ? { ...m, payload: updatedPayload } : m
+      );
+
+      // Append optional brief AI comments after voting
+      const commentMessages: GroupChatMessage[] = comments.map((c, idx) => ({
+        id: `gmsg_pv_${Date.now()}_${idx}`,
+        groupId: group.id,
+        senderId: c.aiMemberId,
+        senderName: c.aiName,
+        senderAvatar: c.aiAvatar,
+        senderType: 'ai',
+        text: c.comment,
+        timestamp: Date.now() + idx * 50,
+      }));
+
+      persistMessages([...updatedMsgs, ...commentMessages]);
+      if (commentMessages.length > 0) scrollToBottom(true);
+    } finally {
+      setAiVotingPollMsgId(null);
+    }
+  };
+
+  const handlePublishRandomDraw = (payload: GroupRandomDrawPayload) => {
+    const winnersSummary = payload.winners.map((w) => w.memberName).join('、');
+    const msg = createUserToolMessage({
+      messageType: 'random_draw',
+      text: `[随机抽人] 抽中：${winnersSummary}`,
+      payload,
+    });
+    const next = [...messagesRef.current, msg];
+    persistMessages(next);
+    scrollToBottom(true);
+    scheduleGroupSocialTick(`grp_draw_${msg.id}`, next);
+  };
+
+  const handleSendGroupPhotoDataUrl = (dataUrl: string) => {
+    const msg = createUserToolMessage({
+      messageType: 'image',
+      imageUrl: dataUrl,
+      text: '[图片]',
+    });
+    const next = [...messagesRef.current, msg];
+    persistMessages(next);
+    scrollToBottom(true);
+    setShowPlusMenu(false);
+    setTimeout(() => {
+      triggerAiResponse(next, undefined, 0);
+    }, 700);
+  };
+
+  const handleTriggerWebFilePicker = (useCameraCapture: boolean) => {
+    const inputEl = webPhotoInputRef.current;
+    if (!inputEl) return;
+    if (useCameraCapture) {
+      inputEl.setAttribute('capture', 'environment');
+    } else {
+      inputEl.removeAttribute('capture');
+    }
+    inputEl.click();
+  };
+
+  const handleWebPhotoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const compressed = await compressImage(file, {
+        maxWidth: 1280,
+        maxHeight: 1280,
+        quality: 0.82,
+        maxFileSizeBytes: 320 * 1024,
+      });
+      handleSendGroupPhotoDataUrl(compressed.dataUrl);
+    } catch (err) {
+      console.warn('Group photo compression error:', err);
+    }
+  };
+
   return (
     <div
       data-global-font-excluded="true"
@@ -312,18 +591,29 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     >
       {/* Top Header */}
       <div className="wx-header h-12 bg-[#EDEDED] dark:bg-zinc-900 border-b border-zinc-300/70 dark:border-zinc-800 px-3 flex items-center justify-between shrink-0 z-20">
-        <div className="flex items-center gap-1 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0">
           <button
             onClick={onBack}
-            className="wx-header-back p-1 -ml-1 text-zinc-800 dark:text-zinc-200 hover:text-emerald-600 transition flex items-center"
+            className="wx-header-back p-1 -ml-1 text-zinc-800 dark:text-zinc-200 hover:text-emerald-600 transition flex items-center shrink-0"
           >
             <ChevronLeft className="w-6 h-6" />
           </button>
-          <div className="min-w-0 flex items-center gap-1.5">
-            <h2 className="wx-header-title text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate max-w-[180px]">
+          <GroupAvatar
+            members={group.members}
+            avatarMode={group.avatarMode}
+            customAvatar={group.customAvatar}
+            legacyAvatar={group.avatar}
+            allCharacters={allCharacters}
+            userProfile={userProfile}
+            size={30}
+            alt={group.name}
+            className="border border-zinc-300/60 dark:border-zinc-700"
+          />
+          <div className="min-w-0 flex items-center gap-1">
+            <h2 className="wx-header-title text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate max-w-[160px]">
               {group.name}
             </h2>
-            <span className="wx-muted-text text-xs font-semibold text-zinc-500">
+            <span className="wx-muted-text text-xs font-semibold text-zinc-500 shrink-0">
               ({group.members.length})
             </span>
           </div>
@@ -414,7 +704,14 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
                 title={msg.senderType === 'ai' || msg.thinkingProcess ? '点击查看 AI 思考链 (CoT)' : `点击快捷@${msg.senderName}`}
               >
                 <img
-                  src={msg.senderAvatar}
+                  src={
+                    msg.senderAvatar ||
+                    group.members.find((m) => m.id === msg.senderId)?.avatar ||
+                    (isMe
+                      ? userProfile.avatar
+                      : allCharacters.find((c) => c.id === msg.senderId)?.avatar) ||
+                    DEFAULT_USER_AVATAR
+                  }
                   alt={msg.senderName}
                   className="wx-avatar w-9 h-9 rounded-lg object-cover shadow-sm border border-black/5 dark:border-white/10"
                 />
@@ -461,30 +758,89 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
                   </div>
                 )}
 
-                {/* Main Bubble */}
-                <div
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setActiveLongPressMsg(msg);
-                  }}
-                  className={`wx-message-bubble relative px-3.5 py-2 rounded-2xl text-[13px] leading-relaxed break-words shadow-sm ${
-                    isMe
-                      ? 'wx-message-bubble-user bg-[#95EC69] dark:bg-emerald-600 text-black dark:text-white rounded-tr-none'
-                      : hasMentionMe
-                      ? 'wx-message-bubble-ai bg-amber-50 dark:bg-amber-950/40 text-zinc-900 dark:text-zinc-100 border border-amber-400 rounded-tl-none ring-1 ring-amber-400/40'
-                      : 'wx-message-bubble-ai bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-black/5 dark:border-white/5 rounded-tl-none'
-                  }`}
-                >
-                  {/* Mention Badge if targeting user */}
-                  {hasMentionMe && !isMe && (
-                    <div className="text-[9px] font-bold text-amber-600 dark:text-amber-400 mb-0.5 flex items-center gap-0.5">
-                      <AtSign className="w-2.5 h-2.5" />
-                      <span>提到了你</span>
-                    </div>
-                  )}
+                {/* Main Bubble or Structured Card */}
+                {msg.messageType === 'relay' && msg.payload ? (
+                  <div
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setActiveLongPressMsg(msg);
+                    }}
+                  >
+                    <GroupRelayCard
+                      payload={msg.payload as GroupRelayPayload}
+                      currentUserId="user_main"
+                      canClose={isMe}
+                      onJoinRelay={(content) => handleJoinRelay(msg.id, content)}
+                      onCloseRelay={() => handleCloseRelay(msg.id)}
+                    />
+                  </div>
+                ) : msg.messageType === 'poll' && msg.payload ? (
+                  <div
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setActiveLongPressMsg(msg);
+                    }}
+                  >
+                    <GroupPollCard
+                      payload={msg.payload as GroupPollPayload}
+                      currentUserId="user_main"
+                      canManage={isMe}
+                      hasAiMembers={group.members.some((m) => m.memberType === 'ai' && !m.isMuted)}
+                      isAiVoting={aiVotingPollMsgId === msg.id}
+                      onCastVote={(optionIds) => handleCastPollVote(msg.id, optionIds)}
+                      onClosePoll={() => handleClosePoll(msg.id)}
+                      onRequestAiVotes={() => handleRequestAiPollVotes(msg.id)}
+                    />
+                  </div>
+                ) : msg.messageType === 'random_draw' && msg.payload ? (
+                  <div
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setActiveLongPressMsg(msg);
+                    }}
+                  >
+                    <GroupRandomDrawCard payload={msg.payload as GroupRandomDrawPayload} />
+                  </div>
+                ) : msg.messageType === 'image' && msg.imageUrl ? (
+                  <div
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setActiveLongPressMsg(msg);
+                    }}
+                    onClick={() => setZoomedImageUrl(msg.imageUrl || null)}
+                    className="rounded-2xl overflow-hidden border border-black/10 dark:border-white/10 shadow-sm cursor-pointer max-w-[210px] bg-white dark:bg-zinc-900"
+                  >
+                    <img
+                      src={msg.imageUrl}
+                      alt="群聊图片"
+                      className="w-full max-h-60 object-cover block"
+                    />
+                  </div>
+                ) : (
+                  <div
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setActiveLongPressMsg(msg);
+                    }}
+                    className={`wx-message-bubble relative px-3.5 py-2 rounded-2xl text-[13px] leading-relaxed break-words shadow-sm ${
+                      isMe
+                        ? 'wx-message-bubble-user bg-[#95EC69] dark:bg-emerald-600 text-black dark:text-white rounded-tr-none'
+                        : hasMentionMe
+                        ? 'wx-message-bubble-ai bg-amber-50 dark:bg-amber-950/40 text-zinc-900 dark:text-zinc-100 border border-amber-400 rounded-tl-none ring-1 ring-amber-400/40'
+                        : 'wx-message-bubble-ai bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-black/5 dark:border-white/5 rounded-tl-none'
+                    }`}
+                  >
+                    {/* Mention Badge if targeting user */}
+                    {hasMentionMe && !isMe && (
+                      <div className="text-[9px] font-bold text-amber-600 dark:text-amber-400 mb-0.5 flex items-center gap-0.5">
+                        <AtSign className="w-2.5 h-2.5" />
+                        <span>提到了你</span>
+                      </div>
+                    )}
 
-                  <p className="whitespace-pre-wrap">{msg.text}</p>
-                </div>
+                    <p className="whitespace-pre-wrap">{msg.text}</p>
+                  </div>
+                )}
               </div>
             </div>
           </React.Fragment>
@@ -560,51 +916,27 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
       )}
 
       {/* Input Bar */}
-      <div className="wx-composer p-2.5 bg-[#F7F7F7] dark:bg-zinc-900 border-t border-zinc-300/70 dark:border-zinc-800 flex items-center gap-2 shrink-0">
+      <div className="wx-composer p-2.5 bg-[#F7F7F7] dark:bg-zinc-900 border-t border-zinc-300/70 dark:border-zinc-800 flex items-center gap-1.5 shrink-0">
         <PressableButton
-          onClick={() => setShowMentionPicker(!showMentionPicker)}
+          onClick={() => {
+            setShowPlusMenu(false);
+            setShowMentionPicker(!showMentionPicker);
+          }}
           title="@群成员"
-          className="wx-header-action w-8 h-8 rounded-full flex items-center justify-center text-zinc-500 hover:text-emerald-600 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition cursor-pointer"
+          className="wx-header-action w-8 h-8 rounded-full flex items-center justify-center text-zinc-500 hover:text-emerald-600 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition cursor-pointer shrink-0"
         >
           <AtSign className="w-5 h-5" />
         </PressableButton>
 
         <input
-          ref={inputRef}
+          ref={composerEditor.mergedRef}
           type="text"
           value={inputText}
-          onChange={(e) => {
-            const val = e.target.value;
-            setInputText(val);
-            if (val.endsWith('@')) {
-              setShowMentionPicker(true);
-            }
-          }}
-          onInput={(e) => {
-            const val = e.currentTarget.value;
-            setInputText(val);
-            if (val.endsWith('@')) {
-              setShowMentionPicker(true);
-            }
-          }}
-          onCompositionStart={() => {
-            isComposingRef.current = true;
-          }}
-          onCompositionEnd={(e) => {
-            isComposingRef.current = false;
-            lastCompositionEndTimestampRef.current = Date.now();
-            const val = e.currentTarget.value;
-            setInputText(val);
-            if (val.endsWith('@')) {
-              setShowMentionPicker(true);
-            }
-          }}
+          onFocus={() => setShowPlusMenu(false)}
+          {...composerEditor.eventProps}
           onKeyDown={(e) => {
-            const isComposing =
-              isComposingRef.current ||
-              (e.nativeEvent as any).isComposing ||
-              e.keyCode === 229 ||
-              Date.now() - lastCompositionEndTimestampRef.current < 60;
+            composerEditor.eventProps.onKeyDown(e);
+            const isComposing = composerEditor.isCompositionActive(e.nativeEvent);
 
             if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
               e.preventDefault();
@@ -612,19 +944,60 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
             }
           }}
           placeholder="发送群消息，输入 @ 提及成员..."
-          className="wx-composer-input flex-1 px-3.5 py-2 text-xs rounded-xl bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-300/70 dark:border-zinc-700 focus:outline-none focus:border-emerald-500"
+          className="wx-composer-input flex-1 min-w-0 px-3.5 py-2 text-xs rounded-xl bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-300/70 dark:border-zinc-700 focus:outline-none focus:border-emerald-500"
         />
 
         <PressableButton
-          onClick={handleSendMessage}
-          disabled={!inputText.trim()}
-          withRipple={false}
-          title="发送群消息"
-          className={`wx-send-button ${inputText.trim() ? 'wx-send-button--active' : ''} px-3.5 py-2 rounded-xl bg-[#07C160] hover:bg-[#06ad56] disabled:opacity-40 disabled:pointer-events-none text-white font-bold text-xs shadow-sm transition flex items-center justify-center shrink-0 cursor-pointer`}
+          onClick={() => {
+            setShowMentionPicker(false);
+            setShowPlusMenu((v) => !v);
+          }}
+          title="更多群聊工具（接龙、投票、抽人、图片）"
+          className={`wx-header-action w-8 h-8 rounded-full flex items-center justify-center transition cursor-pointer shrink-0 ${
+            showPlusMenu
+              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+              : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-800'
+          }`}
         >
-          <Send className="w-4 h-4" />
+          <Plus className="w-5 h-5" />
         </PressableButton>
+
+        {(() => {
+          const canSend = inputText.trim().length > 0;
+          return (
+            <PressableButton
+              onClick={handleSendMessage}
+              disabled={!canSend}
+              withRipple={false}
+              title="发送群消息"
+              className={`wx-send-button ${canSend ? 'wx-send-button--active' : ''} px-3 py-2 rounded-xl bg-[#07C160] hover:bg-[#06ad56] disabled:opacity-40 disabled:pointer-events-none text-white font-bold text-xs shadow-sm transition flex items-center justify-center shrink-0 cursor-pointer`}
+            >
+              <Send className="w-4 h-4" />
+            </PressableButton>
+          );
+        })()}
       </div>
+
+      {/* Group "+" Tools Sheet */}
+      {showPlusMenu && (
+        <GroupPlusMenuSheet
+          onSelectRelay={() => setShowRelayModal(true)}
+          onSelectPoll={() => setShowPollModal(true)}
+          onSelectRandomDraw={() => setShowRandomDrawModal(true)}
+          onPhotoPickedDataUrl={(dataUrl) => handleSendGroupPhotoDataUrl(dataUrl)}
+          onTriggerWebFilePicker={handleTriggerWebFilePicker}
+          onClose={() => setShowPlusMenu(false)}
+        />
+      )}
+
+      {/* Hidden Web Photo Fallback Input */}
+      <input
+        ref={webPhotoInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleWebPhotoFileChange}
+      />
 
       {/* Context / Long Press Menu Modal */}
       {activeLongPressMsg && (
@@ -696,6 +1069,44 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
               {showCoTModal}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Group Tool Modals */}
+      <GroupRelayModal
+        isOpen={showRelayModal}
+        onClose={() => setShowRelayModal(false)}
+        creator={{
+          id: 'user_main',
+          name: userProfile.name || '小清',
+          avatar: userProfile.avatar || DEFAULT_USER_AVATAR,
+        }}
+        onSubmit={handlePublishRelay}
+      />
+
+      <GroupPollModal
+        isOpen={showPollModal}
+        onClose={() => setShowPollModal(false)}
+        onSubmit={handlePublishPoll}
+      />
+
+      <GroupRandomDrawModal
+        isOpen={showRandomDrawModal}
+        onClose={() => setShowRandomDrawModal(false)}
+        members={group.members}
+        onSubmit={handlePublishRandomDraw}
+      />
+
+      {zoomedImageUrl && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4"
+          onClick={() => setZoomedImageUrl(null)}
+        >
+          <img
+            src={zoomedImageUrl}
+            alt="查看大图"
+            className="max-w-full max-h-[85vh] rounded-xl object-contain shadow-2xl"
+          />
         </div>
       )}
 

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Check, Image as ImageIcon, Palette } from 'lucide-react';
 import { AiCharacter } from '../../types';
+import { StableTextInput } from '../common/StableTextInput';
 
 interface ChatBackgroundModalProps {
   isOpen: boolean;
@@ -61,11 +62,11 @@ export const ChatBackgroundModal: React.FC<ChatBackgroundModalProps> = ({
         <div className="space-y-3 text-xs">
           <label className="wx-primary-text block text-zinc-300 font-semibold">自定义背景图片与壁纸</label>
           <div className="flex gap-2">
-            <input
+            <StableTextInput
               type="text"
               placeholder="输入在线图片 URL..."
               value={customInputUrl}
-              onChange={(e) => setCustomInputUrl(e.target.value)}
+              onValueChange={setCustomInputUrl}
               className="wx-modal-input flex-1 px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 text-xs"
             />
             <button

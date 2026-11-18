@@ -61,7 +61,15 @@ import {
   History,
   AlertCircle,
   RotateCcw,
+  Smartphone,
+  Globe2,
 } from 'lucide-react';
+import { AiPhoneViewerModal } from './social/AiPhoneViewerModal';
+import { AiRomanticSettingsSection } from './social/AiRomanticSettingsSection';
+import { AiSocialSettingsPanel } from './social/AiSocialSettingsPanel';
+import { getEffectiveRomanticState, saveRomanticState } from '../../lib/social/socialDb';
+import { onMomentPublishedSocialTick } from '../../lib/social/socialEngine';
+import { buildCharacterRomanticDefault } from '../../lib/social/relationshipRules';
 import {
   AiCharacter,
   ChatMessage,
@@ -78,6 +86,7 @@ import {
   GroupMember,
   GroupChatMessage,
   GroupJoinRequest,
+  AiRomanticState,
 } from '../../types';
 import { ImagePickerModal } from '../ImagePickerModal';
 import { CustomAiCreatorModal } from './CustomAiCreatorModal';
@@ -88,11 +97,13 @@ import { calculateCycleStats } from '../../lib/menstrual';
 import { weatherService } from '../../lib/weatherService';
 import { deviceService } from '../../lib/deviceService';
 import { systemNativeService } from '../../lib/systemNativeService';
-import { loadCharacters, loadGroupChats, saveGroupChats, DEFAULT_AI_AVATAR, DEFAULT_USER_AVATAR } from '../../lib/storage';
+import { loadCharacters, loadGroupChats, loadGroupChatsAsync, saveGroupChats, DEFAULT_AI_AVATAR, DEFAULT_USER_AVATAR } from '../../lib/storage';
+import { hydrateGroupChatsFromDb, subscribeGroupChatDb } from '../../lib/groupChatDb';
 import { ensureCharacterNotificationAvatar } from '../../lib/notificationAvatar';
 import { CreateGroupModal } from './group/CreateGroupModal';
 import { GroupChatView } from './group/GroupChatView';
 import { JoinGroupByCodeModal } from './group/JoinGroupByCodeModal';
+import { GroupAvatar } from './group/GroupAvatar';
 import {
   getMessagesPaged,
   saveChatMessage,
@@ -113,6 +124,9 @@ import {
   MultiBubbleConfig,
 } from '../../lib/wechatMultiBubble';
 import { nativeNotificationService } from '../../lib/NativeNotificationService';
+import { StableTextInput } from '../common/StableTextInput';
+import { StableTextarea } from '../common/StableTextarea';
+import { useStableTextEditing } from '../../hooks/useStableTextEditing';
 import { ChatMessageBubble } from './ChatMessageBubble';
 import { ContactSwipeRow } from './ContactSwipeRow';
 import { AiMemoryVaultModal } from './memory/AiMemoryVaultModal';
@@ -254,7 +268,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
   // Internal WeChat Theme State (strictly scoped to WeChat app)
   const [wechatTheme, setWechatTheme] = useState<WeChatThemeId>(() => loadWeChatTheme());
-  const [meSubView, setMeSubView] = useState<'hub' | 'persona' | 'settings' | 'theme'>('hub');
+  const [meSubView, setMeSubView] = useState<'hub' | 'persona' | 'settings' | 'theme' | 'social'>('hub');
   const [showChatListSearch, setShowChatListSearch] = useState(false);
   const [chatListSearchQuery, setChatListSearchQuery] = useState('');
   const [showGroupListModal, setShowGroupListModal] = useState(false);
@@ -265,6 +279,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
   // Group Chat State
   const [groupChats, setGroupChats] = useState<GroupChat[]>(() => loadGroupChats());
+  const groupChatsRef = useRef<GroupChat[]>(groupChats);
+  groupChatsRef.current = groupChats;
   const [activeGroupChatId, setActiveGroupChatId] = useState<string | null>(null);
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [showJoinGroupByCodeModal, setShowJoinGroupByCodeModal] = useState(false);
@@ -297,8 +313,17 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement | null>(null);
-  const isComposingRef = useRef<boolean>(false);
-  const lastCompositionEndTimestampRef = useRef<number>(0);
+  const composerEditor = useStableTextEditing<HTMLTextAreaElement>({
+    value: inputText,
+    onValueChange: (nextValue) => {
+      if (isSubmittingRef.current) return;
+      setInputText((prev) => (prev === nextValue ? prev : nextValue));
+    },
+    externalRef: inputRef,
+    autoResize: true,
+    minHeightPx: 36,
+    maxHeightPx: 132,
+  });
 
   // Scroll to bottom helper
   const scrollToBottom = useCallback((smooth = false) => {
@@ -312,56 +337,10 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     });
   }, []);
 
-  const adjustTextareaHeight = (textarea: HTMLTextAreaElement | null) => {
-    if (!textarea) return;
-
-    const minHeight = 36;
-    const maxHeight = 132; // ~5.5 lines
-
-    // Reset immediately to minHeight when input is empty or whitespace
-    if (!textarea.value || textarea.value.trim() === '') {
-      textarea.style.height = `${minHeight}px`;
-      textarea.style.overflowY = 'hidden';
-      textarea.scrollTop = 0;
-      return;
-    }
-
-    // Save previous scroll position and caret selection before height recalculation
-    const savedScrollTop = textarea.scrollTop;
-    const selectionStart = textarea.selectionStart;
-    const totalLength = textarea.value.length;
-
-    // Temporarily reset height to auto to measure true scrollHeight
-    textarea.style.height = 'auto';
-    const scrollHeight = textarea.scrollHeight;
-    const newHeight = Math.min(Math.max(scrollHeight, minHeight), maxHeight);
-
-    textarea.style.height = `${newHeight}px`;
-    const isOverflowing = scrollHeight > maxHeight;
-    textarea.style.overflowY = isOverflowing ? 'auto' : 'hidden';
-
-    // Smart Cursor & Scroll Position Management:
-    // Restore selection range to guarantee cursor does not jump to end when editing in the middle
-    // ONLY restore selection range when NOT composing to avoid corrupting Chinese/IME candidate cursor!
-    if (!isComposingRef.current) {
-      try {
-        textarea.setSelectionRange(selectionStart, textarea.selectionEnd);
-      } catch {}
-    }
-
-    if (isOverflowing) {
-      // Only scroll to bottom when user is actively typing/editing at the very end of text
-      const isAtEnd = selectionStart >= totalLength;
-      if (isAtEnd) {
-        textarea.scrollTop = scrollHeight;
-      } else {
-        // Editing in the middle/start, selecting text, or fixing typos: preserve exact scroll position!
-        textarea.scrollTop = savedScrollTop;
-      }
-    } else {
-      textarea.scrollTop = 0;
-    }
-  };
+  const clearComposerInput = useCallback(() => {
+    composerEditor.clearValue('');
+    setInputText('');
+  }, [composerEditor]);
 
   // Modals & Drawers
   const [showCoTModal, setShowCoTModal] = useState<string | null>(null);
@@ -374,6 +353,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
   const [swipedContactId, setSwipedContactId] = useState<string | null>(null);
+  const [aiPhoneViewerChar, setAiPhoneViewerChar] = useState<AiCharacter | null>(null);
 
   // Human-like Multi-Bubble Messaging Engine States (一句话一条消息，一整段分割连发)
   const [multiBubbleConfig, setMultiBubbleConfig] = useState<MultiBubbleConfig>(() => getMultiBubbleConfig());
@@ -462,6 +442,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const [editedModelName, setEditedModelName] = useState('');
   const [editedAvatar, setEditedAvatar] = useState('');
   const [editedMenstrualCareEnabled, setEditedMenstrualCareEnabled] = useState(true);
+  const [editedRomanticState, setEditedRomanticState] = useState<AiRomanticState | null>(null);
   const [addFriendSearchQuery, setAddFriendSearchQuery] = useState('');
 
   // Per-AI chat message font size preference & modal draft state
@@ -477,9 +458,29 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     : defaultChatFontSize;
   const chatFontPresets = getChatFontPresets(wechatTheme);
 
+  // Hydrate group chats from IndexedDB (migrating any legacy localStorage copy cleanly)
+  useEffect(() => {
+    let mounted = true;
+    const unsubscribe = subscribeGroupChatDb((nextGroups) => {
+      if (!mounted) return;
+      groupChatsRef.current = nextGroups;
+      setGroupChats(nextGroups);
+    });
+    void hydrateGroupChatsFromDb().then((hydrated) => {
+      if (!mounted) return;
+      groupChatsRef.current = hydrated;
+      setGroupChats(hydrated);
+    });
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
   // Group Chat Handlers
   const handleCreateGroup = (newGroup: GroupChat) => {
-    const updated = [newGroup, ...groupChats];
+    const updated = [newGroup, ...groupChatsRef.current];
+    groupChatsRef.current = updated;
     setGroupChats(updated);
     saveGroupChats(updated);
     setActiveGroupChatId(newGroup.id);
@@ -487,13 +488,15 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   };
 
   const handleUpdateGroup = (updatedGroup: GroupChat) => {
-    const updated = groupChats.map((g) => (g.id === updatedGroup.id ? updatedGroup : g));
+    const updated = groupChatsRef.current.map((g) => (g.id === updatedGroup.id ? updatedGroup : g));
+    groupChatsRef.current = updated;
     setGroupChats(updated);
     saveGroupChats(updated);
   };
 
   const handleDeleteGroup = (groupId: string) => {
-    const updated = groupChats.filter((g) => g.id !== groupId);
+    const updated = groupChatsRef.current.filter((g) => g.id !== groupId);
+    groupChatsRef.current = updated;
     setGroupChats(updated);
     saveGroupChats(updated);
     if (activeGroupChatId === groupId) {
@@ -503,14 +506,15 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
   const handleJoinGroupSuccess = (targetGroup: GroupChat, newReq?: GroupJoinRequest) => {
     if (newReq) {
-      const existing = groupChats.find((g) => g.id === targetGroup.id) || targetGroup;
+      const existing = groupChatsRef.current.find((g) => g.id === targetGroup.id) || targetGroup;
       const updatedReqs = [...(existing.joinRequests || []), newReq];
       const updatedGroup = { ...existing, joinRequests: updatedReqs };
       handleUpdateGroup(updatedGroup);
     } else {
-      const exists = groupChats.find((g) => g.id === targetGroup.id);
+      const exists = groupChatsRef.current.find((g) => g.id === targetGroup.id);
       if (!exists) {
-        const updated = [targetGroup, ...groupChats];
+        const updated = [targetGroup, ...groupChatsRef.current];
+        groupChatsRef.current = updated;
         setGroupChats(updated);
         saveGroupChats(updated);
       }
@@ -523,7 +527,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     groupId: string,
     fakeUser: { name: string; avatar: string; bio: string }
   ) => {
-    const target = groupChats.find((g) => g.id === groupId);
+    const target = groupChatsRef.current.find((g) => g.id === groupId);
     if (!target) return;
 
     const newReq: GroupJoinRequest = {
@@ -637,6 +641,10 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       setEditedModelName(activeCharacter.modelConfig?.modelName || '');
       setEditedAvatar(activeCharacter.avatar || '');
       setEditedMenstrualCareEnabled(activeCharacter.menstrualCare?.enabled !== false);
+      setEditedRomanticState(buildCharacterRomanticDefault(activeCharacter));
+      void getEffectiveRomanticState(activeCharacter).then((rs) => {
+        setEditedRomanticState(rs);
+      });
 
       const defaultSize = getDefaultChatMessageFontSize(wechatTheme);
       const savedPrefs = loadAllChatDisplayPreferences();
@@ -811,11 +819,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     lastSendTimestampRef.current = now;
 
     // Immediately clear input DOM and React state to prevent duplicate read or ghost typing
-    setInputText('');
-    if (inputRef.current) {
-      inputRef.current.value = '';
-      adjustTextareaHeight(inputRef.current);
-    }
+    clearComposerInput();
     setSelectedImage(null);
     const quoteId = quoteMsgId;
     setQuoteMsgId(null);
@@ -1376,6 +1380,13 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     setNewPostContent('');
     setNewPostImages([]);
     setShowCreatePostModal(false);
+    void onMomentPublishedSocialTick({
+      postId: newPost.id,
+      allCharacters: characters,
+      userProfile,
+      apiConfig,
+      onAddApiLog,
+    }).catch(() => {});
   };
 
   // Toggle Moments Post Like synced strictly to post.likes ('user_main')
@@ -1509,6 +1520,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                   ? '个人资料与人设'
                   : meSubView === 'settings'
                   ? '微信设置'
+                  : meSubView === 'social'
+                  ? 'AI 社会活动'
                   : '我')}
             </h2>
             {activeTab === 'chats' && activeChatId && (
@@ -1646,6 +1659,17 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                       <button
                         onClick={() => {
                           setShowChatOptionsMenu(false);
+                          setAiPhoneViewerChar(activeCharacter);
+                        }}
+                        className="wx-dropdown-item wx-primary-text w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-200 hover:bg-zinc-750 hover:text-emerald-400 flex items-center gap-2.5 transition cursor-pointer"
+                      >
+                        <Smartphone className="wx-green-text w-3.5 h-3.5 text-emerald-400" />
+                        <span>查看TA的手机（只读）</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setShowChatOptionsMenu(false);
                           setShowAiSettingsModal(true);
                         }}
                         className="wx-dropdown-item wx-primary-text w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-200 hover:bg-zinc-750 hover:text-indigo-400 flex items-center gap-2.5 transition cursor-pointer"
@@ -1762,7 +1786,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                       >
                         {wechatTheme === 'classic' ? (
                           <div className="wx-icon-box-new-friend w-6 h-6 flex items-center justify-center">
-                            <WeChatPersonPlusIcon className="w-3.5 h-3.5 text-white" />
+                            <WeChatPersonPlusIcon className="w-3.5 h-3.5" />
                           </div>
                         ) : (
                           <div className="w-6 h-6 rounded-lg bg-indigo-500/20 text-indigo-500 flex items-center justify-center">
@@ -1802,7 +1826,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                 }`}
               >
                 {wechatTheme === 'classic' ? (
-                  <WeChatPersonPlusIcon className="w-3.5 h-3.5 text-white shrink-0" />
+                  <WeChatPersonPlusIcon className="w-3.5 h-3.5 shrink-0" />
                 ) : (
                   <UserPlus className="w-4 h-4" />
                 )}
@@ -2052,29 +2076,14 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
                             {/* Auto-growing Multi-line Textarea */}
                             <textarea
-                              ref={inputRef}
+                              ref={composerEditor.mergedRef}
                               rows={1}
                               placeholder={`给 ${activeCharacter.name} 发送消息... (Enter发送)`}
                               value={inputText}
-                              onChange={(e) => {
-                                setInputText(e.target.value);
-                                adjustTextareaHeight(e.currentTarget);
-                              }}
-                              onCompositionStart={() => {
-                                isComposingRef.current = true;
-                              }}
-                              onCompositionEnd={(e) => {
-                                isComposingRef.current = false;
-                                lastCompositionEndTimestampRef.current = Date.now();
-                                setInputText(e.currentTarget.value);
-                                adjustTextareaHeight(e.currentTarget);
-                              }}
+                              {...composerEditor.eventProps}
                               onKeyDown={(e) => {
-                                const isComposing =
-                                  isComposingRef.current ||
-                                  (e.nativeEvent as any).isComposing ||
-                                  e.keyCode === 229 ||
-                                  Date.now() - lastCompositionEndTimestampRef.current < 60;
+                                composerEditor.eventProps.onKeyDown(e);
+                                const isComposing = composerEditor.isCompositionActive(e.nativeEvent);
 
                                 if (e.key === 'Enter') {
                                   if (isComposing) {
@@ -2082,11 +2091,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                                     return;
                                   }
                                   if (e.shiftKey) {
-                                    // Shift + Enter: native newline, adjust height
+                                    // Shift + Enter: native newline, adjust height preserving selection
                                     setTimeout(() => {
-                                      if (inputRef.current) {
-                                        adjustTextareaHeight(inputRef.current);
-                                      }
+                                      composerEditor.adjustHeightNow();
                                     }, 0);
                                   } else {
                                     // Enter alone: single-click send user message ONLY (does NOT trigger AI)
@@ -2099,22 +2106,27 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                             />
 
                             {/* Send Button: Single-click sends message, Double-click triggers AI reply */}
-                            <PressableButton
-                              type="button"
-                              onClick={handleSendButtonClick}
-                              disabled={isSubmittingRef.current || (!!activeCharacter && aiReplyTaskManager.isCharacterThinking(activeCharacter.id))}
-                              pressScale={0.94}
-                              withRipple={false}
-                              title="单击发送消息 | 快速双击触发AI回复"
-                              className={`wx-send-button px-3.5 py-2 rounded-xl text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0 self-end mb-0.5 disabled:opacity-40 disabled:pointer-events-none ${
-                                inputText.trim() || selectedImage
-                                  ? 'wx-send-button--active bg-emerald-600 hover:bg-emerald-500'
-                                  : 'bg-zinc-700 hover:bg-zinc-600 opacity-90'
-                              }`}
-                            >
-                              <Send className="w-3.5 h-3.5" />
-                              <span>发送</span>
-                            </PressableButton>
+                            {(() => {
+                              const canSend = inputText.trim().length > 0 || Boolean(selectedImage);
+                              return (
+                                <PressableButton
+                                  type="button"
+                                  onClick={handleSendButtonClick}
+                                  disabled={isSubmittingRef.current || (!!activeCharacter && aiReplyTaskManager.isCharacterThinking(activeCharacter.id))}
+                                  pressScale={0.94}
+                                  withRipple={false}
+                                  title="单击发送消息 | 快速双击触发AI回复"
+                                  className={`wx-send-button px-3.5 py-2 rounded-xl text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0 self-end mb-0.5 disabled:opacity-40 disabled:pointer-events-none ${
+                                    canSend
+                                      ? 'wx-send-button--active bg-emerald-600 hover:bg-emerald-500'
+                                      : 'bg-zinc-700 hover:bg-zinc-600 opacity-90'
+                                  }`}
+                                >
+                                  <Send className="w-3.5 h-3.5" />
+                                  <span>发送</span>
+                                </PressableButton>
+                              );
+                            })()}
                           </div>
                         </div>
                       );
@@ -2131,10 +2143,10 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                       <div className="wx-search-bar-wrap px-3 py-2 flex items-center gap-2 shrink-0">
                         <div className="relative flex-1">
                           <Search className="w-3.5 h-3.5 wx-muted-text absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                          <input
+                          <StableTextInput
                             type="text"
                             value={chatListSearchQuery}
-                            onChange={(e) => setChatListSearchQuery(e.target.value)}
+                            onValueChange={setChatListSearchQuery}
                             placeholder="搜索联系人、群聊或最近消息..."
                             className="wx-search-input w-full pl-8 pr-7 py-1.5 text-xs border focus:outline-none"
                           />
@@ -2167,7 +2179,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                           className="wx-btn-primary px-4 py-2 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white font-medium text-xs shadow-md hover:brightness-110 transition flex items-center gap-1.5 cursor-pointer"
                         >
                           {wechatTheme === 'classic' ? (
-                            <WeChatPersonPlusIcon className="w-4 h-4 text-white" />
+                            <WeChatPersonPlusIcon className="w-4 h-4" />
                           ) : (
                             <UserPlus className="w-4 h-4" />
                           )}
@@ -2210,12 +2222,20 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                           }`}
                         >
                           <div className="relative shrink-0">
-                            <img
-                              src={group.avatar}
+                            <GroupAvatar
+                              members={group.members}
+                              avatarMode={group.avatarMode}
+                              customAvatar={group.customAvatar}
+                              legacyAvatar={group.avatar}
+                              allCharacters={characters}
+                              userProfile={userProfile}
+                              size={48}
                               alt={group.name}
-                              className={`wx-avatar w-12 h-12 object-cover border ${
-                                wechatTheme === 'classic' ? '' : 'rounded-2xl border-emerald-500/40 shadow-xs'
-                              }`}
+                              className={
+                                wechatTheme === 'classic'
+                                  ? 'border border-zinc-300/60 dark:border-zinc-700'
+                                  : 'border border-emerald-500/40 shadow-xs'
+                              }
                             />
                             <span className="wx-group-tag absolute -bottom-1 -right-1 px-1 rounded-full bg-emerald-600 text-white text-[8px] font-bold">
                               群
@@ -2256,7 +2276,18 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                                     <span className="wx-green-text text-emerald-400/90 font-medium">
                                       {lastMsg.senderName}:{' '}
                                     </span>
-                                    <span>{lastMsg.text}</span>
+                                    <span>
+                                      {lastMsg.text ||
+                                        (lastMsg.messageType === 'image'
+                                          ? '[图片]'
+                                          : lastMsg.messageType === 'relay'
+                                          ? '[群接龙]'
+                                          : lastMsg.messageType === 'poll'
+                                          ? '[群投票]'
+                                          : lastMsg.messageType === 'random_draw'
+                                          ? '[随机抽人]'
+                                          : '')}
+                                    </span>
                                   </>
                                 ) : (
                                   group.notice || '群聊已创建，开启畅聊吧'
@@ -2359,7 +2390,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                     >
                       <div className="flex items-center gap-3">
                         <div className="wx-icon-box-new-friend w-10 h-10 flex items-center justify-center shrink-0">
-                          <WeChatPersonPlusIcon className="w-5 h-5 text-white" />
+                          <WeChatPersonPlusIcon className="w-5 h-5" />
                         </div>
                         <div>
                           <div className="wx-primary-text text-[13px] font-medium">新的朋友</div>
@@ -2376,7 +2407,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                     >
                       <div className="flex items-center gap-3">
                         <div className="wx-icon-box-group w-10 h-10 flex items-center justify-center shrink-0">
-                          <WeChatGroupIcon className="w-5 h-5 text-white" />
+                          <WeChatGroupIcon className="w-5 h-5" />
                         </div>
                         <div>
                           <div className="wx-primary-text text-[13px] font-medium">群聊</div>
@@ -2414,7 +2445,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                         onClick={() => setShowAddFriendModal(true)}
                         className="wx-btn-primary px-4 py-2 text-xs font-medium flex items-center gap-1.5 cursor-pointer"
                       >
-                        <WeChatPersonPlusIcon className="w-4 h-4 text-white" />
+                        <WeChatPersonPlusIcon className="w-4 h-4" />
                         <span>添加好友 / 创建 AI</span>
                       </button>
                     </div>
@@ -2639,14 +2670,15 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
                   {isCommentOpen && (
                     <div className="flex items-center gap-1.5 pt-1">
-                      <input
+                      <StableTextInput
                         type="text"
                         value={commentInputs[post.id] || ''}
-                        onChange={(e) =>
-                          setCommentInputs((prev) => ({ ...prev, [post.id]: e.target.value }))
+                        onValueChange={(nextVal) =>
+                          setCommentInputs((prev) => ({ ...prev, [post.id]: nextVal }))
                         }
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
+                          const native = e.nativeEvent as KeyboardEvent;
+                          if (e.key === 'Enter' && !native.isComposing && e.keyCode !== 229) {
                             e.preventDefault();
                             handleAddMomentComment(post.id);
                           }
@@ -2709,20 +2741,20 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
                   <div>
                     <label className="wx-secondary-text block mb-1">我的昵称</label>
-                    <input
+                    <StableTextInput
                       type="text"
                       value={selfNameInput}
-                      onChange={(e) => setSelfNameInput(e.target.value)}
+                      onValueChange={setSelfNameInput}
                       className="wx-modal-input w-full px-3 py-1.5 border focus:outline-none"
                     />
                   </div>
 
                   <div>
                     <label className="wx-secondary-text block mb-1">个性签名 / 个人简介</label>
-                    <input
+                    <StableTextInput
                       type="text"
                       value={selfBioInput}
-                      onChange={(e) => setSelfBioInput(e.target.value)}
+                      onValueChange={setSelfBioInput}
                       placeholder="如: 热爱生活、在代码与设计之间穿梭的设计师"
                       className="wx-modal-input w-full px-3 py-1.5 border focus:outline-none"
                     />
@@ -2730,10 +2762,10 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
                   <div>
                     <label className="wx-secondary-text block mb-1">我的性格特征 (Personality)</label>
-                    <textarea
+                    <StableTextarea
                       rows={2}
                       value={selfPersonalityInput}
-                      onChange={(e) => setSelfPersonalityInput(e.target.value)}
+                      onValueChange={setSelfPersonalityInput}
                       placeholder="例如: 慢热、喜欢真诚直率的沟通方式..."
                       className="wx-modal-input w-full px-3 py-1.5 border focus:outline-none leading-relaxed text-xs"
                     />
@@ -2741,10 +2773,10 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
                   <div>
                     <label className="wx-secondary-text block mb-1">我的兴趣爱好与关注主题</label>
-                    <textarea
+                    <StableTextarea
                       rows={2}
                       value={selfPreferencesInput}
-                      onChange={(e) => setSelfPreferencesInput(e.target.value)}
+                      onValueChange={setSelfPreferencesInput}
                       placeholder="例如: 喜欢猫咪、手冲咖啡、动漫、科幻小说..."
                       className="wx-modal-input w-full px-3 py-1.5 border focus:outline-none leading-relaxed text-xs"
                     />
@@ -2752,10 +2784,10 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
                   <div>
                     <label className="wx-secondary-text block mb-1">聊天与关怀偏好</label>
-                    <input
+                    <StableTextInput
                       type="text"
                       value={selfCarePrefInput}
-                      onChange={(e) => setSelfCarePrefInput(e.target.value)}
+                      onValueChange={setSelfCarePrefInput}
                       placeholder="例如: 疲惫时希望得到安静陪伴与温暖鼓励"
                       className="wx-modal-input w-full px-3 py-1.5 border focus:outline-none text-xs"
                     />
@@ -2912,6 +2944,10 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                   </div>
                 </div>
               </div>
+            ) : meSubView === 'social' ? (
+              <div className="wx-me-page w-full h-full overflow-y-auto p-3.5 space-y-3 text-xs">
+                <AiSocialSettingsPanel isClassic />
+              </div>
             ) : (
               /* Classic WeChat "我" Hub: Only Real Functional Entries */
               <div className="wx-me-page w-full h-full overflow-y-auto text-xs space-y-2.5">
@@ -3010,6 +3046,18 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                 <div className="wx-settings-group">
                   <button
                     type="button"
+                    onClick={() => setMeSubView('social')}
+                    className="wx-settings-row w-full px-4 py-3 flex items-center justify-between cursor-pointer text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Globe2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <span className="wx-primary-text text-[13px] font-medium">AI 社会活动</span>
+                    </div>
+                    <ChevronRight className="w-4 h-4 wx-muted-text" />
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => setMeSubView('settings')}
                     className="wx-settings-row w-full px-4 py-3 flex items-center justify-between cursor-pointer text-left"
                   >
@@ -3095,20 +3143,20 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
                 <div>
                   <label className="block text-zinc-400 mb-1">我的昵称</label>
-                  <input
+                  <StableTextInput
                     type="text"
                     value={selfNameInput}
-                    onChange={(e) => setSelfNameInput(e.target.value)}
+                    onValueChange={setSelfNameInput}
                     className="w-full px-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500"
                   />
                 </div>
 
                 <div>
                   <label className="block text-zinc-400 mb-1">个性签名 / 个人简介</label>
-                  <input
+                  <StableTextInput
                     type="text"
                     value={selfBioInput}
-                    onChange={(e) => setSelfBioInput(e.target.value)}
+                    onValueChange={setSelfBioInput}
                     placeholder="如: 热爱生活、在代码与设计之间穿梭的设计师"
                     className="w-full px-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500"
                   />
@@ -3118,10 +3166,10 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                   <label className="block text-zinc-400 mb-1">
                     👤 我的性格特征 (Personality)
                   </label>
-                  <textarea
+                  <StableTextarea
                     rows={2}
                     value={selfPersonalityInput}
-                    onChange={(e) => setSelfPersonalityInput(e.target.value)}
+                    onValueChange={setSelfPersonalityInput}
                     placeholder="例如: 慢热、容易情绪内耗、喜欢真诚直率的沟通方式、对细节敏感..."
                     className="w-full px-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 leading-relaxed text-xs"
                   />
@@ -3131,10 +3179,10 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                   <label className="block text-zinc-400 mb-1">
                     🌟 我的兴趣爱好与关注主题 (Interests & Topics)
                   </label>
-                  <textarea
+                  <StableTextarea
                     rows={2}
                     value={selfPreferencesInput}
-                    onChange={(e) => setSelfPreferencesInput(e.target.value)}
+                    onValueChange={setSelfPreferencesInput}
                     placeholder="例如: 喜欢猫咪、手冲咖啡、二次元动漫、科幻小说、下雨天的安静音乐..."
                     className="w-full px-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 leading-relaxed text-xs"
                   />
@@ -3144,10 +3192,10 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                   <label className="block text-zinc-400 mb-1">
                     💬 聊天与关怀偏好 (Care Preferences)
                   </label>
-                  <input
+                  <StableTextInput
                     type="text"
                     value={selfCarePrefInput}
-                    onChange={(e) => setSelfCarePrefInput(e.target.value)}
+                    onValueChange={setSelfCarePrefInput}
                     placeholder="例如: 疲惫时希望得到安静陪伴与温暖鼓励，不喜讲大道理"
                     className="w-full px-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 text-xs"
                   />
@@ -3173,6 +3221,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                   </PressableButton>
                 </div>
               </div>
+
+              {/* AI Social Activity Settings */}
+              <AiSocialSettingsPanel isClassic={false} />
 
               {/* Data Management & Backup Center Card */}
               <div className="p-4 rounded-3xl bg-zinc-850 border border-zinc-750 space-y-3">
@@ -3438,10 +3489,16 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                     }}
                     className="wx-sub-card w-full p-2.5 border flex items-center gap-3 text-left cursor-pointer"
                   >
-                    <img
-                      src={g.avatar}
+                    <GroupAvatar
+                      members={g.members}
+                      avatarMode={g.avatarMode}
+                      customAvatar={g.customAvatar}
+                      legacyAvatar={g.avatar}
+                      allCharacters={characters}
+                      userProfile={userProfile}
+                      size={40}
                       alt={g.name}
-                      className="wx-avatar w-10 h-10 object-cover border shrink-0"
+                      className="border border-zinc-300/60 dark:border-zinc-700 shrink-0"
                     />
                     <div className="flex-1 min-w-0">
                       <div className="wx-primary-text text-xs font-semibold truncate">
@@ -3519,51 +3576,51 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
               <div>
                 <label className="wx-secondary-text block text-zinc-400 mb-1">AI 名字</label>
-                <input
+                <StableTextInput
                   type="text"
                   value={editedName}
-                  onChange={(e) => setEditedName(e.target.value)}
+                  onValueChange={setEditedName}
                   className="wx-modal-input w-full px-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
               <div>
                 <label className="wx-secondary-text block text-zinc-400 mb-1">微信号</label>
-                <input
+                <StableTextInput
                   type="text"
                   value={editedWxid}
-                  onChange={(e) => setEditedWxid(e.target.value)}
+                  onValueChange={setEditedWxid}
                   className="wx-modal-input w-full px-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 font-mono"
                 />
               </div>
 
               <div>
                 <label className="wx-secondary-text block text-zinc-400 mb-1">与用户的关系</label>
-                <input
+                <StableTextInput
                   type="text"
                   placeholder="例如: 恋人 / 青梅竹马 / 导师"
                   value={editedRelationship}
-                  onChange={(e) => setEditedRelationship(e.target.value)}
+                  onValueChange={setEditedRelationship}
                   className="wx-modal-input w-full px-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
               <div>
                 <label className="wx-secondary-text block text-zinc-400 mb-1">人设背景与设定经历 (System Persona)</label>
-                <textarea
+                <StableTextarea
                   rows={3}
                   value={editedPersona}
-                  onChange={(e) => setEditedPersona(e.target.value)}
+                  onValueChange={setEditedPersona}
                   className="wx-modal-input w-full px-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 leading-relaxed"
                 />
               </div>
 
               <div>
                 <label className="wx-secondary-text block text-zinc-400 mb-1">性格特征与说话风格 (Personality & Tone)</label>
-                <textarea
+                <StableTextarea
                   rows={2}
                   value={editedPersonality}
-                  onChange={(e) => setEditedPersonality(e.target.value)}
+                  onValueChange={setEditedPersonality}
                   placeholder="如: 温柔体贴，常带波浪号，喜欢鼓励用户"
                   className="wx-modal-input w-full px-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 leading-relaxed"
                 />
@@ -3571,11 +3628,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
               <div>
                 <label className="wx-secondary-text block text-zinc-400 mb-1">指定专用模型 (留空使用全局默认)</label>
-                <input
+                <StableTextInput
                   type="text"
                   placeholder="如: gemini-2.5-flash"
                   value={editedModelName}
-                  onChange={(e) => setEditedModelName(e.target.value)}
+                  onValueChange={setEditedModelName}
                   className="wx-modal-input w-full px-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 font-mono"
                 />
               </div>
@@ -3775,11 +3832,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                   </div>
 
                   <div className="flex gap-2">
-                    <input
+                    <StableTextInput
                       type="text"
                       placeholder="手动添加记忆项..."
                       value={newMemoryInput}
-                      onChange={(e) => setNewMemoryInput(e.target.value)}
+                      onValueChange={setNewMemoryInput}
                       className="wx-modal-input flex-1 px-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500 text-xs"
                     />
                     <button
@@ -3838,6 +3895,18 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
               >
                 <FolderOpen className="w-4 h-4" />
                 <span>进入「{activeCharacter.name}」专属记忆空间</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAiSettingsModal(false);
+                  setAiPhoneViewerChar(activeCharacter);
+                }}
+                className="wx-btn-secondary w-full py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer"
+              >
+                <Smartphone className="w-4 h-4 wx-green-text text-emerald-400" />
+                <span>查看「{activeCharacter.name}」的手机（只读）</span>
               </button>
             </div>
 
@@ -3975,6 +4044,17 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
               )}
             </div>
 
+            {/* Romantic Target & Hard Lock Settings (Phase 4) */}
+            {editedRomanticState && (
+              <AiRomanticSettingsSection
+                character={activeCharacter}
+                allCharacters={characters}
+                userProfile={userProfile}
+                value={editedRomanticState}
+                onChange={setEditedRomanticState}
+              />
+            )}
+
             {/* Clear History Danger Zone */}
             <div className="wx-divider pt-2 border-t border-zinc-800">
               <button
@@ -4008,7 +4088,21 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                       ...(activeCharacter.menstrualCare || {}),
                       enabled: editedMenstrualCareEnabled,
                     },
+                    romanticConfig: editedRomanticState
+                      ? {
+                          romanticTargetId: editedRomanticState.romanticTargetId,
+                          romanticTargetLocked: editedRomanticState.romanticTargetLocked,
+                          allowNaturalRomance: editedRomanticState.allowNaturalRomance,
+                          status: editedRomanticState.status,
+                        }
+                      : activeCharacter.romanticConfig,
                   };
+                  if (editedRomanticState) {
+                    void saveRomanticState({
+                      ...editedRomanticState,
+                      characterId: activeCharacter.id,
+                    }).catch(() => {});
+                  }
                   onUpdateCharacters(
                     characters.map((c) => (c.id === activeCharacter.id ? updatedTarget : c))
                   );
@@ -4155,11 +4249,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                     <KeyRound className="w-4 h-4 text-indigo-500" />
                     <span>输入真人的专属微信号邀请码</span>
                   </div>
-                  <input
+                  <StableTextInput
                     type="text"
                     placeholder="如: US-928410"
                     value={realUserInviteInput}
-                    onChange={(e) => setRealUserInviteInput(e.target.value)}
+                    onValueChange={setRealUserInviteInput}
                     className="wx-modal-input w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white font-mono uppercase placeholder-zinc-500 focus:outline-none focus:border-indigo-500 text-xs"
                   />
                   <button
@@ -4206,11 +4300,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="wx-modal-card w-full max-w-sm rounded-3xl bg-zinc-900 border border-zinc-800 p-4 text-white shadow-2xl space-y-3 text-xs">
             <h3 className="wx-primary-text font-semibold text-sm">发布朋友圈</h3>
-            <textarea
+            <StableTextarea
               rows={4}
               placeholder="这一刻的想法..."
               value={newPostContent}
-              onChange={(e) => setNewPostContent(e.target.value)}
+              onValueChange={setNewPostContent}
               className="wx-modal-input w-full px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-emerald-500"
             />
             <div className="flex gap-2">
@@ -4277,6 +4371,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           onClose={() => setShowJoinGroupByCodeModal(false)}
           groupChats={groupChats}
           userProfile={userProfile}
+          allCharacters={characters}
           onJoinGroupSuccess={handleJoinGroupSuccess}
           onSimulateIncomingRequest={handleSimulateIncomingRequest}
         />
@@ -4289,6 +4384,10 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         initialTab={dataModalTab}
         onDataChanged={() => {
           setGroupChats(loadGroupChats());
+          void loadGroupChatsAsync().then((fresh) => {
+            groupChatsRef.current = fresh;
+            setGroupChats(fresh);
+          });
           setDbVersionKey((prev) => prev + 1);
           if (onDataChanged) onDataChanged();
         }}
@@ -4506,6 +4605,18 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
             onBack={() => setShowOfflineModal(false)}
           />
         </div>
+      )}
+
+      {/* Read-Only AI Phone Viewer Modal */}
+      {aiPhoneViewerChar && (
+        <AiPhoneViewerModal
+          isOpen={!!aiPhoneViewerChar}
+          onClose={() => setAiPhoneViewerChar(null)}
+          character={aiPhoneViewerChar}
+          allCharacters={characters}
+          userProfile={userProfile}
+          userMoments={moments}
+        />
       )}
     </div>
   );

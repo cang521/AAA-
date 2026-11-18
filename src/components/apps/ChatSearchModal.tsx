@@ -6,6 +6,7 @@ import {
   cancelActiveSearchTask,
   LightSearchResult,
 } from '../../lib/chatSearchEngine';
+import { StableTextInput } from '../common/StableTextInput';
 
 interface ChatSearchModalProps {
   isOpen: boolean;
@@ -145,12 +146,12 @@ export const ChatSearchModal: React.FC<ChatSearchModalProps> = ({
       >
         <div className="flex-1 relative flex items-center">
           <Search className="wx-muted-text w-4 h-4 text-zinc-400 absolute left-3 pointer-events-none" />
-          <input
+          <StableTextInput
             type="text"
             autoFocus
             placeholder={`在与【${character.name}】的聊天记录中搜索...`}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onValueChange={setQuery}
             className="wx-modal-input w-full pl-9 pr-8 py-2 rounded-2xl bg-zinc-800 border border-zinc-700 text-white text-xs placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
           />
           {query && (

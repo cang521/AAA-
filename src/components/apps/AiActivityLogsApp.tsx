@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { StableTextInput } from '../common/StableTextInput';
 import {
   ArrowLeft,
   FileText,
@@ -261,11 +262,11 @@ export const AiActivityLogsApp: React.FC<AiActivityLogsAppProps> = ({
           {/* Search bar */}
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
-            <input
+            <StableTextInput
               type="text"
               placeholder="搜索动作名称、触发原因或AI角色..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onValueChange={setSearchQuery}
               className="w-full h-8 pl-8 pr-3 rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
             />
           </div>

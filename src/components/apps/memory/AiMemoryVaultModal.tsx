@@ -45,6 +45,7 @@ import {
 import { RecentChatSyncResult, extractRawChatMessagesFromFileContent } from '../../../lib/import/RecentChatSyncManager';
 import { FieldMappingRule, extractSampleForAiAnalysis, analyzeFileStructureWithAi } from '../../../lib/import/AdaptiveFileParser';
 import { loadApiConfig } from '../../../lib/storage';
+import { StableTextInput } from '../../common/StableTextInput';
 
 interface AiMemoryVaultModalProps {
   isOpen: boolean;
@@ -602,10 +603,10 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
                   <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
+                  <StableTextInput
                     type="text"
                     value={searchFilter}
-                    onChange={(e) => setSearchFilter(e.target.value)}
+                    onValueChange={setSearchFilter}
                     placeholder={`在 ${activeChar.name} 的记忆文件中搜索...`}
                     className="wx-modal-input w-full pl-8 pr-3 py-1.5 rounded-xl bg-zinc-800 border border-zinc-700 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
                   />
@@ -1005,11 +1006,16 @@ export const AiMemoryVaultModal: React.FC<AiMemoryVaultModalProps> = ({
                 </p>
 
                 <div className="flex gap-2 pt-1">
-                  <input
+                  <StableTextInput
                     type="text"
                     value={testQuery}
-                    onChange={(e) => setTestQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleRunTestQuery()}
+                    onValueChange={setTestQuery}
+                    onKeyDown={(e) => {
+                      const native = e.nativeEvent as KeyboardEvent;
+                      if (e.key === 'Enter' && !native.isComposing && e.keyCode !== 229) {
+                        handleRunTestQuery();
+                      }
+                    }}
                     placeholder="输入测试话题关键词..."
                     className="wx-modal-input flex-1 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-cyan-500"
                   />

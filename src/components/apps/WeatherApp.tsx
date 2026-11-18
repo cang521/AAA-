@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../../lib/localBackend';
+import { StableTextInput } from '../common/StableTextInput';
 import {
   ArrowLeft,
   Cloud,
@@ -775,14 +776,14 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
             {/* City Search Bar (Network service) */}
             <div className="mt-4 relative">
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-              <input
+              <StableTextInput
                 ref={citySearchRef}
                 type="text"
                 value={citySearchQuery}
-                onChange={(e) => setCitySearchQuery(e.target.value)}
-                onInput={(e) => setCitySearchQuery(e.currentTarget.value)}
-                onCompositionEnd={(e) => setCitySearchQuery(e.currentTarget.value)}
+                onValueChange={setCitySearchQuery}
                 onKeyDown={(e) => {
+                  const nativeEvt = e.nativeEvent as KeyboardEvent;
+                  if (nativeEvt.isComposing || nativeEvt.keyCode === 229) return;
                   const query = (citySearchRef.current?.value || citySearchQuery).trim();
                   if (e.key === 'Enter' && query) {
                     handleSelectCityItem({ name: query });

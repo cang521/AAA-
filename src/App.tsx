@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { androidPermissionBridgeClient } from './lib/agent/AndroidPermissionBridgeClient';
@@ -80,6 +80,9 @@ import { getApiConfigForEngine } from './lib/apiConfigStore';
 import { clearAllChatMessages } from './lib/chatDb';
 import { autoPaginateLayout } from './lib/layoutPaginator';
 import { backfillAllCharactersNotificationAvatars } from './lib/notificationAvatar';
+import { loadWeChatTheme, subscribeWeChatTheme } from './components/apps/wechat/theme/wechatThemeStore';
+import { WeChatThemeId } from './components/apps/wechat/theme/types';
+import { applySystemBarAppearance, resolveSystemBarAppearance } from './lib/systemBarAppearance';
 
 export function App() {
   // Lock state re-hydrated from lockSecurityService (Re-entry maintains lock state)
@@ -103,9 +106,17 @@ export function App() {
   const [memos, setMemosState] = useState<Memo[]>(loadMemos());
   const [worldBooks, setWorldBooksState] = useState<WorldBook[]>(loadWorldBooks());
 
-  // Active sub-app state
+  // Active sub-app & WeChat theme state (used to sync Android status bar & safe-area color)
   const [activeAppId, setActiveAppId] = useState<string | null>(null);
   const [pendingWechatChatId, setPendingWechatChatId] = useState<string | null>(null);
+  const [wechatTheme, setWechatTheme] = useState<WeChatThemeId>(() => loadWeChatTheme());
+
+  useEffect(() => {
+    setWechatTheme(loadWeChatTheme());
+    return subscribeWeChatTheme((nextTheme) => {
+      setWechatTheme(nextTheme);
+    });
+  }, []);
 
   // Phase 2: Agent Orchestration states
   const [activeAskPrompt, setActiveAskPrompt] = useState<AgentAskPrompt | null>(null);
@@ -484,6 +495,21 @@ export function App() {
     }
   }, [effectiveTheme]);
 
+  const systemBarAppearance = useMemo(
+    () =>
+      resolveSystemBarAppearance({
+        effectiveTheme,
+        activeAppId,
+        isLocked,
+        wechatTheme,
+      }),
+    [effectiveTheme, activeAppId, isLocked, wechatTheme]
+  );
+
+  useEffect(() => {
+    void applySystemBarAppearance(systemBarAppearance);
+  }, [systemBarAppearance]);
+
   const activeWallpaperSource = settings.wallpaperSource || 'default';
 
   let activeDesktopWallpaper = settings.desktopWallpaper || DEFAULT_DESKTOP_WALLPAPER;
@@ -526,9 +552,16 @@ export function App() {
           />
         ) : activeAppId ? (
           /* SUB-APP ACTIVE VIEW LAYER */
-          <div className={`w-full h-full relative flex flex-col pt-safe pb-safe pl-safe pr-safe transition-colors duration-200 ${
-            effectiveTheme === 'light' ? 'bg-[#FFFFFF]' : 'bg-zinc-900'
-          }`}>
+          <div
+            style={{
+              backgroundColor: systemBarAppearance.statusBarBackground,
+              backgroundImage:
+                systemBarAppearance.statusBarBackground !== systemBarAppearance.navigationBarBackground
+                  ? `linear-gradient(180deg, ${systemBarAppearance.statusBarBackground} 0%, ${systemBarAppearance.statusBarBackground} 50%, ${systemBarAppearance.navigationBarBackground} 50%, ${systemBarAppearance.navigationBarBackground} 100%)`
+                  : undefined,
+            }}
+            className="w-full h-full relative flex flex-col pt-safe pb-safe pl-safe pr-safe transition-colors duration-200"
+          >
             {activeAppId === 'wechat' && (
               <WeChatApp
                 onBackToLauncher={() => setActiveAppId(null)}

@@ -3072,11 +3072,24 @@ app.post('/api/gemini/group-chat', async (req, res) => {
 - 专属长期记忆: ${memories}`;
     }).join('\n\n');
 
-    // Format recent chat history
+    // Format recent chat history (including tool cards & images cleanly)
     const historyText = recentMessages.map((m: any) => {
       const msgTime = formatFullDateTime(m.timestamp || m.createdAt || m.time);
       const mentions = m.mentionedMemberIds && m.mentionedMemberIds.length > 0 ? ` [@${m.mentionedMemberIds.join(', ')}]` : '';
-      return `[${msgTime}] [${m.senderName} (${m.senderType})]: ${m.text}${mentions}`;
+      let body = m.text || '';
+      if (m.messageType === 'image') {
+        body = `[图片消息] ${m.text || ''}`;
+      } else if (m.messageType === 'relay' && m.payload) {
+        const entries = Array.isArray(m.payload.entries) ? m.payload.entries.map((e: any, i: number) => `${i + 1}.${e.memberName}:${e.content}`).join('；') : '';
+        body = `[群接龙: ${m.payload.title || m.text}] 已接龙(${m.payload.entries?.length || 0}): ${entries || '暂无'}`;
+      } else if (m.messageType === 'poll' && m.payload) {
+        const opts = Array.isArray(m.payload.options) ? m.payload.options.map((o: any) => `${o.text}(${o.voterIds?.length || 0}票)`).join(' / ') : '';
+        body = `[群投票: ${m.payload.title || m.text}] 选项: ${opts}`;
+      } else if (m.messageType === 'random_draw' && m.payload) {
+        const winners = Array.isArray(m.payload.winners) ? m.payload.winners.map((w: any) => w.memberName).join('、') : '';
+        body = `[随机抽人: ${m.payload.taskDescription || m.text}] 已抽出结果: ${winners}`;
+      }
+      return `[${msgTime}] [${m.senderName} (${m.senderType})]: ${body}${mentions}`;
     }).join('\n');
 
     const nativeTime = systemTime || new Date().toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
@@ -3094,10 +3107,10 @@ ${candidateProfilesText}
 
 【群聊运作核心法则】：
 1. 真实群聊氛围：不要让所有AI机械地全部抢着回答。AI要像真实微信群友一样，根据自己的性格爱好、当前话题相关度、人设背景来决定是否发言。
-2. 独立人格与独立记忆：每个AI的发言必须极其符合其独立的人设性格、用语习惯（例如：温柔学姐林思微贴心细腻、学霸顾言冷静严谨偏学术、总裁陆沉简短有力重格局等），绝不能混淆。
+2. 独立人格与独立记忆：每个AI的发言必须极其符合其独立的人设性格、用语习惯，绝不能混淆。
 3. @ 互动机制：
    - 如果某位AI被显式 @ 了（例如 @林思微），该AI必须优先回答。
-   - AI发言时也可以自然地 @ 某位群友（例如 "@顾言 你觉得呢？" 或 "@小清 记得休息"）。
+   - AI发言时也可以自然地 @ 某位群友。
 4. 语言风格：地道自然的微信口语，不要说任何“作为一个AI”、“我是语言模型”之类的出戏内容。可适度使用日常标点和emoji。
 `;
 
@@ -3133,17 +3146,19 @@ ${historyText || '(群内暂无更多历史)'}
 }`;
     }
 
-    const rawResponse = await callAiService({
+    const detailed = await callAiServiceDetailed({
       prompt: userPrompt,
       systemInstruction: systemPrompt,
       model: selectedModel,
-      apiKey: apiConfig?.apiKey,
-      baseUrl: apiConfig?.baseUrl,
-      providerType: apiConfig?.providerType,
+      apiKey: apiConfig?.textApiConfig?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey,
+      baseUrl: apiConfig?.textApiConfig?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl,
+      providerType: apiConfig?.textApiConfig?.provider || apiConfig?.textProvider || apiConfig?.providerType,
+      apiProtocol: apiConfig?.textApiConfig?.apiProtocol || apiConfig?.textApiProtocol,
       responseMimeType: 'application/json',
       temperature: 0.75,
       timeoutMs: 35000,
     });
+    const rawResponse = detailed.text;
 
     let parsed: any;
     try {
@@ -3158,8 +3173,6 @@ ${historyText || '(群内暂无更多历史)'}
     }
 
     const duration = Date.now() - startTime;
-    const promptTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 2);
-    const completionTokens = Math.ceil((rawResponse.length) / 2);
 
     res.json({
       success: true,
@@ -3169,20 +3182,230 @@ ${historyText || '(群内暂无更多历史)'}
       text: parsed.text || '',
       thinkingProcess: parsed.thinkingProcess || '',
       mentionedMemberIds: parsed.mentionedMemberIds || [],
-      log: {
-        id: 'log_' + Date.now(),
+      log: buildApiLogObject({
         appName: 'WeChatGroup',
-        timestamp: Date.now(),
-        modelName: selectedModel,
+        modelName: detailed.modelUsed || selectedModel,
         interfaceType: 'GroupChatOrchestration',
-        promptTokens,
-        completionTokens,
-        estimatedCost: Number(((promptTokens + completionTokens) * 0.0000005).toFixed(5)),
+        durationMs: duration,
+        usage: detailed.usage,
+        isRealTokens: detailed.isRealTokens,
         purpose: `群聊AI发言: ${parsed.responderName || 'AI'} (耗时 ${duration}ms)`,
-      },
+      }),
     });
   } catch (error: any) {
     return handleAiEndpointError(res, error, 'Gemini Group Chat');
+  }
+});
+
+// 1.3 Event-Driven AI-to-AI Social Turn Endpoint
+app.post('/api/gemini/ai-social-turn', async (req, res) => {
+  const {
+    actionType,
+    actorA,
+    actorB,
+    edgeSummary,
+    romanticContext,
+    recentPrivateMessages = [],
+    groupContext,
+    momentContext,
+    userProfile,
+    maxMessages = 4,
+    apiConfig,
+  } = req.body || {};
+
+  const startTime = Date.now();
+  const activeKey = apiConfig?.textApiConfig?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey;
+  const activeBaseUrl = apiConfig?.textApiConfig?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl;
+  const activeProvider = apiConfig?.textApiConfig?.provider || apiConfig?.textProvider || apiConfig?.providerType;
+  const activeProtocol = apiConfig?.textApiConfig?.apiProtocol || apiConfig?.textApiProtocol;
+  const selectedModel = apiConfig?.textApiConfig?.model || apiConfig?.textModel || 'gemini-3.6-flash';
+
+  try {
+    const profileDesc = (c: any) =>
+      c
+        ? `${c.name}(ID:${c.id}) | 人设:${c.persona || '普通角色'} | 性格:${c.personality || '自然真实'} | 记忆:${Array.isArray(c.memories) ? c.memories.slice(0, 4).join('；') : '无'}`
+        : '未知成员';
+
+    const systemInstruction = `你是 AI 角色社交事件生成器。必须严格贴合双方人设与当前客观关系，不得违背关系规则、不得凭空编造未发生事件、不得在输出文案中使用“作为一个AI”或暴露内部评分数字。仅输出纯 JSON。`;
+
+    let prompt = '';
+    if (actionType === 'friend_request_decision') {
+      prompt = `事件：${profileDesc(actorA)} 向 ${profileDesc(actorB)} 发送好友申请。
+当前关系背景：${edgeSummary || '群内认识但尚未成为好友'}
+场景触发来源：${groupContext?.reason || '共同群聊互动后产生联系'}
+用户称呼：${userProfile?.name || '山雨'}
+
+请站在双方真实性格角度，生成申请附言，以及 ${actorB?.name} 的决定（是否通过，若通过可给一句开场白）。
+输出严格 JSON：
+{
+  "greeting": "发送方好友申请验证消息（自然短句，<=30字）",
+  "reason": "发送方想加好友的自然原因（1句话）",
+  "accepted": true,
+  "decisionReason": "接收方同意或婉拒的自然理由（1句话）",
+  "replyIntroText": "如果同意，接收方发出的第一句问候（<=30字）",
+  "summary": "供关系记录展示的自然语言事件描述（不含数值或思维链）"
+}`;
+    } else if (actionType === 'private_chat_burst') {
+      const cappedMax = Math.max(2, Math.min(6, Number(maxMessages) || 4));
+      const historyLines = recentPrivateMessages
+        .slice(-8)
+        .map((m: any) => `${m.senderId === actorA?.id ? actorA?.name : actorB?.name}: ${m.text}`)
+        .join('\n');
+
+      prompt = `事件：好友私聊互动回合（限 2 到 ${cappedMax} 条真实短消息，严禁长篇大论）。
+成员A：${profileDesc(actorA)}
+成员B：${profileDesc(actorB)}
+当前关系摘要：${edgeSummary || '普通好友'}
+感情边界约束：${romanticContext || '普通友谊'}
+用户：${userProfile?.name || '山雨'}
+最近私聊片段：
+${historyLines || '(双方成为好友后的新话题开端)'}
+本次触发话题：${groupContext?.topic || '日常关心、群内话题延续或各自近况'}
+
+要求：
+- 严格输出 2~${cappedMax} 条微信短气泡对话，符合二人性格口吻差异。
+- 若存在锁定喜欢他人（例如都喜欢或其中一方锁定用户），双方不得发展暧昧！
+输出严格 JSON：
+{
+  "messages": [
+    { "senderId": "${actorA?.id}", "text": "对话内容" },
+    { "senderId": "${actorB?.id}", "text": "对话内容" }
+  ],
+  "attitudeDeltaAtoB": { "familiarity": 3, "trust": 2, "affinity": 3, "romanticAffinity": 0, "tension": 0, "jealousy": 0 },
+  "attitudeDeltaBtoA": { "familiarity": 3, "trust": 2, "affinity": 3, "romanticAffinity": 0, "tension": 0, "jealousy": 0 },
+  "impressionAtoB": "A对B的新印象短句",
+  "impressionBtoA": "B对A的新印象短句",
+  "summary": "自然语言摘要（例如：两人私聊了……）"
+}`;
+    } else if (actionType === 'moments_react') {
+      prompt = `事件：${profileDesc(actorB)} 看到好友 ${profileDesc(actorA)} 发布的朋友圈。
+朋友圈内容："${momentContext?.content || ''}"
+当前关系：${edgeSummary || '好友'}
+
+请决定是否点赞并附上一句符合性格的简短评论。
+输出严格 JSON：
+{
+  "shouldLike": true,
+  "commentText": "简短自然的评论内容（如不评论可为空字符串）",
+  "summary": "自然语言互动描述"
+}`;
+    } else if (actionType === 'ai_publish_moment') {
+      prompt = `事件：${profileDesc(actorA)} 准备在自己的微信朋友圈发一条日常动态。
+用户称呼：${userProfile?.name || '山雨'}
+最近状态：${edgeSummary || '日常生活'}
+
+请写一条真实、简短、像真人在微信发的日常朋友圈文案（<=90字，不得出现“作为AI”字样）。
+输出严格 JSON：
+{
+  "content": "朋友圈正文内容",
+  "summary": "自然语言描述（例如：发了一条关于……的朋友圈）"
+}`;
+    } else if (actionType === 'confession_and_reply') {
+      prompt = `事件：${profileDesc(actorA)} 鼓起勇气向 ${profileDesc(actorB)} 表达喜欢/表白。
+当前关系摘要：${edgeSummary || '好友'}
+双方感情配置说明（系统将二次硬性校验，不得违背）：${romanticContext || ''}
+
+请输出：
+{
+  "confessionText": "真诚且符合人设的表白内容（1-2句）",
+  "modelSuggestedAccept": false,
+  "replyText": "对方当下的真实回复口吻（1-2句）",
+  "summary": "自然语言事件记录"
+}`;
+    } else if (actionType === 'conflict_or_reconcile') {
+      prompt = `事件类型：${groupContext?.conflictMode === 'reconcile' ? '尝试缓解矛盾/和好' : '产生小摩擦、拌嘴或情绪波动'}
+成员A：${profileDesc(actorA)}
+成员B：${profileDesc(actorB)}
+当前关系摘要：${edgeSummary || ''}
+感情背景：${romanticContext || ''}
+具体起因：${groupContext?.reason || '意见或立场分歧'}
+
+输出严格 JSON（2-4句真实反应对话）：
+{
+  "lines": [
+    { "senderId": "${actorA?.id}", "text": "..." },
+    { "senderId": "${actorB?.id}", "text": "..." }
+  ],
+  "severity": "mild",
+  "shouldReconcile": false,
+  "summary": "自然语言事件摘要"
+}`;
+    } else if (actionType === 'group_poll_vote') {
+      const pollTitle = String(groupContext?.pollTitle || '群内投票');
+      const pollOptions: Array<{ id: string; text: string }> = Array.isArray(groupContext?.pollOptions)
+        ? groupContext.pollOptions
+        : [];
+      const maxSelections = Math.max(1, Number(groupContext?.maxSelections) || 1);
+      prompt = `事件：${profileDesc(actorA)} 在群聊「${groupContext?.groupName || '微信群'}」看到一个群投票，需要结合自身人设和偏好做出真实选择。
+投票主题：「${pollTitle}」
+可选选项：
+${pollOptions.map((o, idx) => `${idx + 1}. [id:${o.id}] ${o.text}`).join('\n')}
+最多可选：${maxSelections} 项（${groupContext?.multiSelect ? '多选' : '单选'}）。
+
+请严格从上述选项 id 中挑选 1 到 ${maxSelections} 个最符合你性格偏好的选项。
+输出严格 JSON：
+{
+  "selectedOptionIds": ["${pollOptions[0]?.id || ''}"],
+  "commentText": "一句自然简短的跟评（可选，<=25字）"
+}`;
+    } else {
+      // group_random_event
+      prompt = `事件：群聊【${groupContext?.groupName || '微信群'}】中发生了一个低频自然随机事件（如发现共同兴趣、温和互助、轻度吃醋/小拌嘴、对某话题吐槽等，不得突然宣布拉黑或断绝关系）。
+成员A：${profileDesc(actorA)}
+成员B：${profileDesc(actorB)}
+近期群聊氛围：${groupContext?.recentText || '日常闲聊'}
+感情背景：${romanticContext || '普通群友'}
+指定事件方向：${groupContext?.subtypeHint || 'shared_interest'}
+
+请输出严格 JSON：
+{
+  "eventSubtype": "met_in_group | shared_interest | helped | jealousy_sparked | bickering | group_random_event",
+  "actingAiId": "${actorA?.id}",
+  "actingAiName": "${actorA?.name || ''}",
+  "groupMessageText": "一句自然发在群里的聊天消息（<=45字，符合角色人设）",
+  "summary": "自然语言事件摘要（供关系记录显示）"
+}`;
+    }
+
+    const detailed = await callAiServiceDetailed({
+      prompt,
+      systemInstruction,
+      model: selectedModel,
+      apiKey: activeKey,
+      baseUrl: activeBaseUrl,
+      providerType: activeProvider,
+      apiProtocol: activeProtocol,
+      responseMimeType: 'application/json',
+      temperature: 0.78,
+      timeoutMs: 30000,
+    });
+
+    const raw = detailed.text;
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw.replace(/```json|```/gi, '').trim());
+    } catch {
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error('AI 社交回合返回非 JSON 内容');
+      parsed = JSON.parse(m[0]);
+    }
+
+    const duration = Date.now() - startTime;
+    res.json({
+      success: true,
+      result: parsed,
+      log: buildApiLogObject({
+        appName: 'AI社交引擎',
+        modelName: detailed.modelUsed || selectedModel,
+        interfaceType: `SocialTurn:${actionType || 'generic'}`,
+        durationMs: duration,
+        usage: detailed.usage,
+        isRealTokens: detailed.isRealTokens,
+        purpose: `AI社交事件(${actionType || 'generic'}): ${actorA?.name || ''} ${actorB ? '↔ ' + actorB.name : ''}`.trim(),
+      }),
+    });
+  } catch (error: any) {
+    return handleAiEndpointError(res, error, 'AI Social Turn');
   }
 });
 
@@ -3236,6 +3459,8 @@ app.get('/api/groups/invite/:code', (req, res) => {
         id: group.id,
         name: group.name,
         avatar: group.avatar,
+        avatarMode: group.avatarMode,
+        customAvatar: group.customAvatar,
         notice: group.notice,
         ownerId: group.ownerId,
         inviteCode: group.inviteCode,

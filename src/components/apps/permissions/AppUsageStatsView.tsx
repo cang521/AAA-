@@ -22,6 +22,7 @@ import { AppUsageDetail, AppUsageMonitoringConfig } from '../../../types';
 import { androidPermissionBridgeClient } from '../../../lib/agent/AndroidPermissionBridgeClient';
 import { loadFromStorage, saveToStorage } from '../../../lib/storage';
 import { PressableButton, ElasticToggle } from '../../ui/interaction';
+import { StableTextInput } from '../../common/StableTextInput';
 
 const CONFIG_STORAGE_KEY = 'phone_app_usage_monitoring_config_v1';
 
@@ -310,11 +311,11 @@ export const AppUsageStatsView: React.FC<AppUsageStatsViewProps> = ({ onBack }) 
         <div className="p-3 rounded-2xl bg-white dark:bg-zinc-900 border border-sky-100 dark:border-zinc-800 shadow-xs space-y-2.5">
           <div className="relative">
             <Search className="w-4 h-4 text-slate-400 dark:text-zinc-500 absolute left-3 top-2.5" />
-            <input
+            <StableTextInput
               type="text"
               placeholder="搜索应用名称或包名..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onValueChange={setSearchQuery}
               className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-xs text-slate-900 dark:text-zinc-100 placeholder-slate-400 focus:outline-none focus:border-sky-500"
             />
           </div>

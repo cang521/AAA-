@@ -10,15 +10,18 @@ import {
   UserPlus,
   Send,
 } from 'lucide-react';
-import { GroupChat, GroupJoinRequest, UserProfile } from '../../../types';
+import { AiCharacter, GroupChat, GroupJoinRequest, UserProfile } from '../../../types';
 import { DEFAULT_USER_AVATAR } from '../../../lib/storage';
 import { findGroupByInviteCode, joinGroupViaServer } from '../../../lib/groupService';
+import { StableTextInput } from '../../common/StableTextInput';
+import { GroupAvatar } from './GroupAvatar';
 
 interface JoinGroupByCodeModalProps {
   isOpen: boolean;
   onClose: () => void;
   groupChats: GroupChat[];
   userProfile: UserProfile;
+  allCharacters?: AiCharacter[];
   onJoinGroupSuccess: (group: GroupChat, newRequest?: GroupJoinRequest) => void;
   onSimulateIncomingRequest: (groupId: string, fakeUser: { name: string; avatar: string; bio: string }) => void;
 }
@@ -46,6 +49,7 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
   onClose,
   groupChats,
   userProfile,
+  allCharacters,
   onJoinGroupSuccess,
   onSimulateIncomingRequest,
 }) => {
@@ -203,14 +207,19 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
                   请输入 8 位群聊邀请码
                 </label>
                 <div className="flex gap-2">
-                  <input
+                  <StableTextInput
                     type="text"
                     value={inviteCodeInput}
-                    onChange={(e) => {
-                      setInviteCodeInput(e.target.value);
+                    onValueChange={(nextVal) => {
+                      setInviteCodeInput(nextVal);
                       setErrorMsg('');
                     }}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSearchCode()}
+                    onKeyDown={(e) => {
+                      const native = e.nativeEvent as KeyboardEvent;
+                      if (e.key === 'Enter' && !native.isComposing && e.keyCode !== 229) {
+                        handleSearchCode();
+                      }
+                    }}
                     placeholder="例如: WX-GRP-892401"
                     className="wx-modal-input flex-1 px-3 py-2 text-xs uppercase tracking-wider font-mono rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-amber-500"
                   />
@@ -256,10 +265,16 @@ export const JoinGroupByCodeModal: React.FC<JoinGroupByCodeModalProps> = ({
               {matchedGroup && (
                 <div className="wx-sub-card p-3.5 rounded-2xl bg-amber-500/5 dark:bg-amber-500/10 border border-amber-500/20 space-y-3">
                   <div className="flex items-center gap-3">
-                    <img
-                      src={matchedGroup.avatar}
+                    <GroupAvatar
+                      members={matchedGroup.members}
+                      avatarMode={matchedGroup.avatarMode}
+                      customAvatar={matchedGroup.customAvatar}
+                      legacyAvatar={matchedGroup.avatar}
+                      allCharacters={allCharacters}
+                      userProfile={userProfile}
+                      size={48}
                       alt={matchedGroup.name}
-                      className="wx-avatar w-12 h-12 rounded-2xl object-cover border border-amber-400/40 shadow-sm"
+                      className="border border-amber-400/40 shadow-sm"
                     />
                     <div className="min-w-0 flex-1">
                       <h4 className="wx-primary-text font-bold text-xs text-zinc-900 dark:text-zinc-100 truncate">

@@ -33,6 +33,8 @@ import {
   subscribeLifeEvents,
 } from '../../lib/lifeState/lifeStateStore';
 import { loadProactiveSettings, saveProactiveSettings } from '../../lib/proactive/proactiveStore';
+import { StableTextInput } from '../common/StableTextInput';
+import { StableTextarea } from '../common/StableTextarea';
 
 interface LifeStatePanelProps {
   onBack?: () => void;
@@ -419,11 +421,11 @@ export const LifeStatePanel: React.FC<LifeStatePanelProps> = () => {
             <div className="space-y-3 text-xs">
               <div>
                 <label className="block text-zinc-400 mb-1 font-medium">事件标题</label>
-                <input
+                <StableTextInput
                   type="text"
                   placeholder="如：下午见关键客户、准备等考研复试"
                   value={editingEvent.title || ''}
-                  onChange={(e) => setEditingEvent({ ...editingEvent, title: e.target.value })}
+                  onValueChange={(nextVal) => setEditingEvent({ ...editingEvent, title: nextVal })}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-750 text-white focus:outline-none focus:border-purple-500"
                 />
               </div>
@@ -447,11 +449,11 @@ export const LifeStatePanel: React.FC<LifeStatePanelProps> = () => {
 
               <div>
                 <label className="block text-zinc-400 mb-1 font-medium">事件详细摘要</label>
-                <textarea
+                <StableTextarea
                   rows={2}
                   placeholder="简要说明具体背景或事情原委..."
                   value={editingEvent.summary || ''}
-                  onChange={(e) => setEditingEvent({ ...editingEvent, summary: e.target.value })}
+                  onValueChange={(nextVal) => setEditingEvent({ ...editingEvent, summary: nextVal })}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-750 text-white focus:outline-none focus:border-purple-500"
                 />
               </div>
@@ -519,11 +521,11 @@ export const LifeStatePanel: React.FC<LifeStatePanelProps> = () => {
             <div className="space-y-3 text-xs">
               <div>
                 <label className="block text-zinc-400 mb-1 font-medium">最新进展说明</label>
-                <textarea
+                <StableTextarea
                   rows={3}
                   placeholder="如：客户反馈良好、已提交第二轮材料..."
                   value={progressInput}
-                  onChange={(e) => setProgressInput(e.target.value)}
+                  onValueChange={setProgressInput}
                   className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-750 text-white focus:outline-none focus:border-purple-500"
                 />
               </div>

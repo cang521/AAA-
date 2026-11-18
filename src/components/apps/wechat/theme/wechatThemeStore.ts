@@ -21,6 +21,8 @@ export const loadWeChatTheme = (): WeChatThemeId => {
   }
 };
 
+const wechatThemeListeners = new Set<(themeId: WeChatThemeId) => void>();
+
 export const saveWeChatTheme = (themeId: WeChatThemeId): WeChatThemeId => {
   const safeTheme: WeChatThemeId = isValidWeChatTheme(themeId) ? themeId : 'default';
   try {
@@ -30,5 +32,36 @@ export const saveWeChatTheme = (themeId: WeChatThemeId): WeChatThemeId => {
   } catch {
     // Ignore storage write errors in restricted webviews
   }
+  wechatThemeListeners.forEach((listener) => {
+    try {
+      listener(safeTheme);
+    } catch {
+      // Ignore subscriber exceptions
+    }
+  });
   return safeTheme;
 };
+
+export const subscribeWeChatTheme = (
+  listener: (themeId: WeChatThemeId) => void
+): (() => void) => {
+  wechatThemeListeners.add(listener);
+
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === WECHAT_THEME_STORAGE_KEY) {
+      listener(isValidWeChatTheme(event.newValue) ? event.newValue : 'default');
+    }
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('storage', handleStorage);
+  }
+
+  return () => {
+    wechatThemeListeners.delete(listener);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('storage', handleStorage);
+    }
+  };
+};
+

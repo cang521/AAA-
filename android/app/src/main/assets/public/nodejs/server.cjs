@@ -71404,7 +71404,20 @@ app.post("/api/gemini/group-chat", async (req, res) => {
     const historyText = recentMessages.map((m2) => {
       const msgTime = formatFullDateTime(m2.timestamp || m2.createdAt || m2.time);
       const mentions = m2.mentionedMemberIds && m2.mentionedMemberIds.length > 0 ? ` [@${m2.mentionedMemberIds.join(", ")}]` : "";
-      return `[${msgTime}] [${m2.senderName} (${m2.senderType})]: ${m2.text}${mentions}`;
+      let body = m2.text || "";
+      if (m2.messageType === "image") {
+        body = `[\u56FE\u7247\u6D88\u606F] ${m2.text || ""}`;
+      } else if (m2.messageType === "relay" && m2.payload) {
+        const entries = Array.isArray(m2.payload.entries) ? m2.payload.entries.map((e2, i2) => `${i2 + 1}.${e2.memberName}:${e2.content}`).join("\uFF1B") : "";
+        body = `[\u7FA4\u63A5\u9F99: ${m2.payload.title || m2.text}] \u5DF2\u63A5\u9F99(${m2.payload.entries?.length || 0}): ${entries || "\u6682\u65E0"}`;
+      } else if (m2.messageType === "poll" && m2.payload) {
+        const opts = Array.isArray(m2.payload.options) ? m2.payload.options.map((o) => `${o.text}(${o.voterIds?.length || 0}\u7968)`).join(" / ") : "";
+        body = `[\u7FA4\u6295\u7968: ${m2.payload.title || m2.text}] \u9009\u9879: ${opts}`;
+      } else if (m2.messageType === "random_draw" && m2.payload) {
+        const winners = Array.isArray(m2.payload.winners) ? m2.payload.winners.map((w) => w.memberName).join("\u3001") : "";
+        body = `[\u968F\u673A\u62BD\u4EBA: ${m2.payload.taskDescription || m2.text}] \u5DF2\u62BD\u51FA\u7ED3\u679C: ${winners}`;
+      }
+      return `[${msgTime}] [${m2.senderName} (${m2.senderType})]: ${body}${mentions}`;
     }).join("\n");
     const nativeTime = systemTime || (/* @__PURE__ */ new Date()).toLocaleString("zh-CN", { hour12: false, timeZone: "Asia/Shanghai" });
     const systemPrompt = `\u4F60\u662F\u4E00\u4E2A\u9AD8\u5EA6\u62DF\u771F\u7684\u591AAI\u5FAE\u4FE1\u7FA4\u804A\u6A21\u62DF\u4E2D\u67A2\u3002
@@ -71420,10 +71433,10 @@ ${candidateProfilesText}
 
 \u3010\u7FA4\u804A\u8FD0\u4F5C\u6838\u5FC3\u6CD5\u5219\u3011\uFF1A
 1. \u771F\u5B9E\u7FA4\u804A\u6C1B\u56F4\uFF1A\u4E0D\u8981\u8BA9\u6240\u6709AI\u673A\u68B0\u5730\u5168\u90E8\u62A2\u7740\u56DE\u7B54\u3002AI\u8981\u50CF\u771F\u5B9E\u5FAE\u4FE1\u7FA4\u53CB\u4E00\u6837\uFF0C\u6839\u636E\u81EA\u5DF1\u7684\u6027\u683C\u7231\u597D\u3001\u5F53\u524D\u8BDD\u9898\u76F8\u5173\u5EA6\u3001\u4EBA\u8BBE\u80CC\u666F\u6765\u51B3\u5B9A\u662F\u5426\u53D1\u8A00\u3002
-2. \u72EC\u7ACB\u4EBA\u683C\u4E0E\u72EC\u7ACB\u8BB0\u5FC6\uFF1A\u6BCF\u4E2AAI\u7684\u53D1\u8A00\u5FC5\u987B\u6781\u5176\u7B26\u5408\u5176\u72EC\u7ACB\u7684\u4EBA\u8BBE\u6027\u683C\u3001\u7528\u8BED\u4E60\u60EF\uFF08\u4F8B\u5982\uFF1A\u6E29\u67D4\u5B66\u59D0\u6797\u601D\u5FAE\u8D34\u5FC3\u7EC6\u817B\u3001\u5B66\u9738\u987E\u8A00\u51B7\u9759\u4E25\u8C28\u504F\u5B66\u672F\u3001\u603B\u88C1\u9646\u6C89\u7B80\u77ED\u6709\u529B\u91CD\u683C\u5C40\u7B49\uFF09\uFF0C\u7EDD\u4E0D\u80FD\u6DF7\u6DC6\u3002
+2. \u72EC\u7ACB\u4EBA\u683C\u4E0E\u72EC\u7ACB\u8BB0\u5FC6\uFF1A\u6BCF\u4E2AAI\u7684\u53D1\u8A00\u5FC5\u987B\u6781\u5176\u7B26\u5408\u5176\u72EC\u7ACB\u7684\u4EBA\u8BBE\u6027\u683C\u3001\u7528\u8BED\u4E60\u60EF\uFF0C\u7EDD\u4E0D\u80FD\u6DF7\u6DC6\u3002
 3. @ \u4E92\u52A8\u673A\u5236\uFF1A
    - \u5982\u679C\u67D0\u4F4DAI\u88AB\u663E\u5F0F @ \u4E86\uFF08\u4F8B\u5982 @\u6797\u601D\u5FAE\uFF09\uFF0C\u8BE5AI\u5FC5\u987B\u4F18\u5148\u56DE\u7B54\u3002
-   - AI\u53D1\u8A00\u65F6\u4E5F\u53EF\u4EE5\u81EA\u7136\u5730 @ \u67D0\u4F4D\u7FA4\u53CB\uFF08\u4F8B\u5982 "@\u987E\u8A00 \u4F60\u89C9\u5F97\u5462\uFF1F" \u6216 "@\u5C0F\u6E05 \u8BB0\u5F97\u4F11\u606F"\uFF09\u3002
+   - AI\u53D1\u8A00\u65F6\u4E5F\u53EF\u4EE5\u81EA\u7136\u5730 @ \u67D0\u4F4D\u7FA4\u53CB\u3002
 4. \u8BED\u8A00\u98CE\u683C\uFF1A\u5730\u9053\u81EA\u7136\u7684\u5FAE\u4FE1\u53E3\u8BED\uFF0C\u4E0D\u8981\u8BF4\u4EFB\u4F55\u201C\u4F5C\u4E3A\u4E00\u4E2AAI\u201D\u3001\u201C\u6211\u662F\u8BED\u8A00\u6A21\u578B\u201D\u4E4B\u7C7B\u7684\u51FA\u620F\u5185\u5BB9\u3002\u53EF\u9002\u5EA6\u4F7F\u7528\u65E5\u5E38\u6807\u70B9\u548Cemoji\u3002
 `;
     let userPrompt = `\u4EE5\u4E0B\u662F\u8BE5\u7FA4\u804A\u6700\u8FD1\u7684\u5BF9\u8BDD\u8BB0\u5F55\uFF1A
@@ -71456,17 +71469,19 @@ ${historyText || "(\u7FA4\u5185\u6682\u65E0\u66F4\u591A\u5386\u53F2)"}
   "mentionedMemberIds": ["@\u63D0\u5230\u7684\u6210\u5458ID\u5217\u8868\uFF0C\u82E5\u65E0\u5219\u4E3A\u7A7A\u6570\u7EC4"]
 }`;
     }
-    const rawResponse = await callAiService({
+    const detailed = await callAiServiceDetailed({
       prompt: userPrompt,
       systemInstruction: systemPrompt,
       model: selectedModel,
-      apiKey: apiConfig?.apiKey,
-      baseUrl: apiConfig?.baseUrl,
-      providerType: apiConfig?.providerType,
+      apiKey: apiConfig?.textApiConfig?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey,
+      baseUrl: apiConfig?.textApiConfig?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl,
+      providerType: apiConfig?.textApiConfig?.provider || apiConfig?.textProvider || apiConfig?.providerType,
+      apiProtocol: apiConfig?.textApiConfig?.apiProtocol || apiConfig?.textApiProtocol,
       responseMimeType: "application/json",
       temperature: 0.75,
       timeoutMs: 35e3
     });
+    const rawResponse = detailed.text;
     let parsed;
     try {
       parsed = JSON.parse(rawResponse);
@@ -71479,8 +71494,6 @@ ${historyText || "(\u7FA4\u5185\u6682\u65E0\u66F4\u591A\u5386\u53F2)"}
       }
     }
     const duration = Date.now() - startTime;
-    const promptTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 2);
-    const completionTokens = Math.ceil(rawResponse.length / 2);
     res.json({
       success: true,
       shouldRespond: parsed.shouldRespond !== false,
@@ -71489,20 +71502,211 @@ ${historyText || "(\u7FA4\u5185\u6682\u65E0\u66F4\u591A\u5386\u53F2)"}
       text: parsed.text || "",
       thinkingProcess: parsed.thinkingProcess || "",
       mentionedMemberIds: parsed.mentionedMemberIds || [],
-      log: {
-        id: "log_" + Date.now(),
+      log: buildApiLogObject({
         appName: "WeChatGroup",
-        timestamp: Date.now(),
-        modelName: selectedModel,
+        modelName: detailed.modelUsed || selectedModel,
         interfaceType: "GroupChatOrchestration",
-        promptTokens,
-        completionTokens,
-        estimatedCost: Number(((promptTokens + completionTokens) * 5e-7).toFixed(5)),
+        durationMs: duration,
+        usage: detailed.usage,
+        isRealTokens: detailed.isRealTokens,
         purpose: `\u7FA4\u804AAI\u53D1\u8A00: ${parsed.responderName || "AI"} (\u8017\u65F6 ${duration}ms)`
-      }
+      })
     });
   } catch (error) {
     return handleAiEndpointError(res, error, "Gemini Group Chat");
+  }
+});
+app.post("/api/gemini/ai-social-turn", async (req, res) => {
+  const {
+    actionType,
+    actorA,
+    actorB,
+    edgeSummary,
+    romanticContext,
+    recentPrivateMessages = [],
+    groupContext,
+    momentContext,
+    userProfile,
+    maxMessages = 4,
+    apiConfig
+  } = req.body || {};
+  const startTime = Date.now();
+  const activeKey = apiConfig?.textApiConfig?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey;
+  const activeBaseUrl = apiConfig?.textApiConfig?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl;
+  const activeProvider = apiConfig?.textApiConfig?.provider || apiConfig?.textProvider || apiConfig?.providerType;
+  const activeProtocol = apiConfig?.textApiConfig?.apiProtocol || apiConfig?.textApiProtocol;
+  const selectedModel = apiConfig?.textApiConfig?.model || apiConfig?.textModel || "gemini-3.6-flash";
+  try {
+    const profileDesc = (c) => c ? `${c.name}(ID:${c.id}) | \u4EBA\u8BBE:${c.persona || "\u666E\u901A\u89D2\u8272"} | \u6027\u683C:${c.personality || "\u81EA\u7136\u771F\u5B9E"} | \u8BB0\u5FC6:${Array.isArray(c.memories) ? c.memories.slice(0, 4).join("\uFF1B") : "\u65E0"}` : "\u672A\u77E5\u6210\u5458";
+    const systemInstruction = `\u4F60\u662F AI \u89D2\u8272\u793E\u4EA4\u4E8B\u4EF6\u751F\u6210\u5668\u3002\u5FC5\u987B\u4E25\u683C\u8D34\u5408\u53CC\u65B9\u4EBA\u8BBE\u4E0E\u5F53\u524D\u5BA2\u89C2\u5173\u7CFB\uFF0C\u4E0D\u5F97\u8FDD\u80CC\u5173\u7CFB\u89C4\u5219\u3001\u4E0D\u5F97\u51ED\u7A7A\u7F16\u9020\u672A\u53D1\u751F\u4E8B\u4EF6\u3001\u4E0D\u5F97\u5728\u8F93\u51FA\u6587\u6848\u4E2D\u4F7F\u7528\u201C\u4F5C\u4E3A\u4E00\u4E2AAI\u201D\u6216\u66B4\u9732\u5185\u90E8\u8BC4\u5206\u6570\u5B57\u3002\u4EC5\u8F93\u51FA\u7EAF JSON\u3002`;
+    let prompt = "";
+    if (actionType === "friend_request_decision") {
+      prompt = `\u4E8B\u4EF6\uFF1A${profileDesc(actorA)} \u5411 ${profileDesc(actorB)} \u53D1\u9001\u597D\u53CB\u7533\u8BF7\u3002
+\u5F53\u524D\u5173\u7CFB\u80CC\u666F\uFF1A${edgeSummary || "\u7FA4\u5185\u8BA4\u8BC6\u4F46\u5C1A\u672A\u6210\u4E3A\u597D\u53CB"}
+\u573A\u666F\u89E6\u53D1\u6765\u6E90\uFF1A${groupContext?.reason || "\u5171\u540C\u7FA4\u804A\u4E92\u52A8\u540E\u4EA7\u751F\u8054\u7CFB"}
+\u7528\u6237\u79F0\u547C\uFF1A${userProfile?.name || "\u5C71\u96E8"}
+
+\u8BF7\u7AD9\u5728\u53CC\u65B9\u771F\u5B9E\u6027\u683C\u89D2\u5EA6\uFF0C\u751F\u6210\u7533\u8BF7\u9644\u8A00\uFF0C\u4EE5\u53CA ${actorB?.name} \u7684\u51B3\u5B9A\uFF08\u662F\u5426\u901A\u8FC7\uFF0C\u82E5\u901A\u8FC7\u53EF\u7ED9\u4E00\u53E5\u5F00\u573A\u767D\uFF09\u3002
+\u8F93\u51FA\u4E25\u683C JSON\uFF1A
+{
+  "greeting": "\u53D1\u9001\u65B9\u597D\u53CB\u7533\u8BF7\u9A8C\u8BC1\u6D88\u606F\uFF08\u81EA\u7136\u77ED\u53E5\uFF0C<=30\u5B57\uFF09",
+  "reason": "\u53D1\u9001\u65B9\u60F3\u52A0\u597D\u53CB\u7684\u81EA\u7136\u539F\u56E0\uFF081\u53E5\u8BDD\uFF09",
+  "accepted": true,
+  "decisionReason": "\u63A5\u6536\u65B9\u540C\u610F\u6216\u5A49\u62D2\u7684\u81EA\u7136\u7406\u7531\uFF081\u53E5\u8BDD\uFF09",
+  "replyIntroText": "\u5982\u679C\u540C\u610F\uFF0C\u63A5\u6536\u65B9\u53D1\u51FA\u7684\u7B2C\u4E00\u53E5\u95EE\u5019\uFF08<=30\u5B57\uFF09",
+  "summary": "\u4F9B\u5173\u7CFB\u8BB0\u5F55\u5C55\u793A\u7684\u81EA\u7136\u8BED\u8A00\u4E8B\u4EF6\u63CF\u8FF0\uFF08\u4E0D\u542B\u6570\u503C\u6216\u601D\u7EF4\u94FE\uFF09"
+}`;
+    } else if (actionType === "private_chat_burst") {
+      const cappedMax = Math.max(2, Math.min(6, Number(maxMessages) || 4));
+      const historyLines = recentPrivateMessages.slice(-8).map((m2) => `${m2.senderId === actorA?.id ? actorA?.name : actorB?.name}: ${m2.text}`).join("\n");
+      prompt = `\u4E8B\u4EF6\uFF1A\u597D\u53CB\u79C1\u804A\u4E92\u52A8\u56DE\u5408\uFF08\u9650 2 \u5230 ${cappedMax} \u6761\u771F\u5B9E\u77ED\u6D88\u606F\uFF0C\u4E25\u7981\u957F\u7BC7\u5927\u8BBA\uFF09\u3002
+\u6210\u5458A\uFF1A${profileDesc(actorA)}
+\u6210\u5458B\uFF1A${profileDesc(actorB)}
+\u5F53\u524D\u5173\u7CFB\u6458\u8981\uFF1A${edgeSummary || "\u666E\u901A\u597D\u53CB"}
+\u611F\u60C5\u8FB9\u754C\u7EA6\u675F\uFF1A${romanticContext || "\u666E\u901A\u53CB\u8C0A"}
+\u7528\u6237\uFF1A${userProfile?.name || "\u5C71\u96E8"}
+\u6700\u8FD1\u79C1\u804A\u7247\u6BB5\uFF1A
+${historyLines || "(\u53CC\u65B9\u6210\u4E3A\u597D\u53CB\u540E\u7684\u65B0\u8BDD\u9898\u5F00\u7AEF)"}
+\u672C\u6B21\u89E6\u53D1\u8BDD\u9898\uFF1A${groupContext?.topic || "\u65E5\u5E38\u5173\u5FC3\u3001\u7FA4\u5185\u8BDD\u9898\u5EF6\u7EED\u6216\u5404\u81EA\u8FD1\u51B5"}
+
+\u8981\u6C42\uFF1A
+- \u4E25\u683C\u8F93\u51FA 2~${cappedMax} \u6761\u5FAE\u4FE1\u77ED\u6C14\u6CE1\u5BF9\u8BDD\uFF0C\u7B26\u5408\u4E8C\u4EBA\u6027\u683C\u53E3\u543B\u5DEE\u5F02\u3002
+- \u82E5\u5B58\u5728\u9501\u5B9A\u559C\u6B22\u4ED6\u4EBA\uFF08\u4F8B\u5982\u90FD\u559C\u6B22\u6216\u5176\u4E2D\u4E00\u65B9\u9501\u5B9A\u7528\u6237\uFF09\uFF0C\u53CC\u65B9\u4E0D\u5F97\u53D1\u5C55\u66A7\u6627\uFF01
+\u8F93\u51FA\u4E25\u683C JSON\uFF1A
+{
+  "messages": [
+    { "senderId": "${actorA?.id}", "text": "\u5BF9\u8BDD\u5185\u5BB9" },
+    { "senderId": "${actorB?.id}", "text": "\u5BF9\u8BDD\u5185\u5BB9" }
+  ],
+  "attitudeDeltaAtoB": { "familiarity": 3, "trust": 2, "affinity": 3, "romanticAffinity": 0, "tension": 0, "jealousy": 0 },
+  "attitudeDeltaBtoA": { "familiarity": 3, "trust": 2, "affinity": 3, "romanticAffinity": 0, "tension": 0, "jealousy": 0 },
+  "impressionAtoB": "A\u5BF9B\u7684\u65B0\u5370\u8C61\u77ED\u53E5",
+  "impressionBtoA": "B\u5BF9A\u7684\u65B0\u5370\u8C61\u77ED\u53E5",
+  "summary": "\u81EA\u7136\u8BED\u8A00\u6458\u8981\uFF08\u4F8B\u5982\uFF1A\u4E24\u4EBA\u79C1\u804A\u4E86\u2026\u2026\uFF09"
+}`;
+    } else if (actionType === "moments_react") {
+      prompt = `\u4E8B\u4EF6\uFF1A${profileDesc(actorB)} \u770B\u5230\u597D\u53CB ${profileDesc(actorA)} \u53D1\u5E03\u7684\u670B\u53CB\u5708\u3002
+\u670B\u53CB\u5708\u5185\u5BB9\uFF1A"${momentContext?.content || ""}"
+\u5F53\u524D\u5173\u7CFB\uFF1A${edgeSummary || "\u597D\u53CB"}
+
+\u8BF7\u51B3\u5B9A\u662F\u5426\u70B9\u8D5E\u5E76\u9644\u4E0A\u4E00\u53E5\u7B26\u5408\u6027\u683C\u7684\u7B80\u77ED\u8BC4\u8BBA\u3002
+\u8F93\u51FA\u4E25\u683C JSON\uFF1A
+{
+  "shouldLike": true,
+  "commentText": "\u7B80\u77ED\u81EA\u7136\u7684\u8BC4\u8BBA\u5185\u5BB9\uFF08\u5982\u4E0D\u8BC4\u8BBA\u53EF\u4E3A\u7A7A\u5B57\u7B26\u4E32\uFF09",
+  "summary": "\u81EA\u7136\u8BED\u8A00\u4E92\u52A8\u63CF\u8FF0"
+}`;
+    } else if (actionType === "ai_publish_moment") {
+      prompt = `\u4E8B\u4EF6\uFF1A${profileDesc(actorA)} \u51C6\u5907\u5728\u81EA\u5DF1\u7684\u5FAE\u4FE1\u670B\u53CB\u5708\u53D1\u4E00\u6761\u65E5\u5E38\u52A8\u6001\u3002
+\u7528\u6237\u79F0\u547C\uFF1A${userProfile?.name || "\u5C71\u96E8"}
+\u6700\u8FD1\u72B6\u6001\uFF1A${edgeSummary || "\u65E5\u5E38\u751F\u6D3B"}
+
+\u8BF7\u5199\u4E00\u6761\u771F\u5B9E\u3001\u7B80\u77ED\u3001\u50CF\u771F\u4EBA\u5728\u5FAE\u4FE1\u53D1\u7684\u65E5\u5E38\u670B\u53CB\u5708\u6587\u6848\uFF08<=90\u5B57\uFF0C\u4E0D\u5F97\u51FA\u73B0\u201C\u4F5C\u4E3AAI\u201D\u5B57\u6837\uFF09\u3002
+\u8F93\u51FA\u4E25\u683C JSON\uFF1A
+{
+  "content": "\u670B\u53CB\u5708\u6B63\u6587\u5185\u5BB9",
+  "summary": "\u81EA\u7136\u8BED\u8A00\u63CF\u8FF0\uFF08\u4F8B\u5982\uFF1A\u53D1\u4E86\u4E00\u6761\u5173\u4E8E\u2026\u2026\u7684\u670B\u53CB\u5708\uFF09"
+}`;
+    } else if (actionType === "confession_and_reply") {
+      prompt = `\u4E8B\u4EF6\uFF1A${profileDesc(actorA)} \u9F13\u8D77\u52C7\u6C14\u5411 ${profileDesc(actorB)} \u8868\u8FBE\u559C\u6B22/\u8868\u767D\u3002
+\u5F53\u524D\u5173\u7CFB\u6458\u8981\uFF1A${edgeSummary || "\u597D\u53CB"}
+\u53CC\u65B9\u611F\u60C5\u914D\u7F6E\u8BF4\u660E\uFF08\u7CFB\u7EDF\u5C06\u4E8C\u6B21\u786C\u6027\u6821\u9A8C\uFF0C\u4E0D\u5F97\u8FDD\u80CC\uFF09\uFF1A${romanticContext || ""}
+
+\u8BF7\u8F93\u51FA\uFF1A
+{
+  "confessionText": "\u771F\u8BDA\u4E14\u7B26\u5408\u4EBA\u8BBE\u7684\u8868\u767D\u5185\u5BB9\uFF081-2\u53E5\uFF09",
+  "modelSuggestedAccept": false,
+  "replyText": "\u5BF9\u65B9\u5F53\u4E0B\u7684\u771F\u5B9E\u56DE\u590D\u53E3\u543B\uFF081-2\u53E5\uFF09",
+  "summary": "\u81EA\u7136\u8BED\u8A00\u4E8B\u4EF6\u8BB0\u5F55"
+}`;
+    } else if (actionType === "conflict_or_reconcile") {
+      prompt = `\u4E8B\u4EF6\u7C7B\u578B\uFF1A${groupContext?.conflictMode === "reconcile" ? "\u5C1D\u8BD5\u7F13\u89E3\u77DB\u76FE/\u548C\u597D" : "\u4EA7\u751F\u5C0F\u6469\u64E6\u3001\u62CC\u5634\u6216\u60C5\u7EEA\u6CE2\u52A8"}
+\u6210\u5458A\uFF1A${profileDesc(actorA)}
+\u6210\u5458B\uFF1A${profileDesc(actorB)}
+\u5F53\u524D\u5173\u7CFB\u6458\u8981\uFF1A${edgeSummary || ""}
+\u611F\u60C5\u80CC\u666F\uFF1A${romanticContext || ""}
+\u5177\u4F53\u8D77\u56E0\uFF1A${groupContext?.reason || "\u610F\u89C1\u6216\u7ACB\u573A\u5206\u6B67"}
+
+\u8F93\u51FA\u4E25\u683C JSON\uFF082-4\u53E5\u771F\u5B9E\u53CD\u5E94\u5BF9\u8BDD\uFF09\uFF1A
+{
+  "lines": [
+    { "senderId": "${actorA?.id}", "text": "..." },
+    { "senderId": "${actorB?.id}", "text": "..." }
+  ],
+  "severity": "mild",
+  "shouldReconcile": false,
+  "summary": "\u81EA\u7136\u8BED\u8A00\u4E8B\u4EF6\u6458\u8981"
+}`;
+    } else if (actionType === "group_poll_vote") {
+      const pollTitle = String(groupContext?.pollTitle || "\u7FA4\u5185\u6295\u7968");
+      const pollOptions = Array.isArray(groupContext?.pollOptions) ? groupContext.pollOptions : [];
+      const maxSelections = Math.max(1, Number(groupContext?.maxSelections) || 1);
+      prompt = `\u4E8B\u4EF6\uFF1A${profileDesc(actorA)} \u5728\u7FA4\u804A\u300C${groupContext?.groupName || "\u5FAE\u4FE1\u7FA4"}\u300D\u770B\u5230\u4E00\u4E2A\u7FA4\u6295\u7968\uFF0C\u9700\u8981\u7ED3\u5408\u81EA\u8EAB\u4EBA\u8BBE\u548C\u504F\u597D\u505A\u51FA\u771F\u5B9E\u9009\u62E9\u3002
+\u6295\u7968\u4E3B\u9898\uFF1A\u300C${pollTitle}\u300D
+\u53EF\u9009\u9009\u9879\uFF1A
+${pollOptions.map((o, idx) => `${idx + 1}. [id:${o.id}] ${o.text}`).join("\n")}
+\u6700\u591A\u53EF\u9009\uFF1A${maxSelections} \u9879\uFF08${groupContext?.multiSelect ? "\u591A\u9009" : "\u5355\u9009"}\uFF09\u3002
+
+\u8BF7\u4E25\u683C\u4ECE\u4E0A\u8FF0\u9009\u9879 id \u4E2D\u6311\u9009 1 \u5230 ${maxSelections} \u4E2A\u6700\u7B26\u5408\u4F60\u6027\u683C\u504F\u597D\u7684\u9009\u9879\u3002
+\u8F93\u51FA\u4E25\u683C JSON\uFF1A
+{
+  "selectedOptionIds": ["${pollOptions[0]?.id || ""}"],
+  "commentText": "\u4E00\u53E5\u81EA\u7136\u7B80\u77ED\u7684\u8DDF\u8BC4\uFF08\u53EF\u9009\uFF0C<=25\u5B57\uFF09"
+}`;
+    } else {
+      prompt = `\u4E8B\u4EF6\uFF1A\u7FA4\u804A\u3010${groupContext?.groupName || "\u5FAE\u4FE1\u7FA4"}\u3011\u4E2D\u53D1\u751F\u4E86\u4E00\u4E2A\u4F4E\u9891\u81EA\u7136\u968F\u673A\u4E8B\u4EF6\uFF08\u5982\u53D1\u73B0\u5171\u540C\u5174\u8DA3\u3001\u6E29\u548C\u4E92\u52A9\u3001\u8F7B\u5EA6\u5403\u918B/\u5C0F\u62CC\u5634\u3001\u5BF9\u67D0\u8BDD\u9898\u5410\u69FD\u7B49\uFF0C\u4E0D\u5F97\u7A81\u7136\u5BA3\u5E03\u62C9\u9ED1\u6216\u65AD\u7EDD\u5173\u7CFB\uFF09\u3002
+\u6210\u5458A\uFF1A${profileDesc(actorA)}
+\u6210\u5458B\uFF1A${profileDesc(actorB)}
+\u8FD1\u671F\u7FA4\u804A\u6C1B\u56F4\uFF1A${groupContext?.recentText || "\u65E5\u5E38\u95F2\u804A"}
+\u611F\u60C5\u80CC\u666F\uFF1A${romanticContext || "\u666E\u901A\u7FA4\u53CB"}
+\u6307\u5B9A\u4E8B\u4EF6\u65B9\u5411\uFF1A${groupContext?.subtypeHint || "shared_interest"}
+
+\u8BF7\u8F93\u51FA\u4E25\u683C JSON\uFF1A
+{
+  "eventSubtype": "met_in_group | shared_interest | helped | jealousy_sparked | bickering | group_random_event",
+  "actingAiId": "${actorA?.id}",
+  "actingAiName": "${actorA?.name || ""}",
+  "groupMessageText": "\u4E00\u53E5\u81EA\u7136\u53D1\u5728\u7FA4\u91CC\u7684\u804A\u5929\u6D88\u606F\uFF08<=45\u5B57\uFF0C\u7B26\u5408\u89D2\u8272\u4EBA\u8BBE\uFF09",
+  "summary": "\u81EA\u7136\u8BED\u8A00\u4E8B\u4EF6\u6458\u8981\uFF08\u4F9B\u5173\u7CFB\u8BB0\u5F55\u663E\u793A\uFF09"
+}`;
+    }
+    const detailed = await callAiServiceDetailed({
+      prompt,
+      systemInstruction,
+      model: selectedModel,
+      apiKey: activeKey,
+      baseUrl: activeBaseUrl,
+      providerType: activeProvider,
+      apiProtocol: activeProtocol,
+      responseMimeType: "application/json",
+      temperature: 0.78,
+      timeoutMs: 3e4
+    });
+    const raw = detailed.text;
+    let parsed;
+    try {
+      parsed = JSON.parse(raw.replace(/```json|```/gi, "").trim());
+    } catch {
+      const m2 = raw.match(/\{[\s\S]*\}/);
+      if (!m2) throw new Error("AI \u793E\u4EA4\u56DE\u5408\u8FD4\u56DE\u975E JSON \u5185\u5BB9");
+      parsed = JSON.parse(m2[0]);
+    }
+    const duration = Date.now() - startTime;
+    res.json({
+      success: true,
+      result: parsed,
+      log: buildApiLogObject({
+        appName: "AI\u793E\u4EA4\u5F15\u64CE",
+        modelName: detailed.modelUsed || selectedModel,
+        interfaceType: `SocialTurn:${actionType || "generic"}`,
+        durationMs: duration,
+        usage: detailed.usage,
+        isRealTokens: detailed.isRealTokens,
+        purpose: `AI\u793E\u4EA4\u4E8B\u4EF6(${actionType || "generic"}): ${actorA?.name || ""} ${actorB ? "\u2194 " + actorB.name : ""}`.trim()
+      })
+    });
+  } catch (error) {
+    return handleAiEndpointError(res, error, "AI Social Turn");
   }
 });
 var serverGroupStore = /* @__PURE__ */ new Map();
@@ -71544,6 +71748,8 @@ app.get("/api/groups/invite/:code", (req, res) => {
         id: group.id,
         name: group.name,
         avatar: group.avatar,
+        avatarMode: group.avatarMode,
+        customAvatar: group.customAvatar,
         notice: group.notice,
         ownerId: group.ownerId,
         inviteCode: group.inviteCode,

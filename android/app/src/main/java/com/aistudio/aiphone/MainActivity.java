@@ -1,6 +1,7 @@
 package com.aistudio.aiphone;
 
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
@@ -14,38 +15,51 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 import com.aistudio.aiphone.plugins.AndroidPermissionBridge;
+import com.aistudio.aiphone.plugins.LauncherAppearanceManager;
 
 public class MainActivity extends BridgeActivity {
+    private int currentSystemBgColor = Color.parseColor("#FFFFFF");
+    private boolean currentLightStatusBars = true;
+    private boolean currentLightNavigationBars = true;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(AndroidPermissionBridge.class);
         super.onCreate(savedInstanceState);
+
+        if (LauncherAppearanceManager.reconcileOnLaunch(this, getIntent())) {
+            finish();
+            return;
+        }
+
+        boolean isSystemNight =
+            (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                == Configuration.UI_MODE_NIGHT_YES;
+        currentSystemBgColor = Color.parseColor(isSystemNight ? "#090D12" : "#FFFFFF");
+        currentLightStatusBars = !isSystemNight;
+        currentLightNavigationBars = !isSystemNight;
 
         Window window = getWindow();
 
         // 1. Ensure modern edge-to-edge layout so WindowInsets are fully dispatched
         WindowCompat.setDecorFitsSystemWindows(window, false);
 
-        // 2. Set window background & system bar colors to dark/transparent to eliminate any white seams
-        window.setBackgroundDrawable(new ColorDrawable(Color.parseColor("#09090b")));
+        // 2. Keep system bars transparent under edge-to-edge while matching window background to current theme
+        window.setBackgroundDrawable(new ColorDrawable(currentSystemBgColor));
         window.setStatusBarColor(Color.TRANSPARENT);
         window.setNavigationBarColor(Color.TRANSPARENT);
 
         // 3. Android 10+ (API 29+) & Android 14/15 edge-to-edge:
-        // Disable contrast enforcement to prevent the OS from injecting an artificial white/light scrim or divider line under the status bar
+        // Disable contrast enforcement to prevent the OS from injecting an artificial scrim or divider line
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.setStatusBarContrastEnforced(false);
             window.setNavigationBarContrastEnforced(false);
         }
 
-        // 4. Force status bar icons to light (white) for our dark top bar
-        WindowInsetsControllerCompat insetsController = WindowCompat.getInsetsController(window, window.getDecorView());
-        if (insetsController != null) {
-            insetsController.setAppearanceLightStatusBars(false);
-            insetsController.setAppearanceLightNavigationBars(false);
-        }
+        // 4. Sync initial status & navigation bar icon styles
+        applyInsetsIconStyles();
 
-        // 5. Configure WebView background to dark to prevent white flash or subpixel white lines
+        // 5. Configure WebView background to match current theme/app bar color
         configureWebViewBackground();
 
         // 6. Listen for system Window Insets (status bar, display cutout, navigation bar)
@@ -85,6 +99,10 @@ public class MainActivity extends BridgeActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        if (LauncherAppearanceManager.reconcileOnLaunch(this, intent)) {
+            finish();
+            return;
+        }
         handleNotificationIntent(intent, true);
     }
 
@@ -117,16 +135,58 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    private void applyInsetsIconStyles() {
+        Window window = getWindow();
+        if (window == null) {
+            return;
+        }
+        WindowInsetsControllerCompat insetsController =
+            WindowCompat.getInsetsController(window, window.getDecorView());
+        if (insetsController != null) {
+            insetsController.setAppearanceLightStatusBars(currentLightStatusBars);
+            insetsController.setAppearanceLightNavigationBars(currentLightNavigationBars);
+        }
+    }
+
+    public void applySystemBarAppearance(
+        final String statusBarBgHex,
+        final boolean lightStatusBars,
+        final boolean lightNavigationBars
+    ) {
+        runOnUiThread(() -> {
+            if (isFinishing() || isDestroyed()) {
+                return;
+            }
+            if (statusBarBgHex != null && !statusBarBgHex.trim().isEmpty()) {
+                try {
+                    currentSystemBgColor = Color.parseColor(statusBarBgHex.trim());
+                } catch (IllegalArgumentException ignored) {
+                    // Keep previous color on malformed hex
+                }
+            }
+            currentLightStatusBars = lightStatusBars;
+            currentLightNavigationBars = lightNavigationBars;
+
+            Window window = getWindow();
+            if (window != null) {
+                window.setBackgroundDrawable(new ColorDrawable(currentSystemBgColor));
+            }
+            applyInsetsIconStyles();
+            configureWebViewBackground();
+        });
+    }
+
     private void configureWebViewBackground() {
         if (getBridge() != null && getBridge().getWebView() != null) {
             WebView wv = getBridge().getWebView();
-            wv.setBackgroundColor(Color.parseColor("#09090b"));
+            wv.setBackgroundColor(currentSystemBgColor);
         }
     }
 
     @Override
     public void onResume() {
         super.onResume();
+        applyInsetsIconStyles();
         configureWebViewBackground();
     }
 }

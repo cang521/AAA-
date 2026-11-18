@@ -3,6 +3,8 @@ import { Sparkles, MapPin, Smile, Plus, Star, Edit, Trash2, ArrowRight, BookOpen
 import { SceneTemplate } from '../../lib/offline/OfflineSessionDb';
 import { loadSceneTemplates, deleteSceneTemplate } from '../../lib/offline/SceneTemplateService';
 import { SceneEditorModal } from './SceneEditorModal';
+import { StableTextInput } from '../common/StableTextInput';
+import { StableTextarea } from '../common/StableTextarea';
 
 interface SceneSelectorProps {
   onSelectScene: (scene: { name: string; location: string; atmosphere: string; background: string; defaultOpening?: string }, templateId?: string) => void;
@@ -209,11 +211,11 @@ export const SceneSelector: React.FC<SceneSelectorProps> = ({ onSelectScene, onB
         <div className="p-4 rounded-2xl bg-zinc-850/80 border border-zinc-750 space-y-3.5 text-xs">
           <div className="space-y-1">
             <label className="text-zinc-300 font-semibold block">场景名称 *</label>
-            <input
+            <StableTextInput
               type="text"
               placeholder="例如：露天咖啡馆看雨"
               value={tempName}
-              onChange={(e) => setTempName(e.target.value)}
+              onValueChange={setTempName}
               className="w-full p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100"
             />
           </div>
@@ -221,21 +223,21 @@ export const SceneSelector: React.FC<SceneSelectorProps> = ({ onSelectScene, onB
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
               <label className="text-zinc-300 font-semibold block">地点</label>
-              <input
+              <StableTextInput
                 type="text"
                 placeholder="街角咖啡馆"
                 value={tempLocation}
-                onChange={(e) => setTempLocation(e.target.value)}
+                onValueChange={setTempLocation}
                 className="w-full p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100"
               />
             </div>
             <div className="space-y-1">
               <label className="text-zinc-300 font-semibold block">氛围</label>
-              <input
+              <StableTextInput
                 type="text"
                 placeholder="悠闲、惬意"
                 value={tempAtmosphere}
-                onChange={(e) => setTempAtmosphere(e.target.value)}
+                onValueChange={setTempAtmosphere}
                 className="w-full p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100"
               />
             </div>
@@ -243,22 +245,22 @@ export const SceneSelector: React.FC<SceneSelectorProps> = ({ onSelectScene, onB
 
           <div className="space-y-1">
             <label className="text-zinc-300 font-semibold block">环境设定描述 *</label>
-            <textarea
+            <StableTextarea
               rows={3}
               placeholder="描述当前场景细节、气候背景以及你们正在做的事情..."
               value={tempBackground}
-              onChange={(e) => setTempBackground(e.target.value)}
+              onValueChange={setTempBackground}
               className="w-full p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100 resize-none leading-relaxed"
             />
           </div>
 
           <div className="space-y-1">
             <label className="text-zinc-300 font-semibold block">开场动作 / 对白（可选）</label>
-            <input
+            <StableTextInput
               type="text"
               placeholder="（轻轻靠过来）在想什么呢？"
               value={tempOpening}
-              onChange={(e) => setTempOpening(e.target.value)}
+              onValueChange={setTempOpening}
               className="w-full p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100"
             />
           </div>

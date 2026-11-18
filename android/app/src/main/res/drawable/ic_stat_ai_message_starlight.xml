@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Monochrome crescent moon and companion star silhouette for starlight preset -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M13.2,3.4A8.4,8.4 0 1,0 20.4,16.8A6.8,6.8 0 1,1 13.2,3.4Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M17.2,4.8L18.15,7.35L20.7,8.3L18.15,9.25L17.2,11.8L16.25,9.25L13.7,8.3L16.25,7.35Z" />
+</vector>

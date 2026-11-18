@@ -30,6 +30,18 @@ import {
   GroupChatMessage,
   GroupJoinRequest,
 } from '../types';
+import {
+  clearGroupChatsInDb,
+  getCachedGroupChats,
+  hydrateGroupChatsFromDb,
+  isIndexedDbAvailable,
+  readLegacyGroupChatsFromLocalStorage,
+  saveGroupChatsToDb,
+} from './groupChatDb';
+
+if (isIndexedDbAvailable()) {
+  void hydrateGroupChatsFromDb();
+}
 
 const STORAGE_KEYS = {
   PIN: 'phone_pin_code',
@@ -698,17 +710,21 @@ export const generateGroupInviteCode = (): string => {
 export const INITIAL_GROUP_CHATS: GroupChat[] = [];
 
 export const loadGroupChats = (): GroupChat[] => {
-  const loaded = loadFromStorage<GroupChat[]>(STORAGE_KEYS.GROUP_CHATS, []);
-  if (!Array.isArray(loaded)) return [];
-  const cleaned = loaded.filter((g) => g && g.id && !PRESET_DEMO_GROUP_IDS.has(g.id));
-  if (cleaned.length !== loaded.length) {
-    saveToStorage(STORAGE_KEYS.GROUP_CHATS, cleaned);
-  }
-  return cleaned;
+  const cached = getCachedGroupChats();
+  if (cached) return cached;
+  return readLegacyGroupChatsFromLocalStorage();
+};
+
+export const loadGroupChatsAsync = async (): Promise<GroupChat[]> => {
+  return hydrateGroupChatsFromDb();
 };
 
 export const saveGroupChats = (groups: GroupChat[]): void => {
-  saveToStorage(STORAGE_KEYS.GROUP_CHATS, groups);
+  void saveGroupChatsToDb(groups);
+};
+
+export const saveGroupChatsAsync = async (groups: GroupChat[]): Promise<void> => {
+  await saveGroupChatsToDb(groups);
 };
 
 export {
@@ -766,7 +782,7 @@ export function resetStorageToFactoryDefaults(): void {
   saveToStorage(STORAGE_KEYS.RPS_STATS, INITIAL_RPS_STATS);
   saveToStorage(STORAGE_KEYS.TELEPATHY_RECORDS, []);
   saveToStorage(STORAGE_KEYS.TELEPATHY_CHAR_STATS, {});
-  saveToStorage(STORAGE_KEYS.GROUP_CHATS, []);
+  void clearGroupChatsInDb();
   saveToStorage(STORAGE_KEYS.MESSAGES, []);
 }
 

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { apiFetch } from '../../lib/localBackend';
 import { AppIconConfig, ApiLog, ApiConfig, ThemeId, WallpaperSource } from '../../types';
+import { StableTextInput } from '../common/StableTextInput';
+import { StableTextarea } from '../common/StableTextarea';
 import {
   ArrowLeft,
   Palette,
@@ -156,6 +158,8 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
     availablePresets: LAUNCHER_PRESETS.map((p) => p.id),
   }));
   const [isSwitchingLauncher, setIsSwitchingLauncher] = useState(false);
+  const switchingLockRef = React.useRef(false);
+  const restartFallbackTimerRef = React.useRef<number | null>(null);
   const [launcherFeedback, setLauncherFeedback] = useState<{
     type: 'success' | 'warn' | 'info';
     text: string;
@@ -176,14 +180,45 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
       .catch(() => {});
     return () => {
       cancelled = true;
+      if (restartFallbackTimerRef.current !== null) {
+        window.clearTimeout(restartFallbackTimerRef.current);
+      }
     };
   }, []);
 
   const handleSelectLauncherPreset = async (presetId: LauncherPresetId) => {
+    if (switchingLockRef.current || isSwitchingLauncher) {
+      return;
+    }
+    switchingLockRef.current = true;
     setIsSwitchingLauncher(true);
-    setLauncherFeedback(null);
+    setLauncherFeedback({
+      type: 'info',
+      text: '正在切换桌面图标与名称，请稍候...',
+    });
+
+    let awaitingControlledRestart = false;
     try {
       const res = await androidPermissionBridgeClient.setLauncherPreset(presetId);
+      if (res.success && res.restarting) {
+        awaitingControlledRestart = true;
+        setLauncherFeedback({
+          type: 'info',
+          text: res.message || '正在应用桌面图标，应用将自动重新打开',
+        });
+        // Keep interaction locked while native controlled task rebuild executes.
+        // Only unlock after a generous timeout if the OS prevented the restart.
+        restartFallbackTimerRef.current = window.setTimeout(() => {
+          switchingLockRef.current = false;
+          setIsSwitchingLauncher(false);
+          androidPermissionBridgeClient
+            .getLauncherAppearanceStatus()
+            .then((status) => setLauncherStatus(status))
+            .catch(() => {});
+        }, 4500);
+        return;
+      }
+
       if (res.success) {
         setLauncherStatus((prev) => ({
           ...prev,
@@ -191,7 +226,7 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
         }));
         setLauncherFeedback({
           type: 'success',
-          text: res.message || '已切换桌面图标与名称预设！',
+          text: res.message || '当前已是该桌面图标与名称预设！',
         });
       } else {
         setLauncherFeedback({
@@ -199,18 +234,55 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
           text: res.message || '当前环境无法切换 APK 桌面图标。',
         });
       }
+    } catch (err: any) {
+      setLauncherFeedback({
+        type: 'warn',
+        text: err?.message || '切换桌面图标与名称失败，请稍后重试。',
+      });
     } finally {
-      setIsSwitchingLauncher(false);
+      if (!awaitingControlledRestart) {
+        switchingLockRef.current = false;
+        setIsSwitchingLauncher(false);
+      }
     }
   };
 
   const handleResetLauncherDefault = async () => {
+    if (switchingLockRef.current || isSwitchingLauncher) {
+      return;
+    }
+    switchingLockRef.current = true;
     setIsSwitchingLauncher(true);
-    setLauncherFeedback(null);
+    setLauncherFeedback({
+      type: 'info',
+      text: '正在切换桌面图标与名称，请稍候...',
+    });
+
+    let awaitingControlledRestart = false;
     try {
       const res = await androidPermissionBridgeClient.resetLauncherDefault();
+      if (res.success && res.restarting) {
+        awaitingControlledRestart = true;
+        setLauncherFeedback({
+          type: 'info',
+          text: res.message || '正在应用桌面图标，应用将自动重新打开',
+        });
+        restartFallbackTimerRef.current = window.setTimeout(() => {
+          switchingLockRef.current = false;
+          setIsSwitchingLauncher(false);
+          androidPermissionBridgeClient
+            .getLauncherAppearanceStatus()
+            .then((status) => setLauncherStatus(status))
+            .catch(() => {});
+        }, 4500);
+        return;
+      }
+
       if (res.success) {
-        setLauncherStatus((prev) => ({ ...prev, activePresetId: 'default' }));
+        setLauncherStatus((prev) => ({
+          ...prev,
+          activePresetId: res.activePresetId || 'default',
+        }));
         setLauncherFeedback({
           type: 'success',
           text: res.message || '已恢复默认桌面图标与名称！',
@@ -221,19 +293,34 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
           text: res.message || '当前环境无法恢复默认图标。',
         });
       }
+    } catch (err: any) {
+      setLauncherFeedback({
+        type: 'warn',
+        text: err?.message || '恢复默认桌面图标失败，请稍后重试。',
+      });
     } finally {
-      setIsSwitchingLauncher(false);
+      if (!awaitingControlledRestart) {
+        switchingLockRef.current = false;
+        setIsSwitchingLauncher(false);
+      }
     }
   };
 
   const handleCreateCustomShortcut = async () => {
+    if (switchingLockRef.current || isSwitchingLauncher) {
+      return;
+    }
     const cleanName = customShortcutName.trim();
     if (!cleanName) {
       setLauncherFeedback({ type: 'warn', text: '请先输入自定义快捷方式名称！' });
       return;
     }
+    switchingLockRef.current = true;
     setIsSwitchingLauncher(true);
-    setLauncherFeedback(null);
+    setLauncherFeedback({
+      type: 'info',
+      text: '正在向系统桌面请求创建快捷方式，请稍候...',
+    });
     try {
       const res = await androidPermissionBridgeClient.createCustomShortcut({
         label: cleanName,
@@ -244,6 +331,7 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
         text: res.message || (res.success ? '已发起自定义桌面快捷方式创建请求' : '创建失败'),
       });
     } finally {
+      switchingLockRef.current = false;
       setIsSwitchingLauncher(false);
     }
   };
@@ -719,12 +807,12 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
             在下方自由输入自定义 CSS 代码。若出现样式错乱或无法使用，可一键调用 API 让 AI 自动修复并适配手机屏幕。
           </p>
 
-          <textarea
+          <StableTextarea
             rows={6}
             value={cssCode}
-            onChange={(e) => {
-              setCssCode(e.target.value);
-              onUpdateCustomCss(e.target.value);
+            onValueChange={(nextVal) => {
+              setCssCode(nextVal);
+              onUpdateCustomCss(nextVal);
             }}
             className="w-full px-3 py-2 rounded-xl bg-zinc-850 border border-zinc-700 font-mono text-xs text-emerald-300 focus:outline-none focus:border-purple-500"
           />
@@ -765,12 +853,12 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
                       <span className="text-xs font-bold text-purple-300">{icon.name.slice(0, 2)}</span>
                     )}
                   </div>
-                  <input
+                  <StableTextInput
                     type="text"
                     value={icon.name}
-                    onChange={(e) => {
+                    onValueChange={(nextVal) => {
                       const updated = icons.map((i) =>
-                        i.id === icon.id ? { ...i, name: e.target.value } : i
+                        i.id === icon.id ? { ...i, name: nextVal } : i
                       );
                       onUpdateIcons(updated);
                     }}
@@ -871,6 +959,8 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
               className={`p-2.5 rounded-2xl border text-[11px] leading-relaxed ${
                 launcherFeedback.type === 'success'
                   ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                  : launcherFeedback.type === 'info'
+                  ? 'bg-sky-500/15 border-sky-500/40 text-sky-300 font-medium'
                   : 'bg-amber-500/15 border-amber-500/40 text-amber-300'
               }`}
             >
@@ -919,7 +1009,7 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
               })}
             </div>
             <p className="text-[10px] text-zinc-400 leading-relaxed">
-              说明：切换采用 Android 原生组件别名（DONT_KILL_APP），不会清空聊天记录、角色、记忆或 API 配置；部分手机系统桌面图标缓存需数秒刷新。
+              说明：切换采用分阶段安全切换（先启用新桌面入口并自动重新打开应用，再清理旧入口），不会清空聊天记录、角色、记忆或 API 配置；部分手机系统桌面图标缓存需数秒刷新。
             </p>
           </div>
 
@@ -954,11 +1044,11 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
               </button>
 
               <div className="flex-1 space-y-1.5">
-                <input
+                <StableTextInput
                   type="text"
                   maxLength={24}
                   value={customShortcutName}
-                  onChange={(e) => setCustomShortcutName(e.target.value)}
+                  onValueChange={setCustomShortcutName}
                   placeholder="输入桌面快捷方式显示名称"
                   className="w-full px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700 text-xs text-white focus:outline-none focus:border-sky-400"
                 />

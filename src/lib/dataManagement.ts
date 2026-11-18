@@ -16,7 +16,9 @@ import {
   loadCharacters,
   saveCharacters,
   loadGroupChats,
+  loadGroupChatsAsync,
   saveGroupChats,
+  saveGroupChatsAsync,
   loadUserProfile,
   saveUserProfile,
   loadSettings,
@@ -42,6 +44,16 @@ import {
   clearAllChatMessages,
 } from './chatDb';
 import { backfillAllCharactersNotificationAvatars } from './notificationAvatar';
+import { normalizeGroupChatSchema } from './groupAvatar';
+import {
+  exportSocialBundle,
+  importSocialBundleNonDestructive,
+  SocialExportBundle,
+} from './social/socialDb';
+import {
+  loadAiSocialSettings,
+  saveAiSocialSettings,
+} from './social/socialSettings';
 
 export type ExportCategory = 'characters' | 'messages' | 'memories' | 'groups' | 'settings' | 'all';
 export type ExportFormat = 'json' | 'jsonl' | 'txt' | 'zip';
@@ -132,6 +144,8 @@ export interface ImportParsedResult {
   messages: ChatMessage[];
   groups: GroupChat[];
   memories: { characterId?: string; characterName?: string; text: string }[];
+  socialData?: Partial<SocialExportBundle>;
+  socialSettings?: any;
   settings?: {
     settings?: any;
     userProfile?: UserProfile;
@@ -174,6 +188,7 @@ export interface DataSnapshot {
   note: string;
   localStorageDump: Record<string, string>;
   messagesDump: ChatMessage[];
+  groupsDump?: GroupChat[];
   stats: {
     characterCount: number;
     messageCount: number;
@@ -215,7 +230,6 @@ export async function createDataSnapshot(note = '导入前自动备份'): Promis
     'phone_ai_permissions',
     'ai_phone_api_settings_v1',
     'phone_ai_controls',
-    'phone_group_chats',
   ];
 
   const localStorageDump: Record<string, string> = {};
@@ -228,7 +242,7 @@ export async function createDataSnapshot(note = '导入前自动备份'): Promis
 
   const allMsgs = await getAllChatMessages();
   const characters = loadCharacters();
-  const groups = loadGroupChats();
+  const groups = await loadGroupChatsAsync();
 
   const snapshot: DataSnapshot = {
     id: 'snap_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
@@ -236,6 +250,7 @@ export async function createDataSnapshot(note = '导入前自动备份'): Promis
     note,
     localStorageDump,
     messagesDump: allMsgs,
+    groupsDump: groups,
     stats: {
       characterCount: characters.length,
       messageCount: allMsgs.length,
@@ -245,11 +260,16 @@ export async function createDataSnapshot(note = '导入前自动备份'): Promis
 
   try {
     const existing = listDataSnapshots();
-    // Keep max 6 snapshots to conserve browser storage
-    const updated = [snapshot, ...existing].slice(0, 6);
+    // Keep max 4 snapshots in localStorage to avoid crowding browser 5MB quota
+    const updated = [snapshot, ...existing].slice(0, 4);
     localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(updated));
   } catch (e) {
-    console.warn('Failed to save snapshot metadata to localStorage', e);
+    // Fallback: keep only the latest snapshot or lightened copy without throwing QuotaExceededError
+    try {
+      localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify([snapshot]));
+    } catch {
+      console.warn('Failed to save snapshot metadata to localStorage (quota tight)', e);
+    }
   }
 
   return snapshot;
@@ -262,12 +282,28 @@ export async function restoreDataSnapshot(snapshotId: string): Promise<boolean> 
     throw new Error('未找到指定备份快照数据');
   }
 
-  // Restore LocalStorage
+  // Restore LocalStorage (skip legacy phone_group_chats which now lives in IndexedDB)
   for (const [key, val] of Object.entries(snap.localStorageDump)) {
+    if (key === 'phone_group_chats') {
+      try {
+        const parsedGroups = JSON.parse(val);
+        if (Array.isArray(parsedGroups)) {
+          await saveGroupChatsAsync(parsedGroups);
+        }
+      } catch {
+        // ignore
+      }
+      continue;
+    }
     localStorage.setItem(key, val);
   }
 
-  // Restore IndexedDB
+  // Restore IndexedDB Group Chats
+  if (Array.isArray(snap.groupsDump)) {
+    await saveGroupChatsAsync(snap.groupsDump);
+  }
+
+  // Restore IndexedDB Messages
   await restoreChatMessages(snap.messagesDump, true);
   return true;
 }
@@ -357,6 +393,8 @@ export async function parseImportFile(file: File, options?: ImportParseOptions):
   let parsedGroups: GroupChat[] = [];
   let parsedMemories: { characterId?: string; characterName?: string; text: string }[] = [];
   let parsedSettings: any = undefined;
+  let parsedSocialData: Partial<SocialExportBundle> | undefined = undefined;
+  let parsedSocialSettings: any = undefined;
   let fileType: 'zip' | 'json' | 'jsonl' | 'txt' = 'json';
 
   let rawReport: Partial<FileIntelligenceReport> = {};
@@ -369,6 +407,8 @@ export async function parseImportFile(file: File, options?: ImportParseOptions):
     parsedGroups = zipResult.groups;
     parsedMemories = zipResult.memories;
     parsedSettings = zipResult.settings;
+    parsedSocialData = zipResult.socialData;
+    parsedSocialSettings = zipResult.socialSettings;
     warnings.push(...zipResult.warnings);
     rawReport = zipResult.report;
   } else if (ext === 'jsonl') {
@@ -380,6 +420,8 @@ export async function parseImportFile(file: File, options?: ImportParseOptions):
     parsedGroups = jsonlResult.groups;
     parsedMemories = jsonlResult.memories;
     parsedSettings = jsonlResult.settings;
+    parsedSocialData = jsonlResult.socialData;
+    parsedSocialSettings = jsonlResult.socialSettings;
     warnings.push(...jsonlResult.warnings);
     rawReport = jsonlResult.report;
   } else if (ext === 'txt') {
@@ -401,6 +443,8 @@ export async function parseImportFile(file: File, options?: ImportParseOptions):
     parsedGroups = jsonResult.groups;
     parsedMemories = jsonResult.memories;
     parsedSettings = jsonResult.settings;
+    parsedSocialData = jsonResult.socialData;
+    parsedSocialSettings = jsonResult.socialSettings;
     warnings.push(...jsonResult.warnings);
     rawReport = jsonResult.report;
   }
@@ -505,6 +549,8 @@ export async function parseImportFile(file: File, options?: ImportParseOptions):
     messages: parsedMsgs,
     groups: parsedGroups,
     memories: parsedMemories,
+    socialData: parsedSocialData,
+    socialSettings: parsedSocialSettings,
     settings: parsedSettings,
     stats: {
       characterCount: parsedChars.length,
@@ -532,6 +578,8 @@ async function parseZipFile(file: File, options?: ImportParseOptions) {
   let groups: GroupChat[] = [];
   let memories: { characterId?: string; characterName?: string; text: string }[] = [];
   let settings: any = undefined;
+  let socialData: Partial<SocialExportBundle> | undefined = undefined;
+  let socialSettings: any = undefined;
 
   const rootFiles = Object.keys(loaded.files);
   const fileTypesCount: Record<string, number> = {};
@@ -561,6 +609,17 @@ async function parseZipFile(file: File, options?: ImportParseOptions) {
       groups.push(...res.groups);
       memories.push(...res.memories);
       if (res.settings) settings = res.settings;
+      if (res.socialData) socialData = res.socialData;
+      if (res.socialSettings) socialSettings = res.socialSettings;
+    } else if (lower === 'social_data.json') {
+      const str = await fileObj.async('text');
+      try {
+        const parsed = JSON.parse(str);
+        if (parsed && typeof parsed === 'object') {
+          socialData = parsed.socialData || parsed;
+          if (parsed.socialSettings) socialSettings = parsed.socialSettings;
+        }
+      } catch {}
     } else if (lower === 'characters.json' || lower === 'ai_characters.json') {
       const str = await fileObj.async('text');
       try {
@@ -576,7 +635,7 @@ async function parseZipFile(file: File, options?: ImportParseOptions) {
       try {
         const parsed = JSON.parse(str);
         if (Array.isArray(parsed)) {
-          groups.push(...parsed);
+          groups.push(...parsed.map(normalizeGroupChatSchema));
         }
       } catch (e) {
         warnings.push(`解析 ${name} 失败`);
@@ -669,7 +728,7 @@ async function parseZipFile(file: File, options?: ImportParseOptions) {
       : '可在下方逐一确认导入角色的本地归属。',
   };
 
-  return { characters, messages, groups, memories, settings, warnings, report };
+  return { characters, messages, groups, memories, settings, socialData, socialSettings, warnings, report };
 }
 
 // -------------------------------------------------------------------------
@@ -682,6 +741,8 @@ function parseJsonContent(text: string, fileName: string, options?: ImportParseO
   let groups: GroupChat[] = [];
   let memories: { characterId?: string; characterName?: string; text: string }[] = [];
   let settings: any = undefined;
+  let socialData: Partial<SocialExportBundle> | undefined = undefined;
+  let socialSettings: any = undefined;
 
   let identifiedFormat = '标准 JSON 数据';
   let category: 'tavern_card' | 'chat_transcript' | 'full_backup' | 'character_dossier' | 'generic' = 'generic';
@@ -858,7 +919,7 @@ function parseJsonContent(text: string, fileName: string, options?: ImportParseO
       }
       if (Array.isArray(data.groupChats) || Array.isArray(data.groups)) {
         const grps = data.groupChats || data.groups;
-        groups.push(...grps);
+        groups.push(...grps.map(normalizeGroupChatSchema));
         featuresDetected.push(`包含 ${grps.length} 个群聊空间`);
       }
       if (data.userProfile || data.settings || data.apiConfig || data.memos || data.worldBooks) {
@@ -875,7 +936,15 @@ function parseJsonContent(text: string, fileName: string, options?: ImportParseO
         featuresDetected.push('包含用户资料、API密钥与系统偏好');
       }
 
-      analysisSummary = `精准识别出全量备份文件，涵盖通讯录、聊天记忆及系统偏好。`;
+      if (data.socialData && typeof data.socialData === 'object') {
+        socialData = data.socialData;
+        featuresDetected.push('包含 AI 社会关系、AI 私聊与感情目标锁定状态');
+      }
+      if (data.socialSettings && typeof data.socialSettings === 'object') {
+        socialSettings = data.socialSettings;
+      }
+
+      analysisSummary = `精准识别出全量备份文件，涵盖通讯录、聊天记忆、AI 社会关系及系统偏好。`;
       actionSuggestion = '推荐选择「⚡ 智能合并」一键恢复或更新本地数据。';
     } else if (Array.isArray(data)) {
       // === Case Array of items ===
@@ -899,7 +968,7 @@ function parseJsonContent(text: string, fileName: string, options?: ImportParseO
         } else if (first.members && first.inviteCode) {
           category = 'generic';
           categoryLabel = '群聊列表定义';
-          groups.push(...data);
+          groups.push(...data.map(normalizeGroupChatSchema));
         }
       }
     } else {
@@ -926,6 +995,8 @@ function parseJsonContent(text: string, fileName: string, options?: ImportParseO
     groups,
     memories,
     settings,
+    socialData,
+    socialSettings,
     warnings,
     report: {
       confidence,
@@ -951,6 +1022,8 @@ function parseJsonlText(text: string, options?: ImportParseOptions) {
   const groups: GroupChat[] = [];
   const memories: { characterId?: string; characterName?: string; text: string }[] = [];
   let settings: any = undefined;
+  let socialData: Partial<SocialExportBundle> | undefined = undefined;
+  let socialSettings: any = undefined;
 
   const lines = text.split('\n');
   let charLines = 0;
@@ -968,7 +1041,7 @@ function parseJsonlText(text: string, options?: ImportParseOptions) {
         messages.push(normalizeChatMessageSchema(obj.data || obj));
         msgLines++;
       } else if (obj.type === 'group' || (obj.members && obj.inviteCode)) {
-        groups.push(obj.data || obj);
+        groups.push(normalizeGroupChatSchema(obj.data || obj));
       } else if (obj.type === 'memory' || obj.memory) {
         memories.push({
           characterId: obj.characterId,
@@ -977,6 +1050,10 @@ function parseJsonlText(text: string, options?: ImportParseOptions) {
         });
       } else if (obj.type === 'settings') {
         settings = obj.data || obj;
+      } else if (obj.type === 'social_bundle' && obj.data) {
+        socialData = obj.data;
+      } else if (obj.type === 'social_settings' && obj.data) {
+        socialSettings = obj.data;
       }
     } catch (e) {
       warnings.push(`第 ${i + 1} 行 JSONL 解析错误`);
@@ -999,7 +1076,7 @@ function parseJsonlText(text: string, options?: ImportParseOptions) {
     actionSuggestion: '数据已规范化，可选择目标本地角色进行导入。',
   };
 
-  return { characters, messages, groups, memories, settings, warnings, report };
+  return { characters, messages, groups, memories, settings, socialData, socialSettings, warnings, report };
 }
 
 // -------------------------------------------------------------------------
@@ -1446,7 +1523,7 @@ export async function executeImport(
 
   try {
     const existingChars = loadCharacters();
-    const existingGroups = loadGroupChats();
+    const existingGroups = await loadGroupChatsAsync();
     const existingMessages = await getAllChatMessages();
 
     // Map of old characterId -> new resolved characterId
@@ -1690,13 +1767,14 @@ export async function executeImport(
       const groupMap = new Map<string, GroupChat>();
       for (const g of existingGroups) groupMap.set(g.id, g);
 
-      for (const incGroup of parsed.groups) {
+      for (const rawIncGroup of parsed.groups) {
+        const incGroup = normalizeGroupChatSchema(rawIncGroup);
         if (!groupMap.has(incGroup.id)) {
           groupMap.set(incGroup.id, incGroup);
           importedGroupCount++;
         } else {
-          // Merge group messages
-          const existingG = groupMap.get(incGroup.id)!;
+          // Merge group messages while preserving explicit custom avatar if existing/incoming has one
+          const existingG = normalizeGroupChatSchema(groupMap.get(incGroup.id)!);
           const mergedMsgs = [...(existingG.messages || [])];
           const existingMsgIds = new Set(mergedMsgs.map((m) => m.id));
 
@@ -1707,11 +1785,13 @@ export async function executeImport(
           }
           groupMap.set(incGroup.id, {
             ...existingG,
+            avatarMode: existingG.avatarMode || incGroup.avatarMode,
+            customAvatar: existingG.customAvatar || incGroup.customAvatar,
             messages: mergedMsgs,
           });
         }
       }
-      saveGroupChats(Array.from(groupMap.values()));
+      await saveGroupChatsAsync(Array.from(groupMap.values()));
     }
 
     // 5. Import System Settings & User Profile if present
@@ -1725,6 +1805,16 @@ export async function executeImport(
       if (s.permissions) savePermissions({ ...loadPermissions(), ...s.permissions });
       if (Array.isArray(s.memos)) saveMemos([...loadMemos(), ...s.memos]);
       if (Array.isArray(s.worldBooks)) saveWorldBooks([...loadWorldBooks(), ...s.worldBooks]);
+    }
+
+    // 6. Non-destructive merge import for AI Social Relationships, Private Threads & Romantic States
+    if (parsed.socialData) {
+      await importSocialBundleNonDestructive(parsed.socialData).catch((e) => {
+        console.warn('[dataManagement] Non-destructive social bundle import warning:', e);
+      });
+    }
+    if (options.importSettings && parsed.socialSettings && typeof parsed.socialSettings === 'object') {
+      saveAiSocialSettings({ ...loadAiSocialSettings(), ...parsed.socialSettings });
     }
 
     return {
@@ -1770,7 +1860,7 @@ export async function exportData(options: ExportOptions): Promise<{ blob: Blob; 
       ? allMsgs.filter((m) => options.characterIds!.includes(m.characterId))
       : allMsgs;
 
-  const allGroups = loadGroupChats();
+  const allGroups = await loadGroupChatsAsync();
   const settings = loadSettings();
   const userProfile = loadUserProfile();
   const menstrualData = loadMenstrualData();
@@ -1779,6 +1869,8 @@ export async function exportData(options: ExportOptions): Promise<{ blob: Blob; 
   const permissions = loadPermissions();
   const memos = loadMemos();
   const worldBooks = loadWorldBooks();
+  const socialData = await exportSocialBundle();
+  const socialSettings = loadAiSocialSettings();
 
   const timestamp = Date.now();
   const dateStr = new Date(timestamp).toISOString().slice(0, 10);
@@ -1847,6 +1939,13 @@ export async function exportData(options: ExportOptions): Promise<{ blob: Blob; 
       }
     }
 
+    if (includeChars || includeGroups || includeSettings || isAll) {
+      zip.file(
+        'social_data.json',
+        JSON.stringify({ socialData, socialSettings }, null, 2)
+      );
+    }
+
     // Full backup bundle for instant restore
     const fullBackup = {
       manifest,
@@ -1861,6 +1960,8 @@ export async function exportData(options: ExportOptions): Promise<{ blob: Blob; 
       memos: includeSettings ? memos : undefined,
       worldBooks: includeSettings ? worldBooks : undefined,
       menstrualData: includeSettings ? menstrualData : undefined,
+      socialData: includeChars || includeGroups || includeSettings || isAll ? socialData : undefined,
+      socialSettings: includeSettings || isAll ? socialSettings : undefined,
     };
     zip.file('backup.json', JSON.stringify(fullBackup, null, 2));
 
@@ -1923,6 +2024,11 @@ export async function exportData(options: ExportOptions): Promise<{ blob: Blob; 
           },
         })
       );
+    }
+
+    if (includeChars || includeGroups || includeSettings || isAll) {
+      lines.push(JSON.stringify({ type: 'social_bundle', data: socialData }));
+      lines.push(JSON.stringify({ type: 'social_settings', data: socialSettings }));
     }
 
     const blob = new Blob([lines.join('\n')], { type: 'application/x-jsonlines;charset=utf-8' });
@@ -2016,6 +2122,8 @@ export async function exportData(options: ExportOptions): Promise<{ blob: Blob; 
     memos: includeSettings ? memos : undefined,
     worldBooks: includeSettings ? worldBooks : undefined,
     menstrualData: includeSettings ? menstrualData : undefined,
+    socialData: includeChars || includeGroups || includeSettings || isAll ? socialData : undefined,
+    socialSettings: includeSettings || isAll ? socialSettings : undefined,
   };
 
   const jsonStr = JSON.stringify(fullBackupData, null, 2);

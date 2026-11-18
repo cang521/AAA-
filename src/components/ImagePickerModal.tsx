@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Upload, Image as ImageIcon } from 'lucide-react';
+import { StableTextInput } from './common/StableTextInput';
 
 interface ImagePickerModalProps {
   isOpen: boolean;
@@ -74,13 +75,13 @@ export const ImagePickerModal: React.FC<ImagePickerModalProps> = ({
         {/* URL Input */}
         <div className="mb-4">
           <label className="wx-secondary-text block text-xs text-zinc-400 mb-1">图片 URL 链接</label>
-          <input
+          <StableTextInput
             type="text"
             placeholder="https://..."
             value={customUrl}
-            onChange={(e) => {
-              setCustomUrl(e.target.value);
-              setPreview(e.target.value);
+            onValueChange={(nextVal) => {
+              setCustomUrl(nextVal);
+              setPreview(nextVal);
             }}
             className="wx-modal-input w-full px-3 py-2 text-xs rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
           />

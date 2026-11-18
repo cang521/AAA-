@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DEFAULT_AI_AVATAR } from '../../../lib/storage';
 import { PressableButton } from '../../ui/interaction';
+import { StableTextInput } from '../../common/StableTextInput';
 import {
   AiCharacter,
   ApiConfig,
@@ -993,12 +994,18 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                   {/* Input area */}
                   {phase === 'qa_session' ? (
                     <div className="flex items-center gap-2">
-                      <input
+                      <StableTextInput
                         id="rps-player-question-input"
                         type="text"
                         value={playerQuestionInput}
-                        onChange={(e) => setPlayerQuestionInput(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handlePlayerSubmitQuestion()}
+                        onValueChange={setPlayerQuestionInput}
+                        onKeyDown={(e) => {
+                          const nativeEvt = e.nativeEvent as KeyboardEvent;
+                          if (nativeEvt.isComposing || nativeEvt.keyCode === 229) return;
+                          if (e.key === 'Enter') {
+                            handlePlayerSubmitQuestion();
+                          }
+                        }}
                         placeholder={`向 ${opponent.name} 提问...`}
                         className="flex-1 bg-slate-900/90 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 transition-colors"
                       />
@@ -1071,12 +1078,18 @@ export const RpsGame: React.FC<RpsGameProps> = ({
                   {phase === 'qa_session' ? (
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
-                        <input
+                        <StableTextInput
                           id="rps-player-answer-input"
                           type="text"
                           value={playerAnswerInput}
-                          onChange={(e) => setPlayerAnswerInput(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && handlePlayerSubmitAnswer()}
+                          onValueChange={setPlayerAnswerInput}
+                          onKeyDown={(e) => {
+                            const nativeEvt = e.nativeEvent as KeyboardEvent;
+                            if (nativeEvt.isComposing || nativeEvt.keyCode === 229) return;
+                            if (e.key === 'Enter') {
+                              handlePlayerSubmitAnswer();
+                            }
+                          }}
                           placeholder="输入你的诚实回答..."
                           className="flex-1 bg-slate-900/90 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 transition-colors"
                         />

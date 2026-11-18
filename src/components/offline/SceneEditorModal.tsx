@@ -3,6 +3,8 @@ import { X, Sparkles, MapPin, Smile, BookOpen, Check, MessageSquare } from 'luci
 import { SceneTemplate } from '../../lib/offline/OfflineSessionDb';
 import { saveSceneTemplate } from '../../lib/offline/SceneTemplateService';
 import { AnimatedCheckbox, PressableButton } from '../ui/interaction';
+import { StableTextInput } from '../common/StableTextInput';
+import { StableTextarea } from '../common/StableTextarea';
 
 interface SceneEditorModalProps {
   isOpen: boolean;
@@ -74,12 +76,12 @@ export const SceneEditorModal: React.FC<SceneEditorModalProps> = ({
           {/* Scene Name */}
           <div className="space-y-1">
             <label className="text-zinc-300 font-semibold block">场景名称 *</label>
-            <input
+            <StableTextInput
               type="text"
               required
               placeholder="例如：雨夜宅家 / 深夜便利店 / 露天音乐节"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onValueChange={setName}
               className="w-full p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100 focus:outline-none focus:border-indigo-500 font-medium"
             />
           </div>
@@ -90,11 +92,11 @@ export const SceneEditorModal: React.FC<SceneEditorModalProps> = ({
               <label className="text-zinc-300 font-semibold flex items-center gap-1">
                 <MapPin className="w-3.5 h-3.5 text-amber-400" /> 具体地点
               </label>
-              <input
+              <StableTextInput
                 type="text"
                 placeholder="例如：卧室落地窗前"
                 value={location}
-                onChange={(e) => setLocation(e.target.value)}
+                onValueChange={setLocation}
                 className="w-full p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100 focus:outline-none focus:border-indigo-500"
               />
             </div>
@@ -103,11 +105,11 @@ export const SceneEditorModal: React.FC<SceneEditorModalProps> = ({
               <label className="text-zinc-300 font-semibold flex items-center gap-1">
                 <Smile className="w-3.5 h-3.5 text-emerald-400" /> 氛围基调
               </label>
-              <input
+              <StableTextInput
                 type="text"
                 placeholder="例如：安静、温馨、微醺"
                 value={atmosphere}
-                onChange={(e) => setAtmosphere(e.target.value)}
+                onValueChange={setAtmosphere}
                 className="w-full p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100 focus:outline-none focus:border-indigo-500"
               />
             </div>
@@ -118,12 +120,12 @@ export const SceneEditorModal: React.FC<SceneEditorModalProps> = ({
             <label className="text-zinc-300 font-semibold flex items-center gap-1">
               <BookOpen className="w-3.5 h-3.5 text-blue-400" /> 详细环境背景与剧情设定 *
             </label>
-            <textarea
+            <StableTextarea
               required
               rows={4}
               placeholder="描述当前场景的环境细节、灯光、天气、两人所处的位置关系以及此刻正在做的事情..."
               value={background}
-              onChange={(e) => setBackground(e.target.value)}
+              onValueChange={setBackground}
               className="w-full p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100 focus:outline-none focus:border-indigo-500 leading-relaxed resize-none"
             />
           </div>
@@ -133,11 +135,11 @@ export const SceneEditorModal: React.FC<SceneEditorModalProps> = ({
             <label className="text-zinc-300 font-semibold flex items-center gap-1">
               <MessageSquare className="w-3.5 h-3.5 text-purple-400" /> AI 默认开场白 / 第一句动作（可选）
             </label>
-            <textarea
+            <StableTextarea
               rows={2}
               placeholder="例如：（把热茶递到你手上，顺势坐下）雨下得好大呢..."
               value={defaultOpening}
-              onChange={(e) => setDefaultOpening(e.target.value)}
+              onValueChange={setDefaultOpening}
               className="w-full p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100 focus:outline-none focus:border-indigo-500 leading-relaxed resize-none"
             />
             <span className="text-[10px] text-zinc-500 block">动作请使用中文全角括号：（...）</span>

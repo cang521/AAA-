@@ -1,20 +1,21 @@
-import React, { useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   X,
   Users,
   Check,
   Search,
-  Sparkles,
-  Camera,
   Image as ImageIcon,
-  UserCheck,
-  Shield,
   Bot,
   User,
+  Upload,
+  RotateCcw,
 } from 'lucide-react';
 import { AiCharacter, UserProfile, GroupChat, GroupMember } from '../../../types';
 import { generateGroupInviteCode, DEFAULT_USER_AVATAR, DEFAULT_AI_AVATAR } from '../../../lib/storage';
 import { registerGroupOnServer } from '../../../lib/groupService';
+import { StableTextInput } from '../../common/StableTextInput';
+import { StableTextarea } from '../../common/StableTextarea';
+import { GroupAvatar } from './GroupAvatar';
 
 interface CreateGroupModalProps {
   isOpen: boolean;
@@ -23,11 +24,6 @@ interface CreateGroupModalProps {
   userProfile: UserProfile;
   onCreateGroup: (newGroup: GroupChat) => void;
 }
-
-const PRESET_GROUP_AVATARS = [
-  DEFAULT_AI_AVATAR,
-  DEFAULT_USER_AVATAR,
-];
 
 export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
   isOpen,
@@ -43,10 +39,38 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
   });
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Group Details Form
+  // Group Details Form (default avatarMode is 'auto' mosaic)
   const [groupName, setGroupName] = useState('');
-  const [groupAvatar, setGroupAvatar] = useState(PRESET_GROUP_AVATARS[0]);
+  const [avatarMode, setAvatarMode] = useState<'auto' | 'custom'>('auto');
+  const [customAvatar, setCustomAvatar] = useState('');
   const [groupNotice, setGroupNotice] = useState('欢迎加入群聊！大家可以自由交流与讨论~');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Live member preview list matching final creation order
+  const previewMembers = useMemo<GroupMember[]>(() => {
+    const selectedChars = characters.filter((c) => selectedCharacterIds.includes(c.id));
+    return [
+      {
+        id: 'user_main',
+        name: `${userProfile.name || '小清'} (我)`,
+        avatar: userProfile.avatar || DEFAULT_USER_AVATAR,
+        memberType: 'human',
+        role: 'owner',
+        joinedAt: 0,
+        wxid: userProfile.wxid || 'xiaoqing',
+      },
+      ...selectedChars.map((c, index) => ({
+        id: c.id,
+        name: c.name,
+        avatar: c.avatar,
+        memberType: (c.isCustom ? 'ai' : 'npc') as 'ai' | 'npc',
+        role: (index === 0 ? 'admin' : 'member') as 'admin' | 'member',
+        joinedAt: 0,
+        wxid: c.wxid,
+        characterId: c.id,
+      })),
+    ];
+  }, [characters, selectedCharacterIds, userProfile]);
 
   if (!isOpen) return null;
 
@@ -74,6 +98,20 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
       setGroupName(`${userProfile.name || '我'}、${selectedNames}的群聊`);
     }
     setStep('group_details');
+  };
+
+  const handleCustomFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string' && reader.result.trim()) {
+        setCustomAvatar(reader.result);
+        setAvatarMode('custom');
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const handleFinishCreate = () => {
@@ -109,11 +147,17 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
       })),
     ];
 
+    const trimmedCustom = customAvatar.trim();
+    const effectiveMode: 'auto' | 'custom' =
+      avatarMode === 'custom' && trimmedCustom ? 'custom' : 'auto';
+
     const now = Date.now();
     const newGroup: GroupChat = {
       id: 'group_' + now + '_' + Math.random().toString(36).slice(2, 6),
       name: finalGroupName,
-      avatar: groupAvatar,
+      avatar: effectiveMode === 'custom' ? trimmedCustom : '',
+      avatarMode: effectiveMode,
+      customAvatar: trimmedCustom || undefined,
       notice: groupNotice.trim(),
       ownerId: 'user_main',
       members,
@@ -190,18 +234,42 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
             <div className="wx-divider p-3 border-b border-zinc-100 dark:border-zinc-800/80 bg-white dark:bg-zinc-900">
               <div className="relative">
                 <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-zinc-400 wx-muted-text" />
-                <input
+                <StableTextInput
                   type="text"
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onValueChange={setSearchQuery}
                   placeholder="搜索 AI 伙伴名称、人设、标签..."
                   className="wx-modal-input w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
             </div>
 
-            {/* Current User Card (Always included) */}
+            {/* Live Composite Group Avatar Preview Bar */}
             <div className="px-3 pt-2.5">
+              <div className="wx-sub-card p-2.5 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-800 flex items-center gap-2.5">
+                <GroupAvatar
+                  members={previewMembers}
+                  avatarMode={avatarMode}
+                  customAvatar={customAvatar}
+                  allCharacters={characters}
+                  userProfile={userProfile}
+                  size={40}
+                  alt="群头像实时预览"
+                  className="border border-zinc-300/70 dark:border-zinc-700"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="wx-primary-text text-[11px] font-bold text-zinc-800 dark:text-zinc-200">
+                    群头像实时预览（{previewMembers.length}人）
+                  </div>
+                  <div className="wx-muted-text text-[10px] text-zinc-400 truncate">
+                    默认根据群成员头像自动组合九宫格，勾选成员实时更新
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Current User Card (Always included) */}
+            <div className="px-3 pt-2">
               <div className="p-2.5 rounded-2xl bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="relative">
@@ -320,39 +388,75 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
             {/* Step 2: Group Details */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
               {/* Group Avatar Selection */}
-              <div className="space-y-2">
-                <label className="wx-primary-text text-[11px] font-bold text-zinc-700 dark:text-zinc-300 flex items-center gap-1">
-                  <ImageIcon className="w-3.5 h-3.5 text-emerald-500 wx-green-text" />
-                  <span>群头像</span>
+              <div className="space-y-2.5">
+                <label className="wx-primary-text text-[11px] font-bold text-zinc-700 dark:text-zinc-300 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <ImageIcon className="w-3.5 h-3.5 text-emerald-500 wx-green-text" />
+                    <span>群头像</span>
+                  </span>
+                  <span className="wx-muted-text text-[10px] font-normal text-zinc-400">
+                    {avatarMode === 'custom' && customAvatar.trim() ? '当前：自定义群头像' : '当前：自动组合成员头像'}
+                  </span>
                 </label>
+
                 <div className="flex items-center gap-3">
-                  <img
-                    src={groupAvatar}
+                  <GroupAvatar
+                    members={previewMembers}
+                    avatarMode={avatarMode}
+                    customAvatar={customAvatar}
+                    allCharacters={characters}
+                    userProfile={userProfile}
+                    size={56}
                     alt="Group Avatar Preview"
-                    className="wx-avatar w-14 h-14 rounded-2xl object-cover border-2 border-emerald-500 shadow-md shrink-0"
+                    className="border border-zinc-300/70 dark:border-zinc-700 shadow-sm"
                   />
-                  <div className="flex-1 space-y-1.5">
-                    <span className="wx-muted-text text-[10px] text-zinc-400 block">选择预设群头像或输入自定义图片 URL</span>
-                    <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-                      {PRESET_GROUP_AVATARS.map((url, idx) => (
-                        <img
-                          key={idx}
-                          src={url}
-                          alt="Preset"
-                          onClick={() => setGroupAvatar(url)}
-                          className={`wx-avatar w-7 h-7 rounded-lg object-cover cursor-pointer border-2 transition ${
-                            groupAvatar === url ? 'border-emerald-500 scale-105' : 'border-transparent opacity-70 hover:opacity-100'
-                          }`}
-                        />
-                      ))}
+                  <div className="flex-1 space-y-2">
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="wx-btn-secondary px-2.5 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 text-[11px] font-semibold flex items-center gap-1 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition"
+                      >
+                        <Upload className="w-3 h-3" />
+                        <span>上传自定义头像</span>
+                      </button>
+                      {avatarMode === 'custom' && (
+                        <button
+                          type="button"
+                          onClick={() => setAvatarMode('auto')}
+                          className="wx-btn-secondary px-2.5 py-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[11px] font-semibold flex items-center gap-1 hover:bg-emerald-500/20 transition"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>恢复自动组合</span>
+                        </button>
+                      )}
                     </div>
+                    <p className="wx-muted-text text-[10px] text-zinc-400 leading-snug">
+                      默认使用群成员头像自动九宫格拼图，也可上传或粘贴自定义图片。
+                    </p>
                   </div>
                 </div>
+
                 <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleCustomFileUpload}
+                  className="hidden"
+                />
+
+                <StableTextInput
                   type="text"
-                  value={groupAvatar}
-                  onChange={(e) => setGroupAvatar(e.target.value)}
-                  placeholder="或粘贴自定义头像图片 URL..."
+                  value={customAvatar}
+                  onValueChange={(nextVal) => {
+                    setCustomAvatar(nextVal);
+                    if (nextVal.trim()) {
+                      setAvatarMode('custom');
+                    } else {
+                      setAvatarMode('auto');
+                    }
+                  }}
+                  placeholder="可选：粘贴自定义头像图片 URL（留空则保持自动组合）"
                   className="wx-modal-input w-full px-3 py-1.5 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
@@ -360,10 +464,10 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
               {/* Group Name */}
               <div className="space-y-1.5">
                 <label className="wx-primary-text text-[11px] font-bold text-zinc-700 dark:text-zinc-300">群聊名称</label>
-                <input
+                <StableTextInput
                   type="text"
                   value={groupName}
-                  onChange={(e) => setGroupName(e.target.value)}
+                  onValueChange={setGroupName}
                   placeholder="给群聊起个响亮的名字..."
                   maxLength={30}
                   className="wx-modal-input w-full px-3 py-2 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-bold"
@@ -373,9 +477,9 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
               {/* Group Notice */}
               <div className="space-y-1.5">
                 <label className="wx-primary-text text-[11px] font-bold text-zinc-700 dark:text-zinc-300">群公告 (初始话题)</label>
-                <textarea
+                <StableTextarea
                   value={groupNotice}
-                  onChange={(e) => setGroupNotice(e.target.value)}
+                  onValueChange={setGroupNotice}
                   placeholder="输入群公告或开场讨论主题..."
                   rows={2}
                   className="wx-modal-input w-full px-3 py-1.5 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none"
@@ -429,3 +533,4 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
     </div>
   );
 };
+

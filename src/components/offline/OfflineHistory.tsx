@@ -3,6 +3,7 @@ import { Search, Sparkles, Clock, Heart, BookOpen, ChevronRight, User } from 'lu
 import { OfflineSession, getAllSavedSessions } from '../../lib/offline/OfflineSessionDb';
 import { AiCharacter, ChatMessage } from '../../types';
 import { OfflineHistoryDetailModal } from './OfflineHistoryDetailModal';
+import { StableTextInput } from '../common/StableTextInput';
 
 interface OfflineHistoryProps {
   characters: AiCharacter[];
@@ -59,11 +60,11 @@ export const OfflineHistory: React.FC<OfflineHistoryProps> = ({ characters, onSh
           {/* Search Box */}
           <div className="flex-1 relative">
             <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
+            <StableTextInput
               type="text"
               placeholder="搜索场景名称、内容与AI..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onValueChange={setSearchQuery}
               className="w-full pl-9 pr-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-100 focus:outline-none focus:border-indigo-500"
             />
           </div>

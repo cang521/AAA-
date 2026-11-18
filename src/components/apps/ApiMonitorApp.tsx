@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ApiLog } from '../../types';
+import { StableTextInput } from '../common/StableTextInput';
 import {
   ArrowLeft,
   Activity,
@@ -136,11 +137,11 @@ export const ApiMonitorApp: React.FC<ApiMonitorAppProps> = ({
       <div className="p-2.5 bg-zinc-900 border-b border-zinc-800 flex gap-2 shrink-0 items-center">
         <div className="flex-1 relative flex items-center">
           <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5" />
-          <input
+          <StableTextInput
             type="text"
             placeholder="搜索模型、位置、错误或用途..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onValueChange={setSearchTerm}
             className="w-full pl-8 pr-3 py-1 text-xs rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500"
           />
         </div>

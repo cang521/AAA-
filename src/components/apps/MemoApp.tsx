@@ -16,6 +16,8 @@ import {
   Brain,
   Share2,
 } from 'lucide-react';
+import { StableTextInput } from '../common/StableTextInput';
+import { StableTextarea } from '../common/StableTextarea';
 
 interface MemoAppProps {
   onBackToLauncher: () => void;
@@ -219,11 +221,11 @@ export const MemoApp: React.FC<MemoAppProps> = ({
         {/* Search Input */}
         <div className="relative flex items-center">
           <Search className="w-4 h-4 text-zinc-400 absolute left-3" />
-          <input
+          <StableTextInput
             type="text"
             placeholder="搜索备忘录标题、内容..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onValueChange={setSearchQuery}
             className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400"
           />
           {searchQuery && (
@@ -364,14 +366,12 @@ export const MemoApp: React.FC<MemoAppProps> = ({
             </div>
 
             {/* Title Input */}
-            <input
+            <StableTextInput
               ref={titleRef}
               type="text"
               placeholder="便签标题..."
               value={memoTitle}
-              onChange={(e) => setMemoTitle(e.target.value)}
-              onInput={(e) => setMemoTitle(e.currentTarget.value)}
-              onCompositionEnd={(e) => setMemoTitle(e.currentTarget.value)}
+              onValueChange={setMemoTitle}
               className="w-full px-3 py-2 text-xs font-semibold rounded-xl bg-zinc-800 border border-zinc-700 text-amber-200 placeholder-zinc-500 focus:outline-none focus:border-amber-400"
             />
 
@@ -394,14 +394,12 @@ export const MemoApp: React.FC<MemoAppProps> = ({
             </div>
 
             {/* Content Textarea */}
-            <textarea
+            <StableTextarea
               ref={contentRef}
               rows={8}
               placeholder="在此输入便签备忘细节..."
               value={memoContent}
-              onChange={(e) => setMemoContent(e.target.value)}
-              onInput={(e) => setMemoContent(e.currentTarget.value)}
-              onCompositionEnd={(e) => setMemoContent(e.currentTarget.value)}
+              onValueChange={setMemoContent}
               className="w-full px-3 py-2.5 text-xs rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400 leading-relaxed resize-none"
             />
 
