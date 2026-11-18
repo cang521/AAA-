@@ -71291,7 +71291,8 @@ ${req.body.lifeStateContext}
     if (cleanedHistory && cleanedHistory.length > 0) {
       cleanedHistory.forEach((msg) => {
         const msgTime = formatFullDateTime(msg.timestamp || msg.createdAt || msg.time);
-        const senderLabel = msg.sender === "user" ? userProfile?.name || "\u7528\u6237" : character.name;
+        const isProactiveMsg = Boolean(msg.isProactive);
+        const senderLabel = msg.sender === "user" ? userProfile?.name || "\u7528\u6237" : isProactiveMsg ? `${character.name} [\u6B64\u524D\u4E3B\u52A8\u6D88\u606F${msg.proactiveMeta?.repliedByUser ? "\xB7\u7528\u6237\u5DF2\u56DE\u5E94" : "\xB7\u6B64\u524D\u53D1\u8D77"}]` : character.name;
         let msgStr = `[${msgTime}] ${senderLabel}: ${msg.text || ""}`;
         if (msg.imageUrl) {
           msgStr += ` [\u56FE\u7247\u9644\u4EF6${msg.imageAnalysis ? `: ${msg.imageAnalysis}` : ""}]`;
@@ -72552,65 +72553,127 @@ app.post("/api/gemini/rps-answer-question", async (req, res) => {
 });
 app.post("/api/gemini/proactive-generate", async (req, res) => {
   try {
-    const { character, triggerType, eventData, userProfile, recentMessages = [], apiConfig } = req.body;
+    const {
+      character,
+      triggerType,
+      eventData,
+      userProfile,
+      recentMessages = [],
+      episode,
+      rejectedAttempts,
+      currentTime,
+      apiConfig
+    } = req.body;
     const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || "gemini-3.6-flash";
     let triggerDescription = "";
     if (triggerType === "inactivity_timeout") {
       const hours = typeof eventData?.hoursInactive === "number" && eventData.hoursInactive > 0 ? eventData.hoursInactive : null;
       if (hours) {
-        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u957F\u65F6\u95F4\u672A\u8054\u7CFB\u3011\u6839\u636E\u771F\u5B9E\u804A\u5929\u8BB0\u5F55\uFF0C\u4F60\u4E0E\u7528\u6237\u5DF2\u7ECF\u6709\u7EA6 ${hours} \u5C0F\u65F6\u6CA1\u6709\u53D1\u8FC7\u6D88\u606F\u4E86\u3002\u8BF7\u4E3B\u52A8\u5411\u7528\u6237\u53D1\u4E00\u6761\u81EA\u7136\u719F\u7EDC\u7684\u5FAE\u4FE1\u77ED\u6D88\u606F\uFF0C\u804A\u804A\u5929\u3001\u95EE\u5019\u4E00\u4E0B\u6216\u63A5\u7EED\u8FD1\u671F\u8BDD\u9898\u3002\u5207\u52FF\u6307\u8D23\u7528\u6237\u3002`;
+        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u957F\u65F6\u95F4\u672A\u8054\u7CFB\u3011\u6839\u636E\u771F\u5B9E\u804A\u5929\u8BB0\u5F55\uFF0C\u4F60\u4E0E\u7528\u6237\u5DF2\u7ECF\u6709\u7EA6 ${hours} \u5C0F\u65F6\u6CA1\u6709\u4E92\u52A8\u3002\u8BF7\u7ED3\u5408\u5F53\u524D\u4E3B\u52A8\u4F1A\u8BDD\u72B6\u6001\u4E0E\u5386\u53F2\u8BDD\u9898\uFF0C\u5224\u65AD\u662F\u5426\u9700\u8981\u81EA\u7136\u8F7B\u67D4\u5730\u53D1\u8D77\u6216\u5EF6\u7EED\u8054\u7CFB\uFF0C\u5207\u52FF\u6307\u8D23\u6216\u50AC\u4FC3\u7528\u6237\u3002`;
       } else {
-        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u65E5\u5E38\u4E3B\u52A8\u95EE\u5019\u3011\u4F60\u6709\u4E00\u6BB5\u65F6\u95F4\u6CA1\u548C\u7528\u6237\u804A\u5929\u4E86\u3002\u8BF7\u4E3B\u52A8\u5411\u7528\u6237\u53D1\u4E00\u6761\u81EA\u7136\u3001\u968F\u548C\u3001\u6709\u6E29\u5EA6\u7684\u5FAE\u4FE1\u77ED\u6D88\u606F\uFF0C\u6253\u4E2A\u62DB\u547C\u6216\u5206\u4EAB\u65E5\u5E38\uFF0C\u7981\u6B62\u968F\u610F\u7F16\u9020\u5177\u4F53\u7684\u65AD\u8054\u5C0F\u65F6\u6570\u3002`;
+        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u65E5\u5E38\u4E3B\u52A8\u95EE\u5019\u3011\u4F60\u6709\u4E00\u6BB5\u65F6\u95F4\u6CA1\u548C\u7528\u6237\u804A\u5929\u4E86\u3002\u8BF7\u7ED3\u5408\u5F53\u524D\u65F6\u6BB5\u4E0E\u8BDD\u9898\u81EA\u7136\u51B3\u5B9A\u662F\u5426\u53D1\u4E00\u6761\u8F7B\u76C8\u6709\u6E29\u5EA6\u7684\u5FAE\u4FE1\u77ED\u6D88\u606F\uFF0C\u7981\u6B62\u7F16\u9020\u5177\u4F53\u65AD\u8054\u5C0F\u65F6\u6570\u3002`;
       }
     } else if (triggerType === "weather_alert") {
-      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u771F\u5B9E\u6C14\u8C61\u63D0\u9192\u3011\u6700\u65B0\u6C14\u8C61\u611F\u77E5\u663E\u793A\uFF1A${eventData?.weatherEventTitle || "\u5929\u6C14\u53D8\u5316"} (${eventData?.weatherSummary || "\u6C14\u8C61\u9884\u8B66"})\u3002\u8BF7\u4F9D\u636E\u6B64\u771F\u5B9E\u6570\u636E\uFF0C\u4EE5\u4F60\u7684\u6027\u683C\u53E3\u543B\u63D0\u9192\u7528\u6237\uFF08\u4F8B\u5982\u63D0\u9192\u5E26\u4F1E\u3001\u52A0\u8863\u6216\u6CE8\u610F\u51FA\u884C\uFF09\u3002\u4E0D\u8981\u5938\u5927\u4E8B\u5B9E\u3002`;
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u771F\u5B9E\u6C14\u8C61\u63D0\u9192\u3011\u6700\u65B0\u6C14\u8C61\u611F\u77E5\u663E\u793A\uFF1A${eventData?.weatherEventTitle || "\u5929\u6C14\u53D8\u5316"} (${eventData?.weatherSummary || "\u6C14\u8C61\u9884\u8B66"})\u3002\u8BF7\u4F9D\u636E\u6B64\u771F\u5B9E\u6570\u636E\uFF0C\u4EE5\u4F60\u7684\u6027\u683C\u53E3\u543B\u63D0\u9192\u7528\u6237\uFF08\u4F8B\u5982\u63D0\u9192\u5E26\u4F1E\u3001\u52A0\u8863\u6216\u6CE8\u610F\u51FA\u884C\uFF09\u3002\u4E0D\u8981\u5938\u5927\u4E8B\u5B9E\uFF0C\u4E14\u53EA\u9700\u7B80\u77ED1\u6761\u5373\u53EF\u3002`;
     } else if (triggerType === "menstrual_care") {
-      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u7ECF\u671F\u5065\u5EB7\u5173\u6000\u3011\u7528\u6237\u9884\u8BA1\u5C06\u5728 ${eventData?.daysBefore || 2} \u5929\u540E\u8FDB\u5165\u751F\u7406\u671F\u3002\u8BF7\u4EE5\u4F60\u7684\u6027\u683C\u53E3\u543B\u5411\u7528\u6237\u8868\u8FBE\u8D34\u5FC3\u5173\u6000\uFF08\u63D0\u9192\u5907\u597D\u6E29\u6C34\u3001\u536B\u751F\u7528\u54C1\u3001\u6CE8\u610F\u4FDD\u6696\uFF09\u3002`;
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u7ECF\u671F\u5065\u5EB7\u5173\u6000\u3011\u7528\u6237\u9884\u8BA1\u5C06\u5728 ${eventData?.daysBefore || 2} \u5929\u540E\u8FDB\u5165\u751F\u7406\u671F\u3002\u8BF7\u4EE5\u4F60\u7684\u6027\u683C\u53E3\u543B\u8868\u8FBE\u81EA\u7136\u8D34\u5FC3\u5173\u6000\uFF0C\u907F\u514D\u673A\u68B0\u8BF4\u6559\u3002`;
     } else if (triggerType === "greeting") {
       const gType = eventData?.greetingType || "morning";
       const label = gType === "morning" ? "\u65E9\u5B89" : gType === "noon" ? "\u5348\u95F4" : "\u665A\u5B89";
-      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: ${label}\u95EE\u5019\u3011\u73B0\u5728\u662F${label}\u65F6\u6BB5\u3002\u8BF7\u4E3B\u52A8\u5411\u7528\u6237\u53D1\u4E00\u6761\u81EA\u7136\u6709\u6E29\u5EA6\u7684${label}\u95EE\u5019\u77ED\u6D88\u606F\u3002`;
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: ${label}\u95EE\u5019\u3011\u73B0\u5728\u662F${label}\u65F6\u6BB5\u3002\u8BF7\u7ED3\u5408\u4E0A\u4E0B\u6587\u4E0E\u5F53\u524D\u4E3B\u52A8\u4F1A\u8BDD\u5386\u53F2\u5224\u65AD\uFF1A\u82E5\u524D\u9762\u5DF2\u7ECF\u4E3B\u52A8\u53D1\u8FC7\u76F8\u4F3C\u95EE\u5019\u4E14\u7528\u6237\u672A\u56DE\u590D\uFF0C\u5207\u5FCC\u673A\u68B0\u590D\u8BFB\uFF01`;
     } else if (triggerType === "important_event") {
-      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u91CD\u8981\u65E5\u671F\u63D0\u9192\u3011\u7528\u6237\u6709\u4E00\u4E2A\u91CD\u8981\u65E5\u7A0B/\u4E8B\u4EF6\uFF1A[${eventData?.eventTitle || "\u91CD\u8981\u4E8B\u4EF6"}]\uFF0C\u5C06\u5728 ${eventData?.daysRemaining === 0 ? "\u4ECA\u5929" : eventData?.daysRemaining + "\u5929\u540E"} (${eventData?.eventDate || ""}) \u5230\u6765\u3002\u8BF7\u4E3B\u52A8\u5411\u7528\u6237\u9001\u4E0A\u95EE\u5019\u4E0E\u5173\u6000\u3002`;
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u91CD\u8981\u65E5\u671F\u63D0\u9192\u3011\u7528\u6237\u6709\u4E00\u4E2A\u91CD\u8981\u65E5\u7A0B/\u4E8B\u4EF6\uFF1A[${eventData?.eventTitle || "\u91CD\u8981\u4E8B\u4EF6"}]\uFF0C\u5C06\u5728 ${eventData?.daysRemaining === 0 ? "\u4ECA\u5929" : eventData?.daysRemaining + "\u5929\u540E"} (${eventData?.eventDate || ""}) \u5230\u6765\u3002\u8BF7\u4E3B\u52A8\u9001\u4E0A\u7B80\u660E\u95EE\u5019\u4E0E\u5173\u6000\u3002`;
     } else if (triggerType === "followup_topic") {
-      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u5F85\u8DDF\u8FDB\u4E8B\u9879\u8FFD\u95EE\u3011\u7528\u6237\u4E4B\u524D\u63D0\u5230\u8FC7\u8FD9\u4EF6\u4E8B\uFF1A[${eventData?.topicTitle || "\u4E4B\u524D\u7684\u8BA1\u5212"}]\u3002\u73B0\u5728\u65F6\u95F4\u5230\u4E86\uFF0C\u8BF7\u4E3B\u52A8\u5FAE\u4FE1\u8BE2\u95EE\u4E8B\u60C5\u7684\u540E\u7EED\u8FDB\u5C55\u6216\u7ED3\u679C\u3002`;
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u5F85\u8DDF\u8FDB\u4E8B\u9879\u8FFD\u95EE\u3011\u7528\u6237\u4E4B\u524D\u63D0\u5230\u8FC7\u8FD9\u4EF6\u4E8B\uFF1A[${eventData?.topicTitle || "\u4E4B\u524D\u7684\u8BA1\u5212"}]\u3002\u73B0\u5728\u65F6\u95F4\u5230\u4E86\uFF0C\u8BF7\u81EA\u7136\u8BE2\u95EE\u540E\u7EED\u8FDB\u5C55\u6216\u7ED3\u679C\u3002`;
     } else if (triggerType === "life_event_followup") {
-      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u751F\u6D3B\u8FDE\u7EED\u6027\u8DDF\u8FDB / Current Life State\u3011\u7528\u6237\u8FD1\u671F\u6B63\u5728\u7ECF\u5386\u7684\u4E8B\u9879\uFF1A[${eventData?.title || "\u5173\u6CE8\u4E8B\u9879"}] (${eventData?.summary || ""}${eventData?.latestProgress ? `\uFF0C\u6700\u65B0\u8FDB\u5C55: ${eventData?.latestProgress}` : ""})\u3002\u8BF7\u4EE5\u4F60\u7684\u89D2\u8272\u4EBA\u8BBE\u548C\u8BED\u6C14\uFF0C\u81EA\u7136\u5173\u5207\u5730\u95EE\u8D77\u8FD9\u4EF6\u4E8B\u7684\u8FD1\u51B5\u6216\u8868\u8FBE\u5173\u5FC3\u3002`;
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u751F\u6D3B\u8FDE\u7EED\u6027\u8DDF\u8FDB / Current Life State\u3011\u7528\u6237\u8FD1\u671F\u6B63\u5728\u7ECF\u5386\u7684\u4E8B\u9879\uFF1A[${eventData?.title || "\u5173\u6CE8\u4E8B\u9879"}] (${eventData?.summary || ""}${eventData?.latestProgress ? `\uFF0C\u6700\u65B0\u8FDB\u5C55: ${eventData?.latestProgress}` : ""})\u3002\u8BF7\u4EE5\u4F60\u7684\u89D2\u8272\u53E3\u543B\u81EA\u7136\u5173\u5207\u3002`;
     } else if (triggerType === "device_life_event") {
       const sub = eventData?.deviceSubtype || "low_battery";
       if (sub === "low_battery") {
-        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u624B\u673A\u4F4E\u7535\u91CF\u63D0\u9192\u3011\u68C0\u6D4B\u5230\u7528\u6237\u624B\u673A\u7535\u91CF\u4F4E\u81F3 ${eventData?.batteryLevel || 12}% (${eventData?.isCharging ? "\u6B63\u5728\u5145\u7535" : "\u672A\u5145\u7535"})\u3002\u8BF7\u50CF\u5173\u5FC3\u597D\u670B\u53CB\u4E00\u6837\u63D0\u9192\u7528\u6237\u63D2\u4E0A\u5145\u7535\u5668\u3002`;
+        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u624B\u673A\u4F4E\u7535\u91CF\u63D0\u9192\u3011\u68C0\u6D4B\u5230\u7528\u6237\u624B\u673A\u7535\u91CF\u4F4E\u81F3 ${eventData?.batteryLevel || 12}% (${eventData?.isCharging ? "\u6B63\u5728\u5145\u7535" : "\u672A\u5145\u7535"})\u3002\u8BF7\u7B80\u6D01\u5173\u5FC3\u63D0\u9192\u63D2\u4E0A\u5145\u7535\u5668\u3002`;
       } else if (sub === "late_night") {
-        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u6DF1\u591C\u73A9\u624B\u673A\u63D0\u9192\u3011\u73B0\u5728\u5DF2\u7ECF\u662F\u6DF1\u591C ${eventData?.currentTimeStr || "23:40"} \u4E86\uFF0C\u7528\u6237\u8FD8\u5728\u73A9\u624B\u673A\u3002\u8BF7\u6E29\u67D4\u63D0\u9192\u7528\u6237\u6CE8\u610F\u4F11\u606F\u3001\u65E9\u70B9\u7761\u89C9\u3002`;
+        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u6DF1\u591C\u73A9\u624B\u673A\u63D0\u9192\u3011\u73B0\u5728\u5DF2\u7ECF\u662F\u6DF1\u591C ${eventData?.currentTimeStr || "23:40"} \u4E86\uFF0C\u7528\u6237\u8FD8\u5728\u73A9\u624B\u673A\u3002\u8BF7\u6E29\u67D4\u63D0\u9192\u4F11\u606F\uFF0C\u4E0D\u8981\u8BF4\u6559\u3002`;
       } else {
-        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: App\u5F88\u4E45\u672A\u6253\u5F00\u95EE\u5019\u3011\u7528\u6237\u5DF2\u7ECF\u6709\u597D\u51E0\u5929\u6CA1\u6253\u5F00 App \u5566\uFF0C\u8BF7\u4E3B\u52A8\u53D1\u4E00\u6761\u6D88\u606F\u95EE\u5019\u5E76\u8868\u8FBE\u60F3\u5FF5\u3002`;
+        triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u4E45\u672A\u6253\u5F00\u5E94\u7528\u95EE\u5019\u3011\u8BF7\u81EA\u7136\u95EE\u5019\u7528\u6237\u8FD1\u51B5\u3002`;
       }
     } else if (triggerType === "app_usage") {
-      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u5C4F\u5E55\u8FDE\u7EED\u4F7F\u7528\u8FC7\u4E45\u5173\u6000\u3011\u68C0\u6D4B\u5230\u7528\u6237\u8FDE\u7EED\u76EF\u7740\u5C4F\u5E55\u4F7F\u7528\u8BBE\u5907\u5DF2\u6709 ${eventData?.durationMinutes || 120} \u5206\u949F\uFF08\u5F53\u524D\u5E94\u7528: ${eventData?.currentApp || "\u624B\u673A"}\uFF09\u3002\u8BF7\u4EE5\u4F60\u7684\u89D2\u8272\u4EBA\u8BBE\u548C\u8BED\u6C14\uFF0C\u50CF\u771F\u6B63\u7684\u670B\u53CB\u6216\u604B\u4EBA\u4E00\u6837\u4E3B\u52A8\u5173\u5FC3\u7528\u6237\uFF0C\u5EFA\u8BAE\u7528\u6237\u95ED\u773C\u4F11\u606F\u3001\u6D3B\u52A8\u4E00\u4E0B\u9888\u690E\u3001\u559D\u676F\u6C34\u6216\u5403\u70B9\u4E1C\u897F\uFF0C\u6216\u8005\u6E29\u67D4\u9080\u8BF7\u7528\u6237\u804A\u5929\u3002\u5207\u52FF\u4F7F\u7528\u673A\u68B0\u51B0\u51B7\u7684\u7CFB\u7EDF\u63D0\u793A\u6A21\u677F\uFF0C\u4FDD\u6301\u9AD8\u5EA6\u62DF\u4EBA\u3001\u81EA\u7136\u6E29\u60C5\u3002`;
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u5C4F\u5E55\u8FDE\u7EED\u4F7F\u7528\u8FC7\u4E45\u5173\u6000\u3011\u68C0\u6D4B\u5230\u7528\u6237\u8FDE\u7EED\u4F7F\u7528\u8BBE\u5907\u5DF2\u6709 ${eventData?.durationMinutes || 120} \u5206\u949F\uFF08\u5F53\u524D\u5E94\u7528: ${eventData?.currentApp || "\u624B\u673A"}\uFF09\u3002\u8BF7\u7B80\u77ED\u81EA\u7136\u5730\u5EFA\u8BAE\u95ED\u773C\u4F11\u606F\u3001\u559D\u676F\u6C34\u6216\u6D3B\u52A8\u4E00\u4E0B\uFF0C\u52FF\u673A\u68B0\u91CD\u590D\u3002`;
     } else {
-      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u6A21\u62DF\u6D4B\u8BD5\u89E6\u53D1\u3011\u6D4B\u8BD5\u573A\u666F\uFF1A${eventData?.testScenario || "\u4E3B\u52A8\u5FAE\u4FE1\u95EE\u5019"}\u3002\u8BF7\u751F\u6210\u4E00\u6761\u751F\u52A8\u8D34\u5207\u7684\u5FAE\u4FE1\u6D88\u606F\u3002`;
+      triggerDescription = `\u3010\u89E6\u53D1\u573A\u666F: \u6A21\u62DF\u6D4B\u8BD5\u6216\u4E3B\u52A8\u8054\u7CFB\u3011\u573A\u666F\uFF1A${eventData?.testScenario || triggerType || "\u4E3B\u52A8\u5FAE\u4FE1\u95EE\u5019"}\u3002`;
     }
-    const historyText = (recentMessages || []).slice(-6).map((m2) => `${m2.sender === "user" ? userProfile?.name || "\u7528\u6237" : character.name}: ${m2.text || ""}`).join("\n");
+    const structuredMsgs = Array.isArray(recentMessages) ? recentMessages : [];
+    const userDisplayName = userProfile?.name || "\u7528\u6237";
+    const historyLines = structuredMsgs.map((m2) => {
+      const tsStr = m2.timestamp ? formatFullDateTime(m2.timestamp) : "";
+      const senderLabel = m2.sender === "user" ? userDisplayName : character.name;
+      let roleTag = "[\u666E\u901A\u5BF9\u8BDD]";
+      if (m2.contextRole === "current_episode_proactive" || m2.isProactive && m2.proactiveMeta?.episodeId && episode?.episodeId && m2.proactiveMeta.episodeId === episode.episodeId) {
+        roleTag = `[\u672C\u8F6E\u4E3B\u52A8\u6D88\u606F\xB7\u672A\u83B7\u56DE\u590D${m2.proactiveMeta?.intent ? `\xB7\u610F\u56FE:${m2.proactiveMeta.intent}` : ""}]`;
+      } else if (m2.isProactive) {
+        roleTag = `[\u5386\u53F2\u4E3B\u52A8\u6D88\u606F${m2.proactiveMeta?.repliedByUser ? "\xB7\u5DF2\u83B7\u56DE\u590D" : "\xB7\u672A\u56DE\u590D"}]`;
+      }
+      const turnSuffix = typeof m2.turnTotalBubbles === "number" && m2.turnTotalBubbles > 1 ? ` (\u6C14\u6CE1${(m2.turnBubbleIndex ?? 0) + 1}/${m2.turnTotalBubbles})` : "";
+      return `${tsStr ? `[${tsStr}] ` : ""}${roleTag} ${senderLabel}${turnSuffix}: ${m2.text || ""}`;
+    });
+    const episodeRejections = Array.isArray(rejectedAttempts) ? rejectedAttempts : Array.isArray(episode?.rejectedAttempts) ? episode.rejectedAttempts : [];
+    const episodeSummaryBlock = episode ? `\u3010\u5F53\u524D\u8FDE\u7EED\u4E3B\u52A8\u4F1A\u8BDD\u72B6\u6001 (Active Proactive Episode)\u3011:
+- \u4F1A\u8BDD ID\uFF1A${episode.episodeId}
+- \u521D\u59CB\u89E6\u53D1\u6E90\uFF1A${episode.triggerSource}
+- \u5F53\u524D\u8FDE\u7EED\u610F\u56FE\uFF1A${episode.currentIntent || "\u5F85\u89C4\u5212"}
+- \u5F53\u524D\u5EF6\u7EED\u8BDD\u9898\uFF1A${episode.currentTopic || "\u5F85\u89C4\u5212"}
+- \u5BF9\u7528\u6237\u5F53\u524D\u72B6\u6001\u7684\u63A8\u65AD\uFF1A${episode.inferredUserState || "\u672A\u77E5"}
+- \u672C\u8F6E\u5DF2\u53D1\u51FA\u4E3B\u52A8\u6D88\u606F\u6B21\u6570\uFF1A${episode.sentCount ?? 0} \u6B21\uFF08\u5171\u5C1D\u8BD5 ${episode.attemptCount ?? 0} \u6B21\uFF09
+- \u4E0A\u6B21\u52A8\u4F5C\u5EFA\u8BAE\uFF1A${episode.lastAction || "\u65E0"}${episode.lastDecisionSummary ? `\uFF08${episode.lastDecisionSummary}\uFF09` : ""}
+- \u4E0A\u6B21\u7B56\u7565\u5907\u5FD8\uFF1A${episode.suggestedNextAction || "\u65E0"}
+- \u3010\u6B64\u524D\u88AB\u62E6\u622A/\u9A73\u56DE\u7684\u5019\u9009\u65B9\u6848\u8BB0\u5F55\u3011\uFF08\u4E25\u7981\u539F\u6837\u91CD\u590D\u4EE5\u4E0B\u5931\u8D25\u6587\u6848\u6216\u540C\u7C7B\u8E29\u96F7\u884C\u4E3A\uFF09\uFF1A
+${episodeRejections.length > 0 ? episodeRejections.slice(-8).map(
+      (r2, idx) => `  ${idx + 1}. [${r2.timestamp ? formatFullDateTime(r2.timestamp) : "\u8FD1\u671F"}] \u5019\u9009="${(r2.candidateText || "").slice(0, 60)}" -> \u9A73\u56DE\u539F\u56E0: ${r2.rejectReason}${r2.suggestedNextAction ? ` | \u8C03\u6574\u5EFA\u8BAE: ${r2.suggestedNextAction}` : ""}`
+    ).join("\n") : "  (\u6682\u65E0\u88AB\u9A73\u56DE\u8BB0\u5F55)"}` : "\u3010\u5F53\u524D\u4E3B\u52A8\u4F1A\u8BDD\u72B6\u6001\u3011: \u5C1A\u672A\u5EFA\u7ACB\u8FDE\u7EED\u4F1A\u8BDD\uFF08\u65B0\u53D1\u8D77\uFF09";
+    const realTimeStr = currentTime || formatFullDateTime(Date.now());
     const systemPrompt = `\u4F60\u73B0\u5728\u6B63\u5728\u626E\u6F14\u4EFF\u771F\u5FAE\u4FE1\u4E2D\u7684 AI \u89D2\u8272\uFF1A\u3010${character.name}\u3011(\u5FAE\u4FE1\u53F7: ${character.wxid || "ai_user"})\u3002
 \u89D2\u8272\u8EAB\u4EFD\u4E0E\u4EBA\u8BBE\uFF1A${character.persona}
 \u6027\u683C\u7279\u5F81\u4E0E\u53E3\u543B\uFF1A${character.personality || "\u81EA\u7136\u4EB2\u5207"}
 ${character.relationship ? `\u4E0E\u7528\u6237\u7684\u5173\u7CFB\uFF1A${character.relationship}
-` : ""}
-\u957F\u671F\u8BB0\u5FC6\uFF1A${(character.memories || []).join("\uFF1B")}
+` : ""}\u957F\u671F\u8BB0\u5FC6\uFF1A${(character.memories || []).join("\uFF1B") || "\u6682\u65E0"}
 
 \u5BF9\u8BDD\u4EBA\uFF08\u4F60\u7684\u5FAE\u4FE1\u597D\u53CB\uFF09\uFF1A
-- \u59D3\u540D/\u6635\u79F0\uFF1A${userProfile?.name || "\u5C0F\u6E05"}
+- \u59D3\u540D/\u6635\u79F0\uFF1A${userDisplayName}
 
-\u3010\u4E3B\u52A8\u6D88\u606F\u89E6\u53D1\u80CC\u666F\u4E0E\u771F\u5B9E\u4E8B\u5B9E\u3011\uFF1A
+\u3010\u5F53\u524D\u771F\u5B9E\u672C\u5730\u65F6\u95F4\u3011\uFF1A${realTimeStr}
+
+\u3010\u672C\u6B21\u89E6\u53D1\u4E8B\u4EF6\u4E0E\u80CC\u666F\u3011\uFF1A
 ${triggerDescription}
 
-\u3010\u6700\u8FD1\u804A\u5929\u4E0A\u4E0B\u6587\u3011\uFF1A
-${historyText || "(\u8FD1\u671F\u6682\u65E0\u804A\u5929)"}
+${episodeSummaryBlock}
 
-\u3010\u6838\u5FC3\u8F93\u51FA\u8981\u6C42\u3011\uFF1A
-1. \u5FC5\u987B\u7528 <think>...</think> \u6807\u7B7E\u5728\u6700\u524D\u9762\u8F93\u51FA\u601D\u8003\u8FC7\u7A0B\u3002
-2. \u5728 </think> \u6807\u7B7E\u540E\uFF0C\u76F4\u63A5\u8F93\u51FA\u4F60\u8981\u53D1\u7ED9\u7528\u6237\u7684\u5FAE\u4FE1\u6D88\u606F\u6587\u672C\uFF081~2 \u53E5\u5FAE\u4FE1\u53E3\u8BED\u5316\u77ED\u53E5\uFF0C\u5207\u5FCC\u50CF\u673A\u5668\u4EBA\u5FF5\u8BF4\u660E\u4E66\uFF09\u3002
-3. \u4E25\u683C\u57FA\u4E8E\u7CFB\u7EDF\u7ED9\u51FA\u7684\u4E8B\u5B9E\uFF0C\u7981\u6B62\u865A\u6784\u4E0D\u5B58\u5728\u7684\u5929\u6C14\u6216\u4E8B\u4EF6\u3002`;
+\u3010\u7ED3\u6784\u5316\u5B8C\u6574\u804A\u5929\u4E0A\u4E0B\u6587\uFF08\u542B\u51BB\u7ED3\u7684\u8D77\u70B9\u5BF9\u8BDD + \u672C\u8F6E\u6240\u6709\u4E3B\u52A8\u6D88\u606F\uFF0C\u6309\u65F6\u95F4\u6B63\u5E8F\uFF09\u3011\uFF1A
+${historyLines.length > 0 ? historyLines.join("\n") : "(\u8FD1\u671F\u6682\u65E0\u804A\u5929\u8BB0\u5F55)"}
+
+\u3010\u201CPlan \u2014 Review \u2014 Execute \u2014 Reflect\u201D \u6838\u5FC3\u884C\u4E3A\u51B3\u7B56\u51C6\u5219\u3011\uFF1A
+1. \u82E5\u672C\u8F6E\u5DF2\u53D1\u51FA\u4E3B\u52A8\u6D88\u606F\u4E14\u7528\u6237\u4ECD\u672A\u56DE\u590D\uFF0C\u7981\u6B62\u53CD\u590D\u8F66\u8F71\u8F98\u91CD\u590D\u540C\u6837\u7684\u53EE\u5631\uFF08\u5982\u8FDE\u53D1\u4E09\u6B21\u201C\u65E9\u70B9\u7761/\u591A\u559D\u70ED\u6C34/\u8BB0\u5F97\u5E26\u4F1E\u201D\uFF09\u3002
+2. \u82E5\u7528\u6237\u672A\u5728\u672C\u8F6E\u56DE\u590D\u8FC7\u4F60\uFF0C\u4E25\u7981\u51ED\u7A7A\u5047\u8BBE\u7528\u6237\u8BF4\u8FC7\u8BDD\u6216\u4EA7\u751F\u201C\u521A\u624D\u90A3\u53E5/\u600E\u4E48\u53C8/\u522B\u751F\u6C14/\u522B\u4E0D\u7406\u6211/\u4E3A\u4EC0\u4E48\u4E0D\u56DE\u6211\u201D\u7B49\u65E0\u6839\u636E\u56DE\u6EAF\u6216\u6307\u8D23\u60C5\u7EEA\uFF01
+3. \u5148\u5224\u65AD\u7528\u6237\u6B64\u523B\u771F\u5B9E\u72B6\u6001\uFF08\u4F8B\u5982\u6DF1\u591C\u53EF\u80FD\u5DF2\u7ECF\u7761\u7740\u3001\u4E0A\u73ED\u5FD9\u3001\u6216\u666E\u901A\u79BB\u7EBF\uFF09\uFF1A
+   - SEND_NEW\uFF1A\u9002\u5408\u5F00\u542F\u5168\u65B0\u7684\u4E3B\u52A8\u5173\u5FC3/\u8BDD\u9898\uFF08\u672C\u8F6E\u5C1A\u672A\u53D1\u8FC7\u6D88\u606F\u65F6\uFF09\u3002
+   - CONTINUE\uFF1A\u7528\u6237\u5C1A\u672A\u56DE\u590D\u4F46\u4ECD\u6709\u5FC5\u8981\u8F7B\u91CF\u8865\u5145\u4E00\u53E5\u65B0\u89D2\u5EA6/\u8F7B\u91CF\u5173\u5FC3\uFF08\u5FC5\u987B\u4E0E\u524D\u51E0\u6761\u4E0D\u91CD\u590D\u3001\u4E0D\u538B\u8FEB\uFF0C\u6709\u9012\u589E\u610F\u4E49\uFF09\u3002
+   - CHANGE_DIRECTION\uFF1A\u6362\u4E00\u4E2A\u66F4\u8F7B\u677E\u81EA\u7136\u7684\u8BDD\u9898\u6216\u5206\u4EAB\uFF0C\u907F\u514D\u5728\u8001\u8BDD\u9898\u4E0A\u6B7B\u78D5\u3002
+   - WAIT\uFF1A\u5224\u65AD\u6B64\u523B\u53D1\u6D88\u606F\u4E0D\u5408\u9002\u3001\u592A\u9891\u7E41\u3001\u6216\u4E0A\u4E00\u6761\u672A\u6D88\u5316\u9700\u8981\u518D\u7B49\u7B49 -> \u8FD4\u56DE WAIT \u4E14 candidateText \u4E3A\u7A7A\u5B57\u7B26\u4E32\u3002
+   - END_EPISODE\uFF1A\u8BE5\u8BDD\u9898\u6216\u672C\u8F6E\u4E3B\u52A8\u5173\u5FC3\u5DF2\u8DB3\u591F\u5B8C\u6574\uFF0C\u6216\u660E\u663E\u65E0\u9700\u7EE7\u7EED\u6253\u6270 -> \u8FD4\u56DE END_EPISODE \u4E14 candidateText \u4E3A\u7A7A\u5B57\u7B26\u4E32\u3002
+4. \u5173\u7CFB\u578B\u4E3B\u52A8\u804A\u5929\u53EF\u81EA\u7136\u5199\u51FA 1~2 \u53E5\u77ED\u53E5\uFF08\u82E5\u9700\u591A\u6C14\u6CE1\u53EF\u7528\u6362\u884C\u5206\u9694\uFF0C\u4F46\u7981\u6B623\u6761\u540C\u4E49\u91CD\u590D\uFF09\uFF1B\u5929\u6C14/\u7535\u91CF/\u65E5\u7A0B/\u7528\u773C\u7B49\u7EAF\u4E8B\u4EF6\u63D0\u9192\u53EA\u5199\u7B80\u77ED1\u53E5\u3002
+5. \u4E25\u683C\u57FA\u4E8E\u771F\u5B9E\u4E8B\u4EF6\u4E0E\u4E0A\u4E0B\u6587\uFF0C\u4E25\u7981\u7F16\u9020\u4E0D\u5B58\u5728\u7684\u804A\u5929\u5185\u5BB9\u3001\u65F6\u95F4\u6216\u5929\u6C14\u6570\u636E\u3002
+
+\u3010\u8F93\u51FA\u683C\u5F0F\u8981\u6C42\u3011\uFF1A
+1. \u5148\u7528 <think>...</think> \u8F93\u51FA\u601D\u8003\u4E0E\u51B3\u7B56\u5206\u6790\u8FC7\u7A0B\uFF08\u8BC4\u4F30\u65F6\u95F4\u3001\u7528\u6237\u72B6\u6001\u3001\u6B64\u524D\u5DF2\u53D1\u4E0E\u88AB\u9A73\u56DE\u8BB0\u5F55\uFF09\u3002
+2. \u5728 </think> \u4E4B\u540E\uFF0C\u53EA\u8F93\u51FA\u4E25\u683C\u5408\u6CD5\u7684 JSON \u5BF9\u8C61\uFF08\u4E0D\u8981\u52A0\u591A\u4F59\u89E3\u91CA\uFF09\uFF0C\u5B57\u6BB5\u5982\u4E0B\uFF1A
+{
+  "action": "SEND_NEW" | "CONTINUE" | "CHANGE_DIRECTION" | "WAIT" | "END_EPISODE",
+  "intent": "\u672C\u6B21\u610F\u56FE\u7B80\u8FF0",
+  "topic": "\u5F53\u524D\u6838\u5FC3\u8BDD\u9898",
+  "inferredUserState": "\u5BF9\u7528\u6237\u5F53\u524D\u72B6\u6001\u7684\u63A8\u6D4B",
+  "candidateText": "\u51C6\u5907\u53D1\u7ED9\u7528\u6237\u7684\u5FAE\u4FE1\u6D88\u606F\u6B63\u6587\uFF1B\u82E5 action \u4E3A WAIT \u6216 END_EPISODE \u5219\u5FC5\u987B\u4E3A\u7A7A\u5B57\u7B26\u4E32 """,
+  "decisionSummary": "\u4E00\u53E5\u8BDD\u603B\u7ED3\u4E3A\u4F55\u505A\u6B64\u51B3\u7B56",
+  "suggestedNextAction": "\u7ED9\u4E0B\u4E00\u6B21\u89E6\u53D1\u7684\u7B56\u7565\u5EFA\u8BAE",
+  "nextCheckDelayMinutes": 90
+}`;
     const responseText = await callAiService({
       prompt: systemPrompt,
       model: selectedModel,
@@ -72621,10 +72684,77 @@ ${historyText || "(\u8FD1\u671F\u6682\u65E0\u804A\u5929)"}
       timeoutMs: apiConfig?.timeoutMs || 35e3
     });
     const extracted = extractThinkingAndContent(responseText);
-    const hasText = Boolean(extracted.cleanText && extracted.cleanText.trim());
+    const rawClean = (extracted.cleanText || "").trim();
+    const allowedActions = /* @__PURE__ */ new Set(["SEND_NEW", "CONTINUE", "CHANGE_DIRECTION", "WAIT", "END_EPISODE"]);
+    let parsedJson = null;
+    try {
+      const strippedFence = rawClean.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+      parsedJson = JSON.parse(strippedFence);
+    } catch {
+      const match2 = rawClean.match(/\{[\s\S]*\}/);
+      if (match2) {
+        try {
+          parsedJson = JSON.parse(match2[0]);
+        } catch {
+          parsedJson = null;
+        }
+      }
+    }
+    const defaultAction = (episode?.sentCount || 0) > 0 ? "CONTINUE" : "SEND_NEW";
+    let action = defaultAction;
+    let intent = episode?.currentIntent || triggerType || "\u4E3B\u52A8\u95EE\u5019";
+    let topic = episode?.currentTopic || triggerType || "\u65E5\u5E38\u4E92\u52A8";
+    let inferredUserState = episode?.inferredUserState || "";
+    let candidateText = "";
+    let decisionSummary = "";
+    let suggestedNextAction = "";
+    let nextCheckDelayMinutes = 90;
+    if (parsedJson && typeof parsedJson === "object") {
+      if (typeof parsedJson.action === "string" && allowedActions.has(parsedJson.action.trim().toUpperCase())) {
+        action = parsedJson.action.trim().toUpperCase();
+      }
+      if (typeof parsedJson.intent === "string" && parsedJson.intent.trim()) {
+        intent = parsedJson.intent.trim();
+      }
+      if (typeof parsedJson.topic === "string" && parsedJson.topic.trim()) {
+        topic = parsedJson.topic.trim();
+      }
+      if (typeof parsedJson.inferredUserState === "string") {
+        inferredUserState = parsedJson.inferredUserState.trim();
+      }
+      if (typeof parsedJson.candidateText === "string") {
+        candidateText = parsedJson.candidateText.trim();
+      } else if (typeof parsedJson.text === "string") {
+        candidateText = parsedJson.text.trim();
+      }
+      if (typeof parsedJson.decisionSummary === "string") {
+        decisionSummary = parsedJson.decisionSummary.trim();
+      }
+      if (typeof parsedJson.suggestedNextAction === "string") {
+        suggestedNextAction = parsedJson.suggestedNextAction.trim();
+      }
+      if (typeof parsedJson.nextCheckDelayMinutes === "number" && parsedJson.nextCheckDelayMinutes > 0) {
+        nextCheckDelayMinutes = Math.min(720, Math.max(15, Math.round(parsedJson.nextCheckDelayMinutes)));
+      }
+    } else if (rawClean) {
+      candidateText = rawClean;
+      decisionSummary = "\u6A21\u578B\u8FD4\u56DE\u81EA\u7136\u6587\u672C\uFF0C\u6309\u517C\u5BB9\u6A21\u5F0F\u89E3\u6790\u53D1\u9001";
+    }
+    if (action === "WAIT" || action === "END_EPISODE") {
+      candidateText = "";
+    }
+    const hasDecision = Boolean(parsedJson) || Boolean(candidateText);
     res.json({
-      success: hasText,
-      text: extracted.cleanText || "",
+      success: hasDecision,
+      action,
+      intent,
+      topic,
+      inferredUserState,
+      text: candidateText,
+      candidateText,
+      decisionSummary,
+      suggestedNextAction,
+      nextCheckDelayMinutes,
       thinkingProcess: extracted.thinkingProcess,
       triggerType
     });

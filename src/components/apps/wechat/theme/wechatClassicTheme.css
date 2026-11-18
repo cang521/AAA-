@@ -4,18 +4,31 @@
    ============================================================================ */
 
 .wechat-app[data-wechat-theme="classic"] {
-  --wx-page-bg: #F5F5F5;
-  --wx-chat-bg: #EDEDED;
+  --wechat-page-bg: #EDEDED;
+  --wechat-row-bg: #EDEDED;
+  --wechat-nav-bg: #F7F7F7;
+  --wechat-nav-inactive: #707070;
+  --wechat-divider: #D8D8D8;
+  --wechat-green: #07C160;
+  --wechat-green-pressed: #06AD56;
+  --wechat-primary-text: #191919;
+  --wechat-secondary-text: #999999;
+  --wechat-new-friend-orange: #FA9D3B;
+
+  --wx-page-bg: var(--wechat-page-bg);
+  --wx-chat-bg: var(--wechat-page-bg);
+  --wx-row-bg: var(--wechat-row-bg);
+  --wx-row-active: #E2E2E2;
   --wx-surface: #FFFFFF;
-  --wx-surface-hover: #ECECEC;
-  --wx-surface-pinned: #F2F2F2;
-  --wx-nav-bg: #F7F7F7;
-  --wx-text: #191919;
-  --wx-text-secondary: #7A7A7A;
-  --wx-text-muted: #999999;
-  --wx-divider: #E5E5E5;
-  --wx-green: #07C160;
-  --wx-green-pressed: #06AD56;
+  --wx-surface-hover: #E5E5E5;
+  --wx-surface-pinned: var(--wechat-row-bg);
+  --wx-nav-bg: var(--wechat-nav-bg);
+  --wx-text: var(--wechat-primary-text);
+  --wx-text-secondary: var(--wechat-secondary-text);
+  --wx-text-muted: var(--wechat-secondary-text);
+  --wx-divider: var(--wechat-divider);
+  --wx-green: var(--wechat-green);
+  --wx-green-pressed: var(--wechat-green-pressed);
   --wx-user-bubble: #95EC69;
   --wx-ai-bubble: #FFFFFF;
   --wx-danger: #FA5151;
@@ -32,18 +45,31 @@
 
 html[data-theme="dark"] .wechat-app[data-wechat-theme="classic"],
 .theme-dark .wechat-app[data-wechat-theme="classic"] {
-  --wx-page-bg: #111111;
-  --wx-chat-bg: #111111;
+  --wechat-page-bg: #111111;
+  --wechat-row-bg: #111111;
+  --wechat-nav-bg: #191919;
+  --wechat-nav-inactive: #9E9E9E;
+  --wechat-divider: #2C2C2C;
+  --wechat-green: #07C160;
+  --wechat-green-pressed: #06AD56;
+  --wechat-primary-text: #F5F5F5;
+  --wechat-secondary-text: #8A8A8A;
+  --wechat-new-friend-orange: #FA9D3B;
+
+  --wx-page-bg: var(--wechat-page-bg);
+  --wx-chat-bg: var(--wechat-page-bg);
+  --wx-row-bg: var(--wechat-row-bg);
+  --wx-row-active: #1E1E1E;
   --wx-surface: #191919;
   --wx-surface-hover: #242424;
-  --wx-surface-pinned: #202020;
-  --wx-nav-bg: #191919;
-  --wx-text: #F5F5F5;
-  --wx-text-secondary: #C5C5C5;
-  --wx-text-muted: #8A8A8A;
-  --wx-divider: #2C2C2C;
-  --wx-green: #07C160;
-  --wx-green-pressed: #06AD56;
+  --wx-surface-pinned: var(--wechat-row-bg);
+  --wx-nav-bg: var(--wechat-nav-bg);
+  --wx-text: var(--wechat-primary-text);
+  --wx-text-secondary: var(--wechat-secondary-text);
+  --wx-text-muted: var(--wechat-secondary-text);
+  --wx-divider: var(--wechat-divider);
+  --wx-green: var(--wechat-green);
+  --wx-green-pressed: var(--wechat-green-pressed);
   --wx-user-bubble: #3B7F47;
   --wx-ai-bubble: #2C2C2C;
   --wx-danger: #FA5151;
@@ -61,29 +87,29 @@ html[data-theme="dark"] .wechat-app[data-wechat-theme="classic"],
 /* 1. Root Shell */
 .wechat-app[data-wechat-theme="classic"].wx-shell,
 .wechat-app[data-wechat-theme="classic"] .wx-shell {
-  background-color: var(--wx-page-bg) !important;
-  color: var(--wx-text) !important;
+  background-color: var(--wechat-page-bg) !important;
+  color: var(--wechat-primary-text) !important;
 }
 
 /* 2. Top Navigation Bar */
 .wechat-app[data-wechat-theme="classic"] .wx-header {
-  background-color: var(--wx-nav-bg) !important;
-  border-bottom-color: var(--wx-divider) !important;
-  color: var(--wx-text) !important;
+  background-color: var(--wechat-page-bg) !important;
+  border-bottom: 1px solid var(--wechat-divider) !important;
+  color: var(--wechat-primary-text) !important;
 }
 
 .wechat-app[data-wechat-theme="classic"] .wx-header-title {
-  color: var(--wx-text) !important;
+  color: var(--wechat-primary-text) !important;
   font-weight: 600;
 }
 
 .wechat-app[data-wechat-theme="classic"] .wx-header-back {
-  color: var(--wx-text) !important;
+  color: var(--wechat-primary-text) !important;
 }
 
 .wechat-app[data-wechat-theme="classic"] .wx-header-action {
   background-color: transparent !important;
-  color: var(--wx-text) !important;
+  color: var(--wechat-primary-text) !important;
   border-radius: 0.5rem;
 }
 
@@ -92,13 +118,15 @@ html[data-theme="dark"] .wechat-app[data-wechat-theme="classic"],
 }
 
 .wechat-app[data-wechat-theme="classic"] .wx-header-cta {
-  background-color: var(--wx-green) !important;
+  background-color: var(--wechat-green) !important;
+  background-image: none !important;
   color: #FFFFFF !important;
   border-radius: 0.375rem !important;
+  box-shadow: none !important;
 }
 
 .wechat-app[data-wechat-theme="classic"] .wx-header-cta:hover {
-  background-color: var(--wx-green-pressed) !important;
+  background-color: var(--wechat-green-pressed) !important;
 }
 
 /* 3. Text & Divider Utilities */
@@ -132,16 +160,16 @@ html[data-theme="dark"] .wechat-app[data-wechat-theme="classic"],
 
 /* 4. Bottom Navigation Bar */
 .wechat-app[data-wechat-theme="classic"] .wx-bottom-nav {
-  background-color: var(--wx-nav-bg) !important;
-  border-top-color: var(--wx-divider) !important;
+  background-color: var(--wechat-nav-bg) !important;
+  border-top: 1px solid var(--wechat-divider) !important;
 }
 
 .wechat-app[data-wechat-theme="classic"] .wx-bottom-tab {
-  color: var(--wx-text-secondary) !important;
+  color: var(--wechat-nav-inactive) !important;
 }
 
 .wechat-app[data-wechat-theme="classic"] .wx-bottom-tab--active {
-  color: var(--wx-green) !important;
+  color: var(--wechat-green) !important;
 }
 
 .wechat-app[data-wechat-theme="classic"] .wx-unread-badge {
@@ -151,56 +179,86 @@ html[data-theme="dark"] .wechat-app[data-wechat-theme="classic"],
 
 /* 5. Lists & Conversation Rows */
 .wechat-app[data-wechat-theme="classic"] .wx-list {
-  background-color: var(--wx-page-bg) !important;
-}
-
-.wechat-app[data-wechat-theme="classic"] .wx-list > * {
-  border-color: var(--wx-divider) !important;
+  background-color: var(--wechat-page-bg) !important;
 }
 
 .wechat-app[data-wechat-theme="classic"] .wx-search-bar-wrap {
-  background-color: var(--wx-nav-bg) !important;
-  border-bottom: 1px solid var(--wx-divider) !important;
+  background-color: var(--wechat-page-bg) !important;
+  border-bottom: 1px solid var(--wechat-divider) !important;
 }
 
 .wechat-app[data-wechat-theme="classic"] .wx-search-input {
   background-color: var(--wx-input-bg) !important;
-  color: var(--wx-text) !important;
-  border-color: var(--wx-divider) !important;
+  color: var(--wechat-primary-text) !important;
+  border-color: var(--wechat-divider) !important;
   border-radius: 0.375rem !important;
 }
 
 .wechat-app[data-wechat-theme="classic"] .wx-conversation-row {
-  background-color: var(--wx-surface) !important;
-  border-bottom: 1px solid var(--wx-divider) !important;
+  position: relative;
+  background-color: var(--wechat-row-bg) !important;
+  background-image: none !important;
+  border: none !important;
   min-height: 70px;
-  padding: 0.65rem 0.875rem !important;
+  padding: 0.6875rem 0.875rem !important;
   border-radius: 0 !important;
+  box-shadow: none !important;
 }
 
 .wechat-app[data-wechat-theme="classic"] .wx-conversation-row--pinned {
-  background-color: var(--wx-surface-pinned) !important;
+  background-color: var(--wechat-row-bg) !important;
 }
 
-.wechat-app[data-wechat-theme="classic"] .wx-conversation-row:hover,
+.wechat-app[data-wechat-theme="classic"] .wx-conversation-row:hover {
+  background-color: var(--wechat-row-bg) !important;
+}
+
 .wechat-app[data-wechat-theme="classic"] .wx-conversation-row:active {
-  background-color: var(--wx-surface-hover) !important;
+  background-color: var(--wx-row-active) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-conversation-row::after {
+  content: '';
+  position: absolute;
+  left: 4.625rem;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background-color: var(--wechat-divider);
+  pointer-events: none;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-conversation-row:last-child::after {
+  display: none;
 }
 
 .wechat-app[data-wechat-theme="classic"] .wx-avatar {
   border-radius: 0.4rem !important;
-  border-color: var(--wx-divider) !important;
+  border-color: var(--wechat-divider) !important;
+  box-shadow: none !important;
 }
 
 .wechat-app[data-wechat-theme="classic"] .wx-group-tag {
-  background-color: var(--wx-green) !important;
+  background-color: var(--wechat-green) !important;
   color: #FFFFFF !important;
   border-radius: 0.25rem !important;
 }
 
+.wechat-app[data-wechat-theme="classic"] .wx-icon-box-new-friend {
+  background-color: var(--wechat-new-friend-orange) !important;
+  color: #FFFFFF !important;
+  border-radius: 0.4375rem !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-icon-box-group {
+  background-color: var(--wechat-green) !important;
+  color: #FFFFFF !important;
+  border-radius: 0.4375rem !important;
+}
+
 /* 6. Contacts Page */
 .wechat-app[data-wechat-theme="classic"] .wx-contacts-page {
-  background-color: var(--wx-page-bg) !important;
+  background-color: var(--wechat-page-bg) !important;
   padding: 0 !important;
 }
 

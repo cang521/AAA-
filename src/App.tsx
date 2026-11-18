@@ -79,6 +79,7 @@ import { AgentAskPrompt, InPhoneNotification } from './lib/agent/types';
 import { getApiConfigForEngine } from './lib/apiConfigStore';
 import { clearAllChatMessages } from './lib/chatDb';
 import { autoPaginateLayout } from './lib/layoutPaginator';
+import { backfillAllCharactersNotificationAvatars } from './lib/notificationAvatar';
 
 export function App() {
   // Lock state re-hydrated from lockSecurityService (Re-entry maintains lock state)
@@ -223,6 +224,23 @@ export function App() {
       });
     }
   }, [characters]);
+
+  // Non-blocking startup backfill for dedicated 192x192 notificationAvatar thumbnails
+  useEffect(() => {
+    let cancelled = false;
+    backfillAllCharactersNotificationAvatars()
+      .then((changed) => {
+        if (changed && !cancelled) {
+          setCharactersState(loadCharacters());
+        }
+      })
+      .catch((e) => {
+        console.warn('[App] notificationAvatar startup backfill warning:', e);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Auto-paginate desktop layout on startup to prevent vertical scrolling overflow
   useEffect(() => {

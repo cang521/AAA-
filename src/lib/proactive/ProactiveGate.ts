@@ -44,12 +44,16 @@ export interface ProactiveDispatchParams extends GateCheckParams {
   proposedText: string;
   contextSummary?: string;
   thinkingProcess?: string;
+  episodeId?: string;
+  intent?: string;
+  generatedAt?: number;
 }
 
 export interface ProactiveDispatchResult {
   sent: boolean;
   reason?: string;
   messageId?: string;
+  messageIds?: string[];
 }
 
 class ProactiveGateService {
@@ -248,10 +252,18 @@ class ProactiveGateService {
         {
           notifySystem: Boolean(settings.systemNotificationsEnabled),
           triggerSource: params.triggerType,
+          triggerType: params.triggerType,
+          eventId: params.eventId,
+          sourceSystem: params.sourceSystem,
+          priority: params.priority,
+          episodeId: params.episodeId,
+          intent: params.intent,
+          generatedAt: params.generatedAt,
         }
       );
 
       const firstMessage = results[0]?.message;
+      const messageIds = results.map((r) => r.message.id).filter(Boolean);
 
       // 2. Update Runtime State
       const charRuntime = getCharacterProactiveRuntime(params.aiId, runtimeState);
@@ -271,7 +283,7 @@ class ProactiveGateService {
       runtimeState.lastGlobalCheckAt = Date.now();
       saveProactiveRuntimeState(runtimeState);
 
-      return { sent: true, messageId: firstMessage?.id };
+      return { sent: true, messageId: firstMessage?.id, messageIds };
     } catch (e: any) {
       console.error('[ProactiveGate] Dispatch error:', e);
       return { sent: false, reason: e.message || '发送主动消息失败' };

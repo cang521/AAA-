@@ -10,6 +10,26 @@ export interface ProactiveMessageResult {
   character: AiCharacter;
 }
 
+export interface ProactiveBridgeOptions {
+  notifySystem?: boolean;
+  triggerSource?: string;
+  triggerType?: string;
+  eventId?: string;
+  sourceSystem?: 'proactiveEngine' | 'agent';
+  priority?: 'high' | 'medium' | 'low';
+  episodeId?: string;
+  intent?: string;
+  generatedAt?: number;
+}
+
+const SINGLE_BUBBLE_EVENT_TRIGGERS = new Set([
+  'weather_alert',
+  'device_life_event',
+  'app_usage',
+  'APP_USAGE_TICK',
+  'important_event',
+]);
+
 class ChatMessageBridge {
   private static instance: ChatMessageBridge;
 
@@ -29,39 +49,47 @@ class ChatMessageBridge {
     aiId: string,
     text: string,
     contextSummary: string,
-    options?: { notifySystem?: boolean; triggerSource?: string }
+    options?: ProactiveBridgeOptions
   ): Promise<ProactiveMessageResult> {
     const multiResults = await this.postProactiveMultiBubbleMessage(aiId, text, contextSummary, options);
     return multiResults[0];
   }
 
   /**
-   * Persist AI proactive messages with support for multi-bubble reply splitting and natural delays
+   * Persist AI proactive messages with support for multi-bubble reply splitting,
+   * unified turnId grouping, and complete proactiveMeta persistence.
    */
   public async postProactiveMultiBubbleMessage(
     aiId: string,
     rawText: string,
     contextSummary: string,
-    options?: { notifySystem?: boolean; triggerSource?: string }
+    options?: ProactiveBridgeOptions
   ): Promise<ProactiveMessageResult[]> {
     const characters = loadCharacters();
     const character = characters.find((c) => c.id === aiId) || characters[0];
 
     const cleanRawText = sanitizeReplyText(rawText || '');
+    const triggerType = options?.triggerType || options?.triggerSource || 'proactive';
+    const isSingleBubbleEvent = SINGLE_BUBBLE_EVENT_TRIGGERS.has(triggerType);
+
     const multiBubbleConfig = getMultiBubbleConfig();
-    const shouldSplit = multiBubbleConfig.enabled;
+    const shouldSplit = multiBubbleConfig.enabled && !isSingleBubbleEvent;
     const rawBubbles = shouldSplit
-      ? splitMessageIntoSentenceBubbles(cleanRawText, { maxBubbles: Math.min(3, multiBubbleConfig.maxBubbles || 3) })
+      ? splitMessageIntoSentenceBubbles(cleanRawText, {
+          maxBubbles: Math.min(3, multiBubbleConfig.maxBubbles || 3),
+        })
       : [cleanRawText];
 
     const bubbles = rawBubbles.map((b) => sanitizeReplyText(b)).filter((s) => s.trim().length > 0);
     if (bubbles.length === 0) {
-      bubbles.push(cleanRawText || '嗨，想你啦！');
+      bubbles.push(cleanRawText || '嗨，最近怎么样？');
     }
 
     const results: ProactiveMessageResult[] = [];
     const baseTimestamp = Date.now();
     const shouldNotifySystem = options?.notifySystem ?? false;
+    const turnId = `turn_proactive_${character.id}_${baseTimestamp}_${Math.random().toString(36).slice(2, 6)}`;
+    const generatedAt = options?.generatedAt || baseTimestamp;
 
     for (let i = 0; i < bubbles.length; i++) {
       const bubbleText = bubbles[i];
@@ -77,7 +105,26 @@ class ChatMessageBridge {
         sender: 'ai',
         text: bubbleText.trim(),
         timestamp: baseTimestamp + i * 200, // slight sequential timestamp offset
-        thinkingProcess: i === 0 ? `【AI主动手机代理决策链】\n• 触发上下文：${contextSummary}\n• 决策判定：四层权限全链路检测通过 (系统能力/AI独立权限/场景控制)\n• 目标动作：向用户发送主动关怀消息，生成 ${bubbles.length} 条连贯气泡。` : undefined,
+        turnId,
+        turnBubbleIndex: i,
+        turnTotalBubbles: bubbles.length,
+        isProactive: true,
+        proactiveMeta: {
+          episodeId: options?.episodeId,
+          triggerType,
+          eventId: options?.eventId,
+          sourceSystem: options?.sourceSystem || 'proactiveEngine',
+          priority: options?.priority,
+          intent: options?.intent,
+          generatedAt,
+          bubbleIndex: i,
+          totalBubbles: bubbles.length,
+          repliedByUser: false,
+        },
+        thinkingProcess:
+          i === 0
+            ? `【AI主动消息决策链】\n• 会话ID：${options?.episodeId || 'standalone'}\n• 触发类型：${triggerType}\n• 意图：${options?.intent || '主动关怀'}\n• 触发上下文：${contextSummary}\n• 输出气泡数：${bubbles.length} 条`
+            : `${contextSummary}\n\n[主动连发第 ${i + 1}/${bubbles.length} 条气泡]`,
       };
 
       // 1. Save to Messages store (Authoritative IndexedDB)
@@ -94,7 +141,7 @@ class ChatMessageBridge {
             messageId: newMessage.id,
             bubbleIndex: i,
             timestamp: newMessage.timestamp,
-            triggerSource: options?.triggerSource || 'proactive',
+            triggerSource: triggerType,
           });
           if (!notifRes.success && notifRes.code !== 'SKIPPED_APP_FOREGROUND' && notifRes.code !== 'NOT_NATIVE_ANDROID') {
             console.warn(
@@ -121,7 +168,7 @@ class ChatMessageBridge {
     });
     saveCharacters(updatedCharacters);
 
-    // 3. Emit custom events and system notification (using last bubble text preview for status bar)
+    // 4. Emit custom events
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('ai_proactive_message_received', {
@@ -129,6 +176,7 @@ class ChatMessageBridge {
             messages: results.map((r) => r.message),
             message: results[results.length - 1].message,
             character,
+            episodeId: options?.episodeId,
           },
         })
       );

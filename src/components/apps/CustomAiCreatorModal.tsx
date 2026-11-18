@@ -16,6 +16,7 @@ import {
 import { AiCharacter } from '../../types';
 import { ensureAiMemoryVault } from '../../lib/aiMemoryVaultDb';
 import { DEFAULT_AI_AVATAR } from '../../lib/storage';
+import { generateNotificationAvatarThumbnail } from '../../lib/notificationAvatar';
 
 interface CustomAiCreatorModalProps {
   isOpen: boolean;
@@ -96,7 +97,7 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
   };
 
   // Handle final submission
-  const handleSave = () => {
+  const handleSave = async () => {
     const finalName = (nameRef.current?.value !== undefined ? nameRef.current.value : name).trim() || '自定义 AI';
     const finalWxid = (wxidRef.current?.value !== undefined ? wxidRef.current.value : wxid).trim() || `ai_${Date.now().toString().slice(-6)}`;
     const finalAvatar = avatar || DEFAULT_AI_AVATAR;
@@ -110,11 +111,22 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
       .map((t) => t.trim())
       .filter(Boolean);
 
+    let notificationAvatar: string | undefined;
+    try {
+      const thumbRes = await generateNotificationAvatarThumbnail(finalAvatar, { timeoutMs: 800 });
+      if (thumbRes.dataUrl) {
+        notificationAvatar = thumbRes.dataUrl;
+      }
+    } catch {
+      // Non-blocking: lazy backfill will retry when needed
+    }
+
     const newChar: AiCharacter = {
       id: `char_custom_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       name: finalName,
       wxid: finalWxid,
       avatar: finalAvatar,
+      notificationAvatar,
       persona: finalPersona,
       personality: finalPersonality,
       relationship: finalRelationship,

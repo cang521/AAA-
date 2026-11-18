@@ -1,5 +1,6 @@
 import { AiCharacter, ChatMessage, UserProfile, AiPermissions, WorldBook, Memo } from '../../types';
-import { getRecentChatMessages, saveChatMessage, recallCharacterMemories, replaceChatMessagesTurn } from '../chatDb';
+import { getRecentChatMessages, getMessagesByIds, saveChatMessage, recallCharacterMemories, replaceChatMessagesTurn } from '../chatDb';
+import { getRecentEpisodeForNormalReply } from '../proactive/proactiveStore';
 import { getAiArchiveConfig, recallArchivedHistory } from '../chatArchiveDb';
 import { searchAiMemoryChunks } from '../aiMemoryVaultDb';
 import { systemNativeService } from '../systemNativeService';
@@ -110,9 +111,33 @@ export async function executeAiReplyTask(
   }
 
   // If this is a reroll task, make sure the old AI messages being replaced are also excluded from prompt context
-  if (task.replaceMessageIds && task.replaceMessageIds.length > 0) {
-    const replaceIdSet = new Set(task.replaceMessageIds);
+  const replaceIdSet = new Set(task.replaceMessageIds || []);
+  if (replaceIdSet.size > 0) {
     conversationHistory = conversationHistory.filter((msg) => !replaceIdSet.has(msg.id));
+  }
+
+  // Ensure any proactive message chain from the active or recently-answered episode remains visible
+  // to the normal AI reply so AI clearly knows what proactive message the user is replying to.
+  if (!task.conversationHistoryOverride) {
+    try {
+      const recentEpisode = getRecentEpisodeForNormalReply(activeCharacter.id);
+      if (recentEpisode && recentEpisode.proactiveMessageIds.length > 0) {
+        const existingIds = new Set(conversationHistory.map((m) => m.id));
+        const missingIds = recentEpisode.proactiveMessageIds.filter(
+          (id) => !existingIds.has(id) && !currentTurnMsgIdSet.has(id) && !replaceIdSet.has(id)
+        );
+        if (missingIds.length > 0) {
+          const extraMsgs = await getMessagesByIds(activeCharacter.id, missingIds);
+          if (extraMsgs.length > 0) {
+            conversationHistory = [...conversationHistory, ...extraMsgs].sort(
+              (a, b) => (a.timestamp || 0) - (b.timestamp || 0)
+            );
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[AiReplyExecutor] Failed to merge episode proactive messages:', e);
+    }
   }
 
   // Evaluate memory needs

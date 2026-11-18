@@ -2941,7 +2941,13 @@ ${devicesSummary}
     if (cleanedHistory && cleanedHistory.length > 0) {
       cleanedHistory.forEach((msg: any) => {
         const msgTime = formatFullDateTime(msg.timestamp || msg.createdAt || msg.time);
-        const senderLabel = msg.sender === 'user' ? (userProfile?.name || '用户') : character.name;
+        const isProactiveMsg = Boolean(msg.isProactive);
+        const senderLabel =
+          msg.sender === 'user'
+            ? userProfile?.name || '用户'
+            : isProactiveMsg
+            ? `${character.name} [此前主动消息${msg.proactiveMeta?.repliedByUser ? '·用户已回应' : '·此前发起'}]`
+            : character.name;
         let msgStr = `[${msgTime}] ${senderLabel}: ${msg.text || ''}`;
         if (msg.imageUrl) {
           msgStr += ` [图片附件${msg.imageAnalysis ? `: ${msg.imageAnalysis}` : ''}]`;
@@ -4334,70 +4340,151 @@ app.post('/api/gemini/rps-answer-question', async (req, res) => {
 
 app.post('/api/gemini/proactive-generate', async (req, res) => {
   try {
-    const { character, triggerType, eventData, userProfile, recentMessages = [], apiConfig } = req.body;
+    const {
+      character,
+      triggerType,
+      eventData,
+      userProfile,
+      recentMessages = [],
+      episode,
+      rejectedAttempts,
+      currentTime,
+      apiConfig,
+    } = req.body;
     const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || 'gemini-3.6-flash';
 
     let triggerDescription = '';
     if (triggerType === 'inactivity_timeout') {
       const hours = typeof eventData?.hoursInactive === 'number' && eventData.hoursInactive > 0 ? eventData.hoursInactive : null;
       if (hours) {
-        triggerDescription = `【触发场景: 长时间未联系】根据真实聊天记录，你与用户已经有约 ${hours} 小时没有发过消息了。请主动向用户发一条自然熟络的微信短消息，聊聊天、问候一下或接续近期话题。切勿指责用户。`;
+        triggerDescription = `【触发场景: 长时间未联系】根据真实聊天记录，你与用户已经有约 ${hours} 小时没有互动。请结合当前主动会话状态与历史话题，判断是否需要自然轻柔地发起或延续联系，切勿指责或催促用户。`;
       } else {
-        triggerDescription = `【触发场景: 日常主动问候】你有一段时间没和用户聊天了。请主动向用户发一条自然、随和、有温度的微信短消息，打个招呼或分享日常，禁止随意编造具体的断联小时数。`;
+        triggerDescription = `【触发场景: 日常主动问候】你有一段时间没和用户聊天了。请结合当前时段与话题自然决定是否发一条轻盈有温度的微信短消息，禁止编造具体断联小时数。`;
       }
     } else if (triggerType === 'weather_alert') {
-      triggerDescription = `【触发场景: 真实气象提醒】最新气象感知显示：${eventData?.weatherEventTitle || '天气变化'} (${eventData?.weatherSummary || '气象预警'})。请依据此真实数据，以你的性格口吻提醒用户（例如提醒带伞、加衣或注意出行）。不要夸大事实。`;
+      triggerDescription = `【触发场景: 真实气象提醒】最新气象感知显示：${eventData?.weatherEventTitle || '天气变化'} (${eventData?.weatherSummary || '气象预警'})。请依据此真实数据，以你的性格口吻提醒用户（例如提醒带伞、加衣或注意出行）。不要夸大事实，且只需简短1条即可。`;
     } else if (triggerType === 'menstrual_care') {
-      triggerDescription = `【触发场景: 经期健康关怀】用户预计将在 ${eventData?.daysBefore || 2} 天后进入生理期。请以你的性格口吻向用户表达贴心关怀（提醒备好温水、卫生用品、注意保暖）。`;
+      triggerDescription = `【触发场景: 经期健康关怀】用户预计将在 ${eventData?.daysBefore || 2} 天后进入生理期。请以你的性格口吻表达自然贴心关怀，避免机械说教。`;
     } else if (triggerType === 'greeting') {
       const gType = eventData?.greetingType || 'morning';
       const label = gType === 'morning' ? '早安' : gType === 'noon' ? '午间' : '晚安';
-      triggerDescription = `【触发场景: ${label}问候】现在是${label}时段。请主动向用户发一条自然有温度的${label}问候短消息。`;
+      triggerDescription = `【触发场景: ${label}问候】现在是${label}时段。请结合上下文与当前主动会话历史判断：若前面已经主动发过相似问候且用户未回复，切忌机械复读！`;
     } else if (triggerType === 'important_event') {
-      triggerDescription = `【触发场景: 重要日期提醒】用户有一个重要日程/事件：[${eventData?.eventTitle || '重要事件'}]，将在 ${eventData?.daysRemaining === 0 ? '今天' : eventData?.daysRemaining + '天后'} (${eventData?.eventDate || ''}) 到来。请主动向用户送上问候与关怀。`;
+      triggerDescription = `【触发场景: 重要日期提醒】用户有一个重要日程/事件：[${eventData?.eventTitle || '重要事件'}]，将在 ${eventData?.daysRemaining === 0 ? '今天' : eventData?.daysRemaining + '天后'} (${eventData?.eventDate || ''}) 到来。请主动送上简明问候与关怀。`;
     } else if (triggerType === 'followup_topic') {
-      triggerDescription = `【触发场景: 待跟进事项追问】用户之前提到过这件事：[${eventData?.topicTitle || '之前的计划'}]。现在时间到了，请主动微信询问事情的后续进展或结果。`;
+      triggerDescription = `【触发场景: 待跟进事项追问】用户之前提到过这件事：[${eventData?.topicTitle || '之前的计划'}]。现在时间到了，请自然询问后续进展或结果。`;
     } else if (triggerType === 'life_event_followup') {
-      triggerDescription = `【触发场景: 生活连续性跟进 / Current Life State】用户近期正在经历的事项：[${eventData?.title || '关注事项'}] (${eventData?.summary || ''}${eventData?.latestProgress ? `，最新进展: ${eventData?.latestProgress}` : ''})。请以你的角色人设和语气，自然关切地问起这件事的近况或表达关心。`;
+      triggerDescription = `【触发场景: 生活连续性跟进 / Current Life State】用户近期正在经历的事项：[${eventData?.title || '关注事项'}] (${eventData?.summary || ''}${eventData?.latestProgress ? `，最新进展: ${eventData?.latestProgress}` : ''})。请以你的角色口吻自然关切。`;
     } else if (triggerType === 'device_life_event') {
       const sub = eventData?.deviceSubtype || 'low_battery';
       if (sub === 'low_battery') {
-        triggerDescription = `【触发场景: 手机低电量提醒】检测到用户手机电量低至 ${eventData?.batteryLevel || 12}% (${eventData?.isCharging ? '正在充电' : '未充电'})。请像关心好朋友一样提醒用户插上充电器。`;
+        triggerDescription = `【触发场景: 手机低电量提醒】检测到用户手机电量低至 ${eventData?.batteryLevel || 12}% (${eventData?.isCharging ? '正在充电' : '未充电'})。请简洁关心提醒插上充电器。`;
       } else if (sub === 'late_night') {
-        triggerDescription = `【触发场景: 深夜玩手机提醒】现在已经是深夜 ${eventData?.currentTimeStr || '23:40'} 了，用户还在玩手机。请温柔提醒用户注意休息、早点睡觉。`;
+        triggerDescription = `【触发场景: 深夜玩手机提醒】现在已经是深夜 ${eventData?.currentTimeStr || '23:40'} 了，用户还在玩手机。请温柔提醒休息，不要说教。`;
       } else {
-        triggerDescription = `【触发场景: App很久未打开问候】用户已经有好几天没打开 App 啦，请主动发一条消息问候并表达想念。`;
+        triggerDescription = `【触发场景: 久未打开应用问候】请自然问候用户近况。`;
       }
     } else if (triggerType === 'app_usage') {
-      triggerDescription = `【触发场景: 屏幕连续使用过久关怀】检测到用户连续盯着屏幕使用设备已有 ${eventData?.durationMinutes || 120} 分钟（当前应用: ${eventData?.currentApp || '手机'}）。请以你的角色人设和语气，像真正的朋友或恋人一样主动关心用户，建议用户闭眼休息、活动一下颈椎、喝杯水或吃点东西，或者温柔邀请用户聊天。切勿使用机械冰冷的系统提示模板，保持高度拟人、自然温情。`;
+      triggerDescription = `【触发场景: 屏幕连续使用过久关怀】检测到用户连续使用设备已有 ${eventData?.durationMinutes || 120} 分钟（当前应用: ${eventData?.currentApp || '手机'}）。请简短自然地建议闭眼休息、喝杯水或活动一下，勿机械重复。`;
     } else {
-      triggerDescription = `【触发场景: 模拟测试触发】测试场景：${eventData?.testScenario || '主动微信问候'}。请生成一条生动贴切的微信消息。`;
+      triggerDescription = `【触发场景: 模拟测试或主动联系】场景：${eventData?.testScenario || triggerType || '主动微信问候'}。`;
     }
 
-    const historyText = (recentMessages || [])
-      .slice(-6)
-      .map((m: any) => `${m.sender === 'user' ? userProfile?.name || '用户' : character.name}: ${m.text || ''}`)
-      .join('\n');
+    // Preserve ALL structured messages sent by client (base 30 + current episode proactive chain) — NO slice(-6)
+    const structuredMsgs = Array.isArray(recentMessages) ? recentMessages : [];
+    const userDisplayName = userProfile?.name || '用户';
+
+    const historyLines = structuredMsgs.map((m: any) => {
+      const tsStr = m.timestamp ? formatFullDateTime(m.timestamp) : '';
+      const senderLabel = m.sender === 'user' ? userDisplayName : character.name;
+      let roleTag = '[普通对话]';
+      if (m.contextRole === 'current_episode_proactive' || (m.isProactive && m.proactiveMeta?.episodeId && episode?.episodeId && m.proactiveMeta.episodeId === episode.episodeId)) {
+        roleTag = `[本轮主动消息·未获回复${m.proactiveMeta?.intent ? `·意图:${m.proactiveMeta.intent}` : ''}]`;
+      } else if (m.isProactive) {
+        roleTag = `[历史主动消息${m.proactiveMeta?.repliedByUser ? '·已获回复' : '·未回复'}]`;
+      }
+      const turnSuffix =
+        typeof m.turnTotalBubbles === 'number' && m.turnTotalBubbles > 1
+          ? ` (气泡${(m.turnBubbleIndex ?? 0) + 1}/${m.turnTotalBubbles})`
+          : '';
+      return `${tsStr ? `[${tsStr}] ` : ''}${roleTag} ${senderLabel}${turnSuffix}: ${m.text || ''}`;
+    });
+
+    const episodeRejections = Array.isArray(rejectedAttempts)
+      ? rejectedAttempts
+      : Array.isArray(episode?.rejectedAttempts)
+      ? episode.rejectedAttempts
+      : [];
+
+    const episodeSummaryBlock = episode
+      ? `【当前连续主动会话状态 (Active Proactive Episode)】:
+- 会话 ID：${episode.episodeId}
+- 初始触发源：${episode.triggerSource}
+- 当前连续意图：${episode.currentIntent || '待规划'}
+- 当前延续话题：${episode.currentTopic || '待规划'}
+- 对用户当前状态的推断：${episode.inferredUserState || '未知'}
+- 本轮已发出主动消息次数：${episode.sentCount ?? 0} 次（共尝试 ${episode.attemptCount ?? 0} 次）
+- 上次动作建议：${episode.lastAction || '无'}${episode.lastDecisionSummary ? `（${episode.lastDecisionSummary}）` : ''}
+- 上次策略备忘：${episode.suggestedNextAction || '无'}
+- 【此前被拦截/驳回的候选方案记录】（严禁原样重复以下失败文案或同类踩雷行为）：
+${
+  episodeRejections.length > 0
+    ? episodeRejections
+        .slice(-8)
+        .map(
+          (r: any, idx: number) =>
+            `  ${idx + 1}. [${r.timestamp ? formatFullDateTime(r.timestamp) : '近期'}] 候选="${(r.candidateText || '').slice(0, 60)}" -> 驳回原因: ${r.rejectReason}${r.suggestedNextAction ? ` | 调整建议: ${r.suggestedNextAction}` : ''}`
+        )
+        .join('\n')
+    : '  (暂无被驳回记录)'
+}`
+      : '【当前主动会话状态】: 尚未建立连续会话（新发起）';
+
+    const realTimeStr = currentTime || formatFullDateTime(Date.now());
 
     const systemPrompt = `你现在正在扮演仿真微信中的 AI 角色：【${character.name}】(微信号: ${character.wxid || 'ai_user'})。
 角色身份与人设：${character.persona}
 性格特征与口吻：${character.personality || '自然亲切'}
-${character.relationship ? `与用户的关系：${character.relationship}\n` : ''}
-长期记忆：${(character.memories || []).join('；')}
+${character.relationship ? `与用户的关系：${character.relationship}\n` : ''}长期记忆：${(character.memories || []).join('；') || '暂无'}
 
 对话人（你的微信好友）：
-- 姓名/昵称：${userProfile?.name || '小清'}
+- 姓名/昵称：${userDisplayName}
 
-【主动消息触发背景与真实事实】：
+【当前真实本地时间】：${realTimeStr}
+
+【本次触发事件与背景】：
 ${triggerDescription}
 
-【最近聊天上下文】：
-${historyText || '(近期暂无聊天)'}
+${episodeSummaryBlock}
 
-【核心输出要求】：
-1. 必须用 <think>...</think> 标签在最前面输出思考过程。
-2. 在 </think> 标签后，直接输出你要发给用户的微信消息文本（1~2 句微信口语化短句，切忌像机器人念说明书）。
-3. 严格基于系统给出的事实，禁止虚构不存在的天气或事件。`;
+【结构化完整聊天上下文（含冻结的起点对话 + 本轮所有主动消息，按时间正序）】：
+${historyLines.length > 0 ? historyLines.join('\n') : '(近期暂无聊天记录)'}
+
+【“Plan — Review — Execute — Reflect” 核心行为决策准则】：
+1. 若本轮已发出主动消息且用户仍未回复，禁止反复车轱辘重复同样的叮嘱（如连发三次“早点睡/多喝热水/记得带伞”）。
+2. 若用户未在本轮回复过你，严禁凭空假设用户说过话或产生“刚才那句/怎么又/别生气/别不理我/为什么不回我”等无根据回溯或指责情绪！
+3. 先判断用户此刻真实状态（例如深夜可能已经睡着、上班忙、或普通离线）：
+   - SEND_NEW：适合开启全新的主动关心/话题（本轮尚未发过消息时）。
+   - CONTINUE：用户尚未回复但仍有必要轻量补充一句新角度/轻量关心（必须与前几条不重复、不压迫，有递增意义）。
+   - CHANGE_DIRECTION：换一个更轻松自然的话题或分享，避免在老话题上死磕。
+   - WAIT：判断此刻发消息不合适、太频繁、或上一条未消化需要再等等 -> 返回 WAIT 且 candidateText 为空字符串。
+   - END_EPISODE：该话题或本轮主动关心已足够完整，或明显无需继续打扰 -> 返回 END_EPISODE 且 candidateText 为空字符串。
+4. 关系型主动聊天可自然写出 1~2 句短句（若需多气泡可用换行分隔，但禁止3条同义重复）；天气/电量/日程/用眼等纯事件提醒只写简短1句。
+5. 严格基于真实事件与上下文，严禁编造不存在的聊天内容、时间或天气数据。
+
+【输出格式要求】：
+1. 先用 <think>...</think> 输出思考与决策分析过程（评估时间、用户状态、此前已发与被驳回记录）。
+2. 在 </think> 之后，只输出严格合法的 JSON 对象（不要加多余解释），字段如下：
+{
+  "action": "SEND_NEW" | "CONTINUE" | "CHANGE_DIRECTION" | "WAIT" | "END_EPISODE",
+  "intent": "本次意图简述",
+  "topic": "当前核心话题",
+  "inferredUserState": "对用户当前状态的推测",
+  "candidateText": "准备发给用户的微信消息正文；若 action 为 WAIT 或 END_EPISODE 则必须为空字符串 \"\"",
+  "decisionSummary": "一句话总结为何做此决策",
+  "suggestedNextAction": "给下一次触发的策略建议",
+  "nextCheckDelayMinutes": 90
+}`;
 
     const responseText = await callAiService({
       prompt: systemPrompt,
@@ -4410,12 +4497,84 @@ ${historyText || '(近期暂无聊天)'}
     });
 
     const extracted = extractThinkingAndContent(responseText);
+    const rawClean = (extracted.cleanText || '').trim();
 
-    const hasText = Boolean(extracted.cleanText && extracted.cleanText.trim());
+    const allowedActions = new Set(['SEND_NEW', 'CONTINUE', 'CHANGE_DIRECTION', 'WAIT', 'END_EPISODE']);
+    let parsedJson: any = null;
+    try {
+      const strippedFence = rawClean.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+      parsedJson = JSON.parse(strippedFence);
+    } catch {
+      const match = rawClean.match(/\{[\s\S]*\}/);
+      if (match) {
+        try {
+          parsedJson = JSON.parse(match[0]);
+        } catch {
+          parsedJson = null;
+        }
+      }
+    }
+
+    const defaultAction = (episode?.sentCount || 0) > 0 ? 'CONTINUE' : 'SEND_NEW';
+    let action = defaultAction;
+    let intent = episode?.currentIntent || triggerType || '主动问候';
+    let topic = episode?.currentTopic || triggerType || '日常互动';
+    let inferredUserState = episode?.inferredUserState || '';
+    let candidateText = '';
+    let decisionSummary = '';
+    let suggestedNextAction = '';
+    let nextCheckDelayMinutes = 90;
+
+    if (parsedJson && typeof parsedJson === 'object') {
+      if (typeof parsedJson.action === 'string' && allowedActions.has(parsedJson.action.trim().toUpperCase())) {
+        action = parsedJson.action.trim().toUpperCase();
+      }
+      if (typeof parsedJson.intent === 'string' && parsedJson.intent.trim()) {
+        intent = parsedJson.intent.trim();
+      }
+      if (typeof parsedJson.topic === 'string' && parsedJson.topic.trim()) {
+        topic = parsedJson.topic.trim();
+      }
+      if (typeof parsedJson.inferredUserState === 'string') {
+        inferredUserState = parsedJson.inferredUserState.trim();
+      }
+      if (typeof parsedJson.candidateText === 'string') {
+        candidateText = parsedJson.candidateText.trim();
+      } else if (typeof parsedJson.text === 'string') {
+        candidateText = parsedJson.text.trim();
+      }
+      if (typeof parsedJson.decisionSummary === 'string') {
+        decisionSummary = parsedJson.decisionSummary.trim();
+      }
+      if (typeof parsedJson.suggestedNextAction === 'string') {
+        suggestedNextAction = parsedJson.suggestedNextAction.trim();
+      }
+      if (typeof parsedJson.nextCheckDelayMinutes === 'number' && parsedJson.nextCheckDelayMinutes > 0) {
+        nextCheckDelayMinutes = Math.min(720, Math.max(15, Math.round(parsedJson.nextCheckDelayMinutes)));
+      }
+    } else if (rawClean) {
+      // Graceful fallback for custom reverse proxies that ignore JSON formatting
+      candidateText = rawClean;
+      decisionSummary = '模型返回自然文本，按兼容模式解析发送';
+    }
+
+    if (action === 'WAIT' || action === 'END_EPISODE') {
+      candidateText = '';
+    }
+
+    const hasDecision = Boolean(parsedJson) || Boolean(candidateText);
 
     res.json({
-      success: hasText,
-      text: extracted.cleanText || '',
+      success: hasDecision,
+      action,
+      intent,
+      topic,
+      inferredUserState,
+      text: candidateText,
+      candidateText,
+      decisionSummary,
+      suggestedNextAction,
+      nextCheckDelayMinutes,
       thinkingProcess: extracted.thinkingProcess,
       triggerType,
     });

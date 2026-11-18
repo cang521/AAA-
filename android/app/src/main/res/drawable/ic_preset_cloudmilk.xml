@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Sky-blue Cloud Milk squircle -->
+    <path
+        android:fillColor="#59B6E8"
+        android:pathData="M24,10 L84,10 A14,14 0 0,1 98,24 L98,84 A14,14 0 0,1 84,98 L24,98 A14,14 0 0,1 10,84 L10,24 A14,14 0 0,1 24,10 Z" />
+    <!-- Soft outer sky halo -->
+    <path
+        android:fillColor="#8AD0F5"
+        android:pathData="M54,22 A32,32 0 1,1 53.9,22 Z" />
+    <!-- Fluffy milk-white cloud -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,72 L73,72 A11,11 0 0,0 75,50.5 A15,15 0 0,0 47,43 A13,13 0 0,0 32,54.5 A10,10 0 0,0 36,72 Z" />
+    <!-- Golden sunshine star -->
+    <path
+        android:fillColor="#FFD166"
+        android:pathData="M73,30 L75.5,36.5 L82,39 L75.5,41.5 L73,48 L70.5,41.5 L64,39 L70.5,36.5 Z" />
+</vector>

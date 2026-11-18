@@ -60,6 +60,28 @@ export interface PendingNotificationAction {
   aiId: string;
 }
 
+export type LauncherPresetId = 'default' | 'xiaoshouji' | 'cloud_milk' | 'starlight' | 'minimal';
+
+export interface LauncherAppearanceStatus {
+  isNativeAndroid: boolean;
+  activePresetId: LauncherPresetId | string;
+  supportsPinShortcut: boolean;
+  availablePresets: string[];
+}
+
+export interface SetLauncherPresetResult {
+  success: boolean;
+  message?: string;
+  activePresetId?: string;
+}
+
+export interface CreateCustomShortcutResult {
+  success: boolean;
+  supported?: boolean;
+  message?: string;
+  shortcutId?: string;
+}
+
 export interface AndroidPermissionBridgePlugin {
   getEnvironmentInfo(): Promise<AndroidNativeInfo>;
   checkAllPermissions(): Promise<Record<string, CapabilityStatus>>;
@@ -70,6 +92,14 @@ export interface AndroidPermissionBridgePlugin {
   showAiMessageNotification(options: ShowAiMessageNotificationOptions): Promise<NativeNotificationResult>;
   consumePendingNotificationAction(): Promise<PendingNotificationAction>;
   getNotificationDiagnostics(): Promise<NotificationDiagnostics>;
+  getLauncherAppearanceStatus(): Promise<LauncherAppearanceStatus>;
+  setLauncherPreset(options: { presetId: LauncherPresetId | string }): Promise<SetLauncherPresetResult>;
+  resetLauncherDefault(): Promise<SetLauncherPresetResult>;
+  createCustomShortcut(options: {
+    label: string;
+    iconDataUrl?: string;
+    shortcutId?: string;
+  }): Promise<CreateCustomShortcutResult>;
 }
 
 export class AndroidPermissionBridgeWeb extends WebPlugin implements AndroidPermissionBridgePlugin {
@@ -148,6 +178,43 @@ export class AndroidPermissionBridgeWeb extends WebPlugin implements AndroidPerm
       channelId: 'ai_messages_v1',
       channelExists: false,
       channelImportance: 0,
+    };
+  }
+
+  async getLauncherAppearanceStatus(): Promise<LauncherAppearanceStatus> {
+    return {
+      isNativeAndroid: false,
+      activePresetId: 'default',
+      supportsPinShortcut: false,
+      availablePresets: ['default', 'xiaoshouji', 'cloud_milk', 'starlight', 'minimal'],
+    };
+  }
+
+  async setLauncherPreset(_options: { presetId: LauncherPresetId | string }): Promise<SetLauncherPresetResult> {
+    return {
+      success: false,
+      activePresetId: 'default',
+      message: '真实桌面图标与名称切换仅能在 Android APK 中验证。',
+    };
+  }
+
+  async resetLauncherDefault(): Promise<SetLauncherPresetResult> {
+    return {
+      success: false,
+      activePresetId: 'default',
+      message: '真实桌面图标与名称切换仅能在 Android APK 中验证。',
+    };
+  }
+
+  async createCustomShortcut(_options: {
+    label: string;
+    iconDataUrl?: string;
+    shortcutId?: string;
+  }): Promise<CreateCustomShortcutResult> {
+    return {
+      success: false,
+      supported: false,
+      message: '创建系统桌面快捷方式仅能在 Android APK 中验证。',
     };
   }
 }
@@ -388,6 +455,94 @@ export class AndroidPermissionBridgeClient {
         hasPermission: false,
         apps: [],
         isSimulation: false,
+      };
+    }
+  }
+
+  public async getLauncherAppearanceStatus(): Promise<LauncherAppearanceStatus> {
+    if (!this.isNativeAndroid()) {
+      return {
+        isNativeAndroid: false,
+        activePresetId: 'default',
+        supportsPinShortcut: false,
+        availablePresets: ['default', 'xiaoshouji', 'cloud_milk', 'starlight', 'minimal'],
+      };
+    }
+
+    try {
+      return await AndroidPermissionBridge.getLauncherAppearanceStatus();
+    } catch (e) {
+      console.warn('[AndroidPermissionBridgeClient] getLauncherAppearanceStatus error:', e);
+      return {
+        isNativeAndroid: true,
+        activePresetId: 'default',
+        supportsPinShortcut: false,
+        availablePresets: ['default', 'xiaoshouji', 'cloud_milk', 'starlight', 'minimal'],
+      };
+    }
+  }
+
+  public async setLauncherPreset(presetId: LauncherPresetId | string): Promise<SetLauncherPresetResult> {
+    if (!this.isNativeAndroid()) {
+      return {
+        success: false,
+        activePresetId: 'default',
+        message: '真实桌面图标与名称切换仅能在 Android APK 中验证。',
+      };
+    }
+
+    try {
+      return await AndroidPermissionBridge.setLauncherPreset({ presetId });
+    } catch (e: any) {
+      console.warn('[AndroidPermissionBridgeClient] setLauncherPreset error:', e);
+      return {
+        success: false,
+        message: e?.message || '切换桌面图标预设失败',
+      };
+    }
+  }
+
+  public async resetLauncherDefault(): Promise<SetLauncherPresetResult> {
+    if (!this.isNativeAndroid()) {
+      return {
+        success: false,
+        activePresetId: 'default',
+        message: '真实桌面图标与名称切换仅能在 Android APK 中验证。',
+      };
+    }
+
+    try {
+      return await AndroidPermissionBridge.resetLauncherDefault();
+    } catch (e: any) {
+      console.warn('[AndroidPermissionBridgeClient] resetLauncherDefault error:', e);
+      return {
+        success: false,
+        message: e?.message || '恢复默认桌面图标失败',
+      };
+    }
+  }
+
+  public async createCustomShortcut(options: {
+    label: string;
+    iconDataUrl?: string;
+    shortcutId?: string;
+  }): Promise<CreateCustomShortcutResult> {
+    if (!this.isNativeAndroid()) {
+      return {
+        success: false,
+        supported: false,
+        message: '创建系统桌面快捷方式仅能在 Android APK 中验证。',
+      };
+    }
+
+    try {
+      return await AndroidPermissionBridge.createCustomShortcut(options);
+    } catch (e: any) {
+      console.warn('[AndroidPermissionBridgeClient] createCustomShortcut error:', e);
+      return {
+        success: false,
+        supported: false,
+        message: e?.message || '创建系统桌面快捷方式失败',
       };
     }
   }

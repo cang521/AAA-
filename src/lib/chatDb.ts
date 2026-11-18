@@ -1,6 +1,9 @@
 import { ChatMessage, HistorySourceType, HistoryImportance } from '../types';
 import { classifyMessage, classifyImportance, determineSourceType } from './historyClassifier';
-import { syncProactiveRuntimeOnMessageSaved } from './proactive/proactiveStore';
+import {
+  syncProactiveRuntimeOnMessageSaved,
+  settleActiveEpisodeByUserMessage,
+} from './proactive/proactiveStore';
 
 const DB_NAME = 'PhoneSimChatDB_v2';
 const DB_VERSION = 3;
@@ -350,13 +353,21 @@ export async function saveChatMessage(msg: ChatMessage): Promise<void> {
     message: msg,
   });
 
-  // Sync proactive engine timestamps accurately upon successful persistence
+  // Sync proactive engine timestamps & settle active proactive episode on genuine user message
   try {
     syncProactiveRuntimeOnMessageSaved(
       msg.characterId,
       msg.sender === 'user' ? 'user' : 'ai',
       msg.timestamp
     );
+    if (msg.sender === 'user' && msg.sourceType !== 'imported') {
+      const settled = settleActiveEpisodeByUserMessage(msg.characterId, msg.id, msg.timestamp);
+      if (settled && settled.proactiveMessageIds.length > 0) {
+        void markProactiveMessagesReplied(msg.characterId, settled.proactiveMessageIds).catch((err) => {
+          console.warn('[chatDb] markProactiveMessagesReplied error:', err);
+        });
+      }
+    }
   } catch (e) {
     console.warn('[chatDb] syncProactiveRuntimeOnMessageSaved error:', e);
   }
@@ -469,6 +480,108 @@ export async function getRecentChatMessages(
 }
 
 /**
+ * Fetch exact messages by their IDs from IndexedDB, preserving chronological order.
+ */
+export async function getMessagesByIds(
+  characterId: string,
+  ids: string[]
+): Promise<ChatMessage[]> {
+  if (!characterId || !Array.isArray(ids) || ids.length === 0) return [];
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+  if (uniqueIds.length === 0) return [];
+
+  const db = await getDb();
+  return new Promise((resolve) => {
+    const tx = db.transaction([STORE_MESSAGES], 'readonly');
+    const store = tx.objectStore(STORE_MESSAGES);
+    const results: ChatMessage[] = [];
+    let pending = uniqueIds.length;
+
+    const done = () => {
+      pending--;
+      if (pending <= 0) {
+        results.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        resolve(results);
+      }
+    };
+
+    for (const id of uniqueIds) {
+      const req = store.get(id);
+      req.onsuccess = () => {
+        const rawMsg = req.result as ChatMessage | undefined;
+        if (rawMsg && rawMsg.characterId === characterId) {
+          results.push({
+            id: rawMsg.id,
+            characterId: rawMsg.characterId,
+            sender: rawMsg.sender,
+            text: rawMsg.text || '',
+            timestamp: rawMsg.timestamp,
+            quoteMessageId: rawMsg.quoteMessageId,
+            imageUrl: rawMsg.imageUrl,
+            imageAnalysis: rawMsg.imageAnalysis,
+            imageAnalysisStatus: rawMsg.imageAnalysisStatus,
+            sourceType: rawMsg.sourceType,
+            importance: rawMsg.importance,
+            thinkingProcess: rawMsg.thinkingProcess,
+            turnId: rawMsg.turnId,
+            turnBubbleIndex: rawMsg.turnBubbleIndex,
+            turnTotalBubbles: rawMsg.turnTotalBubbles,
+            isRefreshed: rawMsg.isRefreshed,
+            isProactive: rawMsg.isProactive,
+            proactiveMeta: rawMsg.proactiveMeta,
+            type: rawMsg.type,
+          });
+        }
+        done();
+      };
+      req.onerror = () => done();
+    }
+  });
+}
+
+/**
+ * Mark specified proactive messages as repliedByUser = true in IndexedDB.
+ */
+export async function markProactiveMessagesReplied(
+  characterId: string,
+  messageIds: string[]
+): Promise<void> {
+  if (!characterId || !Array.isArray(messageIds) || messageIds.length === 0) return;
+  const uniqueIds = Array.from(new Set(messageIds.filter(Boolean)));
+  if (uniqueIds.length === 0) return;
+
+  const db = await getDb();
+  return new Promise((resolve) => {
+    const tx = db.transaction([STORE_MESSAGES], 'readwrite');
+    const store = tx.objectStore(STORE_MESSAGES);
+
+    for (const id of uniqueIds) {
+      const req = store.get(id);
+      req.onsuccess = () => {
+        const existing = req.result as ChatMessage | undefined;
+        if (existing && existing.characterId === characterId) {
+          const updated: ChatMessage = {
+            ...existing,
+            isProactive: true,
+            proactiveMeta: {
+              ...(existing.proactiveMeta || {}),
+              repliedByUser: true,
+            },
+          };
+          store.put(updated);
+        }
+      };
+    }
+
+    tx.oncomplete = () => {
+      clearChatIndexCache();
+      resolve();
+    };
+    tx.onerror = () => resolve();
+  });
+}
+
+/**
  * Bulk save messages (supports streaming batch imports without full DB rescans per batch)
  */
 export async function saveChatMessagesBulk(
@@ -506,6 +619,7 @@ export async function saveChatMessagesBulk(
 
   // Sync proactive runtime with the latest timestamps in this bulk save
   try {
+    const latestLiveUserByChar = new Map<string, ChatMessage>();
     for (const msg of msgs) {
       if (msg.characterId && msg.timestamp) {
         syncProactiveRuntimeOnMessageSaved(
@@ -513,6 +627,18 @@ export async function saveChatMessagesBulk(
           msg.sender === 'user' ? 'user' : 'ai',
           msg.timestamp
         );
+        if (!options?.isImported && msg.sender === 'user' && msg.sourceType !== 'imported') {
+          const prev = latestLiveUserByChar.get(msg.characterId);
+          if (!prev || msg.timestamp >= prev.timestamp) {
+            latestLiveUserByChar.set(msg.characterId, msg);
+          }
+        }
+      }
+    }
+    for (const [charId, userMsg] of latestLiveUserByChar.entries()) {
+      const settled = settleActiveEpisodeByUserMessage(charId, userMsg.id, userMsg.timestamp);
+      if (settled && settled.proactiveMessageIds.length > 0) {
+        void markProactiveMessagesReplied(charId, settled.proactiveMessageIds).catch(() => {});
       }
     }
   } catch (e) {

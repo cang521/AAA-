@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Deep indigo starlight squircle -->
+    <path
+        android:fillColor="#4F46E5"
+        android:pathData="M24,10 L84,10 A14,14 0 0,1 98,24 L98,84 A14,14 0 0,1 84,98 L24,98 A14,14 0 0,1 10,84 L10,24 A14,14 0 0,1 24,10 Z" />
+    <!-- Inner twilight disc -->
+    <path
+        android:fillColor="#312E81"
+        android:pathData="M54,20 A34,34 0 1,1 53.9,20 Z" />
+    <!-- Crescent moon -->
+    <path
+        android:fillColor="#FDE68A"
+        android:pathData="M59,31 A21,21 0 1,0 77,65 A17,17 0 1,1 59,31 Z" />
+    <!-- Bright companion star -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M70,34 L72.5,40.5 L79,43 L72.5,45.5 L70,52 L67.5,45.5 L61,43 L67.5,40.5 Z" />
+</vector>

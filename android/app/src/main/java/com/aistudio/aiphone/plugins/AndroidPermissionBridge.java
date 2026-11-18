@@ -19,6 +19,7 @@ import android.graphics.Paint;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.media.AudioAttributes;
@@ -33,6 +34,9 @@ import android.view.accessibility.AccessibilityManager;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.pm.ShortcutInfoCompat;
+import androidx.core.content.pm.ShortcutManagerCompat;
+import androidx.core.graphics.drawable.IconCompat;
 import android.content.pm.ApplicationInfo;
 import android.app.usage.UsageEvents;
 import android.app.usage.UsageStats;
@@ -40,6 +44,7 @@ import android.app.usage.UsageStatsManager;
 
 import com.aistudio.aiphone.MainActivity;
 import com.aistudio.aiphone.R;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -52,7 +57,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -81,14 +88,28 @@ import java.util.concurrent.Executors;
 public class AndroidPermissionBridge extends Plugin {
     private static final String TAG = "AndroidPermissionBridge";
     private static final String NOTIF_TAG = "AiMessageNotification";
+    private static final String LAUNCHER_TAG = "LauncherAppearance";
     public static final String CHANNEL_ID = "ai_messages_v1";
     public static final String CHANNEL_NAME = "AI消息提醒";
     public static final String CHANNEL_DESCRIPTION = "显示AI角色的新消息和主动关怀";
     public static final String PREFS_NAME = "aiphone_notification_prefs";
+    public static final String LAUNCHER_PREFS_NAME = "aiphone_launcher_prefs";
+    public static final String KEY_ACTIVE_PRESET_ID = "active_launcher_preset_id";
     public static final String KEY_PENDING_AI_ID = "pending_notification_ai_id";
     public static final String ACTION_OPEN_AI_CHAT = "OPEN_AI_CHAT";
     private static final int MAX_AVATAR_BYTES = 2 * 1024 * 1024;
     private static final int MAX_AVATAR_DIM = 192;
+    private static final int NOTIF_AVATAR_SIZE = 128;
+    private static final float NOTIF_AVATAR_CORNER_RADIUS = 12f;
+
+    private static final Map<String, String> LAUNCHER_PRESET_ALIASES = new LinkedHashMap<>();
+    static {
+        LAUNCHER_PRESET_ALIASES.put("default", ".LauncherDefault");
+        LAUNCHER_PRESET_ALIASES.put("xiaoshouji", ".LauncherXiaoshouji");
+        LAUNCHER_PRESET_ALIASES.put("cloud_milk", ".LauncherCloudMilk");
+        LAUNCHER_PRESET_ALIASES.put("starlight", ".LauncherStarlight");
+        LAUNCHER_PRESET_ALIASES.put("minimal", ".LauncherMinimal");
+    }
 
     private static final ExecutorService AVATAR_EXECUTOR = Executors.newFixedThreadPool(2);
 
@@ -446,14 +467,15 @@ public class AndroidPermissionBridge extends Plugin {
             );
 
             NotificationManagerCompat.from(context).notify(notificationId, initialNotification);
-            Log.i(NOTIF_TAG, "Notification posted id=" + notificationId + ", aiId=" + aiId);
+            final String avatarSourceType = classifyAvatarSource(avatar);
+            Log.i(NOTIF_TAG, "Notification posted id=" + notificationId + ", aiId=" + aiId + ", avatarSourceType=" + avatarSourceType);
 
             // Asynchronously decode/fetch AI avatar without blocking status bar delivery
             if (avatar != null && !avatar.trim().isEmpty() && !avatar.startsWith("blob:")) {
                 final String avatarSource = avatar.trim();
                 AVATAR_EXECUTOR.execute(() -> {
                     try {
-                        Bitmap avatarBitmap = loadAvatarBitmapSafely(avatarSource);
+                        Bitmap avatarBitmap = loadAvatarBitmapSafely(context, avatarSource, aiId);
                         if (avatarBitmap != null) {
                             if (!isPostNotificationsGranted(context) || !NotificationManagerCompat.from(context).areNotificationsEnabled()) {
                                 avatarBitmap.recycle();
@@ -471,14 +493,41 @@ public class AndroidPermissionBridge extends Plugin {
                                 true
                             );
                             NotificationManagerCompat.from(context).notify(notificationId, updatedNotification);
-                            Log.i(NOTIF_TAG, "Updated notification avatar id=" + notificationId);
+                            Log.i(
+                                NOTIF_TAG,
+                                "Updated notification rounded-square avatar id=" + notificationId
+                                    + ", aiId=" + aiId
+                                    + ", dim=" + avatarBitmap.getWidth() + "x" + avatarBitmap.getHeight()
+                                    + ", fallbackUsed=false"
+                            );
+                        } else {
+                            Log.w(
+                                NOTIF_TAG,
+                                "Avatar decode returned null, keeping default app icon fallback=true, id=" + notificationId
+                                    + ", aiId=" + aiId
+                                    + ", sourceType=" + avatarSourceType
+                            );
                         }
                     } catch (SecurityException se) {
                         Log.w(NOTIF_TAG, "Permission revoked while updating avatar for id=" + notificationId);
                     } catch (Throwable t) {
-                        Log.w(NOTIF_TAG, "Async avatar load skipped for id=" + notificationId + ": " + t.getClass().getSimpleName());
+                        Log.w(
+                            NOTIF_TAG,
+                            "Async avatar load skipped for id=" + notificationId
+                                + ", aiId=" + aiId
+                                + ", sourceType=" + avatarSourceType
+                                + ", ex=" + t.getClass().getSimpleName()
+                                + ", fallbackUsed=true"
+                        );
                     }
                 });
+            } else {
+                Log.i(
+                    NOTIF_TAG,
+                    "No usable avatar string supplied, using default app icon fallback=true, id=" + notificationId
+                        + ", aiId=" + aiId
+                        + ", sourceType=" + avatarSourceType
+                );
             }
 
             call.resolve(createNotifResult(true, "NOTIFICATION_POSTED", "已向Android系统提交状态栏通知", notificationId));
@@ -603,28 +652,86 @@ public class AndroidPermissionBridge extends Plugin {
         }
     }
 
-    private Bitmap loadAvatarBitmapSafely(String avatarSource) {
+    private String classifyAvatarSource(String avatarSource) {
+        if (avatarSource == null || avatarSource.trim().isEmpty()) {
+            return "empty";
+        }
+        String trimmed = avatarSource.trim();
+        if (trimmed.startsWith("data:image/svg+xml")) {
+            return "data_svg";
+        }
+        if (trimmed.startsWith("data:image/")) {
+            return "data_base64";
+        }
+        if (trimmed.startsWith("https://")) {
+            return "https_url";
+        }
+        if (trimmed.startsWith("http://")) {
+            return "http_url";
+        }
+        if (trimmed.startsWith("/") || trimmed.startsWith("./")) {
+            return "asset_relative";
+        }
+        if (trimmed.startsWith("blob:")) {
+            return "blob_url";
+        }
+        return "unknown";
+    }
+
+    private byte[] decodeDataImageBytes(String dataUrl, String aiId) {
+        try {
+            int commaIndex = dataUrl.indexOf(',');
+            if (commaIndex <= 0 || commaIndex + 1 >= dataUrl.length()) {
+                Log.w(NOTIF_TAG, "Base64 avatar malformed header aiId=" + aiId);
+                return null;
+            }
+            String base64Payload = dataUrl.substring(commaIndex + 1);
+            byte[] rawBytes = Base64.decode(base64Payload, Base64.DEFAULT);
+            if (rawBytes == null || rawBytes.length == 0 || rawBytes.length > MAX_AVATAR_BYTES) {
+                Log.w(
+                    NOTIF_TAG,
+                    "Base64 avatar invalid byte length aiId=" + aiId
+                        + ", bytes=" + (rawBytes != null ? rawBytes.length : 0)
+                );
+                return null;
+            }
+            return rawBytes;
+        } catch (Exception e) {
+            Log.w(
+                NOTIF_TAG,
+                "Failed Base64 decode aiId=" + aiId + ", ex=" + e.getClass().getSimpleName()
+            );
+            return null;
+        }
+    }
+
+    private Bitmap loadAvatarBitmapSafely(Context context, String avatarSource, String aiId) {
         if (avatarSource == null || avatarSource.isEmpty()) {
             return null;
         }
 
+        String sourceType = classifyAvatarSource(avatarSource);
         Bitmap decoded = null;
+        int payloadBytes = 0;
+
         if (avatarSource.startsWith("data:image/")) {
-            try {
-                int commaIndex = avatarSource.indexOf(',');
-                if (commaIndex <= 0 || commaIndex + 1 >= avatarSource.length()) {
-                    return null;
-                }
-                String base64Payload = avatarSource.substring(commaIndex + 1);
-                byte[] rawBytes = Base64.decode(base64Payload, Base64.DEFAULT);
-                if (rawBytes == null || rawBytes.length == 0 || rawBytes.length > MAX_AVATAR_BYTES) {
-                    return null;
-                }
-                decoded = decodeSampledBitmapFromBytes(rawBytes, MAX_AVATAR_DIM, MAX_AVATAR_DIM);
-            } catch (Exception e) {
+            if ("data_svg".equals(sourceType)) {
                 Log.w(
                     NOTIF_TAG,
-                    "Failed to decode Base64 notification avatar: " + e.getClass().getSimpleName()
+                    "Raw SVG data URI reached native decoder (expected pre-rasterized thumbnail), aiId=" + aiId
+                );
+                return null;
+            }
+            byte[] rawBytes = decodeDataImageBytes(avatarSource, aiId);
+            if (rawBytes == null) {
+                return null;
+            }
+            payloadBytes = rawBytes.length;
+            decoded = decodeSampledBitmapFromBytes(rawBytes, MAX_AVATAR_DIM, MAX_AVATAR_DIM);
+            if (decoded == null) {
+                Log.w(
+                    NOTIF_TAG,
+                    "BitmapFactory returned null for Base64 payload aiId=" + aiId + ", bytes=" + payloadBytes
                 );
                 return null;
             }
@@ -641,10 +748,18 @@ public class AndroidPermissionBridge extends Plugin {
 
                 int code = conn.getResponseCode();
                 if (code < 200 || code >= 300) {
+                    Log.w(
+                        NOTIF_TAG,
+                        "Remote avatar HTTP error aiId=" + aiId + ", status=" + code
+                    );
                     return null;
                 }
                 int contentLength = conn.getContentLength();
                 if (contentLength > MAX_AVATAR_BYTES) {
+                    Log.w(
+                        NOTIF_TAG,
+                        "Remote avatar exceeded limit aiId=" + aiId + ", contentLength=" + contentLength
+                    );
                     return null;
                 }
 
@@ -656,17 +771,23 @@ public class AndroidPermissionBridge extends Plugin {
                     while ((read = is.read(buf)) != -1) {
                         total += read;
                         if (total > MAX_AVATAR_BYTES) {
+                            Log.w(
+                                NOTIF_TAG,
+                                "Remote avatar stream exceeded limit aiId=" + aiId + ", bytes=" + total
+                            );
                             return null;
                         }
                         baos.write(buf, 0, read);
                     }
                     byte[] rawBytes = baos.toByteArray();
+                    payloadBytes = rawBytes.length;
                     decoded = decodeSampledBitmapFromBytes(rawBytes, MAX_AVATAR_DIM, MAX_AVATAR_DIM);
                 }
             } catch (Exception e) {
                 Log.w(
                     NOTIF_TAG,
-                    "Failed to load remote notification avatar: " + e.getClass().getSimpleName()
+                    "Failed to load remote notification avatar aiId=" + aiId
+                        + ", ex=" + e.getClass().getSimpleName()
                 );
                 return null;
             } finally {
@@ -674,15 +795,55 @@ public class AndroidPermissionBridge extends Plugin {
                     conn.disconnect();
                 }
             }
+        } else if (avatarSource.startsWith("/") || avatarSource.startsWith("./")) {
+            String relPath = avatarSource.startsWith("./") ? avatarSource.substring(2) : avatarSource.substring(1);
+            String assetPath = "public/" + relPath;
+            try (InputStream is = context.getAssets().open(assetPath);
+                 ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+                byte[] buf = new byte[8192];
+                int read;
+                int total = 0;
+                while ((read = is.read(buf)) != -1) {
+                    total += read;
+                    if (total > MAX_AVATAR_BYTES) {
+                        return null;
+                    }
+                    baos.write(buf, 0, read);
+                }
+                byte[] rawBytes = baos.toByteArray();
+                payloadBytes = rawBytes.length;
+                decoded = decodeSampledBitmapFromBytes(rawBytes, MAX_AVATAR_DIM, MAX_AVATAR_DIM);
+            } catch (Exception e) {
+                Log.w(
+                    NOTIF_TAG,
+                    "Failed to load asset notification avatar aiId=" + aiId
+                        + ", path=" + assetPath
+                        + ", ex=" + e.getClass().getSimpleName()
+                );
+                return null;
+            }
         }
 
         if (decoded == null) {
+            Log.w(
+                NOTIF_TAG,
+                "Avatar decode produced null aiId=" + aiId + ", sourceType=" + sourceType + ", bytes=" + payloadBytes
+            );
             return null;
         }
-        Bitmap circular = toCircularBitmap(decoded, 128);
-        if (circular != null && circular != decoded) {
+
+        Log.d(
+            NOTIF_TAG,
+            "Avatar decoded aiId=" + aiId
+                + ", sourceType=" + sourceType
+                + ", bytes=" + payloadBytes
+                + ", rawDim=" + decoded.getWidth() + "x" + decoded.getHeight()
+        );
+
+        Bitmap roundedSquare = toRoundedSquareBitmap(decoded, NOTIF_AVATAR_SIZE, NOTIF_AVATAR_CORNER_RADIUS);
+        if (roundedSquare != null && roundedSquare != decoded) {
             decoded.recycle();
-            return circular;
+            return roundedSquare;
         }
         return decoded;
     }
@@ -708,20 +869,24 @@ public class AndroidPermissionBridge extends Plugin {
         return BitmapFactory.decodeByteArray(data, 0, data.length, decodeOpts);
     }
 
-    private Bitmap toCircularBitmap(Bitmap source, int targetSize) {
+    /**
+     * Center-crop source bitmap into a square rounded-corner icon (WeChat-style rounded square, NOT circle).
+     */
+    private Bitmap toRoundedSquareBitmap(Bitmap source, int targetSize, float cornerRadius) {
         if (source == null) return null;
         try {
             int minEdge = Math.min(source.getWidth(), source.getHeight());
-            int cropX = (source.getWidth() - minEdge) / 2;
-            int cropY = (source.getHeight() - minEdge) / 2;
+            int cropX = Math.max(0, (source.getWidth() - minEdge) / 2);
+            int cropY = Math.max(0, (source.getHeight() - minEdge) / 2);
 
             Bitmap output = Bitmap.createBitmap(targetSize, targetSize, Bitmap.Config.ARGB_8888);
             Canvas canvas = new Canvas(output);
-            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            float radius = targetSize / 2f;
+            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+            paint.setColor(0xFFFFFFFF);
 
             canvas.drawARGB(0, 0, 0, 0);
-            canvas.drawCircle(radius, radius, radius, paint);
+            RectF roundRect = new RectF(0f, 0f, (float) targetSize, (float) targetSize);
+            canvas.drawRoundRect(roundRect, cornerRadius, cornerRadius, paint);
             paint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC_IN));
 
             Rect srcRect = new Rect(cropX, cropY, cropX + minEdge, cropY + minEdge);
@@ -729,6 +894,7 @@ public class AndroidPermissionBridge extends Plugin {
             canvas.drawBitmap(source, srcRect, dstRect, paint);
             return output;
         } catch (Throwable t) {
+            Log.w(NOTIF_TAG, "toRoundedSquareBitmap fallback: " + t.getClass().getSimpleName());
             return source;
         }
     }
@@ -1118,6 +1284,196 @@ public class AndroidPermissionBridge extends Plugin {
 
         // Fallback to app details
         openAppDetailsSettings(context);
+    }
+
+    // ==========================================
+    // Launcher Icon & App Name Beautification (Module C)
+    // ==========================================
+
+    private String resolveActiveLauncherPresetId(Context context) {
+        PackageManager pm = context.getPackageManager();
+        String pkg = context.getPackageName();
+
+        for (Map.Entry<String, String> entry : LAUNCHER_PRESET_ALIASES.entrySet()) {
+            String presetId = entry.getKey();
+            String aliasClass = entry.getValue();
+            if ("default".equals(presetId)) {
+                continue;
+            }
+            try {
+                ComponentName cn = new ComponentName(pkg, pkg + aliasClass);
+                int state = pm.getComponentEnabledSetting(cn);
+                if (state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+                    return presetId;
+                }
+            } catch (Exception ignored) {}
+        }
+
+        SharedPreferences prefs = context.getApplicationContext().getSharedPreferences(LAUNCHER_PREFS_NAME, Context.MODE_PRIVATE);
+        String saved = prefs.getString(KEY_ACTIVE_PRESET_ID, "default");
+        return LAUNCHER_PRESET_ALIASES.containsKey(saved) ? saved : "default";
+    }
+
+    private JSObject applyLauncherPresetInternal(Context context, String presetId) {
+        if (!LAUNCHER_PRESET_ALIASES.containsKey(presetId)) {
+            JSObject err = createResult(false, "无效的桌面预设方案: " + presetId);
+            err.put("activePresetId", resolveActiveLauncherPresetId(context));
+            return err;
+        }
+
+        PackageManager pm = context.getPackageManager();
+        String pkg = context.getPackageName();
+        String targetAlias = LAUNCHER_PRESET_ALIASES.get(presetId);
+
+        try {
+            // Step 1: Enable target launcher alias FIRST so the launcher never sees zero active entrypoints
+            ComponentName targetComponent = new ComponentName(pkg, pkg + targetAlias);
+            pm.setComponentEnabledSetting(
+                targetComponent,
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                PackageManager.DONT_KILL_APP
+            );
+
+            // Step 2: Disable all other launcher aliases with DONT_KILL_APP
+            for (Map.Entry<String, String> entry : LAUNCHER_PRESET_ALIASES.entrySet()) {
+                if (entry.getKey().equals(presetId)) {
+                    continue;
+                }
+                ComponentName otherComponent = new ComponentName(pkg, pkg + entry.getValue());
+                pm.setComponentEnabledSetting(
+                    otherComponent,
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    PackageManager.DONT_KILL_APP
+                );
+            }
+
+            SharedPreferences prefs = context.getApplicationContext().getSharedPreferences(LAUNCHER_PREFS_NAME, Context.MODE_PRIVATE);
+            prefs.edit().putString(KEY_ACTIVE_PRESET_ID, presetId).apply();
+            Log.i(LAUNCHER_TAG, "Switched launcher preset to " + presetId + " (" + targetAlias + ")");
+
+            JSObject ok = createResult(true, "已切换系统桌面图标与名称预设，系统桌面可能需要几秒或返回桌面后刷新图标缓存。");
+            ok.put("activePresetId", presetId);
+            return ok;
+        } catch (Exception e) {
+            Log.e(LAUNCHER_TAG, "Failed to switch launcher preset to " + presetId, e);
+            JSObject err = createResult(false, "切换桌面预设失败: " + e.getMessage());
+            err.put("activePresetId", resolveActiveLauncherPresetId(context));
+            return err;
+        }
+    }
+
+    @PluginMethod
+    public void getLauncherAppearanceStatus(PluginCall call) {
+        Context context = getContext().getApplicationContext();
+        String activeId = resolveActiveLauncherPresetId(context);
+        boolean supportsPinShortcut = ShortcutManagerCompat.isRequestPinShortcutSupported(context);
+
+        JSArray available = new JSArray();
+        for (String id : LAUNCHER_PRESET_ALIASES.keySet()) {
+            available.put(id);
+        }
+
+        JSObject ret = new JSObject();
+        ret.put("isNativeAndroid", true);
+        ret.put("activePresetId", activeId);
+        ret.put("supportsPinShortcut", supportsPinShortcut);
+        ret.put("availablePresets", available);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void setLauncherPreset(PluginCall call) {
+        String presetId = call.getString("presetId", "default");
+        Context context = getContext().getApplicationContext();
+        call.resolve(applyLauncherPresetInternal(context, presetId));
+    }
+
+    @PluginMethod
+    public void resetLauncherDefault(PluginCall call) {
+        Context context = getContext().getApplicationContext();
+        call.resolve(applyLauncherPresetInternal(context, "default"));
+    }
+
+    @PluginMethod
+    public void createCustomShortcut(PluginCall call) {
+        Context context = getContext().getApplicationContext();
+        String rawLabel = call.getString("label", "");
+        String label = rawLabel != null ? rawLabel.trim() : "";
+        if (label.isEmpty()) {
+            JSObject res = createResult(false, "请输入自定义快捷方式名称");
+            res.put("supported", ShortcutManagerCompat.isRequestPinShortcutSupported(context));
+            call.resolve(res);
+            return;
+        }
+        if (label.length() > 24) {
+            label = label.substring(0, 24);
+        }
+
+        if (!ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
+            JSObject res = createResult(false, "当前手机系统或桌面暂不支持固定桌面快捷方式，请使用上方内置预设切换功能。");
+            res.put("supported", false);
+            call.resolve(res);
+            return;
+        }
+
+        String iconDataUrl = call.getString("iconDataUrl", "");
+        String shortcutId = call.getString("shortcutId", "");
+        if (shortcutId == null || shortcutId.trim().isEmpty()) {
+            shortcutId = "aiphone_custom_shortcut_" + System.currentTimeMillis();
+        }
+
+        Bitmap shortcutBitmap = null;
+        try {
+            if (iconDataUrl != null && iconDataUrl.startsWith("data:image/") && !iconDataUrl.startsWith("data:image/svg+xml")) {
+                byte[] rawBytes = decodeDataImageBytes(iconDataUrl, "custom_shortcut");
+                if (rawBytes != null) {
+                    Bitmap decoded = decodeSampledBitmapFromBytes(rawBytes, 192, 192);
+                    if (decoded != null) {
+                        shortcutBitmap = toRoundedSquareBitmap(decoded, 192, 26f);
+                        if (shortcutBitmap != decoded) {
+                            decoded.recycle();
+                        }
+                    }
+                }
+            }
+            if (shortcutBitmap == null) {
+                Bitmap fallback = loadDefaultAppIconBitmap(context);
+                if (fallback != null) {
+                    shortcutBitmap = toRoundedSquareBitmap(fallback, 192, 26f);
+                }
+            }
+
+            Intent launchIntent = new Intent(context, MainActivity.class);
+            launchIntent.setAction(Intent.ACTION_VIEW);
+            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+            ShortcutInfoCompat.Builder builder = new ShortcutInfoCompat.Builder(context, shortcutId)
+                .setShortLabel(label)
+                .setLongLabel(label)
+                .setIntent(launchIntent);
+
+            if (shortcutBitmap != null) {
+                builder.setIcon(IconCompat.createWithBitmap(shortcutBitmap));
+            } else {
+                builder.setIcon(IconCompat.createWithResource(context, R.mipmap.ic_launcher));
+            }
+
+            boolean requested = ShortcutManagerCompat.requestPinShortcut(context, builder.build(), null);
+            JSObject res = createResult(
+                requested,
+                requested
+                    ? "已向系统桌面发起自定义快捷方式创建请求，请在系统弹窗中确认添加（注：快捷方式不会覆盖原 APK 应用名称）。"
+                    : "系统桌面拒绝了固定快捷方式请求，请检查桌面权限设置（如 MIUI/HarmonyOS 桌面快捷方式权限）。"
+            );
+            res.put("supported", true);
+            res.put("shortcutId", shortcutId);
+            call.resolve(res);
+        } catch (Exception e) {
+            Log.e(LAUNCHER_TAG, "Failed to create custom shortcut", e);
+            JSObject res = createResult(false, "创建自定义桌面快捷方式失败: " + e.getMessage());
+            res.put("supported", true);
+            call.resolve(res);
+        }
     }
 
     private JSObject createResult(boolean success, String message) {

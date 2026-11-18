@@ -88,7 +88,8 @@ import { calculateCycleStats } from '../../lib/menstrual';
 import { weatherService } from '../../lib/weatherService';
 import { deviceService } from '../../lib/deviceService';
 import { systemNativeService } from '../../lib/systemNativeService';
-import { loadGroupChats, saveGroupChats, DEFAULT_AI_AVATAR, DEFAULT_USER_AVATAR } from '../../lib/storage';
+import { loadCharacters, loadGroupChats, saveGroupChats, DEFAULT_AI_AVATAR, DEFAULT_USER_AVATAR } from '../../lib/storage';
+import { ensureCharacterNotificationAvatar } from '../../lib/notificationAvatar';
 import { CreateGroupModal } from './group/CreateGroupModal';
 import { GroupChatView } from './group/GroupChatView';
 import { JoinGroupByCodeModal } from './group/JoinGroupByCodeModal';
@@ -126,6 +127,8 @@ import {
   loadWeChatTheme,
   saveWeChatTheme,
   WeChatThemeCenter,
+  WeChatPersonPlusIcon,
+  WeChatGroupIcon,
 } from './wechat/theme';
 import { ChatFontSizePreview } from './wechat/ChatFontSizePreview';
 import {
@@ -1339,6 +1342,20 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     setShowNewAiModal(false);
     setActiveChatId(newChar.id);
     setActiveTab('chats');
+    if (!newChar.notificationAvatar && newChar.avatar) {
+      void ensureCharacterNotificationAvatar(newChar).then((enriched) => {
+        if (enriched.notificationAvatar) {
+          const latest = loadCharacters();
+          onUpdateCharacters(
+            latest.map((c) =>
+              c.id === enriched.id
+                ? { ...c, notificationAvatar: enriched.notificationAvatar }
+                : c
+            )
+          );
+        }
+      });
+    }
   };
 
   // Create Moments Post
@@ -1743,9 +1760,15 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                         }}
                         className="wx-dropdown-item wx-primary-text w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-200 hover:bg-zinc-750 hover:text-indigo-400 flex items-center gap-2.5 transition"
                       >
-                        <div className="w-6 h-6 rounded-lg bg-indigo-500/20 text-indigo-500 flex items-center justify-center">
-                          <UserPlus className="w-3.5 h-3.5" />
-                        </div>
+                        {wechatTheme === 'classic' ? (
+                          <div className="wx-icon-box-new-friend w-6 h-6 flex items-center justify-center">
+                            <WeChatPersonPlusIcon className="w-3.5 h-3.5 text-white" />
+                          </div>
+                        ) : (
+                          <div className="w-6 h-6 rounded-lg bg-indigo-500/20 text-indigo-500 flex items-center justify-center">
+                            <UserPlus className="w-3.5 h-3.5" />
+                          </div>
+                        )}
                         <span>添加朋友</span>
                       </button>
                       <button
@@ -1772,9 +1795,17 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                 onClick={() => setShowAddFriendModal(true)}
                 withRipple
                 rippleTone="light"
-                className="wx-header-cta p-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-1 text-xs font-medium cursor-pointer"
+                className={`wx-header-cta text-white transition flex items-center gap-1 text-xs font-medium cursor-pointer ${
+                  wechatTheme === 'classic'
+                    ? 'px-2.5 py-1.5 rounded-[6px]'
+                    : 'p-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500'
+                }`}
               >
-                <UserPlus className="w-4 h-4" />
+                {wechatTheme === 'classic' ? (
+                  <WeChatPersonPlusIcon className="w-3.5 h-3.5 text-white shrink-0" />
+                ) : (
+                  <UserPlus className="w-4 h-4" />
+                )}
                 <span>加好友</span>
               </PressableButton>
             )}
@@ -2091,7 +2122,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                   </div>
                 ) : (
                   // Chat List View (Includes Group Chats + 1-on-1 Character Chats)
-                  <div className="wx-list flex-1 overflow-y-auto divide-y divide-zinc-800/80">
+                  <div
+                    className={`wx-list flex-1 overflow-y-auto ${
+                      wechatTheme === 'classic' ? '' : 'divide-y divide-zinc-800/80'
+                    }`}
+                  >
                     {wechatTheme === 'classic' && showChatListSearch && (
                       <div className="wx-search-bar-wrap px-3 py-2 flex items-center gap-2 shrink-0">
                         <div className="relative flex-1">
@@ -2131,7 +2166,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                           rippleTone="light"
                           className="wx-btn-primary px-4 py-2 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white font-medium text-xs shadow-md hover:brightness-110 transition flex items-center gap-1.5 cursor-pointer"
                         >
-                          <UserPlus className="w-4 h-4" />
+                          {wechatTheme === 'classic' ? (
+                            <WeChatPersonPlusIcon className="w-4 h-4 text-white" />
+                          ) : (
+                            <UserPlus className="w-4 h-4" />
+                          )}
                           <span>添加好友 / 创建 AI</span>
                         </PressableButton>
                       </div>
@@ -2164,13 +2203,19 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                           onClick={() => setActiveGroupChatId(group.id)}
                           className={`wx-conversation-row ${
                             group.isPinned ? 'wx-conversation-row--pinned' : ''
-                          } p-3 flex items-center gap-3 hover:bg-zinc-800/60 active:bg-zinc-800 cursor-pointer transition bg-zinc-900/40`}
+                          } p-3 flex items-center gap-3 cursor-pointer transition ${
+                            wechatTheme === 'classic'
+                              ? ''
+                              : 'hover:bg-zinc-800/60 active:bg-zinc-800 bg-zinc-900/40'
+                          }`}
                         >
                           <div className="relative shrink-0">
                             <img
                               src={group.avatar}
                               alt={group.name}
-                              className="wx-avatar w-12 h-12 rounded-2xl object-cover border border-emerald-500/40 shadow-xs"
+                              className={`wx-avatar w-12 h-12 object-cover border ${
+                                wechatTheme === 'classic' ? '' : 'rounded-2xl border-emerald-500/40 shadow-xs'
+                              }`}
                             />
                             <span className="wx-group-tag absolute -bottom-1 -right-1 px-1 rounded-full bg-emerald-600 text-white text-[8px] font-bold">
                               群
@@ -2238,13 +2283,17 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                         <div
                           key={char.id}
                           onClick={() => handleOpenChat(char.id)}
-                          className="wx-conversation-row p-3 flex items-center gap-3 hover:bg-zinc-800/60 active:bg-zinc-800 cursor-pointer transition"
+                          className={`wx-conversation-row p-3 flex items-center gap-3 cursor-pointer transition ${
+                            wechatTheme === 'classic' ? '' : 'hover:bg-zinc-800/60 active:bg-zinc-800'
+                          }`}
                         >
                           <div className="relative shrink-0">
                             <img
                               src={char.avatar}
                               alt=""
-                              className="wx-avatar w-12 h-12 rounded-2xl object-cover border border-zinc-700 shrink-0"
+                              className={`wx-avatar w-12 h-12 object-cover border shrink-0 ${
+                                wechatTheme === 'classic' ? '' : 'rounded-2xl border-zinc-700'
+                              }`}
                             />
                             {unreadCount > 0 && (
                               <span
@@ -2309,8 +2358,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                       className="wx-settings-row w-full px-3.5 py-2.5 flex items-center justify-between cursor-pointer text-left"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-md bg-amber-500 text-white flex items-center justify-center shrink-0">
-                          <UserPlus className="w-4 h-4" />
+                        <div className="wx-icon-box-new-friend w-10 h-10 flex items-center justify-center shrink-0">
+                          <WeChatPersonPlusIcon className="w-5 h-5 text-white" />
                         </div>
                         <div>
                           <div className="wx-primary-text text-[13px] font-medium">新的朋友</div>
@@ -2326,8 +2375,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                       className="wx-settings-row w-full px-3.5 py-2.5 flex items-center justify-between cursor-pointer text-left"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-md bg-[#07C160] text-white flex items-center justify-center shrink-0">
-                          <Users className="w-4 h-4" />
+                        <div className="wx-icon-box-group w-10 h-10 flex items-center justify-center shrink-0">
+                          <WeChatGroupIcon className="w-5 h-5 text-white" />
                         </div>
                         <div>
                           <div className="wx-primary-text text-[13px] font-medium">群聊</div>
@@ -2355,7 +2404,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                   {characters.length === 0 ? (
                     <div className="py-12 flex flex-col items-center justify-center text-center px-4 space-y-3">
                       <div className="wx-pill-badge w-12 h-12 rounded-full flex items-center justify-center">
-                        <UserPlus className="w-5 h-5" />
+                        <WeChatPersonPlusIcon className="w-5 h-5" />
                       </div>
                       <div>
                         <h4 className="wx-primary-text text-sm font-semibold">还没有好友</h4>
@@ -2365,7 +2414,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                         onClick={() => setShowAddFriendModal(true)}
                         className="wx-btn-primary px-4 py-2 text-xs font-medium flex items-center gap-1.5 cursor-pointer"
                       >
-                        <UserPlus className="w-4 h-4" />
+                        <WeChatPersonPlusIcon className="w-4 h-4 text-white" />
                         <span>添加好友 / 创建 AI</span>
                       </button>
                     </div>
@@ -3941,28 +3990,44 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
             <div className="wx-divider pt-2 flex justify-end gap-2 border-t border-zinc-800">
               <button
                 onClick={() => {
+                  const nextAvatar = editedAvatar || activeCharacter.avatar;
+                  const avatarChanged = nextAvatar !== activeCharacter.avatar;
+                  const updatedTarget: AiCharacter = {
+                    ...activeCharacter,
+                    name: editedName,
+                    wxid: editedWxid,
+                    relationship: editedRelationship,
+                    persona: editedPersona,
+                    personality: editedPersonality,
+                    modelConfig: editedModelName
+                      ? { ...activeCharacter.modelConfig, modelName: editedModelName }
+                      : activeCharacter.modelConfig,
+                    avatar: nextAvatar,
+                    notificationAvatar: avatarChanged ? undefined : activeCharacter.notificationAvatar,
+                    menstrualCare: {
+                      ...(activeCharacter.menstrualCare || {}),
+                      enabled: editedMenstrualCareEnabled,
+                    },
+                  };
                   onUpdateCharacters(
-                    characters.map((c) =>
-                      c.id === activeCharacter.id
-                        ? {
-                            ...c,
-                            name: editedName,
-                            wxid: editedWxid,
-                            relationship: editedRelationship,
-                            persona: editedPersona,
-                            personality: editedPersonality,
-                            modelConfig: editedModelName
-                              ? { ...c.modelConfig, modelName: editedModelName }
-                              : c.modelConfig,
-                            avatar: editedAvatar || c.avatar,
-                            menstrualCare: {
-                              ...(c.menstrualCare || {}),
-                              enabled: editedMenstrualCareEnabled,
-                            },
-                          }
-                        : c
-                    )
+                    characters.map((c) => (c.id === activeCharacter.id ? updatedTarget : c))
                   );
+                  if (avatarChanged || !updatedTarget.notificationAvatar) {
+                    void ensureCharacterNotificationAvatar(updatedTarget, { forceRegenerate: avatarChanged }).then(
+                      (enriched) => {
+                        if (enriched.notificationAvatar) {
+                          const latest = loadCharacters();
+                          onUpdateCharacters(
+                            latest.map((c) =>
+                              c.id === enriched.id
+                                ? { ...c, notificationAvatar: enriched.notificationAvatar }
+                                : c
+                            )
+                          );
+                        }
+                      }
+                    );
+                  }
                   if (draftFontResetPending) {
                     setChatDisplayPrefs(resetChatDisplayPreference(activeCharacter.id));
                   } else {
@@ -4013,7 +4078,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           <div className="wx-modal-card w-full max-w-sm rounded-3xl bg-zinc-900 border border-zinc-800 p-4 text-white shadow-2xl space-y-3.5 max-h-[88vh] overflow-y-auto">
             <div className="wx-divider flex items-center justify-between border-b border-zinc-800 pb-2">
               <h3 className="wx-primary-text font-semibold text-sm flex items-center gap-1.5 text-zinc-100">
-                <UserPlus className="wx-green-text w-4 h-4 text-emerald-400" />
+                {wechatTheme === 'classic' ? (
+                  <WeChatPersonPlusIcon className="wx-green-text w-4 h-4" />
+                ) : (
+                  <UserPlus className="wx-green-text w-4 h-4 text-emerald-400" />
+                )}
                 添加朋友
               </h3>
               <button

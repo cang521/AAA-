@@ -18,6 +18,10 @@ import {
   Moon,
   Monitor,
   X,
+  AppWindow,
+  AlertTriangle,
+  PlusSquare,
+  Sparkles as SparklesIcon,
 } from 'lucide-react';
 import { ImagePickerModal } from '../ImagePickerModal';
 import { IconCropperModal } from '../IconCropperModal';
@@ -25,6 +29,57 @@ import { lockSecurityService, LockType } from '../../lib/lockScreenSecurity';
 import { GestureLock } from '../GestureLock';
 import { Shield, Grid3X3 } from 'lucide-react';
 import { PressableButton, ElasticToggle } from '../ui/interaction';
+import {
+  androidPermissionBridgeClient,
+  LauncherAppearanceStatus,
+  LauncherPresetId,
+} from '../../lib/agent/AndroidPermissionBridgeClient';
+
+interface LauncherPresetMeta {
+  id: LauncherPresetId;
+  label: string;
+  subtitle: string;
+  badgeColor: string;
+  glyph: string;
+}
+
+const LAUNCHER_PRESETS: LauncherPresetMeta[] = [
+  {
+    id: 'default',
+    label: 'AI Phone Simulator',
+    subtitle: '原始默认桌面图标与名称',
+    badgeColor: 'from-sky-500 to-indigo-600',
+    glyph: 'AI',
+  },
+  {
+    id: 'xiaoshouji',
+    label: '小手机',
+    subtitle: '珊瑚粉轻量图标 · 小手机',
+    badgeColor: 'from-rose-400 to-pink-500',
+    glyph: '📱',
+  },
+  {
+    id: 'cloud_milk',
+    label: '晴空笔记',
+    subtitle: '天蓝云朵图标 · 晴空笔记',
+    badgeColor: 'from-sky-400 to-cyan-500',
+    glyph: '☁️',
+  },
+  {
+    id: 'starlight',
+    label: '星语伴侣',
+    subtitle: '深靛星月图标 · 星语伴侣',
+    badgeColor: 'from-indigo-500 to-violet-600',
+    glyph: '🌙',
+  },
+  {
+    id: 'minimal',
+    label: 'Sora Space',
+    subtitle: '极简曜石绿环 · Sora Space',
+    badgeColor: 'from-zinc-800 to-emerald-600',
+    glyph: '◎',
+  },
+];
 
 interface BeautificationAppProps {
   onBackToLauncher: () => void;
@@ -92,6 +147,106 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
   const [isFixingCss, setIsFixingCss] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [showThemeWallpaperModal, setShowThemeWallpaperModal] = useState(false);
+
+  // Module C: APK Desktop Icon & Name Beautification
+  const [launcherStatus, setLauncherStatus] = useState<LauncherAppearanceStatus>(() => ({
+    isNativeAndroid: androidPermissionBridgeClient.isNativeAndroid(),
+    activePresetId: 'default',
+    supportsPinShortcut: false,
+    availablePresets: LAUNCHER_PRESETS.map((p) => p.id),
+  }));
+  const [isSwitchingLauncher, setIsSwitchingLauncher] = useState(false);
+  const [launcherFeedback, setLauncherFeedback] = useState<{
+    type: 'success' | 'warn' | 'info';
+    text: string;
+  } | null>(null);
+  const [customShortcutName, setCustomShortcutName] = useState('小手机');
+  const [customShortcutIcon, setCustomShortcutIcon] = useState('');
+  const [showShortcutCropper, setShowShortcutCropper] = useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    androidPermissionBridgeClient
+      .getLauncherAppearanceStatus()
+      .then((status) => {
+        if (!cancelled) {
+          setLauncherStatus(status);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleSelectLauncherPreset = async (presetId: LauncherPresetId) => {
+    setIsSwitchingLauncher(true);
+    setLauncherFeedback(null);
+    try {
+      const res = await androidPermissionBridgeClient.setLauncherPreset(presetId);
+      if (res.success) {
+        setLauncherStatus((prev) => ({
+          ...prev,
+          activePresetId: res.activePresetId || presetId,
+        }));
+        setLauncherFeedback({
+          type: 'success',
+          text: res.message || '已切换桌面图标与名称预设！',
+        });
+      } else {
+        setLauncherFeedback({
+          type: 'warn',
+          text: res.message || '当前环境无法切换 APK 桌面图标。',
+        });
+      }
+    } finally {
+      setIsSwitchingLauncher(false);
+    }
+  };
+
+  const handleResetLauncherDefault = async () => {
+    setIsSwitchingLauncher(true);
+    setLauncherFeedback(null);
+    try {
+      const res = await androidPermissionBridgeClient.resetLauncherDefault();
+      if (res.success) {
+        setLauncherStatus((prev) => ({ ...prev, activePresetId: 'default' }));
+        setLauncherFeedback({
+          type: 'success',
+          text: res.message || '已恢复默认桌面图标与名称！',
+        });
+      } else {
+        setLauncherFeedback({
+          type: 'warn',
+          text: res.message || '当前环境无法恢复默认图标。',
+        });
+      }
+    } finally {
+      setIsSwitchingLauncher(false);
+    }
+  };
+
+  const handleCreateCustomShortcut = async () => {
+    const cleanName = customShortcutName.trim();
+    if (!cleanName) {
+      setLauncherFeedback({ type: 'warn', text: '请先输入自定义快捷方式名称！' });
+      return;
+    }
+    setIsSwitchingLauncher(true);
+    setLauncherFeedback(null);
+    try {
+      const res = await androidPermissionBridgeClient.createCustomShortcut({
+        label: cleanName,
+        iconDataUrl: customShortcutIcon || undefined,
+      });
+      setLauncherFeedback({
+        type: res.success ? 'success' : 'warn',
+        text: res.message || (res.success ? '已发起自定义桌面快捷方式创建请求' : '创建失败'),
+      });
+    } finally {
+      setIsSwitchingLauncher(false);
+    }
+  };
 
   const handleFixCssWithAi = async () => {
     if (!cssCode.trim()) return;
@@ -652,6 +807,193 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
             ))}
           </div>
         </div>
+
+        {/* 5. APK Desktop Icon & Name Beautification */}
+        <div className="p-4 rounded-3xl bg-zinc-900 border border-zinc-800 space-y-3.5 shadow-sm card-box">
+          <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
+            <h3 className="font-bold text-sm text-rose-400 flex items-center gap-2">
+              <AppWindow className="w-4 h-4 text-rose-400" />
+              <span>5. APK 桌面应用图标与名称美化</span>
+            </h3>
+            <span
+              className={`text-[10px] px-2 py-0.5 rounded-full font-medium border ${
+                launcherStatus.isNativeAndroid
+                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                  : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+              }`}
+            >
+              {launcherStatus.isNativeAndroid ? 'Android 原生可用' : 'Web 预览环境'}
+            </span>
+          </div>
+
+          {!launcherStatus.isNativeAndroid && (
+            <div className="p-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-300 flex items-start gap-2 leading-relaxed">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <span>
+                <b>真实桌面图标与名称切换仅能在 Android APK 中验证。</b>
+                当前处于浏览器预览模式，下方仅展示预设列表与效果预览，点击不会伪造切换成功。
+              </span>
+            </div>
+          )}
+
+          {/* Current Desktop Appearance Preview */}
+          {(() => {
+            const activeMeta =
+              LAUNCHER_PRESETS.find((p) => p.id === launcherStatus.activePresetId) || LAUNCHER_PRESETS[0];
+            return (
+              <div className="p-3 rounded-2xl bg-zinc-850 border border-zinc-750 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div
+                    className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${activeMeta.badgeColor} flex items-center justify-center text-white font-bold text-base shadow-md shrink-0`}
+                  >
+                    {activeMeta.glyph}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[10px] text-zinc-400">当前 APK 桌面呈现状态</div>
+                    <div className="font-bold text-xs text-zinc-100 truncate mt-0.5">{activeMeta.label}</div>
+                    <div className="text-[10px] text-zinc-400 truncate">{activeMeta.subtitle}</div>
+                  </div>
+                </div>
+                <PressableButton
+                  disabled={isSwitchingLauncher || launcherStatus.activePresetId === 'default'}
+                  onClick={handleResetLauncherDefault}
+                  className="px-2.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-zinc-200 text-[11px] font-medium border border-zinc-700 flex items-center gap-1 shrink-0 transition"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>恢复默认</span>
+                </PressableButton>
+              </div>
+            );
+          })()}
+
+          {launcherFeedback && (
+            <div
+              className={`p-2.5 rounded-2xl border text-[11px] leading-relaxed ${
+                launcherFeedback.type === 'success'
+                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                  : 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+              }`}
+            >
+              {launcherFeedback.text}
+            </div>
+          )}
+
+          {/* Preset Launcher Selector */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold text-zinc-200">内置原生桌面预设切换 (activity-alias)</span>
+              <span className="text-[10px] text-zinc-400">保留全部用户数据</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {LAUNCHER_PRESETS.map((preset) => {
+                const isActive = launcherStatus.activePresetId === preset.id;
+                return (
+                  <PressableButton
+                    key={preset.id}
+                    disabled={isSwitchingLauncher}
+                    onClick={() => handleSelectLauncherPreset(preset.id)}
+                    className={`p-2.5 rounded-2xl border text-left flex items-center gap-2.5 transition ${
+                      isActive
+                        ? 'bg-rose-500/15 border-rose-400 ring-1 ring-rose-400/40 shadow-sm'
+                        : 'bg-zinc-850 border-zinc-750 hover:border-zinc-600'
+                    }`}
+                  >
+                    <div
+                      className={`w-9 h-9 rounded-xl bg-gradient-to-br ${preset.badgeColor} flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-xs`}
+                    >
+                      {preset.glyph}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="font-bold text-[11px] text-zinc-100 truncate">{preset.label}</span>
+                        {isActive && (
+                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-rose-500 text-white font-semibold shrink-0">
+                            当前
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[9px] text-zinc-400 truncate mt-0.5">{preset.subtitle}</div>
+                    </div>
+                  </PressableButton>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-zinc-400 leading-relaxed">
+              说明：切换采用 Android 原生组件别名（DONT_KILL_APP），不会清空聊天记录、角色、记忆或 API 配置；部分手机系统桌面图标缓存需数秒刷新。
+            </p>
+          </div>
+
+          {/* Custom Shortcut Section */}
+          <div className="p-3 rounded-2xl bg-zinc-850 border border-zinc-750 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-zinc-100 flex items-center gap-1.5">
+                <PlusSquare className="w-3.5 h-3.5 text-sky-400" />
+                <span>自定义图片与名称（生成系统桌面快捷方式）</span>
+              </span>
+            </div>
+
+            <p className="text-[10px] text-zinc-400 leading-relaxed">
+              受限于 Android 系统签名机制，任意自定义图标与名称通过系统“固定快捷方式”创建桌面新入口，<b>不会直接覆盖原 APK Manifest 中的应用名称与图标</b>。
+            </p>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setShowShortcutCropper(true)}
+                className="w-14 h-14 rounded-2xl bg-zinc-800 border border-dashed border-sky-400/60 hover:border-sky-400 flex flex-col items-center justify-center overflow-hidden shrink-0 transition"
+                title="点击上传或裁剪图标"
+              >
+                {customShortcutIcon ? (
+                  <img src={customShortcutIcon} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <>
+                    <Crop className="w-4 h-4 text-sky-400" />
+                    <span className="text-[9px] text-sky-300 mt-0.5">选图裁剪</span>
+                  </>
+                )}
+              </button>
+
+              <div className="flex-1 space-y-1.5">
+                <input
+                  type="text"
+                  maxLength={24}
+                  value={customShortcutName}
+                  onChange={(e) => setCustomShortcutName(e.target.value)}
+                  placeholder="输入桌面快捷方式显示名称"
+                  className="w-full px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700 text-xs text-white focus:outline-none focus:border-sky-400"
+                />
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowShortcutCropper(true)}
+                    className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] font-medium border border-zinc-700"
+                  >
+                    裁剪方形图标
+                  </button>
+                  {customShortcutIcon && (
+                    <button
+                      type="button"
+                      onClick={() => setCustomShortcutIcon('')}
+                      className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-[10px]"
+                    >
+                      清除图片
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <PressableButton
+              withRipple
+              disabled={isSwitchingLauncher || !customShortcutName.trim()}
+              onClick={handleCreateCustomShortcut}
+              className="w-full py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition"
+            >
+              <SparklesIcon className="w-3.5 h-3.5" />
+              <span>创建自定义桌面快捷方式</span>
+            </PressableButton>
+          </div>
+        </div>
       </div>
 
       {/* Requirement 3: Bottom Sticky "Save Settings" Action Bar */}
@@ -699,6 +1041,19 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
             onUpdateIcons(updated);
             setSuccessMsg(`🎉 已将裁剪后的图片设置为 【${croppingTargetIcon.name}】 的图标！`);
             setTimeout(() => setSuccessMsg(''), 3000);
+          }}
+        />
+      )}
+
+      {/* Custom APK Shortcut Icon Cropper Modal */}
+      {showShortcutCropper && (
+        <IconCropperModal
+          isOpen={showShortcutCropper}
+          onClose={() => setShowShortcutCropper(false)}
+          iconName={customShortcutName || '桌面快捷方式'}
+          initialImageUrl={customShortcutIcon || undefined}
+          onCropComplete={(croppedDataUrl) => {
+            setCustomShortcutIcon(croppedDataUrl);
           }}
         />
       )}

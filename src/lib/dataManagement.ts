@@ -41,6 +41,7 @@ import {
   restoreChatMessages,
   clearAllChatMessages,
 } from './chatDb';
+import { backfillAllCharactersNotificationAvatars } from './notificationAvatar';
 
 export type ExportCategory = 'characters' | 'messages' | 'memories' | 'groups' | 'settings' | 'all';
 export type ExportFormat = 'json' | 'jsonl' | 'txt' | 'zip';
@@ -1611,6 +1612,7 @@ export async function executeImport(
 
       // Save Characters
       saveCharacters(finalChars);
+      void backfillAllCharactersNotificationAvatars().catch(() => {});
     }
 
     // 2. Import Standalone Memories

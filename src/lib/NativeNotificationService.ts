@@ -4,6 +4,10 @@ import {
   androidPermissionBridgeClient,
   NativeNotificationResult,
 } from './agent/AndroidPermissionBridgeClient';
+import {
+  detectAvatarSourceType,
+  getOrBackfillCharacterNotificationAvatar,
+} from './notificationAvatar';
 
 export type { NativeNotificationResult };
 
@@ -38,58 +42,39 @@ export function generateStableNotificationId(params: {
   return positive31 === 0 ? 1 : positive31;
 }
 
-async function prepareAvatarForNative(avatar?: string): Promise<string> {
-  if (!avatar || typeof avatar !== 'string') return '';
-  const trimmed = avatar.trim();
-  if (!trimmed || trimmed.startsWith('/')) {
-    return '';
-  }
-  if (trimmed.startsWith('data:image/') || trimmed.startsWith('https://') || trimmed.startsWith('http://')) {
-    return trimmed;
-  }
-  if (!trimmed.startsWith('blob:') || typeof document === 'undefined' || typeof Image === 'undefined') {
-    return '';
-  }
-
-  // Fast bounded conversion for blob: URLs; never block notification delivery
-  return await new Promise<string>((resolve) => {
-    let settled = false;
-    const finish = (val: string) => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        resolve(val);
-      }
+async function prepareAvatarForNative(character: {
+  id: string;
+  avatar?: string;
+  notificationAvatar?: string;
+}): Promise<{ avatarPayload: string; sourceType: string; stage: string; byteSize: number }> {
+  const backfill = await getOrBackfillCharacterNotificationAvatar(character);
+  if (backfill.thumbnail) {
+    return {
+      avatarPayload: backfill.thumbnail,
+      sourceType: backfill.sourceType,
+      stage: backfill.stage,
+      byteSize: backfill.byteSize,
     };
+  }
 
-    const timer = setTimeout(() => finish(''), 350);
+  // Fallback for http/https URLs (e.g. if browser canvas hit CORS taint, let Android HttpURLConnection fetch it)
+  // or relative assets stored in Capacitor's APK assets/public directory
+  const raw = (character?.avatar || '').trim();
+  if (raw.startsWith('https://') || raw.startsWith('http://') || raw.startsWith('/')) {
+    return {
+      avatarPayload: raw,
+      sourceType: backfill.sourceType,
+      stage: `fallback_${backfill.stage}`,
+      byteSize: 0,
+    };
+  }
 
-    try {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        try {
-          const size = 128;
-          const canvas = document.createElement('canvas');
-          canvas.width = size;
-          canvas.height = size;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            finish('');
-            return;
-          }
-          ctx.drawImage(img, 0, 0, size, size);
-          finish(canvas.toDataURL('image/jpeg', 0.78));
-        } catch {
-          finish('');
-        }
-      };
-      img.onerror = () => finish('');
-      img.src = trimmed;
-    } catch {
-      finish('');
-    }
-  });
+  return {
+    avatarPayload: '',
+    sourceType: backfill.sourceType,
+    stage: backfill.stage,
+    byteSize: 0,
+  };
 }
 
 class NativeNotificationService {
@@ -186,7 +171,7 @@ class NativeNotificationService {
   }
 
   public async notifyAiMessage(
-    character: { id: string; name: string; avatar?: string },
+    character: { id: string; name: string; avatar?: string; notificationAvatar?: string },
     text: string,
     options?: NotifyAiMessageOptions
   ): Promise<NativeNotificationResult> {
@@ -236,12 +221,12 @@ class NativeNotificationService {
 
     try {
       if (androidPermissionBridgeClient.isNativeAndroid()) {
-        const preparedAvatar = await prepareAvatarForNative(character?.avatar);
+        const prepared = await prepareAvatarForNative(character);
         const result = await androidPermissionBridgeClient.showAiMessageNotification({
           aiId,
           title,
           body,
-          avatar: preparedAvatar,
+          avatar: prepared.avatarPayload,
           notificationId,
           timestamp,
           groupKey: `ai_chat_${aiId}`,
@@ -252,7 +237,7 @@ class NativeNotificationService {
         }
 
         console.info(
-          `[NativeNotificationService] native notify result: code=${result.code} success=${result.success} aiId=${aiId} id=${notificationId} source=${options?.triggerSource || 'unknown'}`
+          `[NativeNotificationService] native notify result: code=${result.code} success=${result.success} aiId=${aiId} id=${notificationId} avatarSourceType=${prepared.sourceType} avatarStage=${prepared.stage} thumbBytes=${prepared.byteSize} triggerSource=${options?.triggerSource || 'unknown'}`
         );
         return result;
       }
@@ -260,9 +245,14 @@ class NativeNotificationService {
       // Non-native Web Preview fallback: honestly report Web behavior and never pretend Android APK succeeded
       if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
         try {
+          const previewIcon =
+            character?.notificationAvatar ||
+            character?.avatar ||
+            '/favicon.ico';
+          const srcType = detectAvatarSourceType(previewIcon);
           const notif = new Notification(title, {
             body,
-            icon: character?.avatar || '/favicon.ico',
+            icon: previewIcon,
             badge: '/favicon.ico',
             tag: `ai_chat_${aiId}_${notificationId}`,
             data: { aiId },
@@ -274,6 +264,9 @@ class NativeNotificationService {
           if (messageId && !forceForTest) {
             this.recentlyNotifiedMessageIds.set(messageId, Date.now());
           }
+          console.info(
+            `[NativeNotificationService] web notify posted aiId=${aiId} id=${notificationId} avatarSourceType=${srcType}`
+          );
           return {
             success: true,
             code: 'WEB_NOTIFICATION_POSTED',

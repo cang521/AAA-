@@ -73,6 +73,7 @@ export interface AiCharacter {
   id: string;
   name: string;
   avatar: string;
+  notificationAvatar?: string;
   wxid: string;
   persona: string;
   personality?: string;
@@ -98,6 +99,90 @@ export interface AiCharacter {
 export type HistorySourceType = 'live' | 'archived' | 'imported';
 export type HistoryImportance = 'P0' | 'P1' | 'P2' | 'P3' | 'P4';
 
+export interface ProactiveMessageMeta {
+  episodeId?: string;
+  triggerType?: string;
+  eventId?: string;
+  sourceSystem?: 'proactiveEngine' | 'agent';
+  priority?: string;
+  intent?: string;
+  generatedAt?: number;
+  bubbleIndex?: number;
+  totalBubbles?: number;
+  repliedByUser?: boolean;
+}
+
+export type ProactiveAction =
+  | 'SEND_NEW'
+  | 'CONTINUE'
+  | 'CHANGE_DIRECTION'
+  | 'WAIT'
+  | 'END_EPISODE';
+
+export type ProactiveEpisodeStatus = 'active' | 'answered' | 'closed';
+
+export interface ProactiveRejectedAttempt {
+  id: string;
+  timestamp: number;
+  triggerType: string;
+  candidateText: string;
+  candidateIntent?: string;
+  proposedAction?: ProactiveAction;
+  rejectReason: string;
+  suggestedNextAction?: string;
+  source: 'model_plan' | 'local_review' | 'gate' | 'semantic_check';
+}
+
+export interface ProactiveEpisode {
+  episodeId: string;
+  characterId: string;
+  status: ProactiveEpisodeStatus;
+  startedAt: number;
+  updatedAt: number;
+  closedAt?: number;
+  triggerSource: string;
+  currentIntent: string;
+  currentTopic: string;
+  inferredUserState?: string;
+  baseMessageIds: string[];
+  proactiveMessageIds: string[];
+  rejectedAttempts: ProactiveRejectedAttempt[];
+  attemptCount: number;
+  sentCount: number;
+  nextCheckAt?: number;
+  lastAction?: ProactiveAction;
+  lastDecisionSummary?: string;
+  suggestedNextAction?: string;
+  answeredAt?: number;
+  answeredByMessageId?: string;
+}
+
+export interface ProactiveStructuredContextMessage {
+  id: string;
+  sender: 'user' | 'ai';
+  text: string;
+  timestamp: number;
+  isProactive: boolean;
+  proactiveMeta?: ProactiveMessageMeta;
+  turnId?: string;
+  turnBubbleIndex?: number;
+  turnTotalBubbles?: number;
+  sourceType?: HistorySourceType;
+  contextRole?: 'base_history' | 'current_episode_proactive' | 'prior_proactive';
+}
+
+export interface ProactivePlanDecision {
+  action: ProactiveAction;
+  intent: string;
+  topic?: string;
+  inferredUserState?: string;
+  candidateText: string;
+  decisionSummary: string;
+  suggestedNextAction?: string;
+  nextCheckAt?: number;
+  thinkingProcess?: string;
+}
+
 export interface ChatMessage {
   id: string;
   characterId: string;
@@ -114,13 +199,7 @@ export interface ChatMessage {
   turnBubbleIndex?: number;
   turnTotalBubbles?: number;
   isProactive?: boolean;
-  proactiveMeta?: {
-    triggerType?: string;
-    eventId?: string;
-    sourceSystem?: 'proactiveEngine' | 'agent';
-    priority?: string;
-    generatedAt?: number;
-  };
+  proactiveMeta?: ProactiveMessageMeta;
   type?: 'text' | 'offline_share_card';
   offlineCardData?: {
     sessionId: string;
