@@ -41,7 +41,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
     return (
       <div
         id={`msg-bubble-${msg.id}`}
-        className={`flex gap-2.5 transition-all duration-300 rounded-2xl p-1 ${
+        className={`flex items-start gap-2.5 transition-all duration-300 rounded-2xl p-1 ${
           isHighlighted ? 'ring-2 ring-amber-400 bg-amber-400/10' : ''
         } ${isUser ? 'flex-row-reverse' : 'flex-row'}`}
       >
@@ -64,7 +64,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
         </button>
 
         {/* Bubble Content */}
-        <div className="max-w-[76%] flex flex-col">
+        <div className="max-w-[76%] min-w-0 flex flex-col">
           <div
             onContextMenu={(e) => {
               e.preventDefault();
@@ -95,7 +95,11 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
               </div>
             )}
 
-            {msg.text}
+            {msg.text && (
+              <div className="wx-chat-text whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                {msg.text}
+              </div>
+            )}
 
             {/* Vision API status footnote if failed */}
             {msg.imageAnalysisStatus === 'failed' && (

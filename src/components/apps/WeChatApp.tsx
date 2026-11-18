@@ -127,6 +127,21 @@ import {
   saveWeChatTheme,
   WeChatThemeCenter,
 } from './wechat/theme';
+import { ChatFontSizePreview } from './wechat/ChatFontSizePreview';
+import {
+  ChatDisplayPreference,
+  ChatFontPresetId,
+  MIN_CHAT_MESSAGE_FONT_SIZE,
+  MAX_CHAT_MESSAGE_FONT_SIZE,
+  clampChatMessageFontSize,
+  getDefaultChatMessageFontSize,
+  getChatFontPresets,
+  loadAllChatDisplayPreferences,
+  hasCustomChatDisplayPreference,
+  getEffectiveChatMessageFontSize,
+  saveChatDisplayPreference,
+  resetChatDisplayPreference,
+} from '../../lib/chatDisplayPreferences';
 
 interface WeChatAppProps {
   onBackToLauncher: () => void;
@@ -442,6 +457,19 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const [editedMenstrualCareEnabled, setEditedMenstrualCareEnabled] = useState(true);
   const [addFriendSearchQuery, setAddFriendSearchQuery] = useState('');
 
+  // Per-AI chat message font size preference & modal draft state
+  const [chatDisplayPrefs, setChatDisplayPrefs] = useState<Record<string, ChatDisplayPreference>>(
+    () => loadAllChatDisplayPreferences()
+  );
+  const defaultChatFontSize = getDefaultChatMessageFontSize(wechatTheme);
+  const [draftMessageFontSize, setDraftMessageFontSize] = useState<number>(defaultChatFontSize);
+  const [draftFontResetPending, setDraftFontResetPending] = useState<boolean>(true);
+  const [draftPresetHint, setDraftPresetHint] = useState<ChatFontPresetId | null>(null);
+  const activeChatFontSize = activeCharacter
+    ? getEffectiveChatMessageFontSize(chatDisplayPrefs, activeCharacter.id, wechatTheme)
+    : defaultChatFontSize;
+  const chatFontPresets = getChatFontPresets(wechatTheme);
+
   // Group Chat Handlers
   const handleCreateGroup = (newGroup: GroupChat) => {
     const updated = [newGroup, ...groupChats];
@@ -602,6 +630,16 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       setEditedModelName(activeCharacter.modelConfig?.modelName || '');
       setEditedAvatar(activeCharacter.avatar || '');
       setEditedMenstrualCareEnabled(activeCharacter.menstrualCare?.enabled !== false);
+
+      const defaultSize = getDefaultChatMessageFontSize(wechatTheme);
+      const savedPrefs = loadAllChatDisplayPreferences();
+      const savedPref = savedPrefs[activeCharacter.id];
+      const hasSavedPref = hasCustomChatDisplayPreference(activeCharacter.id);
+      setDraftMessageFontSize(
+        savedPref ? clampChatMessageFontSize(savedPref.messageFontSize, defaultSize) : defaultSize
+      );
+      setDraftFontResetPending(!hasSavedPref);
+      setDraftPresetHint(null);
     }
   }, [activeCharacter?.id, showAiSettingsModal]);
 
@@ -1379,7 +1417,12 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     >
       {/* Top Navigation Bar Header */}
       {!activeGroupChatId && !(activeTab === 'me' && meSubView === 'theme') && (
-        <div className="wx-header h-12 bg-zinc-900 border-b border-zinc-800 px-3 flex items-center justify-between shrink-0 z-20">
+        <div
+          data-global-font-excluded={activeTab === 'chats' && activeChatId ? 'true' : undefined}
+          className={`wx-header min-h-12 py-1.5 bg-zinc-900 border-b border-zinc-800 px-3 flex items-center justify-between shrink-0 z-20 ${
+            activeTab === 'chats' && activeChatId ? 'wechat-chat-font-isolated' : ''
+          }`}
+        >
           <PressableButton
             onClick={() => {
               if (activeChatId) {
@@ -1735,15 +1778,19 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                 {activeChatId ? (
                   // Active 1-on-1 Conversation View with Custom Background Support (Requirement 4)
                   <div
-                    className="wx-chat-viewport w-full h-full flex flex-col bg-zinc-950 relative"
+                    data-global-font-excluded="true"
+                    className="wx-chat-viewport wechat-chat-font-isolated w-full h-full flex flex-col bg-zinc-950 relative"
                     style={
-                      activeCharacter?.customBackground
-                        ? {
-                            backgroundImage: `url(${activeCharacter.customBackground})`,
-                            backgroundSize: 'cover',
-                            backgroundPosition: 'center',
-                          }
-                        : {}
+                      {
+                        '--chat-message-font-size': `${activeChatFontSize}px`,
+                        ...(activeCharacter?.customBackground
+                          ? {
+                              backgroundImage: `url(${activeCharacter.customBackground})`,
+                              backgroundSize: 'cover',
+                              backgroundPosition: 'center',
+                            }
+                          : {}),
+                      } as React.CSSProperties
                     }
                   >
                     {/* Semi-transparent backdrop blur overlay if custom background is present */}
@@ -3106,7 +3153,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
       {/* Requirement 2: Bottom Navigation Bar is automatically HIDDEN when in 1-on-1 chat, group chat, or Me sub-views */}
       {!activeChatId && !activeGroupChatId && !(activeTab === 'me' && meSubView !== 'hub') && (
-        <div className="wx-bottom-nav h-14 bg-zinc-850 border-t border-zinc-800 grid grid-cols-4 items-center shrink-0 z-20">
+        <div className="wx-bottom-nav min-h-14 py-1 bg-zinc-850 border-t border-zinc-800 grid grid-cols-4 items-center shrink-0 z-20">
           <PressableButton
             onClick={() => {
               setActiveTab('chats');
@@ -3448,6 +3495,138 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
               </div>
             </div>
 
+            {/* Chat Display Settings: Per-AI Message Font Size + Live Preview */}
+            <div className="wx-divider pt-3 border-t border-zinc-800 text-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="wx-primary-text font-semibold text-zinc-100">聊天显示设置</h4>
+                <span className="wx-secondary-text text-[11px] text-zinc-400">仅作用于与该 AI 的私聊</span>
+              </div>
+
+              <div className="wx-sub-card p-3 rounded-2xl bg-zinc-850 border border-zinc-750 space-y-3">
+                {/* Font Size Header & px Badge */}
+                <div className="flex items-center justify-between gap-2">
+                  <label htmlFor="chat-font-size-slider" className="wx-primary-text font-medium text-zinc-200">
+                    聊天文字大小
+                  </label>
+                  <span className="wx-font-size-badge px-2 py-0.5 rounded-md font-mono text-xs font-semibold tabular-nums">
+                    {draftMessageFontSize}px
+                  </span>
+                </div>
+
+                {/* Touch-Friendly Step Buttons & Range Slider */}
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = clampChatMessageFontSize(draftMessageFontSize - 1, defaultChatFontSize);
+                      setDraftMessageFontSize(next);
+                      setDraftFontResetPending(false);
+                      setDraftPresetHint(null);
+                    }}
+                    disabled={draftMessageFontSize <= MIN_CHAT_MESSAGE_FONT_SIZE}
+                    aria-label="减小聊天文字大小"
+                    className="wx-font-step-btn min-w-[40px] min-h-[40px] px-2 rounded-xl text-xs font-semibold flex items-center justify-center transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shrink-0"
+                  >
+                    A−
+                  </button>
+
+                  <input
+                    id="chat-font-size-slider"
+                    type="range"
+                    min={MIN_CHAT_MESSAGE_FONT_SIZE}
+                    max={MAX_CHAT_MESSAGE_FONT_SIZE}
+                    step={1}
+                    value={draftMessageFontSize}
+                    aria-label="聊天文字大小"
+                    aria-valuemin={MIN_CHAT_MESSAGE_FONT_SIZE}
+                    aria-valuemax={MAX_CHAT_MESSAGE_FONT_SIZE}
+                    aria-valuenow={draftMessageFontSize}
+                    onChange={(e) => {
+                      const next = clampChatMessageFontSize(e.target.value, defaultChatFontSize);
+                      setDraftMessageFontSize(next);
+                      setDraftFontResetPending(false);
+                      setDraftPresetHint(null);
+                    }}
+                    className="wx-font-range flex-1 h-7 cursor-pointer"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = clampChatMessageFontSize(draftMessageFontSize + 1, defaultChatFontSize);
+                      setDraftMessageFontSize(next);
+                      setDraftFontResetPending(false);
+                      setDraftPresetHint(null);
+                    }}
+                    disabled={draftMessageFontSize >= MAX_CHAT_MESSAGE_FONT_SIZE}
+                    aria-label="增大聊天文字大小"
+                    className="wx-font-step-btn min-w-[40px] min-h-[40px] px-2 rounded-xl text-xs font-semibold flex items-center justify-center transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shrink-0"
+                  >
+                    A+
+                  </button>
+                </div>
+
+                {/* Quick Presets & Reset to Default */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {chatFontPresets.map((preset) => {
+                      const isActive =
+                        preset.size === draftMessageFontSize &&
+                        (preset.id === 'small' && defaultChatFontSize === preset.size
+                          ? draftPresetHint === 'small'
+                          : preset.id === 'standard' && defaultChatFontSize === 12
+                          ? draftPresetHint !== 'small'
+                          : true);
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => {
+                            setDraftMessageFontSize(preset.size);
+                            setDraftFontResetPending(false);
+                            setDraftPresetHint(preset.id);
+                          }}
+                          className={`min-h-[36px] px-2.5 py-1.5 rounded-xl text-xs font-medium transition active:scale-95 cursor-pointer ${
+                            isActive ? 'wx-font-preset-btn--active' : 'wx-font-preset-btn'
+                          }`}
+                        >
+                          {preset.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDraftMessageFontSize(defaultChatFontSize);
+                      setDraftFontResetPending(true);
+                      setDraftPresetHint('standard');
+                    }}
+                    className="wx-font-reset-btn min-h-[36px] px-2.5 py-1.5 rounded-xl text-[11px] font-medium flex items-center gap-1 transition active:scale-95 cursor-pointer shrink-0"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>恢复默认</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Real-time Chat Effect Preview */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="wx-secondary-text text-[11px] font-medium text-zinc-400">效果预览</span>
+                  <span className="wx-muted-text text-[10px] text-zinc-500">跟随当前微信主题与背景实时变化</span>
+                </div>
+                <ChatFontSizePreview
+                  characterName={editedName || activeCharacter.name}
+                  characterAvatar={editedAvatar || activeCharacter.avatar}
+                  userAvatar={userProfile.avatar}
+                  fontSize={draftMessageFontSize}
+                  customBackground={activeCharacter.customBackground}
+                />
+              </div>
+            </div>
+
             {/* Requirement 5: Long-term Memory Packaged into a Collapsible Folder Accordion */}
             <div className="wx-divider pt-3 border-t border-zinc-800 text-xs">
               <div
@@ -3747,6 +3926,17 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                         : c
                     )
                   );
+                  if (draftFontResetPending) {
+                    setChatDisplayPrefs(resetChatDisplayPreference(activeCharacter.id));
+                  } else {
+                    setChatDisplayPrefs(
+                      saveChatDisplayPreference(
+                        activeCharacter.id,
+                        { messageFontSize: draftMessageFontSize },
+                        wechatTheme
+                      )
+                    );
+                  }
                   setShowAiSettingsModal(false);
                 }}
                 className="wx-btn-primary w-full py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 font-semibold text-xs text-white shadow-md transition active:scale-95 cursor-pointer"

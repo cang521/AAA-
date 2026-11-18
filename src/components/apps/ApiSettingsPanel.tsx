@@ -235,11 +235,11 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
 }) => {
   const formatKeyInfo = (key?: string) => {
     if (!key || !key.trim()) {
-      return <span className="text-rose-400 font-bold">[为空] len=0</span>;
+      return <span className="api-diag-err text-rose-400 font-bold">[为空] len=0</span>;
     }
     const k = key.trim();
     return (
-      <span className="text-emerald-400 font-medium">
+      <span className="api-diag-ok text-emerald-400 font-medium">
         [有值] len={k.length} (末尾: ***{k.slice(-4)})
       </span>
     );
@@ -247,10 +247,10 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
 
   const formatKeyInfoFromFields = (isEmpty: boolean, length: number, last4: string) => {
     if (isEmpty || length === 0) {
-      return <span className="text-rose-400 font-bold">[为空] len=0</span>;
+      return <span className="api-diag-err text-rose-400 font-bold">[为空] len=0</span>;
     }
     return (
-      <span className="text-emerald-400 font-medium">
+      <span className="api-diag-ok text-emerald-400 font-medium">
         [有值] len={length} (末尾: ***{last4})
       </span>
     );
@@ -477,9 +477,9 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   };
 
   return (
-    <div className="rounded-2xl bg-zinc-950 border border-zinc-850 p-4 sm:p-5 space-y-5 text-zinc-200">
+    <div className="api-settings-panel-root settings-section-card rounded-2xl bg-zinc-950 border border-zinc-850 p-4 sm:p-5 space-y-5 text-zinc-200">
       {/* 标题分类切换: API连接 / 图像api连接 / 语音api连接 */}
-      <div className="flex p-1 bg-zinc-900/90 rounded-xl border border-zinc-800">
+      <div className="api-category-tabs flex p-1 bg-zinc-900/90 rounded-xl border border-zinc-800">
         <button
           type="button"
           onClick={() => setActiveCategory('text')}
@@ -822,23 +822,23 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             {/* Status & Feedback */}
             {connectionResult && (
               <div
-                className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+                className={`api-diag-status-box p-3 rounded-xl border text-xs flex items-center justify-between ${
                   connectionResult.success
-                    ? 'bg-zinc-900/90 border-zinc-800 text-zinc-200'
-                    : 'bg-zinc-900/90 border-zinc-800 text-rose-300'
+                    ? 'api-diag-status-box--ok bg-zinc-900/90 border-zinc-800 text-zinc-200'
+                    : 'api-diag-status-box--err bg-zinc-900/90 border-zinc-800 text-rose-300'
                 }`}
               >
-                <div className="flex items-center gap-2 truncate">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
                   {connectionResult.success ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
                   ) : (
-                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <AlertCircle className="api-diag-err w-4 h-4 text-rose-400 shrink-0" />
                   )}
-                  <span className="truncate">
+                  <span className="break-words [overflow-wrap:anywhere]">
                     {connectionResult.message || (connectionResult.success ? '连接成功 (HTTP 200)' : '连接失败')}
                   </span>
                 </div>
-                <span className="font-mono text-[11px] text-zinc-400 shrink-0 ml-2">
+                <span className="api-diag-muted font-mono text-[11px] text-zinc-400 shrink-0 ml-2">
                   {connectionResult.latencyMs}ms
                 </span>
               </div>
@@ -846,18 +846,18 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
 
             {modelFetchResult && (
               <div
-                className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                className={`api-diag-status-box p-3 rounded-xl border text-xs flex items-center gap-2 ${
                   modelFetchResult.success
-                    ? 'bg-zinc-900/90 border-zinc-800 text-zinc-200'
-                    : 'bg-zinc-900/90 border-zinc-800 text-amber-300'
+                    ? 'api-diag-status-box--ok bg-zinc-900/90 border-zinc-800 text-zinc-200'
+                    : 'api-diag-status-box--warn bg-zinc-900/90 border-zinc-800 text-amber-300'
                 }`}
               >
                 {modelFetchResult.success ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
                 ) : (
-                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <AlertCircle className="api-diag-warn w-4 h-4 text-amber-400 shrink-0" />
                 )}
-                <span className="truncate">{modelFetchResult.message}</span>
+                <span className="break-words [overflow-wrap:anywhere]">{modelFetchResult.message}</span>
               </div>
             )}
           </div>
@@ -1127,23 +1127,23 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
 
             {connectionResult && (
               <div
-                className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+                className={`api-diag-status-box p-3 rounded-xl border text-xs flex items-center justify-between ${
                   connectionResult.success
-                    ? 'bg-zinc-900/90 border-zinc-800 text-zinc-200'
-                    : 'bg-zinc-900/90 border-zinc-800 text-rose-300'
+                    ? 'api-diag-status-box--ok bg-zinc-900/90 border-zinc-800 text-zinc-200'
+                    : 'api-diag-status-box--err bg-zinc-900/90 border-zinc-800 text-rose-300'
                 }`}
               >
-                <div className="flex items-center gap-2 truncate">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
                   {connectionResult.success ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
                   ) : (
-                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <AlertCircle className="api-diag-err w-4 h-4 text-rose-400 shrink-0" />
                   )}
-                  <span className="truncate">
+                  <span className="break-words [overflow-wrap:anywhere]">
                     {connectionResult.message || (connectionResult.success ? '连接成功 (HTTP 200)' : '连接失败')}
                   </span>
                 </div>
-                <span className="font-mono text-[11px] text-zinc-400 shrink-0 ml-2">
+                <span className="api-diag-muted font-mono text-[11px] text-zinc-400 shrink-0 ml-2">
                   {connectionResult.latencyMs}ms
                 </span>
               </div>
@@ -1151,18 +1151,18 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
 
             {modelFetchResult && (
               <div
-                className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                className={`api-diag-status-box p-3 rounded-xl border text-xs flex items-center gap-2 ${
                   modelFetchResult.success
-                    ? 'bg-zinc-900/90 border-zinc-800 text-zinc-200'
-                    : 'bg-zinc-900/90 border-zinc-800 text-amber-300'
+                    ? 'api-diag-status-box--ok bg-zinc-900/90 border-zinc-800 text-zinc-200'
+                    : 'api-diag-status-box--warn bg-zinc-900/90 border-zinc-800 text-amber-300'
                 }`}
               >
                 {modelFetchResult.success ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
                 ) : (
-                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <AlertCircle className="api-diag-warn w-4 h-4 text-amber-400 shrink-0" />
                 )}
-                <span className="truncate">{modelFetchResult.message}</span>
+                <span className="break-words [overflow-wrap:anywhere]">{modelFetchResult.message}</span>
               </div>
             )}
           </div>
@@ -1432,23 +1432,23 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
 
             {connectionResult && (
               <div
-                className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+                className={`api-diag-status-box p-3 rounded-xl border text-xs flex items-center justify-between ${
                   connectionResult.success
-                    ? 'bg-zinc-900/90 border-zinc-800 text-zinc-200'
-                    : 'bg-zinc-900/90 border-zinc-800 text-rose-300'
+                    ? 'api-diag-status-box--ok bg-zinc-900/90 border-zinc-800 text-zinc-200'
+                    : 'api-diag-status-box--err bg-zinc-900/90 border-zinc-800 text-rose-300'
                 }`}
               >
-                <div className="flex items-center gap-2 truncate">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
                   {connectionResult.success ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
                   ) : (
-                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <AlertCircle className="api-diag-err w-4 h-4 text-rose-400 shrink-0" />
                   )}
-                  <span className="truncate">
+                  <span className="break-words [overflow-wrap:anywhere]">
                     {connectionResult.message || (connectionResult.success ? '连接成功 (HTTP 200)' : '连接失败')}
                   </span>
                 </div>
-                <span className="font-mono text-[11px] text-zinc-400 shrink-0 ml-2">
+                <span className="api-diag-muted font-mono text-[11px] text-zinc-400 shrink-0 ml-2">
                   {connectionResult.latencyMs}ms
                 </span>
               </div>
@@ -1456,18 +1456,18 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
 
             {modelFetchResult && (
               <div
-                className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                className={`api-diag-status-box p-3 rounded-xl border text-xs flex items-center gap-2 ${
                   modelFetchResult.success
-                    ? 'bg-zinc-900/90 border-zinc-800 text-zinc-200'
-                    : 'bg-zinc-900/90 border-zinc-800 text-amber-300'
+                    ? 'api-diag-status-box--ok bg-zinc-900/90 border-zinc-800 text-zinc-200'
+                    : 'api-diag-status-box--warn bg-zinc-900/90 border-zinc-800 text-amber-300'
                 }`}
               >
                 {modelFetchResult.success ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
                 ) : (
-                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <AlertCircle className="api-diag-warn w-4 h-4 text-amber-400 shrink-0" />
                 )}
-                <span className="truncate">{modelFetchResult.message}</span>
+                <span className="break-words [overflow-wrap:anywhere]">{modelFetchResult.message}</span>
               </div>
             )}
           </div>
@@ -1476,9 +1476,9 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
 
       {/* 预设管理 Modal (管理与删除自定义配置) */}
       {showPresetManager && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-5 w-full max-w-md shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-zinc-850 pb-3">
+        <div className="api-preset-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="api-preset-modal settings-modal-card bg-zinc-950 border border-zinc-800 rounded-2xl p-5 w-full max-w-md shadow-2xl space-y-4">
+            <div className="settings-card-divider flex items-center justify-between border-b border-zinc-850 pb-3">
               <div className="flex items-center gap-2">
                 <Settings2 className="w-4 h-4 text-zinc-400" />
                 <h3 className="text-sm font-semibold text-zinc-100">管理自定义配置</h3>
@@ -1493,7 +1493,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             </div>
 
             {/* 1. 保存当前参数为新自定义预设 */}
-            <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800 space-y-2">
+            <div className="api-preset-subcard settings-sub-card p-3 rounded-xl bg-zinc-900/80 border border-zinc-800 space-y-2">
               <label className="text-xs text-zinc-300 font-medium block">
                 将当前参数保存为新配置
               </label>
@@ -1503,12 +1503,12 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   placeholder="配置名称 (如: 我的反向代理 / 公司中转)"
                   value={newPresetName}
                   onChange={(e) => setNewPresetName(e.target.value)}
-                  className="flex-1 px-3 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100 text-xs focus:outline-none focus:border-zinc-500"
+                  className="flex-1 px-3 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100 text-xs focus:outline-none focus:border-zinc-500 min-w-0"
                 />
                 <button
                   type="button"
                   onClick={handleSaveAsCustomPreset}
-                  className="px-3.5 py-2 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-semibold flex items-center gap-1 transition active:scale-95 shrink-0"
+                  className="api-preset-save-btn px-3.5 py-2 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-semibold flex items-center gap-1 transition active:scale-95 shrink-0"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>保存</span>
@@ -1524,7 +1524,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
 
               <div className="space-y-2 max-h-[38vh] overflow-y-auto pr-1">
                 {customPresets.length === 0 ? (
-                  <div className="p-4 rounded-xl bg-zinc-900/40 border border-zinc-800/80 text-center text-xs text-zinc-500">
+                  <div className="api-preset-empty settings-sub-card p-4 rounded-xl bg-zinc-900/40 border border-zinc-800/80 text-center text-xs text-zinc-500">
                     暂无已保存的自定义配置。可以在上方输入名称，将当前配置保存为新预设。
                   </div>
                 ) : (
@@ -1533,9 +1533,9 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                     return (
                       <div
                         key={preset.id}
-                        className={`p-3 rounded-xl border transition flex items-center justify-between gap-3 ${
+                        className={`api-preset-item p-3 rounded-xl border transition flex items-center justify-between gap-3 ${
                           isSelected
-                            ? 'bg-zinc-900 border-zinc-600'
+                            ? 'api-preset-item--selected bg-zinc-900 border-zinc-600'
                             : 'bg-zinc-900/40 border-zinc-800/80 hover:border-zinc-700'
                         }`}
                       >
@@ -1543,7 +1543,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                           <div className="flex items-center gap-2 mb-0.5">
                             <span className="font-semibold text-xs text-zinc-100 truncate">{preset.name}</span>
                             {isSelected && (
-                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300 font-medium">
+                              <span className="api-diagnostic-badge text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300 font-medium shrink-0">
                                 使用中
                               </span>
                             )}
@@ -1563,14 +1563,14 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                               handleSelectPreset(preset.id);
                               setShowPresetManager(false);
                             }}
-                            className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition"
+                            className="api-preset-apply-btn px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition"
                           >
                             应用
                           </button>
                           <button
                             type="button"
                             onClick={() => handleDeleteCustomPreset(preset.id)}
-                            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-rose-950/50 text-zinc-400 hover:text-rose-400 transition"
+                            className="api-preset-del-btn p-1.5 rounded-lg bg-zinc-800 hover:bg-rose-950/50 text-zinc-400 hover:text-rose-400 transition"
                             title="删除此自定义配置"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -1584,11 +1584,11 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             </div>
 
             {/* 3. 清空 / 删除当前配置内容 */}
-            <div className="pt-2 border-t border-zinc-850 flex items-center justify-between">
+            <div className="settings-card-divider pt-2 border-t border-zinc-850 flex items-center justify-between">
               <button
                 type="button"
                 onClick={handleClearCurrentConfig}
-                className="text-xs text-rose-400 hover:text-rose-300 transition flex items-center gap-1"
+                className="api-diag-err text-xs text-rose-400 hover:text-rose-300 transition flex items-center gap-1"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>清空当前配置参数</span>
@@ -1609,38 +1609,46 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
       {/* ========================================================================= */}
       {/* 4. 🔧 真机可视化 API 状态实时诊断看板 */}
       {/* ========================================================================= */}
-      <div className="mt-5 p-3.5 rounded-2xl bg-amber-950/20 border border-amber-500/30 space-y-3 font-mono text-[11px] text-zinc-300">
-        <div className="flex items-center justify-between border-b border-amber-500/20 pb-2">
-          <span className="font-bold text-amber-400 flex items-center gap-1.5 text-xs font-sans">
-            <Bug className="w-4 h-4 text-amber-400" />
-            Android APK 真机 API 状态与链路实时诊断看板
+      <div className="api-diagnostic-panel mt-5 p-3.5 rounded-2xl bg-amber-950/20 border border-amber-500/30 space-y-3 font-mono text-[11px] text-zinc-300">
+        <div className="api-diagnostic-header flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/20 pb-2">
+          <span className="api-diagnostic-title font-bold text-amber-400 flex items-center gap-1.5 text-xs font-sans min-w-0">
+            <Bug className="api-diagnostic-bug w-4 h-4 text-amber-400 shrink-0" />
+            <span className="break-words">Android APK 真机 API 状态与链路实时诊断看板</span>
           </span>
-          <span className="text-[10px] text-amber-300/60 font-sans">密钥脱敏保护中</span>
+          <span className="api-diagnostic-shield-note text-[10px] text-amber-300/60 font-sans shrink-0">密钥脱敏保护中</span>
         </div>
 
         {/* 0. 输入事件实时追踪 */}
-        <div className="space-y-1.5 bg-zinc-950/90 p-2.5 rounded-xl border border-amber-500/40">
-          <div className="text-amber-300 font-bold flex items-center justify-between text-xs font-sans border-b border-amber-500/20 pb-1.5 mb-1.5">
+        <div className="api-diagnostic-card api-diagnostic-card--amber space-y-1.5 bg-zinc-950/90 p-2.5 rounded-xl border border-amber-500/40">
+          <div className="api-diagnostic-section-title api-diagnostic-section-title--amber text-amber-300 font-bold flex flex-wrap items-center justify-between gap-1 text-xs font-sans border-b border-amber-500/20 pb-1.5 mb-1.5">
             <span>【输入事件实时追踪 (最近 30 条)】</span>
-            <span className="text-[10px] text-zinc-400 font-normal">捕获 Input 事件、State 写入与 Render 序号</span>
+            <span className="api-diagnostic-muted text-[10px] text-zinc-400 font-normal">捕获 Input 事件、State 写入与 Render 序号</span>
           </div>
           <div className="max-h-64 overflow-y-auto space-y-1 font-mono text-[10px] pr-1">
             {liveLogs.length === 0 ? (
-              <div className="text-zinc-500 italic p-1">尚无输入事件记录</div>
+              <div className="api-diagnostic-muted text-zinc-500 italic p-1">尚无输入事件记录</div>
             ) : (
               liveLogs.slice(0, 30).map((log) => (
-                <div key={log.id} className="p-1.5 rounded bg-zinc-900/90 border border-zinc-800/80 flex flex-col gap-0.5">
-                  <div className="flex items-center justify-between font-bold">
-                    <span className={log.tag.includes('INPUT') ? 'text-sky-300' : log.tag.includes('RENDER') ? 'text-emerald-400' : 'text-amber-400'}>
+                <div key={log.id} className="api-diagnostic-log-row p-1.5 rounded bg-zinc-900/90 border border-zinc-800/80 flex flex-col gap-0.5">
+                  <div className="flex flex-wrap items-center justify-between gap-1 font-bold">
+                    <span
+                      className={`break-all ${
+                        log.tag.includes('INPUT')
+                          ? 'api-diagnostic-info text-sky-300'
+                          : log.tag.includes('RENDER')
+                          ? 'api-diagnostic-ok text-emerald-400'
+                          : 'api-diagnostic-warn text-amber-400'
+                      }`}
+                    >
                       {log.tag}
                     </span>
-                    <span className="text-zinc-500 text-[9px] font-normal">{log.timestamp}</span>
+                    <span className="api-diagnostic-muted text-zinc-500 text-[9px] font-normal shrink-0">{log.timestamp}</span>
                   </div>
-                  <div className="text-zinc-300 flex items-center gap-3">
+                  <div className="api-diagnostic-value text-zinc-300 flex flex-wrap items-center gap-x-3 gap-y-0.5 break-all">
                     <span>BaseURL len={log.baseUrlLen} {log.baseUrlVal ? `("${log.baseUrlVal.slice(0, 20)}")` : ''}</span>
                     <span>Key len={log.keyLen} {log.keyLast4 ? `(末尾:${log.keyLast4})` : ''}</span>
                   </div>
-                  {log.details && <div className="text-zinc-400 text-[9px] truncate">{log.details}</div>}
+                  {log.details && <div className="api-diagnostic-muted text-zinc-400 text-[9px] break-words [overflow-wrap:anywhere]">{log.details}</div>}
                 </div>
               ))
             )}
@@ -1648,115 +1656,115 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
         </div>
 
         {/* 1. 当前 Input & State 状态 */}
-        <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
-          <div className="text-amber-300 font-semibold mb-1 text-[11px] font-sans">1. 当前 Input & State 内存状态：</div>
-          <div>• Base URL: <span className="text-sky-300">{currentCategoryConfig.baseUrl ? `[有值] len=${currentCategoryConfig.baseUrl.length}` : '[为空] len=0'}</span></div>
-          <div>• API Key: {formatKeyInfo(currentCategoryConfig.apiKey)}</div>
-          <div>• Provider: <span className="text-sky-300 font-bold">{currentCategoryConfig.provider || 'google_gemini'}</span></div>
-          <div>• Model: <span className="text-sky-300 font-bold">{currentCategoryConfig.model || 'gemini-3.6-flash'}</span></div>
+        <div className="api-diagnostic-card space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800 break-words [overflow-wrap:anywhere]">
+          <div className="api-diagnostic-section-title api-diagnostic-section-title--amber text-amber-300 font-semibold mb-1 text-[11px] font-sans">1. 当前 Input & State 内存状态：</div>
+          <div className="api-diagnostic-label">• Base URL: <span className="api-diagnostic-info text-sky-300">{currentCategoryConfig.baseUrl ? `[有值] len=${currentCategoryConfig.baseUrl.length}` : '[为空] len=0'}</span></div>
+          <div className="api-diagnostic-label">• API Key: {formatKeyInfo(currentCategoryConfig.apiKey)}</div>
+          <div className="api-diagnostic-label">• Provider: <span className="api-diagnostic-info text-sky-300 font-bold">{currentCategoryConfig.provider || 'google_gemini'}</span></div>
+          <div className="api-diagnostic-label">• Model: <span className="api-diagnostic-info text-sky-300 font-bold">{currentCategoryConfig.model || 'gemini-3.6-flash'}</span></div>
         </div>
 
         {/* 2. ai_phone_api_settings_v1 校验 */}
-        <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
-          <div className="text-emerald-300 font-semibold mb-1 text-[11px] font-sans">2. localStorage [ai_phone_api_settings_v1] 校验：</div>
+        <div className="api-diagnostic-card space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800 break-words [overflow-wrap:anywhere]">
+          <div className="api-diagnostic-section-title api-diagnostic-section-title--emerald text-emerald-300 font-semibold mb-1 text-[11px] font-sans">2. localStorage [ai_phone_api_settings_v1] 校验：</div>
           {(() => {
             const saved = savedVerification || loadApiSettings();
             const savedCat = saved[activeCategory];
             return (
               <>
-                <div>• 保存的 Base URL: <span className="text-sky-300">{savedCat?.baseUrl ? `[有值] len=${savedCat.baseUrl.length}` : '[为空] len=0'}</span></div>
-                <div>• 保存的 API Key: {formatKeyInfo(savedCat?.apiKey)}</div>
-                <div>• 保存的 Provider: <span className="text-sky-300">{savedCat?.provider}</span></div>
-                <div>• 保存的 Model: <span className="text-sky-300">{savedCat?.model}</span></div>
+                <div className="api-diagnostic-label">• 保存的 Base URL: <span className="api-diagnostic-info text-sky-300">{savedCat?.baseUrl ? `[有值] len=${savedCat.baseUrl.length}` : '[为空] len=0'}</span></div>
+                <div className="api-diagnostic-label">• 保存的 API Key: {formatKeyInfo(savedCat?.apiKey)}</div>
+                <div className="api-diagnostic-label">• 保存的 Provider: <span className="api-diagnostic-info text-sky-300">{savedCat?.provider}</span></div>
+                <div className="api-diagnostic-label">• 保存的 Model: <span className="api-diagnostic-info text-sky-300">{savedCat?.model}</span></div>
               </>
             );
           })()}
         </div>
 
         {/* 3. 点击拉取模型时实际 Request Payload */}
-        <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
-          <div className="text-sky-300 font-semibold mb-1 text-[11px] font-sans">3. 点击「拉取模型」实际 Request Payload：</div>
+        <div className="api-diagnostic-card space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800 break-words [overflow-wrap:anywhere]">
+          <div className="api-diagnostic-section-title api-diagnostic-section-title--sky text-sky-300 font-semibold mb-1 text-[11px] font-sans">3. 点击「拉取模型」实际 Request Payload：</div>
           {fetchDebugInfo ? (
             <>
-              <div>• 抓拍时间: <span className="text-zinc-400">{fetchDebugInfo.timestamp}</span></div>
-              <div>• 实际发送 Base URL: <span className="text-sky-300">{fetchDebugInfo.baseUrl ? `[有值] len=${fetchDebugInfo.baseUrl.length}` : '[为空] len=0'}</span></div>
-              <div>• 实际发送 API Key: {formatKeyInfoFromFields(fetchDebugInfo.keyIsEmpty, fetchDebugInfo.keyLength, fetchDebugInfo.keyLast4)}</div>
-              <div>• 实际发送 Provider: <span className="text-amber-300">{fetchDebugInfo.providerType}</span></div>
+              <div className="api-diagnostic-label">• 抓拍时间: <span className="api-diagnostic-muted text-zinc-400">{fetchDebugInfo.timestamp}</span></div>
+              <div className="api-diagnostic-label">• 实际发送 Base URL: <span className="api-diagnostic-info text-sky-300">{fetchDebugInfo.baseUrl ? `[有值] len=${fetchDebugInfo.baseUrl.length}` : '[为空] len=0'}</span></div>
+              <div className="api-diagnostic-label">• 实际发送 API Key: {formatKeyInfoFromFields(fetchDebugInfo.keyIsEmpty, fetchDebugInfo.keyLength, fetchDebugInfo.keyLast4)}</div>
+              <div className="api-diagnostic-label">• 实际发送 Provider: <span className="api-diagnostic-warn text-amber-300">{fetchDebugInfo.providerType}</span></div>
             </>
           ) : (
-            <div className="text-zinc-500 italic">尚未点击「拉取模型」按钮</div>
+            <div className="api-diagnostic-muted text-zinc-500 italic">尚未点击「拉取模型」按钮</div>
           )}
         </div>
 
         {/* 4. server.ts 接收与响应状态 */}
-        <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
-          <div className="text-purple-300 font-semibold mb-1 text-[11px] font-sans">4. server.ts 接收与响应状态：</div>
-          <div>• HTTP Status: <span className={fetchDebugInfo?.httpStatus === 200 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{fetchDebugInfo?.httpStatus || '未发送'}</span></div>
-          <div>• 到达 server.ts: <span className={fetchDebugInfo?.reachedServer ? 'text-emerald-400 font-bold' : fetchDebugInfo ? 'text-rose-400 font-bold' : 'text-zinc-500'}>{fetchDebugInfo ? (fetchDebugInfo.reachedServer ? '是 (Reached server.ts)' : '否 (未到达 / 离线代理拦截)') : '(等待点击)'}</span></div>
+        <div className="api-diagnostic-card space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800 break-words [overflow-wrap:anywhere]">
+          <div className="api-diagnostic-section-title api-diagnostic-section-title--purple text-purple-300 font-semibold mb-1 text-[11px] font-sans">4. server.ts 接收与响应状态：</div>
+          <div className="api-diagnostic-label">• HTTP Status: <span className={fetchDebugInfo?.httpStatus === 200 ? 'api-diagnostic-ok text-emerald-400 font-bold' : 'api-diagnostic-err text-rose-400 font-bold'}>{fetchDebugInfo?.httpStatus || '未发送'}</span></div>
+          <div className="api-diagnostic-label">• 到达 server.ts: <span className={fetchDebugInfo?.reachedServer ? 'api-diagnostic-ok text-emerald-400 font-bold' : fetchDebugInfo ? 'api-diagnostic-err text-rose-400 font-bold' : 'api-diagnostic-muted text-zinc-500'}>{fetchDebugInfo ? (fetchDebugInfo.reachedServer ? '是 (Reached server.ts)' : '否 (未到达 / 离线代理拦截)') : '(等待点击)'}</span></div>
           {fetchDebugInfo?.responseMessage && (
-            <div>• Response Message: <span className="text-amber-300">{fetchDebugInfo.responseMessage}</span></div>
+            <div className="api-diagnostic-label">• Response Message: <span className="api-diagnostic-warn text-amber-300">{fetchDebugInfo.responseMessage}</span></div>
           )}
           {fetchDebugInfo?.responseError && (
-            <div>• Response Error: <span className="text-rose-300">{fetchDebugInfo.responseError}</span></div>
+            <div className="api-diagnostic-label">• Response Error: <span className="api-diagnostic-err text-rose-300">{fetchDebugInfo.responseError}</span></div>
           )}
           {fetchDebugInfo?.failureStage && (
-            <div>• 当前链路阶段: <span className="text-amber-300 font-bold">{fetchDebugInfo.failureStage}</span></div>
+            <div className="api-diagnostic-label">• 当前链路阶段: <span className="api-diagnostic-warn text-amber-300 font-bold">{fetchDebugInfo.failureStage}</span></div>
           )}
         </div>
 
         {/* 5. Android APK 特有 Node 后端链路 */}
-        <div className="space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800">
-          <div className="text-purple-300 font-semibold mb-1 text-[11px] font-sans">5. Android APK 特有网络与 Node 后端链路诊断：</div>
-          <div>• 是否 Native 平台: <span className="text-amber-300 font-bold">{Capacitor.isNativePlatform() ? '是 (Native APK)' : '否 (Web/Preview)'}</span></div>
-          <div>• Capacitor 平台: <span className="text-sky-300">{Capacitor.getPlatform()}</span></div>
-          <div>• 127.0.0.1:3000 健康状态: <span className={liveHealth.includes('健康') ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{liveHealth}</span></div>
+        <div className="api-diagnostic-card space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800 break-words [overflow-wrap:anywhere]">
+          <div className="api-diagnostic-section-title api-diagnostic-section-title--purple text-purple-300 font-semibold mb-1 text-[11px] font-sans">5. Android APK 特有网络与 Node 后端链路诊断：</div>
+          <div className="api-diagnostic-label">• 是否 Native 平台: <span className="api-diagnostic-warn text-amber-300 font-bold">{Capacitor.isNativePlatform() ? '是 (Native APK)' : '否 (Web/Preview)'}</span></div>
+          <div className="api-diagnostic-label">• Capacitor 平台: <span className="api-diagnostic-info text-sky-300">{Capacitor.getPlatform()}</span></div>
+          <div className="api-diagnostic-label">• 127.0.0.1:3000 健康状态: <span className={liveHealth.includes('健康') ? 'api-diagnostic-ok text-emerald-400 font-bold' : 'api-diagnostic-err text-rose-400 font-bold'}>{liveHealth}</span></div>
         </div>
 
         {/* 6. 上游请求协议与多 Adapter 探测诊断 */}
-        <div className="space-y-2 bg-zinc-950/90 p-2.5 rounded-xl border border-sky-500/30">
-          <div className="text-sky-300 font-bold text-[11px] font-sans flex items-center justify-between">
+        <div className="api-diagnostic-card api-diagnostic-card--sky space-y-2 bg-zinc-950/90 p-2.5 rounded-xl border border-sky-500/30 break-words [overflow-wrap:anywhere]">
+          <div className="api-diagnostic-section-title api-diagnostic-section-title--sky text-sky-300 font-bold text-[11px] font-sans flex items-center justify-between">
             <span>6. 上游请求协议与多 Adapter 自动探测诊断：</span>
           </div>
 
           {fetchDebugInfo?.attemptsTrace && fetchDebugInfo.attemptsTrace.length > 0 ? (
             <div className="space-y-1.5 mt-1">
-              <div className="text-[10px] text-zinc-400 font-semibold">探测历程 (共 {fetchDebugInfo.attemptsTrace.length} 次尝试)：</div>
+              <div className="api-diagnostic-muted text-[10px] text-zinc-400 font-semibold">探测历程 (共 {fetchDebugInfo.attemptsTrace.length} 次尝试)：</div>
               {fetchDebugInfo.attemptsTrace.map((att) => (
                 <div
                   key={att.attemptIndex}
-                  className={`p-2 rounded-lg text-[10px] font-mono border ${
+                  className={`api-diagnostic-attempt p-2 rounded-lg text-[10px] font-mono border ${
                     att.success
-                      ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
-                      : 'bg-zinc-900 border-zinc-800 text-zinc-400'
+                      ? 'api-diagnostic-attempt--ok bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+                      : 'api-diagnostic-attempt--fail bg-zinc-900 border-zinc-800 text-zinc-400'
                   }`}
                 >
-                  <div className="flex items-center justify-between font-bold">
+                  <div className="flex flex-wrap items-center justify-between gap-1 font-bold">
                     <span>
                       Attempt #{att.attemptIndex}: {att.adapterName}
                     </span>
-                    <span className={att.success ? 'text-emerald-400' : 'text-rose-400'}>
+                    <span className={att.success ? 'api-diagnostic-ok text-emerald-400' : 'api-diagnostic-err text-rose-400'}>
                       {att.success ? `SUCCESS (获取 ${att.modelsCount} 个模型)` : `FAILED (${att.httpStatus || 'Timeout'})`}
                     </span>
                   </div>
-                  <div className="mt-1 text-sky-300/80 break-all">• URL: {att.finalUrl}</div>
-                  <div className="mt-0.5 text-zinc-400 flex flex-wrap gap-x-3">
+                  <div className="api-diagnostic-info mt-1 text-sky-300/80 break-all">• URL: {att.finalUrl}</div>
+                  <div className="api-diagnostic-muted mt-0.5 text-zinc-400 flex flex-wrap gap-x-3">
                     <span>Auth: {att.authMethod}</span>
                     <span>耗时: {att.latencyMs}ms</span>
                     <span>超时限制: {att.timeoutMs}ms</span>
                   </div>
-                  {att.error && <div className="mt-0.5 text-rose-300">• 错误信息: {att.error}</div>}
+                  {att.error && <div className="api-diagnostic-err mt-0.5 text-rose-300 break-words">• 错误信息: {att.error}</div>}
                 </div>
               ))}
             </div>
           ) : fetchDebugInfo?.upstreamDiagnostics ? (
             <div className="space-y-0.5 text-[10px]">
-              <div>• Upstream Protocol: <span className="text-amber-300 font-bold">{fetchDebugInfo.upstreamDiagnostics.upstreamProtocol}</span></div>
-              <div>• Final Upstream URL: <span className="text-sky-300 break-all">{fetchDebugInfo.upstreamDiagnostics.finalUpstreamUrl}</span></div>
-              <div>• HTTP Method: <span className="text-emerald-300 font-bold">{fetchDebugInfo.upstreamDiagnostics.httpMethod}</span></div>
-              <div>• Auth Method: <span className="text-purple-300">{fetchDebugInfo.upstreamDiagnostics.authMethod}</span></div>
+              <div className="api-diagnostic-label">• Upstream Protocol: <span className="api-diagnostic-warn text-amber-300 font-bold">{fetchDebugInfo.upstreamDiagnostics.upstreamProtocol}</span></div>
+              <div className="api-diagnostic-label">• Final Upstream URL: <span className="api-diagnostic-info text-sky-300 break-all">{fetchDebugInfo.upstreamDiagnostics.finalUpstreamUrl}</span></div>
+              <div className="api-diagnostic-label">• HTTP Method: <span className="api-diagnostic-ok text-emerald-300 font-bold">{fetchDebugInfo.upstreamDiagnostics.httpMethod}</span></div>
+              <div className="api-diagnostic-label">• Auth Method: <span className="api-diagnostic-purple text-purple-300">{fetchDebugInfo.upstreamDiagnostics.authMethod}</span></div>
             </div>
           ) : (
-            <div className="text-zinc-500 italic text-[10px]">
+            <div className="api-diagnostic-muted text-zinc-500 italic text-[10px]">
               点击「拉取模型」后，系统将自动发起多协议链路顺序探测并展示结果
             </div>
           )}

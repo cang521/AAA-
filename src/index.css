@@ -1106,6 +1106,1148 @@ textarea,
 [data-theme="dark"] .telepathy-lvl-4-bg, .theme-dark .telepathy-lvl-4-bg { background-color: rgba(76, 5, 25, 0.65) !important; }
 [data-theme="dark"] .telepathy-lvl-4-text, .theme-dark .telepathy-lvl-4-text { color: #FB7185 !important; }
 
+/* ======================================================
+   WECHAT PRIVATE CHAT FONT SIZE & PREVIEW CONTROLS (Scoped to .wechat-app)
+   ====================================================== */
+.wechat-app .wx-chat-text {
+  font-size: var(--chat-message-font-size, inherit);
+  line-height: 1.55;
+}
+
+.wechat-app .wx-font-size-badge {
+  background-color: #E6F7EE;
+  color: #047857;
+  border: 1px solid #A7F3D0;
+}
+
+[data-theme="dark"] .wechat-app .wx-font-size-badge,
+.theme-dark .wechat-app .wx-font-size-badge {
+  background-color: rgba(16, 185, 129, 0.16);
+  color: #34D399;
+  border-color: rgba(52, 211, 153, 0.35);
+}
+
+.wechat-app .wx-font-step-btn {
+  background-color: #FFFFFF;
+  color: #243040;
+  border: 1px solid #CBD5E1;
+}
+
+.wechat-app .wx-font-step-btn:hover:not(:disabled) {
+  background-color: #F1F5F9;
+  border-color: #94A3B8;
+}
+
+[data-theme="dark"] .wechat-app .wx-font-step-btn,
+.theme-dark .wechat-app .wx-font-step-btn {
+  background-color: #1E293B;
+  color: #F8FAFC;
+  border-color: #334155;
+}
+
+[data-theme="dark"] .wechat-app .wx-font-step-btn:hover:not(:disabled),
+.theme-dark .wechat-app .wx-font-step-btn:hover:not(:disabled) {
+  background-color: #334155;
+  border-color: #475569;
+}
+
+.wechat-app .wx-font-preset-btn {
+  background-color: #FFFFFF;
+  color: #334155;
+  border: 1px solid #CBD5E1;
+}
+
+.wechat-app .wx-font-preset-btn:hover {
+  background-color: #F1F5F9;
+}
+
+[data-theme="dark"] .wechat-app .wx-font-preset-btn,
+.theme-dark .wechat-app .wx-font-preset-btn {
+  background-color: #1E293B;
+  color: #E2E8F0;
+  border-color: #334155;
+}
+
+[data-theme="dark"] .wechat-app .wx-font-preset-btn:hover,
+.theme-dark .wechat-app .wx-font-preset-btn:hover {
+  background-color: #334155;
+}
+
+.wechat-app .wx-font-preset-btn--active,
+[data-theme="light"] .wechat-app .wx-font-preset-btn--active,
+[data-theme="cloud_milk"] .wechat-app .wx-font-preset-btn--active,
+[data-theme="default"] .wechat-app .wx-font-preset-btn--active {
+  background-color: #059669 !important;
+  color: #FFFFFF !important;
+  border-color: #059669 !important;
+}
+
+[data-theme="dark"] .wechat-app .wx-font-preset-btn--active,
+.theme-dark .wechat-app .wx-font-preset-btn--active {
+  background-color: #0284C7 !important;
+  color: #FFFFFF !important;
+  border-color: #0284C7 !important;
+}
+
+.wechat-app .wx-font-reset-btn {
+  background-color: transparent;
+  color: #475569;
+  border: 1px solid #CBD5E1;
+}
+
+.wechat-app .wx-font-reset-btn:hover {
+  background-color: #F1F5F9;
+  color: #0F172A;
+}
+
+[data-theme="dark"] .wechat-app .wx-font-reset-btn,
+.theme-dark .wechat-app .wx-font-reset-btn {
+  background-color: transparent;
+  color: #94A3B8;
+  border-color: #334155;
+}
+
+[data-theme="dark"] .wechat-app .wx-font-reset-btn:hover,
+.theme-dark .wechat-app .wx-font-reset-btn:hover {
+  background-color: #1E293B;
+  color: #F8FAFC;
+}
+
+.wechat-app .wx-font-range {
+  accent-color: #059669;
+}
+
+[data-theme="dark"] .wechat-app .wx-font-range,
+.theme-dark .wechat-app .wx-font-range {
+  accent-color: #38BDF8;
+}
+
+/* ======================================================
+   WEATHER APP LIGHT MODE SEMANTIC OVERRIDES (Dark mode preserved untouched)
+   ====================================================== */
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-current-card,
+[data-theme="light"] #weather_app_container .weather-current-card,
+[data-theme="cloud_milk"] #weather_app_container .weather-current-card,
+[data-theme="default"] #weather_app_container .weather-current-card,
+.theme-light #weather_app_container .weather-current-card,
+.theme-cloud-milk #weather_app_container .weather-current-card,
+.theme-default #weather_app_container .weather-current-card {
+  background: linear-gradient(145deg, #FFFFFF 0%, #F3FAFF 100%) !important;
+  border-color: #D9EAF7 !important;
+  box-shadow: 0 4px 16px rgba(89, 182, 232, 0.12) !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-current-glow,
+[data-theme="light"] #weather_app_container .weather-current-glow,
+[data-theme="cloud_milk"] #weather_app_container .weather-current-glow,
+[data-theme="default"] #weather_app_container .weather-current-glow,
+.theme-light #weather_app_container .weather-current-glow,
+.theme-cloud-milk #weather_app_container .weather-current-glow,
+.theme-default #weather_app_container .weather-current-glow {
+  background-color: rgba(89, 182, 232, 0.14) !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-current-temp,
+[data-theme="light"] #weather_app_container .weather-current-temp,
+[data-theme="cloud_milk"] #weather_app_container .weather-current-temp,
+[data-theme="default"] #weather_app_container .weather-current-temp,
+.theme-light #weather_app_container .weather-current-temp,
+.theme-cloud-milk #weather_app_container .weather-current-temp,
+.theme-default #weather_app_container .weather-current-temp,
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-current-condition,
+[data-theme="light"] #weather_app_container .weather-current-condition,
+[data-theme="cloud_milk"] #weather_app_container .weather-current-condition,
+[data-theme="default"] #weather_app_container .weather-current-condition,
+.theme-light #weather_app_container .weather-current-condition,
+.theme-cloud-milk #weather_app_container .weather-current-condition,
+.theme-default #weather_app_container .weather-current-condition {
+  color: #243040 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-current-unit,
+[data-theme="light"] #weather_app_container .weather-current-unit,
+[data-theme="cloud_milk"] #weather_app_container .weather-current-unit,
+[data-theme="default"] #weather_app_container .weather-current-unit,
+.theme-light #weather_app_container .weather-current-unit,
+.theme-cloud-milk #weather_app_container .weather-current-unit,
+.theme-default #weather_app_container .weather-current-unit {
+  color: #0369A1 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-feels-pill,
+[data-theme="light"] #weather_app_container .weather-feels-pill,
+[data-theme="cloud_milk"] #weather_app_container .weather-feels-pill,
+[data-theme="default"] #weather_app_container .weather-feels-pill,
+.theme-light #weather_app_container .weather-feels-pill,
+.theme-cloud-milk #weather_app_container .weather-feels-pill,
+.theme-default #weather_app_container .weather-feels-pill {
+  background-color: #EAF7FF !important;
+  border: 1px solid #CBE7F9 !important;
+  color: #243040 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-current-meta,
+[data-theme="light"] #weather_app_container .weather-current-meta,
+[data-theme="cloud_milk"] #weather_app_container .weather-current-meta,
+[data-theme="default"] #weather_app_container .weather-current-meta,
+.theme-light #weather_app_container .weather-current-meta,
+.theme-cloud-milk #weather_app_container .weather-current-meta,
+.theme-default #weather_app_container .weather-current-meta {
+  color: #5B6B7C !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-current-rain-banner,
+[data-theme="light"] #weather_app_container .weather-current-rain-banner,
+[data-theme="cloud_milk"] #weather_app_container .weather-current-rain-banner,
+[data-theme="default"] #weather_app_container .weather-current-rain-banner,
+.theme-light #weather_app_container .weather-current-rain-banner,
+.theme-cloud-milk #weather_app_container .weather-current-rain-banner,
+.theme-default #weather_app_container .weather-current-rain-banner {
+  border-top-color: #D9EAF7 !important;
+  color: #243040 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-current-rain-icon,
+[data-theme="light"] #weather_app_container .weather-current-rain-icon,
+[data-theme="cloud_milk"] #weather_app_container .weather-current-rain-icon,
+[data-theme="default"] #weather_app_container .weather-current-rain-icon,
+.theme-light #weather_app_container .weather-current-rain-icon,
+.theme-cloud-milk #weather_app_container .weather-current-rain-icon,
+.theme-default #weather_app_container .weather-current-rain-icon,
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-diagnostic-shield,
+[data-theme="light"] #weather_app_container .weather-diagnostic-shield,
+[data-theme="cloud_milk"] #weather_app_container .weather-diagnostic-shield,
+[data-theme="default"] #weather_app_container .weather-diagnostic-shield,
+.theme-light #weather_app_container .weather-diagnostic-shield,
+.theme-cloud-milk #weather_app_container .weather-diagnostic-shield,
+.theme-default #weather_app_container .weather-diagnostic-shield {
+  color: #0284C7 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-diagnostic-panel,
+[data-theme="light"] #weather_app_container .weather-diagnostic-panel,
+[data-theme="cloud_milk"] #weather_app_container .weather-diagnostic-panel,
+[data-theme="default"] #weather_app_container .weather-diagnostic-panel,
+.theme-light #weather_app_container .weather-diagnostic-panel,
+.theme-cloud-milk #weather_app_container .weather-diagnostic-panel,
+.theme-default #weather_app_container .weather-diagnostic-panel {
+  background-color: #FFFFFF !important;
+  border-color: #D9EAF7 !important;
+  box-shadow: 0 4px 16px rgba(89, 182, 232, 0.10) !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-diagnostic-header,
+[data-theme="light"] #weather_app_container .weather-diagnostic-header,
+[data-theme="cloud_milk"] #weather_app_container .weather-diagnostic-header,
+[data-theme="default"] #weather_app_container .weather-diagnostic-header,
+.theme-light #weather_app_container .weather-diagnostic-header,
+.theme-cloud-milk #weather_app_container .weather-diagnostic-header,
+.theme-default #weather_app_container .weather-diagnostic-header {
+  border-bottom-color: #D9EAF7 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-diagnostic-title,
+[data-theme="light"] #weather_app_container .weather-diagnostic-title,
+[data-theme="cloud_milk"] #weather_app_container .weather-diagnostic-title,
+[data-theme="default"] #weather_app_container .weather-diagnostic-title,
+.theme-light #weather_app_container .weather-diagnostic-title,
+.theme-cloud-milk #weather_app_container .weather-diagnostic-title,
+.theme-default #weather_app_container .weather-diagnostic-title,
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-diagnostic-value,
+[data-theme="light"] #weather_app_container .weather-diagnostic-value,
+[data-theme="cloud_milk"] #weather_app_container .weather-diagnostic-value,
+[data-theme="default"] #weather_app_container .weather-diagnostic-value,
+.theme-light #weather_app_container .weather-diagnostic-value,
+.theme-cloud-milk #weather_app_container .weather-diagnostic-value,
+.theme-default #weather_app_container .weather-diagnostic-value {
+  color: #243040 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-status-badge,
+[data-theme="light"] #weather_app_container .weather-status-badge,
+[data-theme="cloud_milk"] #weather_app_container .weather-status-badge,
+[data-theme="default"] #weather_app_container .weather-status-badge,
+.theme-light #weather_app_container .weather-status-badge,
+.theme-cloud-milk #weather_app_container .weather-status-badge,
+.theme-default #weather_app_container .weather-status-badge {
+  background-color: #E0F2FE !important;
+  color: #0369A1 !important;
+  border: 1px solid #BAE6FD !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-diagnostic-item,
+[data-theme="light"] #weather_app_container .weather-diagnostic-item,
+[data-theme="cloud_milk"] #weather_app_container .weather-diagnostic-item,
+[data-theme="default"] #weather_app_container .weather-diagnostic-item,
+.theme-light #weather_app_container .weather-diagnostic-item,
+.theme-cloud-milk #weather_app_container .weather-diagnostic-item,
+.theme-default #weather_app_container .weather-diagnostic-item {
+  background-color: #F3FAFF !important;
+  border-color: #D9EAF7 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-diagnostic-label,
+[data-theme="light"] #weather_app_container .weather-diagnostic-label,
+[data-theme="cloud_milk"] #weather_app_container .weather-diagnostic-label,
+[data-theme="default"] #weather_app_container .weather-diagnostic-label,
+.theme-light #weather_app_container .weather-diagnostic-label,
+.theme-cloud-milk #weather_app_container .weather-diagnostic-label,
+.theme-default #weather_app_container .weather-diagnostic-label {
+  color: #5B6B7C !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-diagnostic-latency,
+[data-theme="light"] #weather_app_container .weather-diagnostic-latency,
+[data-theme="cloud_milk"] #weather_app_container .weather-diagnostic-latency,
+[data-theme="default"] #weather_app_container .weather-diagnostic-latency,
+.theme-light #weather_app_container .weather-diagnostic-latency,
+.theme-cloud-milk #weather_app_container .weather-diagnostic-latency,
+.theme-default #weather_app_container .weather-diagnostic-latency {
+  color: #047857 !important;
+  font-weight: 600;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-diagnostic-footnote,
+[data-theme="light"] #weather_app_container .weather-diagnostic-footnote,
+[data-theme="cloud_milk"] #weather_app_container .weather-diagnostic-footnote,
+[data-theme="default"] #weather_app_container .weather-diagnostic-footnote,
+.theme-light #weather_app_container .weather-diagnostic-footnote,
+.theme-cloud-milk #weather_app_container .weather-diagnostic-footnote,
+.theme-default #weather_app_container .weather-diagnostic-footnote {
+  color: #5B6B7C !important;
+  border-top-color: #D9EAF7 !important;
+}
+
+/* Weather Top Toolbar & Realtime Status Strip (Light Mode Only — Dark Mode Untouched) */
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-toolbar,
+[data-theme="light"] #weather_app_container .weather-toolbar,
+[data-theme="cloud_milk"] #weather_app_container .weather-toolbar,
+[data-theme="default"] #weather_app_container .weather-toolbar,
+.theme-light #weather_app_container .weather-toolbar,
+.theme-cloud-milk #weather_app_container .weather-toolbar,
+.theme-default #weather_app_container .weather-toolbar {
+  background: rgba(247, 251, 255, 0.96) !important;
+  border-bottom-color: #D9EAF7 !important;
+  box-shadow: 0 2px 10px rgba(89, 182, 232, 0.08) !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-toolbar-button,
+[data-theme="light"] #weather_app_container .weather-toolbar-button,
+[data-theme="cloud_milk"] #weather_app_container .weather-toolbar-button,
+[data-theme="default"] #weather_app_container .weather-toolbar-button,
+.theme-light #weather_app_container .weather-toolbar-button,
+.theme-cloud-milk #weather_app_container .weather-toolbar-button,
+.theme-default #weather_app_container .weather-toolbar-button,
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-location-selector,
+[data-theme="light"] #weather_app_container .weather-location-selector,
+[data-theme="cloud_milk"] #weather_app_container .weather-location-selector,
+[data-theme="default"] #weather_app_container .weather-location-selector,
+.theme-light #weather_app_container .weather-location-selector,
+.theme-cloud-milk #weather_app_container .weather-location-selector,
+.theme-default #weather_app_container .weather-location-selector,
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-locate-button,
+[data-theme="light"] #weather_app_container .weather-locate-button,
+[data-theme="cloud_milk"] #weather_app_container .weather-locate-button,
+[data-theme="default"] #weather_app_container .weather-locate-button,
+.theme-light #weather_app_container .weather-locate-button,
+.theme-cloud-milk #weather_app_container .weather-locate-button,
+.theme-default #weather_app_container .weather-locate-button,
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-refresh-button,
+[data-theme="light"] #weather_app_container .weather-refresh-button,
+[data-theme="cloud_milk"] #weather_app_container .weather-refresh-button,
+[data-theme="default"] #weather_app_container .weather-refresh-button,
+.theme-light #weather_app_container .weather-refresh-button,
+.theme-cloud-milk #weather_app_container .weather-refresh-button,
+.theme-default #weather_app_container .weather-refresh-button {
+  background-color: #FFFFFF !important;
+  border-color: #D9EAF7 !important;
+  color: #243040 !important;
+  box-shadow: 0 1px 4px rgba(89, 182, 232, 0.08) !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-toolbar-button:hover,
+[data-theme="light"] #weather_app_container .weather-toolbar-button:hover,
+[data-theme="cloud_milk"] #weather_app_container .weather-toolbar-button:hover,
+[data-theme="default"] #weather_app_container .weather-toolbar-button:hover,
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-location-selector:hover,
+[data-theme="light"] #weather_app_container .weather-location-selector:hover,
+[data-theme="cloud_milk"] #weather_app_container .weather-location-selector:hover,
+[data-theme="default"] #weather_app_container .weather-location-selector:hover,
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-refresh-button:hover,
+[data-theme="light"] #weather_app_container .weather-refresh-button:hover,
+[data-theme="cloud_milk"] #weather_app_container .weather-refresh-button:hover,
+[data-theme="default"] #weather_app_container .weather-refresh-button:hover {
+  background-color: #EAF7FF !important;
+  border-color: #9DD8F5 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-toolbar-button svg,
+[data-theme="light"] #weather_app_container .weather-toolbar-button svg,
+[data-theme="cloud_milk"] #weather_app_container .weather-toolbar-button svg,
+[data-theme="default"] #weather_app_container .weather-toolbar-button svg,
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-location-icon,
+[data-theme="light"] #weather_app_container .weather-location-icon,
+[data-theme="cloud_milk"] #weather_app_container .weather-location-icon,
+[data-theme="default"] #weather_app_container .weather-location-icon,
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-status-clock-icon,
+[data-theme="light"] #weather_app_container .weather-status-clock-icon,
+[data-theme="cloud_milk"] #weather_app_container .weather-status-clock-icon,
+[data-theme="default"] #weather_app_container .weather-status-clock-icon {
+  color: #0284C7 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-location-icon--manual,
+[data-theme="light"] #weather_app_container .weather-location-icon--manual,
+[data-theme="cloud_milk"] #weather_app_container .weather-location-icon--manual,
+[data-theme="default"] #weather_app_container .weather-location-icon--manual {
+  color: #D97706 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-location-chevron,
+[data-theme="light"] #weather_app_container .weather-location-chevron,
+[data-theme="cloud_milk"] #weather_app_container .weather-location-chevron,
+[data-theme="default"] #weather_app_container .weather-location-chevron {
+  color: #5B6B7C !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-location-badge--gps,
+[data-theme="light"] #weather_app_container .weather-location-badge--gps,
+[data-theme="cloud_milk"] #weather_app_container .weather-location-badge--gps,
+[data-theme="default"] #weather_app_container .weather-location-badge--gps {
+  background-color: #E0F2FE !important;
+  color: #0369A1 !important;
+  border: 1px solid #BAE6FD !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-location-badge--manual,
+[data-theme="light"] #weather_app_container .weather-location-badge--manual,
+[data-theme="cloud_milk"] #weather_app_container .weather-location-badge--manual,
+[data-theme="default"] #weather_app_container .weather-location-badge--manual {
+  background-color: #FEF3C7 !important;
+  color: #B45309 !important;
+  border: 1px solid #FDE68A !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-locate-button--active,
+[data-theme="light"] #weather_app_container .weather-locate-button--active,
+[data-theme="cloud_milk"] #weather_app_container .weather-locate-button--active,
+[data-theme="default"] #weather_app_container .weather-locate-button--active {
+  background-color: #EAF7FF !important;
+  border-color: #9DD8F5 !important;
+  color: #0284C7 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-ai-care-button,
+[data-theme="light"] #weather_app_container .weather-ai-care-button,
+[data-theme="cloud_milk"] #weather_app_container .weather-ai-care-button,
+[data-theme="default"] #weather_app_container .weather-ai-care-button {
+  background-color: #FFF1F5 !important;
+  border-color: #FBCFE8 !important;
+  color: #BE185D !important;
+  box-shadow: 0 1px 4px rgba(244, 63, 94, 0.08) !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-ai-care-icon,
+[data-theme="light"] #weather_app_container .weather-ai-care-icon,
+[data-theme="cloud_milk"] #weather_app_container .weather-ai-care-icon,
+[data-theme="default"] #weather_app_container .weather-ai-care-icon {
+  color: #DB2777 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-status-strip,
+[data-theme="light"] #weather_app_container .weather-status-strip,
+[data-theme="cloud_milk"] #weather_app_container .weather-status-strip,
+[data-theme="default"] #weather_app_container .weather-status-strip {
+  background-color: #F3FAFF !important;
+  border-bottom-color: #D9EAF7 !important;
+  color: #5B6B7C !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-live-status--live,
+[data-theme="light"] #weather_app_container .weather-live-status--live,
+[data-theme="cloud_milk"] #weather_app_container .weather-live-status--live,
+[data-theme="default"] #weather_app_container .weather-live-status--live {
+  background-color: #ECFDF5 !important;
+  border-color: #A7F3D0 !important;
+  color: #047857 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-live-dot,
+[data-theme="light"] #weather_app_container .weather-live-dot,
+[data-theme="cloud_milk"] #weather_app_container .weather-live-dot,
+[data-theme="default"] #weather_app_container .weather-live-dot {
+  background-color: #10B981 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-live-status--cached,
+[data-theme="light"] #weather_app_container .weather-live-status--cached,
+[data-theme="cloud_milk"] #weather_app_container .weather-live-status--cached,
+[data-theme="default"] #weather_app_container .weather-live-status--cached {
+  background-color: #FFFBEB !important;
+  border-color: #FDE68A !important;
+  color: #B45309 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-live-status--error,
+[data-theme="light"] #weather_app_container .weather-live-status--error,
+[data-theme="cloud_milk"] #weather_app_container .weather-live-status--error,
+[data-theme="default"] #weather_app_container .weather-live-status--error {
+  background-color: #FFF1F2 !important;
+  border-color: #FECDD3 !important;
+  color: #BE123C !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-live-status--simulated,
+[data-theme="light"] #weather_app_container .weather-live-status--simulated,
+[data-theme="cloud_milk"] #weather_app_container .weather-live-status--simulated,
+[data-theme="default"] #weather_app_container .weather-live-status--simulated {
+  background-color: #F5F3FF !important;
+  border-color: #DDD6FE !important;
+  color: #6D28D9 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #weather_app_container .weather-gps-mode-text,
+[data-theme="light"] #weather_app_container .weather-gps-mode-text,
+[data-theme="cloud_milk"] #weather_app_container .weather-gps-mode-text,
+[data-theme="default"] #weather_app_container .weather-gps-mode-text {
+  color: #5B6B7C !important;
+}
+
+/* ======================================================
+   SETTINGS & API DIAGNOSTIC PANEL LIGHT MODE (Dark Mode Untouched)
+   ====================================================== */
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container,
+[data-theme="light"] #settings_app_container,
+[data-theme="cloud_milk"] #settings_app_container,
+[data-theme="default"] #settings_app_container,
+.theme-light #settings_app_container,
+.theme-cloud-milk #settings_app_container,
+.theme-default #settings_app_container {
+  background-color: #F7FBFF !important;
+  color: #243040 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-header,
+[data-theme="light"] #settings_app_container .settings-header,
+[data-theme="cloud_milk"] #settings_app_container .settings-header,
+[data-theme="default"] #settings_app_container .settings-header,
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-section-card,
+[data-theme="light"] #settings_app_container .settings-section-card,
+[data-theme="cloud_milk"] #settings_app_container .settings-section-card,
+[data-theme="default"] #settings_app_container .settings-section-card,
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-modal-card,
+[data-theme="light"] #settings_app_container .settings-modal-card,
+[data-theme="cloud_milk"] #settings_app_container .settings-modal-card,
+[data-theme="default"] #settings_app_container .settings-modal-card {
+  background-color: #FFFFFF !important;
+  border-color: #D9EAF7 !important;
+  color: #243040 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-section-card,
+[data-theme="light"] #settings_app_container .settings-section-card,
+[data-theme="cloud_milk"] #settings_app_container .settings-section-card,
+[data-theme="default"] #settings_app_container .settings-section-card {
+  box-shadow: 0 4px 16px rgba(89, 182, 232, 0.08) !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-sub-card,
+[data-theme="light"] #settings_app_container .settings-sub-card,
+[data-theme="cloud_milk"] #settings_app_container .settings-sub-card,
+[data-theme="default"] #settings_app_container .settings-sub-card,
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-option-btn,
+[data-theme="light"] #settings_app_container .settings-option-btn,
+[data-theme="cloud_milk"] #settings_app_container .settings-option-btn,
+[data-theme="default"] #settings_app_container .settings-option-btn,
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-category-tabs,
+[data-theme="light"] #settings_app_container .api-category-tabs,
+[data-theme="cloud_milk"] #settings_app_container .api-category-tabs,
+[data-theme="default"] #settings_app_container .api-category-tabs {
+  background-color: #F3FAFF !important;
+  border-color: #D9EAF7 !important;
+  color: #243040 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-option-btn--active,
+[data-theme="light"] #settings_app_container .settings-option-btn--active,
+[data-theme="cloud_milk"] #settings_app_container .settings-option-btn--active,
+[data-theme="default"] #settings_app_container .settings-option-btn--active {
+  background-color: #E0F2FE !important;
+  border-color: #7DD3FC !important;
+  color: #0369A1 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-card-divider,
+[data-theme="light"] #settings_app_container .settings-card-divider,
+[data-theme="cloud_milk"] #settings_app_container .settings-card-divider,
+[data-theme="default"] #settings_app_container .settings-card-divider {
+  border-color: #D9EAF7 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-top-save-btn,
+[data-theme="light"] #settings_app_container .settings-top-save-btn,
+[data-theme="cloud_milk"] #settings_app_container .settings-top-save-btn,
+[data-theme="default"] #settings_app_container .settings-top-save-btn,
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-preset-save-btn,
+[data-theme="light"] #settings_app_container .api-preset-save-btn,
+[data-theme="cloud_milk"] #settings_app_container .api-preset-save-btn,
+[data-theme="default"] #settings_app_container .api-preset-save-btn {
+  background-color: #0284C7 !important;
+  color: #FFFFFF !important;
+  border-color: #0284C7 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-feedback-success,
+[data-theme="light"] #settings_app_container .settings-feedback-success,
+[data-theme="cloud_milk"] #settings_app_container .settings-feedback-success,
+[data-theme="default"] #settings_app_container .settings-feedback-success {
+  background-color: #ECFDF5 !important;
+  border-color: #A7F3D0 !important;
+  color: #047857 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-feedback-success svg,
+[data-theme="light"] #settings_app_container .settings-feedback-success svg,
+[data-theme="cloud_milk"] #settings_app_container .settings-feedback-success svg,
+[data-theme="default"] #settings_app_container .settings-feedback-success svg {
+  color: #059669 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-feedback-error,
+[data-theme="light"] #settings_app_container .settings-feedback-error,
+[data-theme="cloud_milk"] #settings_app_container .settings-feedback-error,
+[data-theme="default"] #settings_app_container .settings-feedback-error,
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-danger-btn,
+[data-theme="light"] #settings_app_container .settings-danger-btn,
+[data-theme="cloud_milk"] #settings_app_container .settings-danger-btn,
+[data-theme="default"] #settings_app_container .settings-danger-btn,
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-preset-del-btn,
+[data-theme="light"] #settings_app_container .api-preset-del-btn,
+[data-theme="cloud_milk"] #settings_app_container .api-preset-del-btn,
+[data-theme="default"] #settings_app_container .api-preset-del-btn {
+  background-color: #FFF1F2 !important;
+  border-color: #FECDD3 !important;
+  color: #BE123C !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-status-info,
+[data-theme="light"] #settings_app_container .settings-status-info,
+[data-theme="cloud_milk"] #settings_app_container .settings-status-info,
+[data-theme="default"] #settings_app_container .settings-status-info {
+  color: #0369A1 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-status-warn,
+[data-theme="light"] #settings_app_container .settings-status-warn,
+[data-theme="cloud_milk"] #settings_app_container .settings-status-warn,
+[data-theme="default"] #settings_app_container .settings-status-warn {
+  color: #B45309 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-status-ok,
+[data-theme="light"] #settings_app_container .settings-status-ok,
+[data-theme="cloud_milk"] #settings_app_container .settings-status-ok,
+[data-theme="default"] #settings_app_container .settings-status-ok {
+  color: #047857 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-status-err,
+[data-theme="light"] #settings_app_container .settings-status-err,
+[data-theme="cloud_milk"] #settings_app_container .settings-status-err,
+[data-theme="default"] #settings_app_container .settings-status-err {
+  color: #BE123C !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-code-block,
+[data-theme="light"] #settings_app_container .settings-code-block,
+[data-theme="cloud_milk"] #settings_app_container .settings-code-block,
+[data-theme="default"] #settings_app_container .settings-code-block {
+  background-color: #F3FAFF !important;
+  border-color: #D9EAF7 !important;
+  color: #047857 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-preset-item,
+[data-theme="light"] #settings_app_container .api-preset-item,
+[data-theme="cloud_milk"] #settings_app_container .api-preset-item,
+[data-theme="default"] #settings_app_container .api-preset-item {
+  background-color: #F7FBFF !important;
+  border-color: #D9EAF7 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-preset-item--selected,
+[data-theme="light"] #settings_app_container .api-preset-item--selected,
+[data-theme="cloud_milk"] #settings_app_container .api-preset-item--selected,
+[data-theme="default"] #settings_app_container .api-preset-item--selected {
+  background-color: #EAF7FF !important;
+  border-color: #7DD3FC !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-preset-apply-btn,
+[data-theme="light"] #settings_app_container .api-preset-apply-btn,
+[data-theme="cloud_milk"] #settings_app_container .api-preset-apply-btn,
+[data-theme="default"] #settings_app_container .api-preset-apply-btn {
+  background-color: #FFFFFF !important;
+  border: 1px solid #D9EAF7 !important;
+  color: #243040 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diag-status-box,
+[data-theme="light"] #settings_app_container .api-diag-status-box,
+[data-theme="cloud_milk"] #settings_app_container .api-diag-status-box,
+[data-theme="default"] #settings_app_container .api-diag-status-box {
+  background-color: #F7FBFF !important;
+  border-color: #D9EAF7 !important;
+  color: #243040 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diag-status-box--err,
+[data-theme="light"] #settings_app_container .api-diag-status-box--err,
+[data-theme="cloud_milk"] #settings_app_container .api-diag-status-box--err,
+[data-theme="default"] #settings_app_container .api-diag-status-box--err {
+  background-color: #FFF1F2 !important;
+  border-color: #FECDD3 !important;
+  color: #9F1239 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diag-status-box--warn,
+[data-theme="light"] #settings_app_container .api-diag-status-box--warn,
+[data-theme="cloud_milk"] #settings_app_container .api-diag-status-box--warn,
+[data-theme="default"] #settings_app_container .api-diag-status-box--warn {
+  background-color: #FFFBEB !important;
+  border-color: #FDE68A !important;
+  color: #92400E !important;
+}
+
+/* API Diagnostic Dashboard Light Mode Overrides */
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-panel,
+[data-theme="light"] #settings_app_container .api-diagnostic-panel,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-panel,
+[data-theme="default"] #settings_app_container .api-diagnostic-panel {
+  background-color: #F7FBFF !important;
+  border-color: #D9EAF7 !important;
+  color: #243040 !important;
+  box-shadow: 0 2px 12px rgba(89, 182, 232, 0.08) !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-header,
+[data-theme="light"] #settings_app_container .api-diagnostic-header,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-header,
+[data-theme="default"] #settings_app_container .api-diagnostic-header {
+  border-bottom-color: #D9EAF7 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-title,
+[data-theme="light"] #settings_app_container .api-diagnostic-title,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-title,
+[data-theme="default"] #settings_app_container .api-diagnostic-title,
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-bug,
+[data-theme="light"] #settings_app_container .api-diagnostic-bug,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-bug,
+[data-theme="default"] #settings_app_container .api-diagnostic-bug {
+  color: #B45309 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-shield-note,
+[data-theme="light"] #settings_app_container .api-diagnostic-shield-note,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-shield-note,
+[data-theme="default"] #settings_app_container .api-diagnostic-shield-note {
+  color: #5B6B7C !important;
+  opacity: 1 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-card,
+[data-theme="light"] #settings_app_container .api-diagnostic-card,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-card,
+[data-theme="default"] #settings_app_container .api-diagnostic-card {
+  background-color: #FFFFFF !important;
+  border-color: #D9EAF7 !important;
+  color: #243040 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-card--amber,
+[data-theme="light"] #settings_app_container .api-diagnostic-card--amber,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-card--amber,
+[data-theme="default"] #settings_app_container .api-diagnostic-card--amber {
+  background-color: #FFFFFF !important;
+  border-color: #FCD34D !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-card--sky,
+[data-theme="light"] #settings_app_container .api-diagnostic-card--sky,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-card--sky,
+[data-theme="default"] #settings_app_container .api-diagnostic-card--sky {
+  background-color: #FFFFFF !important;
+  border-color: #BAE6FD !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-section-title--amber,
+[data-theme="light"] #settings_app_container .api-diagnostic-section-title--amber,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-section-title--amber,
+[data-theme="default"] #settings_app_container .api-diagnostic-section-title--amber {
+  color: #B45309 !important;
+  border-bottom-color: #FDE68A !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-section-title--emerald,
+[data-theme="light"] #settings_app_container .api-diagnostic-section-title--emerald,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-section-title--emerald,
+[data-theme="default"] #settings_app_container .api-diagnostic-section-title--emerald {
+  color: #047857 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-section-title--sky,
+[data-theme="light"] #settings_app_container .api-diagnostic-section-title--sky,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-section-title--sky,
+[data-theme="default"] #settings_app_container .api-diagnostic-section-title--sky {
+  color: #0369A1 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-section-title--purple,
+[data-theme="light"] #settings_app_container .api-diagnostic-section-title--purple,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-section-title--purple,
+[data-theme="default"] #settings_app_container .api-diagnostic-section-title--purple {
+  color: #6D28D9 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-log-row,
+[data-theme="light"] #settings_app_container .api-diagnostic-log-row,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-log-row,
+[data-theme="default"] #settings_app_container .api-diagnostic-log-row {
+  background-color: #F3FAFF !important;
+  border-color: #D9EAF7 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-label,
+[data-theme="light"] #settings_app_container .api-diagnostic-label,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-label,
+[data-theme="default"] #settings_app_container .api-diagnostic-label,
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-value,
+[data-theme="light"] #settings_app_container .api-diagnostic-value,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-value,
+[data-theme="default"] #settings_app_container .api-diagnostic-value {
+  color: #243040 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-muted,
+[data-theme="light"] #settings_app_container .api-diagnostic-muted,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-muted,
+[data-theme="default"] #settings_app_container .api-diagnostic-muted,
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diag-muted,
+[data-theme="light"] #settings_app_container .api-diag-muted,
+[data-theme="cloud_milk"] #settings_app_container .api-diag-muted,
+[data-theme="default"] #settings_app_container .api-diag-muted {
+  color: #5B6B7C !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-info,
+[data-theme="light"] #settings_app_container .api-diagnostic-info,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-info,
+[data-theme="default"] #settings_app_container .api-diagnostic-info {
+  color: #0369A1 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-ok,
+[data-theme="light"] #settings_app_container .api-diagnostic-ok,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-ok,
+[data-theme="default"] #settings_app_container .api-diagnostic-ok,
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diag-ok,
+[data-theme="light"] #settings_app_container .api-diag-ok,
+[data-theme="cloud_milk"] #settings_app_container .api-diag-ok,
+[data-theme="default"] #settings_app_container .api-diag-ok {
+  color: #047857 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-warn,
+[data-theme="light"] #settings_app_container .api-diagnostic-warn,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-warn,
+[data-theme="default"] #settings_app_container .api-diagnostic-warn,
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diag-warn,
+[data-theme="light"] #settings_app_container .api-diag-warn,
+[data-theme="cloud_milk"] #settings_app_container .api-diag-warn,
+[data-theme="default"] #settings_app_container .api-diag-warn {
+  color: #B45309 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-err,
+[data-theme="light"] #settings_app_container .api-diagnostic-err,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-err,
+[data-theme="default"] #settings_app_container .api-diagnostic-err,
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diag-err,
+[data-theme="light"] #settings_app_container .api-diag-err,
+[data-theme="cloud_milk"] #settings_app_container .api-diag-err,
+[data-theme="default"] #settings_app_container .api-diag-err {
+  color: #BE123C !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-purple,
+[data-theme="light"] #settings_app_container .api-diagnostic-purple,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-purple,
+[data-theme="default"] #settings_app_container .api-diagnostic-purple {
+  color: #6D28D9 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-badge,
+[data-theme="light"] #settings_app_container .api-diagnostic-badge,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-badge,
+[data-theme="default"] #settings_app_container .api-diagnostic-badge {
+  background-color: #E0F2FE !important;
+  color: #0369A1 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-attempt--ok,
+[data-theme="light"] #settings_app_container .api-diagnostic-attempt--ok,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-attempt--ok,
+[data-theme="default"] #settings_app_container .api-diagnostic-attempt--ok {
+  background-color: #ECFDF5 !important;
+  border-color: #A7F3D0 !important;
+  color: #065F46 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .api-diagnostic-attempt--fail,
+[data-theme="light"] #settings_app_container .api-diagnostic-attempt--fail,
+[data-theme="cloud_milk"] #settings_app_container .api-diagnostic-attempt--fail,
+[data-theme="default"] #settings_app_container .api-diagnostic-attempt--fail {
+  background-color: #F3FAFF !important;
+  border-color: #D9EAF7 !important;
+  color: #243040 !important;
+}
+
+/* ======================================================
+   GLOBAL FONT SIZE SETTINGS CARD & PREVIEW (Light & Dark Modes)
+   ====================================================== */
+#settings_app_container .settings-font-percent-badge {
+  background-color: #E0F2FE;
+  color: #0369A1;
+  border: 1px solid #BAE6FD;
+}
+
+[data-theme="dark"] #settings_app_container .settings-font-percent-badge,
+.theme-dark #settings_app_container .settings-font-percent-badge {
+  background-color: rgba(56, 189, 248, 0.16);
+  color: #38BDF8;
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+#settings_app_container .settings-font-saved-badge {
+  background-color: #ECFDF5;
+  color: #047857;
+  border: 1px solid #A7F3D0;
+}
+
+[data-theme="dark"] #settings_app_container .settings-font-saved-badge,
+.theme-dark #settings_app_container .settings-font-saved-badge {
+  background-color: rgba(16, 185, 129, 0.16);
+  color: #34D399;
+  border-color: rgba(52, 211, 153, 0.35);
+}
+
+#settings_app_container .settings-font-dirty-badge {
+  background-color: #FFFBEB;
+  color: #B45309;
+  border: 1px solid #FDE68A;
+}
+
+[data-theme="dark"] #settings_app_container .settings-font-dirty-badge,
+.theme-dark #settings_app_container .settings-font-dirty-badge {
+  background-color: rgba(245, 158, 11, 0.16);
+  color: #FBBF24;
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+#settings_app_container .settings-font-step-btn,
+#settings_app_container .settings-font-preset-btn,
+#settings_app_container .settings-font-reset-btn {
+  background-color: #F3FAFF;
+  color: #243040;
+  border: 1px solid #D9EAF7;
+}
+
+#settings_app_container .settings-font-step-btn:hover:not(:disabled),
+#settings_app_container .settings-font-preset-btn:hover,
+#settings_app_container .settings-font-reset-btn:hover {
+  background-color: #EAF7FF;
+  border-color: #9DD8F5;
+}
+
+[data-theme="dark"] #settings_app_container .settings-font-step-btn,
+.theme-dark #settings_app_container .settings-font-step-btn,
+[data-theme="dark"] #settings_app_container .settings-font-preset-btn,
+.theme-dark #settings_app_container .settings-font-preset-btn,
+[data-theme="dark"] #settings_app_container .settings-font-reset-btn,
+.theme-dark #settings_app_container .settings-font-reset-btn {
+  background-color: #151D28;
+  color: #E2E8F0;
+  border-color: rgba(141, 204, 244, 0.22);
+}
+
+[data-theme="dark"] #settings_app_container .settings-font-step-btn:hover:not(:disabled),
+.theme-dark #settings_app_container .settings-font-step-btn:hover:not(:disabled),
+[data-theme="dark"] #settings_app_container .settings-font-preset-btn:hover,
+.theme-dark #settings_app_container .settings-font-preset-btn:hover,
+[data-theme="dark"] #settings_app_container .settings-font-reset-btn:hover,
+.theme-dark #settings_app_container .settings-font-reset-btn:hover {
+  background-color: #1E293B;
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+#settings_app_container .settings-font-preset-btn--active,
+[data-theme="light"] #settings_app_container .settings-font-preset-btn--active,
+[data-theme="cloud_milk"] #settings_app_container .settings-font-preset-btn--active,
+[data-theme="default"] #settings_app_container .settings-font-preset-btn--active {
+  background-color: #0284C7 !important;
+  color: #FFFFFF !important;
+  border-color: #0284C7 !important;
+}
+
+[data-theme="dark"] #settings_app_container .settings-font-preset-btn--active,
+.theme-dark #settings_app_container .settings-font-preset-btn--active {
+  background-color: #0284C7 !important;
+  color: #FFFFFF !important;
+  border-color: #38BDF8 !important;
+}
+
+#settings_app_container .settings-font-range {
+  accent-color: #0284C7;
+}
+
+[data-theme="dark"] #settings_app_container .settings-font-range,
+.theme-dark #settings_app_container .settings-font-range {
+  accent-color: #38BDF8;
+}
+
+#settings_app_container .settings-font-preview-card {
+  background-color: #F3FAFF;
+  border-color: #D9EAF7;
+}
+
+[data-theme="dark"] #settings_app_container .settings-font-preview-card,
+.theme-dark #settings_app_container .settings-font-preview-card {
+  background-color: #121820;
+  border-color: rgba(141, 204, 244, 0.22);
+}
+
+#settings_app_container .settings-font-preview-row {
+  background-color: #FFFFFF;
+  border-color: #D9EAF7;
+}
+
+[data-theme="dark"] #settings_app_container .settings-font-preview-row,
+.theme-dark #settings_app_container .settings-font-preview-row {
+  background-color: #18222E;
+  border-color: rgba(141, 204, 244, 0.18);
+}
+
+#settings_app_container .settings-font-preview-status {
+  background-color: #ECFDF5;
+  color: #047857;
+  border: 1px solid #A7F3D0;
+}
+
+[data-theme="dark"] #settings_app_container .settings-font-preview-status,
+.theme-dark #settings_app_container .settings-font-preview-status {
+  background-color: rgba(16, 185, 129, 0.16);
+  color: #34D399;
+  border: 1px solid rgba(52, 211, 153, 0.35);
+}
+
+#settings_app_container .settings-font-preview-btn,
+#settings_app_container .settings-font-save-btn {
+  background-color: #0284C7;
+  color: #FFFFFF;
+}
+
+#settings_app_container .settings-font-save-btn:hover {
+  background-color: #0369A1;
+}
+
+[data-theme="dark"] #settings_app_container .settings-font-preview-btn,
+.theme-dark #settings_app_container .settings-font-preview-btn,
+[data-theme="dark"] #settings_app_container .settings-font-save-btn,
+.theme-dark #settings_app_container .settings-font-save-btn {
+  background-color: #0284C7;
+  color: #FFFFFF;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-card-title,
+[data-theme="light"] #settings_app_container .settings-card-title,
+[data-theme="cloud_milk"] #settings_app_container .settings-card-title,
+[data-theme="default"] #settings_app_container .settings-card-title,
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-preview-body,
+[data-theme="light"] #settings_app_container .settings-preview-body,
+[data-theme="cloud_milk"] #settings_app_container .settings-preview-body,
+[data-theme="default"] #settings_app_container .settings-preview-body {
+  color: #243040 !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-card-subtitle,
+[data-theme="light"] #settings_app_container .settings-card-subtitle,
+[data-theme="cloud_milk"] #settings_app_container .settings-card-subtitle,
+[data-theme="default"] #settings_app_container .settings-card-subtitle {
+  color: #5B6B7C !important;
+}
+
+:root:not([data-theme="dark"]):not(.theme-dark) #settings_app_container .settings-preview-avatar,
+[data-theme="light"] #settings_app_container .settings-preview-avatar,
+[data-theme="cloud_milk"] #settings_app_container .settings-preview-avatar,
+[data-theme="default"] #settings_app_container .settings-preview-avatar {
+  background-color: #E0F2FE !important;
+  color: #0369A1 !important;
+}
+
+/* ======================================================
+   GLOBAL PROPORTIONAL TEXT SCALING (Text-only via --global-font-scale)
+   Excludes WeChat 1-on-1 Private Chat & GroupChatView
+   ====================================================== */
+.phone-screen,
+.phone-screen .global-font-preview-box {
+  --text-xs: calc(0.75rem * var(--global-font-scale, 1));
+  --text-sm: calc(0.875rem * var(--global-font-scale, 1));
+  --text-base: calc(1rem * var(--global-font-scale, 1));
+  --text-lg: calc(1.125rem * var(--global-font-scale, 1));
+  --text-xl: calc(1.25rem * var(--global-font-scale, 1));
+  --text-2xl: calc(1.5rem * var(--global-font-scale, 1));
+  --text-3xl: calc(1.875rem * var(--global-font-scale, 1));
+  --text-4xl: calc(2.25rem * var(--global-font-scale, 1));
+  --text-5xl: calc(3rem * var(--global-font-scale, 1));
+  --text-6xl: calc(3.75rem * var(--global-font-scale, 1));
+}
+
+.phone-screen [data-global-font-excluded="true"],
+.phone-screen .wechat-chat-font-isolated {
+  --global-font-scale: 1;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --text-4xl: 2.25rem;
+  --text-5xl: 3rem;
+  --text-6xl: 3.75rem;
+}
+
+.phone-screen .text-\[8px\] {
+  font-size: calc(8px * var(--global-font-scale, 1));
+}
+
+.phone-screen .text-\[9px\] {
+  font-size: calc(9px * var(--global-font-scale, 1));
+}
+
+.phone-screen .text-\[10px\] {
+  font-size: calc(10px * var(--global-font-scale, 1));
+}
+
+.phone-screen .text-\[11px\] {
+  font-size: calc(11px * var(--global-font-scale, 1));
+}
+
+.phone-screen .text-\[13px\] {
+  font-size: calc(13px * var(--global-font-scale, 1));
+}
+
 /* Smooth Theme Switch Transitions */
 * {
   transition-property: background-color, border-color, color;

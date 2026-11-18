@@ -306,7 +306,10 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   };
 
   return (
-    <div className="wx-chat-viewport flex flex-col h-full bg-[#EDEDED] dark:bg-zinc-950 select-none relative overflow-hidden font-sans">
+    <div
+      data-global-font-excluded="true"
+      className="wx-chat-viewport wechat-chat-font-isolated flex flex-col h-full bg-[#EDEDED] dark:bg-zinc-950 select-none relative overflow-hidden font-sans"
+    >
       {/* Top Header */}
       <div className="wx-header h-12 bg-[#EDEDED] dark:bg-zinc-900 border-b border-zinc-300/70 dark:border-zinc-800 px-3 flex items-center justify-between shrink-0 z-20">
         <div className="flex items-center gap-1 min-w-0">

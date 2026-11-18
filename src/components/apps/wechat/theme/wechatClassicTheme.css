@@ -683,3 +683,61 @@ html[data-theme="dark"] .wechat-app[data-wechat-theme="classic"] .wx-quote-previ
 .wechat-app[data-wechat-theme="classic"] .wx-toggle-off {
   background-color: var(--wx-btn-disabled-bg) !important;
 }
+
+/* 15. Chat Font Size Controls & Real-time Preview Inside Classic Theme */
+.wechat-app[data-wechat-theme="classic"] .wx-chat-text {
+  font-size: var(--chat-message-font-size, 0.8125rem);
+  line-height: 1.55;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-font-size-badge {
+  background-color: rgba(7, 193, 96, 0.12) !important;
+  color: var(--wx-green) !important;
+  border-color: rgba(7, 193, 96, 0.35) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-font-step-btn {
+  background-color: var(--wx-surface) !important;
+  color: var(--wx-text) !important;
+  border-color: var(--wx-divider) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-font-step-btn:hover:not(:disabled) {
+  background-color: var(--wx-surface-hover) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-font-preset-btn {
+  background-color: var(--wx-surface) !important;
+  color: var(--wx-text-secondary) !important;
+  border-color: var(--wx-divider) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-font-preset-btn:hover {
+  background-color: var(--wx-surface-hover) !important;
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-font-preset-btn--active {
+  background-color: var(--wx-green) !important;
+  color: #FFFFFF !important;
+  border-color: var(--wx-green) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-font-reset-btn {
+  background-color: var(--wx-sub-card-bg) !important;
+  color: var(--wx-text-secondary) !important;
+  border-color: var(--wx-divider) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-font-reset-btn:hover {
+  background-color: var(--wx-surface-hover) !important;
+  color: var(--wx-text) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-font-range {
+  accent-color: var(--wx-green) !important;
+}
+
+.wechat-app[data-wechat-theme="classic"] .wx-font-preview-frame {
+  border-color: var(--wx-divider) !important;
+}

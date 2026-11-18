@@ -277,16 +277,16 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
   return (
     <div id="weather_app_container" className="h-full flex flex-col bg-slate-950 text-slate-100 overflow-hidden select-none font-sans">
       {/* Top App Header */}
-      <div id="weather_header" className="py-2.5 px-3 flex items-center justify-between bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80 z-20 gap-2">
-        <div className="flex items-center gap-2">
+      <div id="weather_header" className="weather-toolbar min-h-12 py-2 px-3 flex flex-wrap items-center justify-between bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80 z-20 gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           {onBackToLauncher && (
             <button
               id="weather_back_to_launcher_btn"
               onClick={onBackToLauncher}
-              className="flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300 font-medium px-2.5 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700/90 border border-slate-700/60 transition active:scale-95 shadow-sm shrink-0"
+              className="weather-toolbar-button flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300 font-medium px-2.5 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700/90 border border-slate-700/60 transition active:scale-95 shadow-sm shrink-0"
               title="返回桌面"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-4 h-4 shrink-0" />
               <span>桌面</span>
             </button>
           )}
@@ -295,18 +295,18 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
           <button
             id="weather_city_select_btn"
             onClick={() => setShowCityModal(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-slate-800/90 hover:bg-slate-700/90 border border-slate-700/60 text-slate-100 font-medium text-xs sm:text-sm transition-all active:scale-95 shadow-sm"
+            className="weather-location-selector flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-slate-800/90 hover:bg-slate-700/90 border border-slate-700/60 text-slate-100 font-medium text-xs sm:text-sm transition-all active:scale-95 shadow-sm min-w-0"
           >
             {isAutoGps ? (
-              <Navigation className="w-3.5 h-3.5 text-sky-400 shrink-0 animate-pulse" />
+              <Navigation className="weather-location-icon w-3.5 h-3.5 text-sky-400 shrink-0 animate-pulse" />
             ) : (
-              <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <MapPin className="weather-location-icon--manual w-3.5 h-3.5 text-amber-400 shrink-0" />
             )}
-            <span className="truncate max-w-[90px] sm:max-w-[130px] font-semibold">{displayCityName}</span>
-            <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-normal shrink-0 ${isAutoGps ? 'bg-sky-500/20 text-sky-300' : 'bg-amber-500/20 text-amber-300'}`}>
+            <span className="weather-location-name truncate max-w-[96px] sm:max-w-[140px] font-semibold">{displayCityName}</span>
+            <span className={`weather-location-badge text-[9px] px-1.5 py-0.2 rounded-full font-normal shrink-0 ${isAutoGps ? 'weather-location-badge--gps bg-sky-500/20 text-sky-300' : 'weather-location-badge--manual bg-amber-500/20 text-amber-300'}`}>
               {isAutoGps ? 'GPS' : '指定'}
             </span>
-            <ChevronRight className="w-3.5 h-3.5 text-slate-400 rotate-90 shrink-0" />
+            <ChevronRight className="weather-location-chevron w-3.5 h-3.5 text-slate-400 rotate-90 shrink-0" />
           </button>
         </div>
 
@@ -316,9 +316,9 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
             id="weather_use_current_location_btn"
             onClick={handleUseCurrentLocation}
             disabled={isLocatingGps}
-            className={`p-1.5 rounded-full border transition-all active:scale-90 ${
+            className={`weather-locate-button p-1.5 rounded-full border transition-all active:scale-90 ${
               isAutoGps
-                ? 'bg-sky-500/20 border-sky-500/40 text-sky-300'
+                ? 'weather-locate-button--active bg-sky-500/20 border-sky-500/40 text-sky-300'
                 : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700'
             }`}
             title="使用当前位置 (原生 GPS 定位)"
@@ -330,7 +330,7 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
             id="weather_refresh_location_btn"
             onClick={handleRefresh}
             disabled={isRefreshing}
-            className="p-1.5 rounded-full bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 text-slate-300 transition-all active:scale-90"
+            className="weather-refresh-button p-1.5 rounded-full bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 text-slate-300 transition-all active:scale-90"
             title="刷新天气与位置"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-sky-400' : ''}`} />
@@ -339,41 +339,41 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
           <button
             id="weather_care_settings_btn"
             onClick={() => setShowCareSettingsModal(true)}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-xs font-medium transition-all active:scale-95"
+            className="weather-ai-care-button flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-xs font-medium transition-all active:scale-95 shrink-0"
             title="AI 天气感知与主动关怀设置"
           >
-            <Sparkles className="w-3.5 h-3.5 text-rose-400" />
-            <span>AI关怀</span>
+            <Sparkles className="weather-ai-care-icon w-3.5 h-3.5 text-rose-400 shrink-0" />
+            <span className="whitespace-nowrap">AI关怀</span>
           </button>
         </div>
       </div>
 
       {/* Real-time System Time & Location Sub-bar */}
-      <div id="weather_realtime_clock_bar" className="px-4 py-1.5 bg-slate-900/40 border-b border-slate-800/40 flex items-center justify-between text-[11px] text-slate-400">
-        <div className="flex items-center gap-1.5">
-          <Clock className="w-3 h-3 text-sky-400 shrink-0" />
-          <span>{currentTimeInfo.formattedDate} {currentTimeInfo.dayOfWeek} {currentTimeInfo.formattedTime}</span>
+      <div id="weather_realtime_clock_bar" className="weather-status-strip px-4 py-1.5 bg-slate-900/40 border-b border-slate-800/40 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px] text-slate-400">
+        <div className="weather-status-time flex items-center gap-1.5 min-w-0">
+          <Clock className="weather-status-clock-icon w-3 h-3 text-sky-400 shrink-0" />
+          <span className="truncate">{currentTimeInfo.formattedDate} {currentTimeInfo.dayOfWeek} {currentTimeInfo.formattedTime}</span>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
           {weather?.isSimulated || weather?.dataStatus === 'simulated' ? (
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-semibold border border-purple-500/30">
+            <span className="weather-live-status weather-live-status--simulated text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-semibold border border-purple-500/30">
               🧪 [测试数据/模拟模式]
             </span>
           ) : weather?.dataStatus === 'cached' || weather?.dataSourceInfo?.isFromCache ? (
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-medium border border-amber-500/30">
+            <span className="weather-live-status weather-live-status--cached text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-medium border border-amber-500/30">
               🟡 离线缓存数据
             </span>
           ) : weather?.dataStatus === 'error' ? (
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-medium border border-rose-500/30">
+            <span className="weather-live-status weather-live-status--error text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-medium border border-rose-500/30">
               🔴 请求/定位失败
             </span>
           ) : (
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-medium border border-emerald-500/30 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="weather-live-status weather-live-status--live text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-medium border border-emerald-500/30 flex items-center gap-1">
+              <span className="weather-live-dot w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               🟢 实时直连
             </span>
           )}
-          <span className="text-[10px] text-slate-500">
+          <span className="weather-gps-mode-text text-[10px] text-slate-500 whitespace-nowrap">
             {isAutoGps ? '📡 GPS定位' : '📍 手动城市'}
           </span>
         </div>
@@ -403,7 +403,7 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
         {/* Dynamic Hero Weather Card */}
         <div
           id="weather_hero_card"
-          className={`relative rounded-3xl p-6 overflow-hidden border shadow-lg transition-all ${
+          className={`weather-current-card relative rounded-3xl p-6 overflow-hidden border shadow-lg transition-all ${
             isRaining
               ? 'bg-gradient-to-b from-blue-900/60 via-slate-900/80 to-slate-950 border-blue-500/30'
               : isNight
@@ -411,31 +411,31 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
               : 'bg-gradient-to-b from-sky-900/60 via-slate-900/80 to-slate-950 border-sky-500/30'
           }`}
         >
-          <div className="absolute top-0 right-0 w-48 h-48 bg-sky-500/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="weather-current-glow absolute top-0 right-0 w-48 h-48 bg-sky-500/10 rounded-full blur-3xl pointer-events-none" />
 
-          <div className="relative z-10 flex items-start justify-between">
-            <div>
+          <div className="relative z-10 flex items-start justify-between gap-3">
+            <div className="min-w-0">
               <div className="flex items-baseline gap-1">
-                <span className="text-6xl font-light tracking-tight text-white">{weather?.temp ?? '--'}</span>
-                <span className="text-3xl text-sky-300 font-light">°C</span>
+                <span className="weather-current-temp text-6xl font-light tracking-tight text-white">{weather?.temp ?? '--'}</span>
+                <span className="weather-current-unit text-3xl text-sky-300 font-light">°C</span>
               </div>
-              <div className="mt-1 flex items-center gap-2">
-                <span className="text-lg font-medium text-slate-100">{weather?.condition || '天气获取中...'}</span>
+              <div className="mt-1 flex items-center gap-2 flex-wrap">
+                <span className="weather-current-condition text-lg font-medium text-slate-100">{weather?.condition || '天气获取中...'}</span>
                 {weather?.feelsLike !== undefined && (
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-slate-300">
+                  <span className="weather-feels-pill text-xs px-2 py-0.5 rounded-full bg-white/10 text-slate-300">
                     体感 {weather.feelsLike}°C
                   </span>
                 )}
               </div>
-              <div className="mt-1 text-xs text-slate-400">
+              <div className="weather-current-meta mt-1 text-xs text-slate-400">
                 {weather?.tempMax !== undefined ? `最高 ${weather.tempMax}° · 最低 ${weather.tempMin}°` : ''} 
                 {weather?.windDirection ? ` · ${weather.windDirection}` : ''}
               </div>
             </div>
 
-            <div className="flex flex-col items-end">
+            <div className="flex flex-col items-end shrink-0">
               {getWeatherIcon(weather?.condition, weather?.conditionCode, 'w-16 h-16 drop-shadow-md')}
-              <span className="mt-2 text-[11px] text-slate-400">
+              <span className="weather-current-meta mt-2 text-[11px] text-slate-400">
                 更新于 {weather?.updatedAt ? new Date(weather.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '刚刚'}
               </span>
             </div>
@@ -443,8 +443,8 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
 
           {/* Short-term Rain Prediction Banner */}
           {weather?.rainForecastSummary && (
-            <div id="weather_rain_prediction_banner" className="mt-4 pt-3 border-t border-white/10 flex items-center gap-2 text-xs text-sky-200">
-              <CloudRain className="w-4 h-4 text-sky-400 shrink-0" />
+            <div id="weather_rain_prediction_banner" className="weather-current-rain-banner mt-4 pt-3 border-t border-white/10 flex items-center gap-2 text-xs text-sky-200">
+              <CloudRain className="weather-current-rain-icon w-4 h-4 text-sky-400 shrink-0" />
               <span className="font-normal">{weather.rainForecastSummary}</span>
             </div>
           )}
@@ -658,66 +658,66 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
         </div>
 
         {/* Developer Mode & Data Source Inspector */}
-        <div id="weather_developer_inspector_card" className="p-4 rounded-3xl bg-slate-900/50 border border-slate-800/70 text-xs space-y-2.5 pb-6">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-800/60">
-            <div className="flex items-center gap-1.5 font-semibold text-slate-300">
-              <Shield className="w-3.5 h-3.5 text-sky-400" />
-              <span>数据来源与真实性诊断 (开发模式)</span>
+        <div id="weather_developer_inspector_card" className="weather-diagnostic-panel p-4 rounded-3xl bg-slate-900/50 border border-slate-800/70 text-xs space-y-2.5 pb-6">
+          <div className="weather-diagnostic-header flex items-center justify-between gap-2 pb-2 border-b border-slate-800/60">
+            <div className="weather-diagnostic-title flex items-center gap-1.5 font-semibold text-slate-300 min-w-0">
+              <Shield className="weather-diagnostic-shield w-3.5 h-3.5 text-sky-400 shrink-0" />
+              <span className="truncate">数据来源与真实性诊断 (开发模式)</span>
             </div>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 font-mono">
+            <span className="weather-status-badge text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 font-mono shrink-0">
               REAL LIVE DATA
             </span>
           </div>
 
           <div className="grid grid-cols-2 gap-2 text-[11px]">
-            <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800/50">
-              <span className="text-slate-500 block">手机真实经纬度:</span>
-              <span className="font-mono text-slate-200">
+            <div className="weather-diagnostic-item min-w-0 p-2 rounded-xl bg-slate-950/60 border border-slate-800/50">
+              <span className="weather-diagnostic-label text-slate-500 block">手机真实经纬度:</span>
+              <span className="weather-diagnostic-value font-mono text-slate-200 truncate block">
                 {weather?.latitude !== undefined && weather?.longitude !== undefined
                   ? `${weather.latitude.toFixed(4)}, ${weather.longitude.toFixed(4)}`
                   : '未提供'}
               </span>
             </div>
 
-            <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800/50">
-              <span className="text-slate-500 block">定位模式:</span>
-              <span className="text-slate-200">
+            <div className="weather-diagnostic-item min-w-0 p-2 rounded-xl bg-slate-950/60 border border-slate-800/50">
+              <span className="weather-diagnostic-label text-slate-500 block">定位模式:</span>
+              <span className="weather-diagnostic-value text-slate-200 truncate block">
                 {isAutoGps ? '📡 手机原生 GPS' : '📍 手动指定城市'}
               </span>
             </div>
 
-            <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800/50">
-              <span className="text-slate-500 block">气象预报服务源:</span>
-              <span className="text-slate-200 truncate block" title={weather?.dataSourceInfo?.serviceName}>
+            <div className="weather-diagnostic-item min-w-0 p-2 rounded-xl bg-slate-950/60 border border-slate-800/50">
+              <span className="weather-diagnostic-label text-slate-500 block">气象预报服务源:</span>
+              <span className="weather-diagnostic-value text-slate-200 truncate block" title={weather?.dataSourceInfo?.serviceName}>
                 {weather?.dataSourceInfo?.serviceName || 'Open-Meteo WMO / ECMWF'}
               </span>
             </div>
 
-            <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800/50">
-              <span className="text-slate-500 block">逆地理编码服务:</span>
-              <span className="text-slate-200 truncate block">
+            <div className="weather-diagnostic-item min-w-0 p-2 rounded-xl bg-slate-950/60 border border-slate-800/50">
+              <span className="weather-diagnostic-label text-slate-500 block">逆地理编码服务:</span>
+              <span className="weather-diagnostic-value text-slate-200 truncate block" title={weather?.dataSourceInfo?.geocodingService}>
                 {weather?.dataSourceInfo?.geocodingService || 'Open-Meteo & BigDataCloud'}
               </span>
             </div>
 
-            <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800/50">
-              <span className="text-slate-500 block">请求耗时 & 网络延时:</span>
-              <span className="font-mono text-emerald-400">
+            <div className="weather-diagnostic-item min-w-0 p-2 rounded-xl bg-slate-950/60 border border-slate-800/50">
+              <span className="weather-diagnostic-label text-slate-500 block">请求耗时 & 网络延时:</span>
+              <span className="weather-diagnostic-latency font-mono text-emerald-400 truncate block">
                 {weather?.dataSourceInfo?.networkLatencyMs !== undefined
                   ? `${weather.dataSourceInfo.networkLatencyMs} ms`
                   : '实时直连'}
               </span>
             </div>
 
-            <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800/50">
-              <span className="text-slate-500 block">最新采样更新时间:</span>
-              <span className="font-mono text-slate-200">
+            <div className="weather-diagnostic-item min-w-0 p-2 rounded-xl bg-slate-950/60 border border-slate-800/50">
+              <span className="weather-diagnostic-label text-slate-500 block">最新采样更新时间:</span>
+              <span className="weather-diagnostic-value font-mono text-slate-200 truncate block">
                 {weather?.updatedAt ? new Date(weather.updatedAt).toLocaleTimeString() : '刚刚'}
               </span>
             </div>
           </div>
 
-          <div className="text-[10px] text-slate-500 pt-1 leading-relaxed border-t border-slate-800/40">
+          <div className="weather-diagnostic-footnote text-[10px] text-slate-500 pt-1.5 leading-relaxed border-t border-slate-800/40">
             * 架构合规保证：所有时间均读取手机底层系统时钟；定位直连原生 GPS；天气与地理编码通过普通网络直连气象局公开 API；用户配置的 AI API 绝不介入数据采集与定位，仅用于微信聊天与自然语言智能关怀。
           </div>
         </div>

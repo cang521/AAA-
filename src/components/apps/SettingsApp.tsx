@@ -77,6 +77,14 @@ import {
   getNextSettingsAppRenderIndex,
 } from '../../lib/inputTracker';
 import { PressableButton, ElasticToggle } from '../ui/interaction';
+import {
+  loadGlobalDisplayPreferences,
+  saveGlobalDisplayPreferences,
+  resetGlobalDisplayPreferences,
+  clampGlobalFontScale,
+  scaleToPercent,
+} from '../../lib/globalDisplayPreferences';
+import { GlobalFontSizeSettingsCard } from './settings/GlobalFontSizeSettingsCard';
 
 interface SettingsAppProps {
   onBackToLauncher: () => void;
@@ -121,6 +129,15 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   settingsAppRenderCount.current += 1;
 
   const [controls, setControls] = useState<AiControls>(aiControls);
+
+  // Global Display / Font Scale draft & saved state
+  const [savedFontScale, setSavedFontScale] = useState<number>(
+    () => loadGlobalDisplayPreferences().fontScale
+  );
+  const [draftFontScale, setDraftFontScale] = useState<number>(
+    () => loadGlobalDisplayPreferences().fontScale
+  );
+  const [fontFeedbackMsg, setFontFeedbackMsg] = useState<string | null>(null);
 
   // Active Provider Category Tab
   const [activeCategory, setActiveCategory] = useState<'text' | 'image' | 'voice'>('text');
@@ -382,14 +399,44 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     }));
   };
 
+  const handleSaveGlobalFontScale = () => {
+    const savedPrefs = saveGlobalDisplayPreferences({ fontScale: draftFontScale });
+    setSavedFontScale(savedPrefs.fontScale);
+    setDraftFontScale(savedPrefs.fontScale);
+    setFontFeedbackMsg(`已保存并应用全局字号 (${scaleToPercent(savedPrefs.fontScale)}%)`);
+    setTimeout(() => setFontFeedbackMsg(null), 2800);
+  };
+
+  const handleResetGlobalFontScale = () => {
+    const defaults = resetGlobalDisplayPreferences();
+    setSavedFontScale(defaults.fontScale);
+    setDraftFontScale(defaults.fontScale);
+    setFontFeedbackMsg('已恢复默认字号 (100%)');
+    setTimeout(() => setFontFeedbackMsg(null), 2800);
+  };
+
   const handleGlobalSave = () => {
     onSaveAiControls(controls);
+
+    const fontChanged = scaleToPercent(draftFontScale) !== scaleToPercent(savedFontScale);
+    if (fontChanged) {
+      const savedPrefs = saveGlobalDisplayPreferences({ fontScale: draftFontScale });
+      setSavedFontScale(savedPrefs.fontScale);
+      setDraftFontScale(savedPrefs.fontScale);
+      setFontFeedbackMsg(`已保存并应用全局字号 (${scaleToPercent(savedPrefs.fontScale)}%)`);
+      setTimeout(() => setFontFeedbackMsg(null), 2800);
+    }
 
     const currentText = settings.text;
     const hasBaseUrl = Boolean(currentText && currentText.baseUrl && currentText.baseUrl.trim().length > 0);
     const hasApiKey = Boolean(currentText && currentText.apiKey && currentText.apiKey.trim().length > 0);
 
     if (!hasApiKey && !hasBaseUrl) {
+      if (fontChanged) {
+        setSaveSuccessMsg(`🎉 全局字体大小 (${scaleToPercent(clampGlobalFontScale(draftFontScale))}%) 与系统控制设置已保存生效！`);
+        setTimeout(() => setSaveSuccessMsg(''), 3500);
+        return;
+      }
       addDiagnosticLog({
         tag: '[SAVE_REJECTED]',
         baseUrlLen: 0,
@@ -745,28 +792,28 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-black text-zinc-100 font-sans select-none overflow-hidden">
+    <div id="settings_app_container" className="settings-app-root flex flex-col h-full bg-black text-zinc-100 font-sans select-none overflow-hidden">
       {/* 顶部导航 */}
-      <div className="h-12 px-3 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between z-20 shrink-0">
+      <div className="settings-header min-h-12 py-2 px-3 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between gap-2 z-20 shrink-0">
         <PressableButton
           expandHitArea
           onClick={() => {
             onBackToLauncher();
           }}
-          className="flex items-center gap-1 text-xs text-zinc-300 hover:text-white font-medium px-2.5 py-1 rounded-xl bg-zinc-800 transition"
+          className="flex items-center gap-1 text-xs text-zinc-300 hover:text-white font-medium px-2.5 py-1 rounded-xl bg-zinc-800 transition shrink-0"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           <span>返回桌面</span>
         </PressableButton>
-        <div className="flex items-center gap-1.5">
-          <Settings className="w-4 h-4 text-zinc-400" />
-          <span className="text-xs font-semibold text-zinc-100">系统与 API 设置</span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Settings className="w-4 h-4 text-zinc-400 shrink-0" />
+          <span className="text-xs font-semibold text-zinc-100 truncate">系统与 API 设置</span>
         </div>
         <PressableButton
           withRipple
           rippleTone="dark"
           onClick={handleGlobalSave}
-          className="flex items-center gap-1 text-xs text-zinc-950 font-bold px-3 py-1 rounded-xl bg-white hover:bg-zinc-200 transition shadow-sm"
+          className="settings-top-save-btn flex items-center gap-1 text-xs text-zinc-950 font-bold px-3 py-1 rounded-xl bg-white hover:bg-zinc-200 transition shadow-sm shrink-0"
         >
           <Save className="w-3.5 h-3.5" />
           <span>保存</span>
@@ -775,9 +822,9 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
       {/* 提示 Banner */}
       {saveSuccessMsg && (
-        <div className="bg-emerald-500/10 border-b border-emerald-500/20 px-4 py-2 text-xs text-emerald-400 flex items-center gap-2 animate-in fade-in">
+        <div className="settings-feedback-success bg-emerald-500/10 border-b border-emerald-500/20 px-4 py-2 text-xs text-emerald-400 flex items-center gap-2 animate-in fade-in">
           <CheckCircle className="w-4 h-4 shrink-0 text-emerald-400" />
-          <span className="font-medium">{saveSuccessMsg}</span>
+          <span className="font-medium break-words">{saveSuccessMsg}</span>
         </div>
       )}
 
@@ -822,16 +869,26 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           />
         </section>
 
+        {/* 显示与字体设置 (独立于 API 诊断看板之外的系统显示设置) */}
+        <GlobalFontSizeSettingsCard
+          draftFontScale={draftFontScale}
+          savedFontScale={savedFontScale}
+          onDraftChange={setDraftFontScale}
+          onSave={handleSaveGlobalFontScale}
+          onReset={handleResetGlobalFontScale}
+          feedbackMsg={fontFeedbackMsg}
+        />
+
         {/* 系统 AI 控制开关 */}
         <section className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider px-1">
+          <div className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider px-1 settings-section-heading">
             <Bot className="w-3.5 h-3.5 text-zinc-400" />
             <span>AI 人格智能行为机制</span>
           </div>
 
-          <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-4">
+          <div className="settings-section-card p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-4">
             <div className="flex items-center justify-between gap-3">
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs font-semibold text-zinc-200">启用 AI 后台思考与响应</div>
                 <div className="text-[11px] text-zinc-500">允许 AI 角色根据对话上下文维持后台思考机制</div>
               </div>
@@ -843,8 +900,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
               />
             </div>
 
-            <div className="flex items-center justify-between gap-3 border-t border-zinc-850 pt-3">
-              <div>
+            <div className="settings-card-divider flex items-center justify-between gap-3 border-t border-zinc-850 pt-3">
+              <div className="min-w-0">
                 <div className="text-xs font-semibold text-zinc-200">允许 AI 主动气泡与交互弹窗</div>
                 <div className="text-[11px] text-zinc-500">允许 AI 角色发起主动提醒与气泡提示</div>
               </div>
@@ -860,12 +917,12 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
         {/* AI 聊天记录本地归档与高效检索 */}
         <section className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider px-1">
+          <div className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider px-1 settings-section-heading">
             <Archive className="w-3.5 h-3.5 text-sky-400" />
             <span>AI 聊天记录增量归档与检索设置</span>
           </div>
 
-          <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-4">
+          <div className="settings-section-card p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-4">
             {/* AI 角色选择器 */}
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-zinc-300">选择要设置的 AI 角色</label>
@@ -888,7 +945,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
             {/* 自动归档频率 */}
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center justify-between text-xs gap-2">
                 <span className="font-semibold text-zinc-200">自动归档周期</span>
                 <span className="text-[11px] text-zinc-500">定时增量归档到本地</span>
               </div>
@@ -905,9 +962,9 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                     key={item.id}
                     type="button"
                     onClick={() => handleUpdateFrequency(item.id)}
-                    className={`py-1.5 px-2 rounded-xl text-xs font-medium transition ${
+                    className={`settings-option-btn py-1.5 px-2 rounded-xl text-xs font-medium transition ${
                       archiveConfig?.autoArchiveFrequency === item.id
-                        ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40 font-bold'
+                        ? 'settings-option-btn--active bg-sky-500/20 text-sky-300 border border-sky-500/40 font-bold'
                         : 'bg-zinc-900 text-zinc-400 border border-zinc-850 hover:bg-zinc-850'
                     }`}
                   >
@@ -919,8 +976,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
 
             {/* 历史回忆检索模式 */}
-            <div className="space-y-1.5 border-t border-zinc-850 pt-3">
-              <div className="flex items-center justify-between text-xs">
+            <div className="settings-card-divider space-y-1.5 border-t border-zinc-850 pt-3">
+              <div className="flex items-center justify-between text-xs gap-2">
                 <span className="font-semibold text-zinc-200">AI 对话回忆检索模式</span>
                 <span className="text-[11px] text-zinc-500">控制历史索引的使用范围</span>
               </div>
@@ -936,33 +993,33 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                     key={item.id}
                     type="button"
                     onClick={() => handleUpdateSearchMode(item.id)}
-                    className={`p-2 rounded-xl text-xs text-left transition ${
+                    className={`settings-option-btn p-2 rounded-xl text-xs text-left transition min-w-0 ${
                       archiveConfig?.searchMode === item.id
-                        ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40 font-bold'
+                        ? 'settings-option-btn--active bg-sky-500/20 text-sky-300 border border-sky-500/40 font-bold'
                         : 'bg-zinc-900 text-zinc-400 border border-zinc-850 hover:bg-zinc-850'
                     }`}
                   >
                     <div className="font-semibold text-[11px]">{item.label}</div>
-                    <div className="text-[10px] text-zinc-500">{item.desc}</div>
+                    <div className="text-[10px] text-zinc-500 break-words">{item.desc}</div>
                   </PressableButton>
                 ))}
               </div>
             </div>
 
             {/* 状态卡片与手动归档按钮 */}
-            <div className="bg-zinc-900/80 border border-zinc-850 rounded-xl p-3 space-y-2.5 text-xs text-zinc-300">
-              <div className="flex items-center justify-between text-[11px]">
+            <div className="settings-sub-card bg-zinc-900/80 border border-zinc-850 rounded-xl p-3 space-y-2.5 text-xs text-zinc-300">
+              <div className="flex items-center justify-between text-[11px] gap-2">
                 <span className="text-zinc-500">上次归档时间:</span>
-                <span className="font-mono text-zinc-300">
+                <span className="font-mono text-zinc-300 text-right">
                   {archiveConfig?.lastArchivedAt
                     ? new Date(archiveConfig.lastArchivedAt).toLocaleString()
                     : '从未归档'}
                 </span>
               </div>
 
-              <div className="flex items-center justify-between text-[11px]">
+              <div className="flex items-center justify-between text-[11px] gap-2">
                 <span className="text-zinc-500">归档游标状态:</span>
-                <span className="font-medium text-sky-400">
+                <span className="settings-status-info font-medium text-sky-400">
                   {archiveConfig?.archiveStatus === 'running'
                     ? '⏳ 归档进行中...'
                     : archiveConfig?.archiveStatus === 'completed'
@@ -973,24 +1030,24 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                 </span>
               </div>
 
-              <div className="flex items-center justify-between text-[11px]">
+              <div className="flex items-center justify-between text-[11px] gap-2">
                 <span className="text-zinc-500">待归档增量消息:</span>
-                <span className="font-bold text-amber-400">{archiveConfig?.pendingCount ?? 0} 条</span>
+                <span className="settings-status-warn font-bold text-amber-400">{archiveConfig?.pendingCount ?? 0} 条</span>
               </div>
 
-              <div className="flex items-center justify-between text-[11px]">
+              <div className="flex items-center justify-between text-[11px] gap-2">
                 <span className="text-zinc-500">归档库累计储存:</span>
                 <span className="font-bold text-zinc-200">{archiveConfig?.archivedTotalCount ?? 0} 条</span>
               </div>
 
               {archiveConfig?.lastFailedError && (
-                <div className="text-[11px] text-rose-400 bg-rose-950/30 border border-rose-900/40 p-2 rounded-lg">
+                <div className="settings-feedback-error text-[11px] text-rose-400 bg-rose-950/30 border border-rose-900/40 p-2 rounded-lg break-words">
                   ❌ 归档失败信息: {archiveConfig.lastFailedError}
                 </div>
               )}
 
               {archiveSuccessMsg && (
-                <div className="text-[11px] text-emerald-400 bg-emerald-950/30 border border-emerald-900/40 p-2 rounded-lg">
+                <div className="settings-feedback-success text-[11px] text-emerald-400 bg-emerald-950/30 border border-emerald-900/40 p-2 rounded-lg break-words">
                   ✨ {archiveSuccessMsg}
                 </div>
               )}
@@ -1001,7 +1058,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                 loading={isArchiving}
                 onClick={handleManualArchiveNow}
                 disabled={isArchiving}
-                className="w-full py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer mt-1"
+                className="settings-primary-btn w-full py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer mt-1"
               >
                 <Archive className="w-3.5 h-3.5" />
                 <span>{isArchiving ? '增量归档中...' : '立即增量归档'}</span>
@@ -1012,12 +1069,12 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
         {/* 数据与备份管理 */}
         <section className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider px-1">
+          <div className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider px-1 settings-section-heading">
             <Database className="w-3.5 h-3.5 text-zinc-400" />
             <span>系统数据管理与导入导出</span>
           </div>
 
-          <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-3">
+          <div className="settings-section-card p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-3">
             <div className="grid grid-cols-2 gap-2">
               <PressableButton
                 type="button"
@@ -1026,9 +1083,9 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                   setDataModalTab('export');
                   setShowDataModal(true);
                 }}
-                className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-200 flex items-center justify-center gap-1.5 transition"
+                className="settings-sub-card py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-200 flex items-center justify-center gap-1.5 transition"
               >
-                <Download className="w-3.5 h-3.5 text-zinc-400" />
+                <Download className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
                 <span>导出全量备份</span>
               </PressableButton>
 
@@ -1039,20 +1096,20 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                   setDataModalTab('import');
                   setShowDataModal(true);
                 }}
-                className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-200 flex items-center justify-center gap-1.5 transition"
+                className="settings-sub-card py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-200 flex items-center justify-center gap-1.5 transition"
               >
-                <Upload className="w-3.5 h-3.5 text-zinc-400" />
+                <Upload className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
                 <span>导入数据备份</span>
               </PressableButton>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-zinc-850">
+            <div className="settings-card-divider grid grid-cols-2 gap-2 pt-1 border-t border-zinc-850">
               <PressableButton
                 type="button"
                 onClick={handleOpenUpgradeLogsModal}
-                className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-300 flex items-center justify-center gap-1.5 transition"
+                className="settings-sub-card py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-medium text-zinc-300 flex items-center justify-center gap-1.5 transition"
               >
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                 <span>系统升级无损日志</span>
               </PressableButton>
 
@@ -1061,9 +1118,9 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                 withRipple
                 rippleTone="rose"
                 onClick={() => setShowResetConfirmModal(true)}
-                className="py-2.5 px-3 rounded-xl bg-rose-950/20 hover:bg-rose-950/40 border border-rose-900/30 text-xs font-medium text-rose-300 flex items-center justify-center gap-1.5 transition"
+                className="settings-danger-btn py-2.5 px-3 rounded-xl bg-rose-950/20 hover:bg-rose-950/40 border border-rose-900/30 text-xs font-medium text-rose-300 flex items-center justify-center gap-1.5 transition"
               >
-                <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+                <RotateCcw className="w-3.5 h-3.5 text-rose-400 shrink-0" />
                 <span>恢复出厂设置</span>
               </PressableButton>
             </div>
@@ -1072,12 +1129,12 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
         {/* JSON 规范适配适配器 */}
         <section className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider px-1">
+          <div className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider px-1 settings-section-heading">
             <FileCode className="w-3.5 h-3.5 text-zinc-400" />
             <span>智能 JSON 结构兼容解析器</span>
           </div>
 
-          <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-3">
+          <div className="settings-section-card p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-3">
             <textarea
               placeholder="粘贴包含配置的任意原始 JSON 文本..."
               value={rawJsonInput}
@@ -1092,14 +1149,14 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
               loading={isAdaptingJson}
               onClick={handleAdaptJsonConfig}
               disabled={isAdaptingJson || !rawJsonInput.trim()}
-              className="w-full py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 flex items-center justify-center gap-1.5 transition disabled:opacity-50"
+              className="settings-sub-card w-full py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 flex items-center justify-center gap-1.5 transition disabled:opacity-50"
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-400" />
               <span>{isAdaptingJson ? '解析适配中...' : '解析转换并标准化 JSON'}</span>
             </PressableButton>
 
             {adaptedJsonOutput && (
-              <pre className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-40">
+              <pre className="settings-code-block p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-40">
                 {adaptedJsonOutput}
               </pre>
             )}
@@ -1126,8 +1183,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       {/* 恢复出厂设置确认 Modal */}
       {showResetConfirmModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-zinc-950 border border-rose-900/50 rounded-2xl p-5 w-full max-w-sm shadow-2xl space-y-4">
-            <div className="flex items-center gap-2 text-rose-400 font-bold text-sm">
+          <div className="settings-modal-card bg-zinc-950 border border-rose-900/50 rounded-2xl p-5 w-full max-w-sm shadow-2xl space-y-4">
+            <div className="settings-status-err flex items-center gap-2 text-rose-400 font-bold text-sm">
               <AlertTriangle className="w-5 h-5 shrink-0" />
               <span>确认恢复出厂设置？</span>
             </div>
@@ -1139,11 +1196,11 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                 <li>AI 角色与独立记忆库 (Memory Vaults)</li>
                 <li>自定义 API 配置与基础设定 (localStorage)</li>
               </ul>
-              <p className="text-rose-400 font-medium pt-1">重置后系统将恢复至最初安装状态，且不可撤销。</p>
+              <p className="settings-status-err text-rose-400 font-medium pt-1">重置后系统将恢复至最初安装状态，且不可撤销。</p>
             </div>
 
             {resetSuccessMessage ? (
-              <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-800 text-emerald-400 text-xs font-semibold text-center animate-in fade-in">
+              <div className="settings-feedback-success p-3 rounded-xl bg-emerald-950/40 border border-emerald-800 text-emerald-400 text-xs font-semibold text-center animate-in fade-in">
                 {resetSuccessMessage}
               </div>
             ) : (
@@ -1152,7 +1209,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                   type="button"
                   onClick={() => setShowResetConfirmModal(false)}
                   disabled={isResetting}
-                  className="flex-1 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 transition"
+                  className="settings-sub-card flex-1 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 transition"
                 >
                   取消
                 </PressableButton>
@@ -1181,8 +1238,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       {/* 系统无损升级日志 Modal */}
       {showUpgradeLogsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-5 w-full max-w-md shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-zinc-850 pb-3">
+          <div className="settings-modal-card bg-zinc-950 border border-zinc-800 rounded-2xl p-5 w-full max-w-md shadow-2xl space-y-4">
+            <div className="settings-card-divider flex items-center justify-between border-b border-zinc-850 pb-3">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
                 <h3 className="text-sm font-semibold text-zinc-100">系统升级无损防崩保护日志</h3>
@@ -1198,14 +1255,14 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
             <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
               {upgradeLogs.length === 0 ? (
-                <div className="p-4 rounded-xl bg-zinc-900/40 border border-zinc-800 text-center text-xs text-zinc-500">
+                <div className="settings-sub-card p-4 rounded-xl bg-zinc-900/40 border border-zinc-800 text-center text-xs text-zinc-500">
                   暂无数据迁移触发记录，当前系统为原生数据规格。
                 </div>
               ) : (
                 upgradeLogs.map((log) => (
-                  <div key={log.id} className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800 space-y-1 font-mono text-[11px]">
+                  <div key={log.id} className="settings-sub-card p-3 rounded-xl bg-zinc-900/80 border border-zinc-800 space-y-1 font-mono text-[11px]">
                     <div className="flex items-center justify-between">
-                      <span className="text-emerald-400 font-bold">{log.summary || '版本兼容校验'}</span>
+                      <span className="settings-status-ok text-emerald-400 font-bold">{log.summary || '版本兼容校验'}</span>
                       <span className="text-zinc-500 text-[10px]">{new Date(log.timestamp).toLocaleTimeString()}</span>
                     </div>
                     <div className="text-zinc-500 text-[10px]">VersionCode: {log.fromVersionCode} → {log.toVersionCode}</div>
@@ -1217,11 +1274,11 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
               )}
             </div>
 
-            <div className="pt-2 border-t border-zinc-850 text-right">
+            <div className="settings-card-divider pt-2 border-t border-zinc-850 text-right">
               <PressableButton
                 type="button"
                 onClick={() => setShowUpgradeLogsModal(false)}
-                className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 text-xs font-medium transition"
+                className="settings-sub-card px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 text-xs font-medium transition"
               >
                 关闭
               </PressableButton>
