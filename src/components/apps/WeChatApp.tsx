@@ -314,7 +314,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement | null>(null);
   const composerEditor = useStableTextEditing<HTMLTextAreaElement>({
-    value: inputText,
+    defaultValue: '',
     onValueChange: (nextValue) => {
       if (isSubmittingRef.current) return;
       setInputText((prev) => (prev === nextValue ? prev : nextValue));
@@ -338,7 +338,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   }, []);
 
   const clearComposerInput = useCallback(() => {
-    composerEditor.clearValue('');
+    composerEditor.clear();
     setInputText('');
   }, [composerEditor]);
 
@@ -2078,8 +2078,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                             <textarea
                               ref={composerEditor.mergedRef}
                               rows={1}
+                              defaultValue=""
                               placeholder={`给 ${activeCharacter.name} 发送消息... (Enter发送)`}
-                              value={inputText}
                               {...composerEditor.eventProps}
                               onKeyDown={(e) => {
                                 composerEditor.eventProps.onKeyDown(e);
@@ -2090,12 +2090,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                                     // In Chinese/Japanese IME candidate selection: do NOT send
                                     return;
                                   }
-                                  if (e.shiftKey) {
-                                    // Shift + Enter: native newline, adjust height preserving selection
-                                    setTimeout(() => {
-                                      composerEditor.adjustHeightNow();
-                                    }, 0);
-                                  } else {
+                                  if (!e.shiftKey) {
                                     // Enter alone: single-click send user message ONLY (does NOT trigger AI)
                                     e.preventDefault();
                                     handleSendUserOnlyMessage();

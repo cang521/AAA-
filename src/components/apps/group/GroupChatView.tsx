@@ -103,15 +103,26 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   }, []);
 
   const composerEditor = useStableTextEditing<HTMLInputElement>({
-    value: inputText,
+    defaultValue: '',
     onValueChange: syncInputValue,
     externalRef: inputRef,
   });
 
   const clearComposerInput = useCallback(() => {
-    composerEditor.clearValue('');
+    composerEditor.clear();
     setInputText('');
   }, [composerEditor]);
+
+  const appendMentionText = useCallback(
+    (mentionText: string) => {
+      const currentVal = inputRef.current ? inputRef.current.value : inputText;
+      composerEditor.setNativeValue(`${currentVal}${mentionText}`);
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
+    },
+    [composerEditor, inputText]
+  );
 
   // Sync messages from group prop if changed externally
   useEffect(() => {
@@ -369,14 +380,11 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
 
   const handleInsertMention = (member: GroupMember | 'all') => {
     if (member === 'all') {
-      setInputText((prev) => prev + '@所有人 ');
+      appendMentionText('@所有人 ');
     } else {
-      setInputText((prev) => prev + `@${member.name} `);
+      appendMentionText(`@${member.name} `);
     }
     setShowMentionPicker(false);
-    if (inputRef.current) {
-      inputRef.current.focus();
-    }
   };
 
   const handleDeleteMessage = (msgId: string) => {
@@ -696,8 +704,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
                   if (msg.senderType === 'ai' || msg.thinkingProcess) {
                     setShowCoTModal(msg.thinkingProcess || '该条消息生成时暂未附带详细思考链数据。');
                   } else {
-                    setInputText((prev) => prev + `@${msg.senderName} `);
-                    if (inputRef.current) inputRef.current.focus();
+                    appendMentionText(`@${msg.senderName} `);
                   }
                 }}
                 className="relative cursor-pointer shrink-0"
@@ -931,7 +938,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
         <input
           ref={composerEditor.mergedRef}
           type="text"
-          value={inputText}
+          defaultValue=""
           onFocus={() => setShowPlusMenu(false)}
           {...composerEditor.eventProps}
           onKeyDown={(e) => {
@@ -1022,9 +1029,8 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
             </button>
             <button
               onClick={() => {
-                setInputText((prev) => prev + `@${activeLongPressMsg.senderName} `);
+                appendMentionText(`@${activeLongPressMsg.senderName} `);
                 setActiveLongPressMsg(null);
-                if (inputRef.current) inputRef.current.focus();
               }}
               className="wx-dropdown-item w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
             >

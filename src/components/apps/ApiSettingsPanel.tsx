@@ -536,15 +536,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               type="text"
               placeholder="https://api.openai.com/v1 或留空使用默认"
               value={currentTextBaseUrl}
-              onInput={(e) => {
-                const val = (e.currentTarget as HTMLInputElement).value;
-                setSettings((prev) => ({
-                  ...prev,
-                  text: { ...prev.text, baseUrl: val },
-                }));
-              }}
-              onChange={(e) => {
-                const val = e.target.value;
+              onValueChange={(val) => {
                 const now = new Date().toLocaleTimeString();
 
                 addDiagnosticLog({
@@ -553,7 +545,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                   baseUrlVal: val,
                   keyLen: currentTextKey.length,
                   keyLast4: currentTextKey.slice(-4),
-                  details: `onChange triggered at ${now}, rawValue="${val}" (len=${val.length})`,
+                  details: `onValueChange triggered at ${now}, rawValue="${val}" (len=${val.length})`,
                 });
 
                 if (currentTextBaseUrl.length > 0 && val.length === 0) {
@@ -620,15 +612,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 type={showTextKey ? 'text' : 'password'}
                 placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
                 value={currentTextKey}
-                onInput={(e) => {
-                  const val = (e.currentTarget as HTMLInputElement).value;
-                  setSettings((prev) => ({
-                    ...prev,
-                    text: { ...prev.text, apiKey: val },
-                  }));
-                }}
-                onChange={(e) => {
-                  const val = e.target.value;
+                onValueChange={(val) => {
                   const now = new Date().toLocaleTimeString();
                   const last4 = val.slice(-4);
 
@@ -638,7 +622,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                     baseUrlVal: currentTextBaseUrl,
                     keyLen: val.length,
                     keyLast4: last4,
-                    details: `onChange triggered at ${now}, keyLen=${val.length}, last4=${last4}`,
+                    details: `onValueChange triggered at ${now}, keyLen=${val.length}, last4=${last4}`,
                   });
 
                   if (currentTextKey.length > 0 && val.length === 0) {
@@ -727,8 +711,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               type="text"
               placeholder="手动输入模型名 (如: gemini-3.6-flash, deepseek-chat, gpt-4o)"
               value={settings.text.model || ''}
-              onChange={(e) => {
-                const val = e.target.value;
+              onValueChange={(val) => {
                 addDiagnosticLog({
                   tag: '[SETTINGS_WRITE:PANEL_TEXT_MODEL_INPUT]',
                   baseUrlLen: currentTextBaseUrl.length,
@@ -877,15 +860,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               type="text"
               placeholder="https://api.openai.com/v1 或留空使用默认"
               value={currentImageBaseUrl}
-              onInput={(e) => {
-                const val = (e.currentTarget as HTMLInputElement).value;
-                setSettings((prev) => ({
-                  ...prev,
-                  image: { ...prev.image, baseUrl: val },
-                }));
-              }}
-              onChange={(e) => {
-                const val = e.target.value;
+              onValueChange={(val) => {
                 addDiagnosticLog({
                   tag: '[SETTINGS_WRITE:PANEL_IMAGE_BASE_URL_INPUT]',
                   baseUrlLen: val.length,
@@ -938,15 +913,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 type={showImageKey ? 'text' : 'password'}
                 placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
                 value={currentImageKey}
-                onInput={(e) => {
-                  const val = (e.currentTarget as HTMLInputElement).value;
-                  setSettings((prev) => ({
-                    ...prev,
-                    image: { ...prev.image, apiKey: val },
-                  }));
-                }}
-                onChange={(e) => {
-                  const val = e.target.value;
+                onValueChange={(val) => {
                   addDiagnosticLog({
                     tag: '[SETTINGS_WRITE:PANEL_IMAGE_KEY_INPUT]',
                     baseUrlLen: currentImageBaseUrl.length,
@@ -1021,15 +988,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               type="text"
               placeholder="dall-e-3, imagen-3.0-generate-002, flux-schnell..."
               value={settings.image.model || ''}
-              onInput={(e) => {
-                const val = (e.currentTarget as HTMLInputElement).value;
-                setSettings((prev) => ({
-                  ...prev,
-                  image: { ...prev.image, model: val },
-                }));
-              }}
-              onChange={(e) => {
-                const val = e.target.value;
+              onValueChange={(val) => {
                 addDiagnosticLog({
                   tag: '[SETTINGS_WRITE:PANEL_IMAGE_MODEL_INPUT]',
                   baseUrlLen: currentImageBaseUrl.length,
@@ -1182,15 +1141,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               type="text"
               placeholder="https://api.openai.com/v1 或留空使用默认"
               value={currentVoiceBaseUrl}
-              onInput={(e) => {
-                const val = (e.currentTarget as HTMLInputElement).value;
-                setSettings((prev) => ({
-                  ...prev,
-                  voice: { ...prev.voice, baseUrl: val },
-                }));
-              }}
-              onChange={(e) => {
-                const val = e.target.value;
+              onValueChange={(val) => {
                 addDiagnosticLog({
                   tag: '[SETTINGS_WRITE:PANEL_VOICE_BASE_URL_INPUT]',
                   baseUrlLen: val.length,
@@ -1243,15 +1194,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 type={showVoiceKey ? 'text' : 'password'}
                 placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
                 value={currentVoiceKey}
-                onInput={(e) => {
-                  const val = (e.currentTarget as HTMLInputElement).value;
-                  setSettings((prev) => ({
-                    ...prev,
-                    voice: { ...prev.voice, apiKey: val },
-                  }));
-                }}
-                onChange={(e) => {
-                  const val = e.target.value;
+                onValueChange={(val) => {
                   addDiagnosticLog({
                     tag: '[SETTINGS_WRITE:PANEL_VOICE_KEY_INPUT]',
                     baseUrlLen: currentVoiceBaseUrl.length,
@@ -1326,15 +1269,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               type="text"
               placeholder="tts-1, tts-1-hd, whisper-1..."
               value={settings.voice.model || ''}
-              onInput={(e) => {
-                const val = (e.currentTarget as HTMLInputElement).value;
-                setSettings((prev) => ({
-                  ...prev,
-                  voice: { ...prev.voice, model: val },
-                }));
-              }}
-              onChange={(e) => {
-                const val = e.target.value;
+              onValueChange={(val) => {
                 addDiagnosticLog({
                   tag: '[SETTINGS_WRITE:PANEL_VOICE_MODEL_INPUT]',
                   baseUrlLen: currentVoiceBaseUrl.length,

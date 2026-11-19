@@ -49,7 +49,7 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerEditor = useStableTextEditing<HTMLTextAreaElement>({
-    value: inputText,
+    defaultValue: '',
     onValueChange: setInputText,
     externalRef: textareaRef,
     disabled: isSending,
@@ -134,7 +134,7 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
     if (!userText || isSending) return;
 
     if (!overrideText) {
-      composerEditor.clearValue('');
+      composerEditor.clear();
       setInputText('');
     }
     setSendError(null);
@@ -350,8 +350,8 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
           <textarea
             ref={composerEditor.mergedRef}
             rows={1}
+            defaultValue=""
             placeholder="输入你想说的话或做出的动作（支持多行输入与动作括号……）"
-            value={inputText}
             {...composerEditor.eventProps}
             onKeyDown={handleKeyDown}
             disabled={isSending}

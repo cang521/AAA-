@@ -21,8 +21,6 @@ export const StableTextarea = React.forwardRef<HTMLTextAreaElement, StableTextar
       maxHeightPx = 132,
       onChange,
       onInput,
-      onBeforeInput,
-      onSelect,
       onCompositionStart,
       onCompositionUpdate,
       onCompositionEnd,
@@ -35,7 +33,7 @@ export const StableTextarea = React.forwardRef<HTMLTextAreaElement, StableTextar
     },
     ref
   ) => {
-    const { mergedRef, eventProps } = useStableTextEditing<HTMLTextAreaElement>({
+    const { mergedRef, initialDefaultValue, eventProps } = useStableTextEditing<HTMLTextAreaElement>({
       value,
       defaultValue,
       onValueChange,
@@ -47,8 +45,6 @@ export const StableTextarea = React.forwardRef<HTMLTextAreaElement, StableTextar
       maxHeightPx,
       onChange,
       onInput,
-      onBeforeInput,
-      onSelect,
       onCompositionStart,
       onCompositionUpdate,
       onCompositionEnd,
@@ -61,7 +57,7 @@ export const StableTextarea = React.forwardRef<HTMLTextAreaElement, StableTextar
       <textarea
         ref={mergedRef}
         {...rest}
-        {...(value !== undefined ? { value } : { defaultValue })}
+        defaultValue={initialDefaultValue}
         disabled={disabled}
         readOnly={readOnly}
         {...eventProps}

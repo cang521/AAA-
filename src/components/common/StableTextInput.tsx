@@ -15,8 +15,6 @@ export const StableTextInput = React.forwardRef<HTMLInputElement, StableTextInpu
       onValueChange,
       onChange,
       onInput,
-      onBeforeInput,
-      onSelect,
       onCompositionStart,
       onCompositionUpdate,
       onCompositionEnd,
@@ -29,7 +27,7 @@ export const StableTextInput = React.forwardRef<HTMLInputElement, StableTextInpu
     },
     ref
   ) => {
-    const { mergedRef, eventProps } = useStableTextEditing<HTMLInputElement>({
+    const { mergedRef, initialDefaultValue, eventProps } = useStableTextEditing<HTMLInputElement>({
       value,
       defaultValue,
       onValueChange,
@@ -38,8 +36,6 @@ export const StableTextInput = React.forwardRef<HTMLInputElement, StableTextInpu
       readOnly,
       onChange,
       onInput,
-      onBeforeInput,
-      onSelect,
       onCompositionStart,
       onCompositionUpdate,
       onCompositionEnd,
@@ -52,7 +48,7 @@ export const StableTextInput = React.forwardRef<HTMLInputElement, StableTextInpu
       <input
         ref={mergedRef}
         {...rest}
-        {...(value !== undefined ? { value } : { defaultValue })}
+        defaultValue={initialDefaultValue}
         disabled={disabled}
         readOnly={readOnly}
         {...eventProps}
