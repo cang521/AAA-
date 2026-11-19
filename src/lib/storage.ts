@@ -37,6 +37,7 @@ import {
   isIndexedDbAvailable,
   readLegacyGroupChatsFromLocalStorage,
   saveGroupChatsToDb,
+  waitForGroupChatSave,
 } from './groupChatDb';
 
 if (isIndexedDbAvailable()) {
@@ -726,6 +727,8 @@ export const saveGroupChats = (groups: GroupChat[]): void => {
 export const saveGroupChatsAsync = async (groups: GroupChat[]): Promise<void> => {
   await saveGroupChatsToDb(groups);
 };
+
+export { waitForGroupChatSave };
 
 export {
   INITIAL_CHARACTERS,

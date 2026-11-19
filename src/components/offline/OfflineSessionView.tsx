@@ -129,7 +129,7 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
 
   const handleSend = async (e?: React.FormEvent, overrideText?: string) => {
     if (e) e.preventDefault();
-    const rawCurrent = overrideText ?? (textareaRef.current ? textareaRef.current.value : inputText);
+    const rawCurrent = overrideText ?? (textareaRef.current?.value ?? '');
     const userText = rawCurrent.trim();
     if (!userText || isSending) return;
 
@@ -360,8 +360,12 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
 
           <button
             type="submit"
-            disabled={!inputText.trim() || isSending}
-            className="p-2.5 mb-0.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white transition shrink-0 shadow-md shadow-indigo-600/30 active:scale-95 cursor-pointer"
+            disabled={isSending}
+            className={`p-2.5 mb-0.5 rounded-xl transition shrink-0 shadow-md active:scale-95 cursor-pointer ${
+              inputText.trim().length > 0
+                ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/30'
+                : 'bg-zinc-700 hover:bg-zinc-600 text-zinc-200 opacity-85 shadow-none'
+            } disabled:opacity-40`}
           >
             <Send className="w-4 h-4" />
           </button>

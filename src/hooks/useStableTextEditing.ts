@@ -51,6 +51,7 @@ export function useStableTextEditing<T extends TextEditableElement>(
   const lastCompositionEndTimestampRef = useRef(0);
   const lastSyncedValueRef = useRef<string>(initialDefaultValueRef.current);
   const prevExternalValueRef = useRef<string>(normalizedExternalValue);
+  const lastBlurSelectionRef = useRef<{ start: number; end: number } | null>(null);
 
   const latestCallbacksRef = useRef(options);
   latestCallbacksRef.current = options;
@@ -119,6 +120,7 @@ export function useStableTextEditing<T extends TextEditableElement>(
       if (isExplicitProgrammaticReset) {
         el.value = '';
         lastSyncedValueRef.current = '';
+        lastBlurSelectionRef.current = null;
         if (autoResize) {
           adjustHeightNow();
         }
@@ -129,6 +131,7 @@ export function useStableTextEditing<T extends TextEditableElement>(
     if (el.value !== normalizedExternalValue) {
       el.value = normalizedExternalValue;
       lastSyncedValueRef.current = normalizedExternalValue;
+      lastBlurSelectionRef.current = null;
       if (autoResize) {
         adjustHeightNow();
       }
@@ -208,6 +211,13 @@ export function useStableTextEditing<T extends TextEditableElement>(
 
   const handleBlur: React.FocusEventHandler<T> = useCallback((e) => {
     isFocusedRef.current = false;
+    const el = e.currentTarget;
+    if (typeof el.selectionStart === 'number' && typeof el.selectionEnd === 'number') {
+      lastBlurSelectionRef.current = {
+        start: el.selectionStart,
+        end: el.selectionEnd,
+      };
+    }
     latestCallbacksRef.current.onBlur?.(e);
   }, []);
 
@@ -225,7 +235,7 @@ export function useStableTextEditing<T extends TextEditableElement>(
   );
 
   const setNativeValue = useCallback(
-    (nextValue: string) => {
+    (nextValue: string, cursorPos?: number) => {
       isComposingRef.current = false;
       lastSyncedValueRef.current = nextValue;
       const el = elementRef.current;
@@ -234,10 +244,75 @@ export function useStableTextEditing<T extends TextEditableElement>(
         if (autoResize) {
           adjustHeightNow();
         }
+        if (typeof cursorPos === 'number') {
+          const clamped = Math.max(0, Math.min(cursorPos, nextValue.length));
+          lastBlurSelectionRef.current = { start: clamped, end: clamped };
+          if (typeof el.setSelectionRange === 'function') {
+            try {
+              el.setSelectionRange(clamped, clamped);
+            } catch {
+              // ignore unsupported input types
+            }
+          }
+        } else if (nextValue === '') {
+          lastBlurSelectionRef.current = null;
+        }
       }
       latestCallbacksRef.current.onValueChange?.(nextValue);
     },
     [adjustHeightNow, autoResize]
+  );
+
+  const insertAtCursor = useCallback(
+    (
+      insertText: string,
+      insertOptions?: { replacePrecedingChar?: string; focus?: boolean }
+    ) => {
+      const el = elementRef.current;
+      const currentVal = el ? el.value : lastSyncedValueRef.current;
+      const shouldFocus = insertOptions?.focus !== false;
+
+      let start = currentVal.length;
+      let end = currentVal.length;
+
+      const isElFocused =
+        el !== null &&
+        typeof document !== 'undefined' &&
+        document.activeElement === el;
+
+      if (isElFocused && el && typeof el.selectionStart === 'number') {
+        start = el.selectionStart;
+        end = typeof el.selectionEnd === 'number' ? el.selectionEnd : el.selectionStart;
+      } else if (lastBlurSelectionRef.current) {
+        start = Math.max(0, Math.min(lastBlurSelectionRef.current.start, currentVal.length));
+        end = Math.max(start, Math.min(lastBlurSelectionRef.current.end, currentVal.length));
+      } else if (el && typeof el.selectionStart === 'number' && el.selectionStart > 0) {
+        start = Math.max(0, Math.min(el.selectionStart, currentVal.length));
+        end = Math.max(start, Math.min(el.selectionEnd ?? el.selectionStart, currentVal.length));
+      }
+
+      let replaceStart = start;
+      const preceding = insertOptions?.replacePrecedingChar;
+      if (
+        preceding &&
+        start === end &&
+        start >= preceding.length &&
+        currentVal.slice(start - preceding.length, start) === preceding
+      ) {
+        replaceStart = start - preceding.length;
+      }
+
+      const nextValue =
+        currentVal.slice(0, replaceStart) + insertText + currentVal.slice(end);
+      const nextCaret = replaceStart + insertText.length;
+
+      if (el && shouldFocus && typeof document !== 'undefined' && document.activeElement !== el) {
+        el.focus();
+      }
+
+      setNativeValue(nextValue, nextCaret);
+    },
+    [setNativeValue]
   );
 
   const clear = useCallback(() => {
@@ -256,6 +331,7 @@ export function useStableTextEditing<T extends TextEditableElement>(
     lastCompositionEndTimestampRef,
     isCompositionActive,
     setNativeValue,
+    insertAtCursor,
     clear,
     clearValue: setNativeValue,
     getValue,

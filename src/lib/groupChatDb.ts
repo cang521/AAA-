@@ -253,6 +253,8 @@ export function hydrateGroupChatsFromDb(): Promise<GroupChat[]> {
 /**
  * Persist group chats to IndexedDB sequentially (serialized queue prevents lost concurrent updates).
  */
+let lastWriteSucceeded = true;
+
 export function saveGroupChatsToDb(groups: GroupChat[]): Promise<void> {
   const normalized = normalizeGroupChatList(groups);
   hasLocalMutation = true;
@@ -263,9 +265,13 @@ export function saveGroupChatsToDb(groups: GroupChat[]): Promise<void> {
     if (typeof localStorage !== 'undefined') {
       try {
         localStorage.setItem(LEGACY_GROUP_CHATS_STORAGE_KEY, JSON.stringify(normalized));
+        lastWriteSucceeded = true;
       } catch (e) {
         console.warn('[GroupChatDB] localStorage fallback write failed:', e);
+        lastWriteSucceeded = false;
       }
+    } else {
+      lastWriteSucceeded = true;
     }
     return Promise.resolve();
   }
@@ -279,6 +285,7 @@ export function saveGroupChatsToDb(groups: GroupChat[]): Promise<void> {
         }
         const db = await getGroupChatDb();
         await writeAllToDb(db, normalized);
+        lastWriteSucceeded = true;
 
         // Clean up legacy localStorage key once safely stored in IndexedDB
         if (typeof localStorage !== 'undefined' && localStorage.getItem(LEGACY_GROUP_CHATS_STORAGE_KEY) !== null) {
@@ -289,11 +296,17 @@ export function saveGroupChatsToDb(groups: GroupChat[]): Promise<void> {
           }
         }
       } catch (e) {
+        lastWriteSucceeded = false;
         console.error('[GroupChatDB] Failed to save group chats to IndexedDB:', e);
       }
     });
 
   return writeQueue;
+}
+
+export async function waitForGroupChatSave(): Promise<boolean> {
+  await writeQueue.catch(() => {});
+  return lastWriteSucceeded;
 }
 
 export function clearGroupChatsInDb(): Promise<void> {

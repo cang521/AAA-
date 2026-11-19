@@ -809,7 +809,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     if (isSubmittingRef.current) return null;
     const now = Date.now();
 
-    const rawVal = inputRef.current ? inputRef.current.value : inputText;
+    const rawVal = inputRef.current?.value ?? '';
     const cleanText = rawVal.trim();
     const imageToSend = selectedImage;
     if (!cleanText && !imageToSend) return null;
@@ -951,7 +951,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       await handleTriggerAiReply();
     } else {
       // === SINGLE CLICK ===
-      const rawText = inputRef.current ? inputRef.current.value : inputText;
+      const rawText = inputRef.current?.value ?? '';
       if (rawText.trim() || selectedImage) {
         await handleSendUserOnlyMessage();
       } else {

@@ -3133,6 +3133,17 @@ ${historyText || '(群内暂无更多历史)'}
   "thinkingProcess": "简要分析该角色为何这样说",
   "mentionedMemberIds": ["@提到的成员ID列表，若无则为空数组"]
 }`;
+    } else if (triggeredAiId === '@all') {
+      userPrompt += `用户刚刚在群内 @了所有人（全体群成员），邀请大家参与回应。请结合最新对话选择当前最适合率先发言的一位 AI 成员进行回复（shouldRespond 设为 true）。
+请以 JSON 格式输出：
+{
+  "shouldRespond": true,
+  "responderId": "选择发言的AI的ID",
+  "responderName": "选择发言的AI的名称",
+  "text": "回复内容（地道微信口吻，可包含@其他成员）",
+  "thinkingProcess": "简要分析为什么选择该AI代表群体率先回应",
+  "mentionedMemberIds": ["@提到的成员ID列表，若无则为空数组"]
+}`;
     } else {
       userPrompt += `请评估当前对话流向，决定群内哪一位AI最适合发言（或如果大家都觉得无需插话，也可以保持沉默 shouldRespond: false）。
 请以 JSON 格式输出：
