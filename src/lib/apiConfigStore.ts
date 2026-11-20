@@ -18,7 +18,7 @@ export const DEFAULT_TEXT_CONNECTION: ApiConnectionConfig = {
   provider: 'google_gemini',
   baseUrl: '',
   apiKey: '',
-  model: 'gemini-3.8-flash',
+  model: 'gemini-4-hydrogen',
 };
 
 export const DEFAULT_IMAGE_CONNECTION: ApiConnectionConfig = {
@@ -56,11 +56,18 @@ export function loadApiSettings(): ApiSettings {
       if (!section || typeof section !== 'object') {
         return { ...defaultConn };
       }
+      const provider = typeof section.provider === 'string' ? section.provider : defaultConn.provider;
+      const baseUrl = typeof section.baseUrl === 'string' ? section.baseUrl : defaultConn.baseUrl;
+      let model = typeof section.model === 'string' ? section.model : defaultConn.model;
+      const isOfficialGemini = provider === 'google_gemini' && (!baseUrl.trim() || baseUrl.includes('googleapis.com'));
+      if (isOfficialGemini && (model === 'gemini-3.6-flash' || model === 'gemini-3.8-flash')) {
+        model = 'gemini-4-hydrogen';
+      }
       return {
-        provider: typeof section.provider === 'string' ? section.provider : defaultConn.provider,
-        baseUrl: typeof section.baseUrl === 'string' ? section.baseUrl : defaultConn.baseUrl,
+        provider,
+        baseUrl,
         apiKey: typeof section.apiKey === 'string' ? section.apiKey : defaultConn.apiKey,
-        model: typeof section.model === 'string' ? section.model : defaultConn.model,
+        model,
         apiProtocol: typeof section.apiProtocol === 'string' ? section.apiProtocol : undefined,
       };
     };

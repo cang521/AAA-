@@ -276,9 +276,10 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   const [fetchedModels, setFetchedModels] = useState<RemoteModelItem[]>([]);
   const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<'text' | 'image' | 'voice', RemoteModelItem[]>>({
     text: [
-      { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (默认推荐/超快响应)', type: 'text', owned_by: 'Google' },
-      { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (深度推理模型)', type: 'text', owned_by: 'Google' },
-      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (最新低延迟)', type: 'text', owned_by: 'Google' },
+      { id: 'gemini-4-hydrogen', name: 'Gemini 4 Hydrogen (默认推荐/高速文本)', type: 'text', owned_by: 'Google' },
+      { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite (轻量高配额)', type: 'text', owned_by: 'Google' },
+      { id: 'gemini-4-neon', name: 'Gemini 4 Neon (深度推理/需付费Key)', type: 'text', owned_by: 'Google' },
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (经典低延迟)', type: 'text', owned_by: 'Google' },
       { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (逻辑与计算增强)', type: 'text', owned_by: 'Google' },
       { id: 'deepseek-chat', name: 'DeepSeek V3 (Chat 官方兼容)', type: 'text', owned_by: 'DeepSeek' },
       { id: 'deepseek-reasoner', name: 'DeepSeek R1 (深度推理模型)', type: 'text', owned_by: 'DeepSeek' },
@@ -371,9 +372,10 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   useEffect(() => {
     if (fetchedModels.length === 0) {
       setFetchedModels([
-        { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (默认推荐/超快响应)', type: 'text', owned_by: 'Google' },
-        { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (深度推理模型)', type: 'text', owned_by: 'Google' },
-        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (最新低延迟)', type: 'text', owned_by: 'Google' },
+        { id: 'gemini-4-hydrogen', name: 'Gemini 4 Hydrogen (默认推荐/高速文本)', type: 'text', owned_by: 'Google' },
+        { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite (轻量高配额)', type: 'text', owned_by: 'Google' },
+        { id: 'gemini-4-neon', name: 'Gemini 4 Neon (深度推理/需付费Key)', type: 'text', owned_by: 'Google' },
+        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (经典低延迟)', type: 'text', owned_by: 'Google' },
         { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (逻辑与计算增强)', type: 'text', owned_by: 'Google' },
         { id: 'deepseek-chat', name: 'DeepSeek V3 (Chat 官方兼容)', type: 'text', owned_by: 'DeepSeek' },
         { id: 'deepseek-reasoner', name: 'DeepSeek R1 (深度推理模型)', type: 'text', owned_by: 'DeepSeek' },

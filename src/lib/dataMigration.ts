@@ -42,8 +42,8 @@ import { AI_PERMISSION_ITEMS, DEFAULT_SCENE_RULES } from './agent/PermissionMana
 
 // 当前应用架构与数据版本
 export const CURRENT_APP_DATA_VERSION = 2;
-export const CURRENT_APP_VERSION_CODE = Number(import.meta.env.VITE_APP_VERSION_CODE || 2);
-export const CURRENT_APP_VERSION_NAME = String(import.meta.env.VITE_APP_VERSION_NAME || '1.1.0');
+export const CURRENT_APP_VERSION_CODE = Number(import.meta.env.VITE_APP_VERSION_CODE || 3);
+export const CURRENT_APP_VERSION_NAME = String(import.meta.env.VITE_APP_VERSION_NAME || '1.1.1');
 
 export const MIGRATION_STORAGE_KEYS = {
   APP_DATA_VERSION: 'phone_app_data_version',

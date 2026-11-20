@@ -168,7 +168,7 @@ const INITIAL_API_LOGS: ApiLog[] = [
     id: 'log_1',
     appName: '微信-AI聊天',
     timestamp: Date.now() - 1200000,
-    modelName: 'gemini-3.6-flash',
+    modelName: 'gemini-4-hydrogen',
     interfaceType: 'ChatGeneration',
     category: 'text',
     status: 'success',
@@ -185,7 +185,7 @@ const INITIAL_API_LOGS: ApiLog[] = [
     id: 'log_2',
     appName: '美化-CSS优化',
     timestamp: Date.now() - 5400000,
-    modelName: 'gemini-3.6-flash',
+    modelName: 'gemini-4-hydrogen',
     interfaceType: 'CodeRefactor',
     category: 'text',
     status: 'success',
@@ -202,7 +202,7 @@ const INITIAL_API_LOGS: ApiLog[] = [
     id: 'log_3',
     appName: '主动关怀提醒',
     timestamp: Date.now() - 86400000,
-    modelName: 'gemini-3.6-flash',
+    modelName: 'gemini-4-hydrogen',
     interfaceType: 'ProactiveHealthNotice',
     category: 'text',
     status: 'success',
@@ -259,7 +259,7 @@ export const DEFAULT_TEXT_API_CONFIG: SingleApiConfig = {
   provider: 'google_gemini',
   baseUrl: '',
   apiKey: '',
-  model: 'gemini-3.8-flash',
+  model: 'gemini-4-hydrogen',
 };
 
 export const DEFAULT_IMAGE_API_CONFIG: SingleApiConfig = {

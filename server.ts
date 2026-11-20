@@ -96,11 +96,75 @@ function buildApiLogObject(params: {
   };
 }
 
+const GEMINI_DEFAULT_TEXT_MODEL = 'gemini-4-hydrogen';
+const GEMINI_TEXT_FALLBACK_ORDER = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite', 'gemini-2.5-flash'] as const;
+const geminiModelCooldownUntil = new Map<string, number>();
+
+function isGemini4Model(modelName: string): boolean {
+  return modelName.startsWith('gemini-4-');
+}
+
+function normalizeOfficialGeminiModel(modelName: string): string {
+  const trimmed = modelName.trim();
+  if (!trimmed || trimmed === 'gemini-3.6-flash') {
+    return GEMINI_DEFAULT_TEXT_MODEL;
+  }
+  return trimmed;
+}
+
+function isQuotaOrRateLimitError(msg: string): boolean {
+  return (
+    msg.includes('429') ||
+    msg.includes('RESOURCE_EXHAUSTED') ||
+    msg.includes('Quota exceeded') ||
+    msg.includes('quota')
+  );
+}
+
+function isModelUnavailableError(msg: string): boolean {
+  return msg.includes('404') || msg.includes('NOT_FOUND') || msg.includes('not found');
+}
+
+function parseRetryCooldownMs(msg: string): number {
+  const match = msg.match(/"retryDelay"\s*:\s*"(\d+)s"/i) || msg.match(/Please retry in\s+(?:(\d+)h)?(?:(\d+)m)?(\d+(?:\.\d+)?)s/i);
+  if (match) {
+    if (match.length === 2 && match[1]) {
+      const sec = parseInt(match[1], 10);
+      return Math.min(Math.max(sec * 1000, 60_000), 30 * 60_000);
+    }
+    const hours = parseInt(match[1] || '0', 10);
+    const mins = parseInt(match[2] || '0', 10);
+    const secs = Math.ceil(parseFloat(match[3] || '0'));
+    const totalMs = ((hours * 3600) + (mins * 60) + secs) * 1000;
+    if (totalMs > 0) {
+      return Math.min(Math.max(totalMs, 60_000), 30 * 60_000);
+    }
+  }
+  return 15 * 60_000;
+}
+
+function buildGeminiConfigForModel(modelName: string, params: AiCallParams): Record<string, any> | undefined {
+  const config: Record<string, any> = {};
+  if (params.systemInstruction) {
+    config.systemInstruction = params.systemInstruction;
+  }
+  if (params.responseMimeType) {
+    config.responseMimeType = params.responseMimeType;
+  }
+  if (!isGemini4Model(modelName) && params.temperature !== undefined) {
+    config.temperature = params.temperature;
+  }
+  if (params.maxTokens !== undefined) {
+    config.maxOutputTokens = params.maxTokens;
+  }
+  return Object.keys(config).length > 0 ? config : undefined;
+}
+
 async function callAiServiceDetailed(params: AiCallParams): Promise<AiCallDetailedResult> {
   const cleanBaseUrl = params.baseUrl ? params.baseUrl.trim().replace(/\/+$/, '') : '';
   const cleanKey = (params.apiKey && params.apiKey.trim()) || '';
   const activeKey = cleanKey || (!cleanBaseUrl && (!params.providerType || params.providerType === 'google_gemini') && process.env.NODE_ENV !== 'production' ? (process.env.GEMINI_API_KEY || '') : '');
-  const targetModel = params.model?.trim() || 'gemini-3.6-flash';
+  const targetModel = params.model?.trim() || GEMINI_DEFAULT_TEXT_MODEL;
 
   let isOpenAiCompatible = false;
   let activeProtocol = params.apiProtocol;
@@ -253,7 +317,7 @@ async function callAiServiceDetailed(params: AiCallParams): Promise<AiCallDetail
       apiKey: activeKey,
       httpOptions: {
         headers: {
-          'User-Agent': 'aistudio-build-phone',
+          'User-Agent': 'aistudio-build',
           ...(params.customHeaders || {}),
         },
       },
@@ -262,63 +326,78 @@ async function callAiServiceDetailed(params: AiCallParams): Promise<AiCallDetail
       clientOptions.httpOptions.baseUrl = cleanBaseUrl;
     }
 
+    const isOfficialGeminiEndpoint = !cleanBaseUrl || cleanBaseUrl.includes('googleapis.com');
+    const primaryModel = isOfficialGeminiEndpoint ? normalizeOfficialGeminiModel(targetModel) : targetModel;
+
     try {
       const aiClient = new GoogleGenAI(clientOptions);
-      const generateOptions: any = {
-        model: targetModel,
-        contents: params.prompt,
-      };
-
-      const config: any = {};
-      if (params.systemInstruction) {
-        config.systemInstruction = params.systemInstruction;
-      }
-      if (params.responseMimeType) {
-        config.responseMimeType = params.responseMimeType;
-      }
-      if (params.temperature !== undefined) {
-        config.temperature = params.temperature;
-      }
-      if (params.maxTokens !== undefined) {
-        config.maxOutputTokens = params.maxTokens;
-      }
-      if (Object.keys(config).length > 0) {
-        generateOptions.config = config;
-      }
-
       let result: any;
-      let usedModel = targetModel;
-      try {
-        result = await aiClient.models.generateContent(generateOptions);
-      } catch (geminiPrimaryErr: any) {
-        const primaryMsg = geminiPrimaryErr.message || '';
-        const isQuotaExceeded =
-          primaryMsg.includes('429') ||
-          primaryMsg.includes('RESOURCE_EXHAUSTED') ||
-          primaryMsg.includes('Quota exceeded') ||
-          primaryMsg.includes('quota');
+      let usedModel = primaryModel;
 
-        if (isQuotaExceeded && (!cleanBaseUrl || cleanBaseUrl.includes('googleapis.com'))) {
-          const fallbackCandidates = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'].filter((m) => m !== targetModel);
-          let recovered = false;
-          for (const fallbackModel of fallbackCandidates) {
-            try {
-              console.warn(`[Gemini Fallback] 模型 ${targetModel} 额度受限 (429/Quota)，尝试备用模型: ${fallbackModel}`);
-              const fbOptions = { ...generateOptions, model: fallbackModel };
-              result = await aiClient.models.generateContent(fbOptions);
-              usedModel = fallbackModel;
-              recovered = true;
-              break;
-            } catch (fbErr: any) {
-              console.warn(`[Gemini Fallback] 备用模型 ${fallbackModel} 亦失败:`, fbErr.message || fbErr);
-            }
-          }
-          if (!recovered) {
-            throw geminiPrimaryErr;
-          }
-        } else {
-          throw geminiPrimaryErr;
+      if (isOfficialGeminiEndpoint) {
+        const now = Date.now();
+        const orderedCandidates = Array.from(new Set([primaryModel, ...GEMINI_TEXT_FALLBACK_ORDER]));
+        const activeCandidates = orderedCandidates.filter((m) => (geminiModelCooldownUntil.get(m) || 0) <= now);
+
+        if (activeCandidates.length === 0) {
+          const minWaitMs = Math.min(...orderedCandidates.map((m) => (geminiModelCooldownUntil.get(m) || now) - now));
+          const waitMins = Math.max(1, Math.ceil(minWaitMs / 60_000));
+          const cooldownErr: any = new Error(`[Gemini 429 配额保护] 当前所有可用 Gemini 模型配额已触及限制，将在约 ${waitMins} 分钟后自动恢复尝试；您也可以在系统设置中切换付费 API Key 或其他兼容 Provider。`);
+          cooldownErr.statusCode = 429;
+          cooldownErr.isQuotaExceeded = true;
+          throw cooldownErr;
         }
+
+        let lastErr: any = null;
+        let recovered = false;
+
+        for (let idx = 0; idx < activeCandidates.length; idx++) {
+          const candidateModel = activeCandidates[idx];
+          const generateOptions: any = {
+            model: candidateModel,
+            contents: params.prompt,
+          };
+          const modelConfig = buildGeminiConfigForModel(candidateModel, params);
+          if (modelConfig) {
+            generateOptions.config = modelConfig;
+          }
+
+          try {
+            result = await aiClient.models.generateContent(generateOptions);
+            usedModel = candidateModel;
+            recovered = true;
+            if (idx > 0) {
+              console.info(`[Gemini Fallback] ${primaryModel} 受限，已自动切换至 ${candidateModel}`);
+            }
+            break;
+          } catch (candidateErr: any) {
+            lastErr = candidateErr;
+            const msg = String(candidateErr?.message || candidateErr || '');
+            if (isQuotaOrRateLimitError(msg)) {
+              geminiModelCooldownUntil.set(candidateModel, Date.now() + parseRetryCooldownMs(msg));
+              continue;
+            }
+            if (isModelUnavailableError(msg)) {
+              geminiModelCooldownUntil.set(candidateModel, Date.now() + 60 * 60_000);
+              continue;
+            }
+            throw candidateErr;
+          }
+        }
+
+        if (!recovered) {
+          throw lastErr || new Error('Gemini API 配额已用尽 (429 RESOURCE_EXHAUSTED)');
+        }
+      } else {
+        const generateOptions: any = {
+          model: primaryModel,
+          contents: params.prompt,
+        };
+        const modelConfig = buildGeminiConfigForModel(primaryModel, params);
+        if (modelConfig) {
+          generateOptions.config = modelConfig;
+        }
+        result = await aiClient.models.generateContent(generateOptions);
       }
 
       const usageMeta = result?.usageMetadata;
@@ -422,7 +501,7 @@ function handleAiEndpointError(res: express.Response, error: any, contextName: s
   const statusMsg = isQuota ? '429 配额超限/请求频率过高' : error?.message || `${contextName} 执行异常`;
 
   if (isQuota) {
-    console.warn(`[${contextName}] AI Provider 配额超限/限流保护触发 (429/RESOURCE_EXHAUSTED):`, error.message || error);
+    console.info(`[${contextName}] AI Provider 触发 429 配额保护: ${statusMsg}`);
     return res.status(429).json({
       success: false,
       statusCode: 429,
@@ -430,7 +509,7 @@ function handleAiEndpointError(res: express.Response, error: any, contextName: s
       error: error.message || 'API quota exceeded or rate limited',
       apiLog: buildApiLogObject({
         appName: contextName || 'AI接口',
-        modelName: 'gemini-3.6-flash',
+        modelName: GEMINI_DEFAULT_TEXT_MODEL,
         interfaceType: 'AiEndpoint',
         status: 'failed',
         durationMs: 0,
@@ -446,7 +525,7 @@ function handleAiEndpointError(res: express.Response, error: any, contextName: s
     error: error.message || `${contextName} failed`,
     apiLog: buildApiLogObject({
       appName: contextName || 'AI接口',
-      modelName: 'gemini-3.6-flash',
+      modelName: GEMINI_DEFAULT_TEXT_MODEL,
       interfaceType: 'AiEndpoint',
       status: 'failed',
       durationMs: 0,
@@ -1222,7 +1301,7 @@ app.post('/api/test-api', async (req, res) => {
   const startTime = Date.now();
   const cleanKey = (apiKey && apiKey.trim()) || process.env.GEMINI_API_KEY || '';
   const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, '') : '';
-  const targetModel = model || 'gemini-3.6-flash';
+  const targetModel = model || 'gemini-4-hydrogen';
 
   if (!cleanKey) {
     return res.status(400).json({
@@ -2379,7 +2458,7 @@ app.post('/api/gemini/weather-proactive-care', async (req, res) => {
   } = req.body;
 
   const startTime = Date.now();
-  const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+  const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
 
   try {
     const prompt = `你正在扮演微信好友【${character.name}】(微信号: ${character.wxid})。
@@ -2490,7 +2569,7 @@ app.post('/api/gemini/analyze-image', async (req, res) => {
   const imageBaseUrl = apiConfig?.imageBaseUrl || apiConfig?.textBaseUrl || '';
   const imageProvider = apiConfig?.imageProvider || apiConfig?.textProvider || 'google_gemini';
   const imageProtocol = apiConfig?.imageApiProtocol || apiConfig?.textApiProtocol;
-  const selectedModel = apiConfig?.imageModel || apiConfig?.textModel || 'gemini-3.6-flash';
+  const selectedModel = apiConfig?.imageModel || apiConfig?.textModel || 'gemini-4-hydrogen';
   const customPrompt = prompt || '请用中文详细总结识别这张图片中的核心事物、文字、场景以及主要细节。';
 
   try {
@@ -2537,7 +2616,7 @@ app.post('/api/gemini/analyze-image', async (req, res) => {
       if (isKnownTextOnly) {
         return res.json({
           success: false,
-          error: `当前配置的模型 (${selectedModel}) 为纯文本模型，不支持图像识别。请在系统设置中切换为视觉模型 (如 gpt-4o, gemini-3.6-flash)。`,
+          error: `当前配置的模型 (${selectedModel}) 为纯文本模型，不支持图像识别。请在系统设置中切换为视觉模型 (如 gpt-4o, gemini-4-hydrogen)。`,
           description: '当前模型不支持图片识别',
         });
       }
@@ -2595,7 +2674,7 @@ app.post('/api/gemini/analyze-image', async (req, res) => {
       const clientOptions: any = {
         apiKey: activeKey,
         httpOptions: {
-          headers: { 'User-Agent': 'aistudio-build-phone' },
+          headers: { 'User-Agent': 'aistudio-build' },
         },
       };
       if (imageBaseUrl) {
@@ -2614,17 +2693,41 @@ app.post('/api/gemini/analyze-image', async (req, res) => {
         parts = [{ text: `${customPrompt}\n图片URL: ${imageUrl}` }];
       }
 
-      const visionModel = selectedModel.includes('gemini') ? selectedModel : 'gemini-3.6-flash';
-      let aiResponse: any;
-      try {
-        aiResponse = await aiClient.models.generateContent({
-          model: visionModel,
-          contents: [{ role: 'user', parts }],
-        });
-      } catch (geminiErr: any) {
+      const visionModel = selectedModel.includes('gemini') ? normalizeOfficialGeminiModel(selectedModel) : GEMINI_DEFAULT_TEXT_MODEL;
+      const isOfficialVision = !imageBaseUrl || imageBaseUrl.includes('googleapis.com');
+      const now = Date.now();
+      const visionCandidates = isOfficialVision
+        ? Array.from(new Set([visionModel, ...GEMINI_TEXT_FALLBACK_ORDER])).filter((m) => (geminiModelCooldownUntil.get(m) || 0) <= now)
+        : [visionModel];
+
+      let aiResponse: any = null;
+      let lastVisionErr: any = null;
+      for (const candidateModel of visionCandidates) {
+        try {
+          aiResponse = await aiClient.models.generateContent({
+            model: candidateModel,
+            contents: [{ role: 'user', parts }],
+          });
+          break;
+        } catch (geminiErr: any) {
+          lastVisionErr = geminiErr;
+          const msg = String(geminiErr?.message || '');
+          if (isOfficialVision && isQuotaOrRateLimitError(msg)) {
+            geminiModelCooldownUntil.set(candidateModel, Date.now() + parseRetryCooldownMs(msg));
+            continue;
+          }
+          if (isOfficialVision && isModelUnavailableError(msg)) {
+            geminiModelCooldownUntil.set(candidateModel, Date.now() + 60 * 60_000);
+            continue;
+          }
+          break;
+        }
+      }
+
+      if (!aiResponse) {
         return res.json({
           success: false,
-          error: `Gemini 视觉接口调用异常: ${geminiErr.message || '网络或配额受限'}`,
+          error: `Gemini 视觉接口调用异常: ${lastVisionErr?.message || '当前模型配额受限或网络异常'}`,
           description: '图片识别调用失败',
         });
       }
@@ -2716,7 +2819,7 @@ app.post('/api/gemini/chat', async (req, res) => {
   } = req.body;
 
   const startTime = Date.now();
-  const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || 'gemini-3.6-flash';
+  const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || 'gemini-4-hydrogen';
 
   try {
     // Construct rich contextual system prompt
@@ -3057,7 +3160,7 @@ app.post('/api/gemini/group-chat', async (req, res) => {
   } = req.body;
 
   const startTime = Date.now();
-  const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+  const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
 
   try {
     if (!aiCandidates || aiCandidates.length === 0) {
@@ -3274,7 +3377,7 @@ app.post('/api/gemini/ai-social-turn', async (req, res) => {
   const activeBaseUrl = apiConfig?.textApiConfig?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl;
   const activeProvider = apiConfig?.textApiConfig?.provider || apiConfig?.textProvider || apiConfig?.providerType;
   const activeProtocol = apiConfig?.textApiConfig?.apiProtocol || apiConfig?.textApiProtocol;
-  const selectedModel = apiConfig?.textApiConfig?.model || apiConfig?.textModel || 'gemini-3.6-flash';
+  const selectedModel = apiConfig?.textApiConfig?.model || apiConfig?.textModel || 'gemini-4-hydrogen';
 
   try {
     const profileDesc = (c: any) =>
@@ -3672,7 +3775,7 @@ app.post('/api/groups/:groupId/sync', (req, res) => {
 // 1.5 Dedicated Natural Language Device Control Endpoint
 app.post('/api/gemini/device-nlp-control', async (req, res) => {
   const { command, devicesSummary, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+  const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
 
   const prompt = `你是一个智能家居与外部设备指令解析中枢。
 用户下达的自然语言指令：
@@ -3722,7 +3825,7 @@ ${devicesSummary || '(暂无)'}
 // 2. AI Moments Dynamic Interaction (AI Likes & Comments on User Post)
 app.post('/api/gemini/moments-interact', async (req, res) => {
   const { postContent, userProfile, characters, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+  const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
   try {
     const prompt = `用户发送了一条朋友圈：
 " ${postContent} "
@@ -3793,7 +3896,7 @@ ${characters.map((c: any) => `- ID: ${c.id}, 名字: ${c.name}, 人设: ${c.pers
 // 3. External Link URL Parser Endpoint
 app.post('/api/gemini/url-parse', async (req, res) => {
   const { url, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+  const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
   try {
     const prompt = `请分析以下 Web 链接并提供简洁精炼的内容摘要与关键要点：
 链接地址：${url}
@@ -3838,7 +3941,7 @@ app.post('/api/gemini/url-parse', async (req, res) => {
 // 4. One-Click AI CSS Fix & Auto-Adapt Endpoint
 app.post('/api/gemini/fix-css', async (req, res) => {
   const { customCss, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+  const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
   try {
     const prompt = `你是一个 CSS 与 手机端 UI 适配专家。请检查并优化以下 CSS 代码：
 1. 修复语法错误或冲突属性
@@ -3891,7 +3994,7 @@ ${customCss}`;
 // 5. JSON Format Adapter Endpoint
 app.post('/api/gemini/adapter-json', async (req, res) => {
   const { rawJson, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+  const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
   try {
     const prompt = `你是一个专业的 JSON 格式解析与适配工具。请校验并重构修复以下输入的 JSON 字符串，修复其中可能存在的语法错误、格式混淆或非标准字符，并输出格式化好（带 2 空格缩进）的标准合法 JSON 代码：\n\n${rawJson}`;
 
@@ -3941,7 +4044,7 @@ app.post('/api/gemini/adapter-json', async (req, res) => {
 // 6. WorldBook AI Inspiration & Expand Endpoint
 app.post('/api/gemini/worldbook-ai', async (req, res) => {
   const { title, genre, brief, existingSetting, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+  const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
   try {
     const prompt = `你是一个顶级世界观架构师与小说世界设定师。请根据以下要求构想或扩写一套严密、宏大且富有沉浸感的世界书（WorldBook）设定：
 - 世界名称/主题：${title || '未命名世界'}
@@ -4028,7 +4131,7 @@ app.post('/api/gemini/offline-chat', async (req, res) => {
     const textCfg = apiConfig?.textApiConfig;
     const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || '';
     const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || '';
-    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || 'gemini-3.6-flash';
+    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || 'gemini-4-hydrogen';
     const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || '';
     const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || '';
     const customHeaders = apiConfig?.customHeaders || {};
@@ -4184,7 +4287,7 @@ app.post('/api/gemini/offline-summary', async (req, res) => {
     const textCfg = apiConfig?.textApiConfig;
     const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || '';
     const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || '';
-    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || 'gemini-3.6-flash';
+    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || 'gemini-4-hydrogen';
     const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || '';
     const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || '';
     const customHeaders = apiConfig?.customHeaders || {};
@@ -4259,7 +4362,7 @@ app.post('/api/gemini/offline-summary', async (req, res) => {
 app.post('/api/gemini/gomoku-commentary', async (req, res) => {
   try {
     const { character, situation, boardSummary, difficulty, lastMove, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+    const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
 
     const systemPrompt = `你现在正在扮演角色：${character?.name || 'AI对弈者'}。
 人设背景：${character?.persona || '聪明且富有棋风的AI对手'}。
@@ -4334,7 +4437,7 @@ app.post('/api/gemini/gomoku-commentary', async (req, res) => {
 app.post('/api/gemini/tictactoe-commentary', async (req, res) => {
   try {
     const { character, situation, difficulty, lastMoveIndex, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+    const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
 
     const situationDescriptions: Record<string, string> = {
       player_threat: '玩家准备形成三连（例如：“嗯？你是不是想赢我？”）',
@@ -4417,7 +4520,7 @@ app.post('/api/gemini/tictactoe-commentary', async (req, res) => {
 app.post('/api/gemini/rps-dialogue', async (req, res) => {
   try {
     const { character, situation, streak, roundResult, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+    const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
 
     const situationDescriptions: Record<string, string> = {
       before_throw: 'AI出拳前的预备台词（例如：“这次我可不会让你。”）',
@@ -4497,7 +4600,7 @@ app.post('/api/gemini/rps-dialogue', async (req, res) => {
 app.post('/api/gemini/rps-generate-question', async (req, res) => {
   try {
     const { character, targetName, targetPersona, recentQuestions, category, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+    const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
 
     const categories = ['日常', '喜好', '游戏相关', '回忆与心事', '假设情境', '性格相关', '二选一'];
     const chosenCategory = category || categories[Math.floor(Math.random() * categories.length)];
@@ -4565,7 +4668,7 @@ app.post('/api/gemini/rps-generate-question', async (req, res) => {
 app.post('/api/gemini/rps-answer-question', async (req, res) => {
   try {
     const { character, question, askerName, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+    const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
 
     const systemPrompt = `你现在正在扮演角色：${character?.name || 'AI'}。
 性格与人设：${character?.persona || '温柔体贴的朋友'}。
@@ -4632,7 +4735,7 @@ app.post('/api/gemini/proactive-generate', async (req, res) => {
       currentTime,
       apiConfig,
     } = req.body;
-    const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || 'gemini-3.6-flash';
+    const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || 'gemini-4-hydrogen';
 
     let triggerDescription = '';
     if (triggerType === 'inactivity_timeout') {
@@ -4877,7 +4980,7 @@ app.post('/api/import/analyze-structure', async (req, res) => {
     const textCfg = apiConfig?.textApiConfig;
     const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || '';
     const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || '';
-    const selectedModel = textCfg?.model || apiConfig?.textModel || 'gemini-3.6-flash';
+    const selectedModel = textCfg?.model || apiConfig?.textModel || 'gemini-4-hydrogen';
     const provider = textCfg?.provider || apiConfig?.textProvider || '';
     const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || '';
     const customHeaders = apiConfig?.customHeaders || {};
@@ -4969,7 +5072,7 @@ app.post('/api/gemini/extract-life-events', async (req, res) => {
       return res.json({ success: true, events: [] });
     }
 
-    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+    const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
 
     const conversationSnippet = messages
       .slice(-10)
@@ -5054,7 +5157,7 @@ app.post('/api/gemini/extract-memories', async (req, res) => {
       return res.json({ success: true, extractedMemories: [] });
     }
 
-    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+    const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
     const characterName = character?.name || 'AI';
     const userName = userProfile?.name || '用户';
 
@@ -5136,7 +5239,7 @@ ${userMessage}
 app.post('/api/gemini/proactive-period', async (req, res) => {
   try {
     const { character, userProfile, menstrualInfo, targetStage, apiConfig } = req.body;
-    const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || 'gemini-3.6-flash';
+    const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || 'gemini-4-hydrogen';
     const startTime = Date.now();
 
     const stage = targetStage || (
@@ -5255,7 +5358,7 @@ ${stageInstruction}
 app.post('/api/gemini/telepathy-deduce-choice', async (req, res) => {
   try {
     const { character, question, userProfile, characterMemories, recentChats, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+    const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
 
     const systemPrompt = `你现在正在与玩家进行“心有灵犀”默契小游戏。
 你的身份是：${character?.name || 'AI伙伴'}
@@ -5327,7 +5430,7 @@ ${(question?.options || []).map((o: any) => `- [${o.id}] ${o.text}`).join('\n')}
 app.post('/api/gemini/telepathy-reaction', async (req, res) => {
   try {
     const { character, questionText, playerChoiceText, aiChoiceText, isMatch, currentStreak, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+    const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
 
     const systemPrompt = `你现在正在与玩家玩“心有灵犀”默契小游戏。
 你的身份是：${character?.name || 'AI伙伴'}
@@ -5387,7 +5490,7 @@ app.post('/api/gemini/telepathy-reaction', async (req, res) => {
 app.post('/api/gemini/telepathy-generate-memory', async (req, res) => {
   try {
     const { character, userName, record, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || 'gemini-3.6-flash';
+    const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
 
     const roundsSummary = (record?.rounds || [])
       .map((r: any) => `问题：“${r.question?.question}” -> 玩家选：“${r.playerChoiceText}” (AI预测：“${r.aiChoiceText}”, 是否一致: ${r.isMatch ? '是' : '否'})`)
@@ -5447,9 +5550,10 @@ ${roundsSummary}
 app.get('/api/gemini/models', async (req, res) => {
   try {
     const models = [
-      { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (默认推荐/超快响应)', type: 'text' },
-      { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (深度推理模型)', type: 'text' },
-      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (最新低延迟)', type: 'text' },
+      { id: 'gemini-4-hydrogen', name: 'Gemini 4 Hydrogen (默认推荐/高速文本)', type: 'text' },
+      { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite (轻量高配额)', type: 'text' },
+      { id: 'gemini-4-neon', name: 'Gemini 4 Neon (深度推理/需付费Key)', type: 'text' },
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (经典低延迟)', type: 'text' },
       { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (逻辑与计算增强)', type: 'text' },
       { id: 'gpt-4o', name: 'GPT-4o (OpenAI 兼容反代)', type: 'text' },
       { id: 'gpt-4o-mini', name: 'GPT-4o Mini (轻量反代)', type: 'text' },

@@ -115,11 +115,63 @@ function buildApiLogObject(params) {
     purpose: params.purpose
   };
 }
+var GEMINI_DEFAULT_TEXT_MODEL = "gemini-4-hydrogen";
+var GEMINI_TEXT_FALLBACK_ORDER = ["gemini-4-hydrogen", "gemini-3.1-flash-lite", "gemini-2.5-flash"];
+var geminiModelCooldownUntil = /* @__PURE__ */ new Map();
+function isGemini4Model(modelName) {
+  return modelName.startsWith("gemini-4-");
+}
+function normalizeOfficialGeminiModel(modelName) {
+  const trimmed = modelName.trim();
+  if (!trimmed || trimmed === "gemini-3.6-flash") {
+    return GEMINI_DEFAULT_TEXT_MODEL;
+  }
+  return trimmed;
+}
+function isQuotaOrRateLimitError(msg) {
+  return msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("Quota exceeded") || msg.includes("quota");
+}
+function isModelUnavailableError(msg) {
+  return msg.includes("404") || msg.includes("NOT_FOUND") || msg.includes("not found");
+}
+function parseRetryCooldownMs(msg) {
+  const match = msg.match(/"retryDelay"\s*:\s*"(\d+)s"/i) || msg.match(/Please retry in\s+(?:(\d+)h)?(?:(\d+)m)?(\d+(?:\.\d+)?)s/i);
+  if (match) {
+    if (match.length === 2 && match[1]) {
+      const sec = parseInt(match[1], 10);
+      return Math.min(Math.max(sec * 1e3, 6e4), 30 * 6e4);
+    }
+    const hours = parseInt(match[1] || "0", 10);
+    const mins = parseInt(match[2] || "0", 10);
+    const secs = Math.ceil(parseFloat(match[3] || "0"));
+    const totalMs = (hours * 3600 + mins * 60 + secs) * 1e3;
+    if (totalMs > 0) {
+      return Math.min(Math.max(totalMs, 6e4), 30 * 6e4);
+    }
+  }
+  return 15 * 6e4;
+}
+function buildGeminiConfigForModel(modelName, params) {
+  const config = {};
+  if (params.systemInstruction) {
+    config.systemInstruction = params.systemInstruction;
+  }
+  if (params.responseMimeType) {
+    config.responseMimeType = params.responseMimeType;
+  }
+  if (!isGemini4Model(modelName) && params.temperature !== void 0) {
+    config.temperature = params.temperature;
+  }
+  if (params.maxTokens !== void 0) {
+    config.maxOutputTokens = params.maxTokens;
+  }
+  return Object.keys(config).length > 0 ? config : void 0;
+}
 async function callAiServiceDetailed(params) {
   const cleanBaseUrl = params.baseUrl ? params.baseUrl.trim().replace(/\/+$/, "") : "";
   const cleanKey = params.apiKey && params.apiKey.trim() || "";
   const activeKey = cleanKey || (!cleanBaseUrl && (!params.providerType || params.providerType === "google_gemini") && process.env.NODE_ENV !== "production" ? process.env.GEMINI_API_KEY || "" : "");
-  const targetModel = params.model?.trim() || "gemini-3.6-flash";
+  const targetModel = params.model?.trim() || GEMINI_DEFAULT_TEXT_MODEL;
   let isOpenAiCompatible = false;
   let activeProtocol = params.apiProtocol;
   if (activeProtocol === "openai_compatible") {
@@ -231,7 +283,7 @@ async function callAiServiceDetailed(params) {
       apiKey: activeKey,
       httpOptions: {
         headers: {
-          "User-Agent": "aistudio-build-phone",
+          "User-Agent": "aistudio-build",
           ...params.customHeaders || {}
         }
       }
@@ -239,56 +291,71 @@ async function callAiServiceDetailed(params) {
     if (cleanBaseUrl) {
       clientOptions.httpOptions.baseUrl = cleanBaseUrl;
     }
+    const isOfficialGeminiEndpoint = !cleanBaseUrl || cleanBaseUrl.includes("googleapis.com");
+    const primaryModel = isOfficialGeminiEndpoint ? normalizeOfficialGeminiModel(targetModel) : targetModel;
     try {
       const aiClient = new import_genai.GoogleGenAI(clientOptions);
-      const generateOptions = {
-        model: targetModel,
-        contents: params.prompt
-      };
-      const config = {};
-      if (params.systemInstruction) {
-        config.systemInstruction = params.systemInstruction;
-      }
-      if (params.responseMimeType) {
-        config.responseMimeType = params.responseMimeType;
-      }
-      if (params.temperature !== void 0) {
-        config.temperature = params.temperature;
-      }
-      if (params.maxTokens !== void 0) {
-        config.maxOutputTokens = params.maxTokens;
-      }
-      if (Object.keys(config).length > 0) {
-        generateOptions.config = config;
-      }
       let result;
-      let usedModel = targetModel;
-      try {
-        result = await aiClient.models.generateContent(generateOptions);
-      } catch (geminiPrimaryErr) {
-        const primaryMsg = geminiPrimaryErr.message || "";
-        const isQuotaExceeded = primaryMsg.includes("429") || primaryMsg.includes("RESOURCE_EXHAUSTED") || primaryMsg.includes("Quota exceeded") || primaryMsg.includes("quota");
-        if (isQuotaExceeded && (!cleanBaseUrl || cleanBaseUrl.includes("googleapis.com"))) {
-          const fallbackCandidates = ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"].filter((m) => m !== targetModel);
-          let recovered = false;
-          for (const fallbackModel of fallbackCandidates) {
-            try {
-              console.warn(`[Gemini Fallback] \u6A21\u578B ${targetModel} \u989D\u5EA6\u53D7\u9650 (429/Quota)\uFF0C\u5C1D\u8BD5\u5907\u7528\u6A21\u578B: ${fallbackModel}`);
-              const fbOptions = { ...generateOptions, model: fallbackModel };
-              result = await aiClient.models.generateContent(fbOptions);
-              usedModel = fallbackModel;
-              recovered = true;
-              break;
-            } catch (fbErr) {
-              console.warn(`[Gemini Fallback] \u5907\u7528\u6A21\u578B ${fallbackModel} \u4EA6\u5931\u8D25:`, fbErr.message || fbErr);
-            }
-          }
-          if (!recovered) {
-            throw geminiPrimaryErr;
-          }
-        } else {
-          throw geminiPrimaryErr;
+      let usedModel = primaryModel;
+      if (isOfficialGeminiEndpoint) {
+        const now = Date.now();
+        const orderedCandidates = Array.from(/* @__PURE__ */ new Set([primaryModel, ...GEMINI_TEXT_FALLBACK_ORDER]));
+        const activeCandidates = orderedCandidates.filter((m) => (geminiModelCooldownUntil.get(m) || 0) <= now);
+        if (activeCandidates.length === 0) {
+          const minWaitMs = Math.min(...orderedCandidates.map((m) => (geminiModelCooldownUntil.get(m) || now) - now));
+          const waitMins = Math.max(1, Math.ceil(minWaitMs / 6e4));
+          const cooldownErr = new Error(`[Gemini 429 \u914D\u989D\u4FDD\u62A4] \u5F53\u524D\u6240\u6709\u53EF\u7528 Gemini \u6A21\u578B\u914D\u989D\u5DF2\u89E6\u53CA\u9650\u5236\uFF0C\u5C06\u5728\u7EA6 ${waitMins} \u5206\u949F\u540E\u81EA\u52A8\u6062\u590D\u5C1D\u8BD5\uFF1B\u60A8\u4E5F\u53EF\u4EE5\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u5207\u6362\u4ED8\u8D39 API Key \u6216\u5176\u4ED6\u517C\u5BB9 Provider\u3002`);
+          cooldownErr.statusCode = 429;
+          cooldownErr.isQuotaExceeded = true;
+          throw cooldownErr;
         }
+        let lastErr = null;
+        let recovered = false;
+        for (let idx = 0; idx < activeCandidates.length; idx++) {
+          const candidateModel = activeCandidates[idx];
+          const generateOptions = {
+            model: candidateModel,
+            contents: params.prompt
+          };
+          const modelConfig = buildGeminiConfigForModel(candidateModel, params);
+          if (modelConfig) {
+            generateOptions.config = modelConfig;
+          }
+          try {
+            result = await aiClient.models.generateContent(generateOptions);
+            usedModel = candidateModel;
+            recovered = true;
+            if (idx > 0) {
+              console.info(`[Gemini Fallback] ${primaryModel} \u53D7\u9650\uFF0C\u5DF2\u81EA\u52A8\u5207\u6362\u81F3 ${candidateModel}`);
+            }
+            break;
+          } catch (candidateErr) {
+            lastErr = candidateErr;
+            const msg = String(candidateErr?.message || candidateErr || "");
+            if (isQuotaOrRateLimitError(msg)) {
+              geminiModelCooldownUntil.set(candidateModel, Date.now() + parseRetryCooldownMs(msg));
+              continue;
+            }
+            if (isModelUnavailableError(msg)) {
+              geminiModelCooldownUntil.set(candidateModel, Date.now() + 60 * 6e4);
+              continue;
+            }
+            throw candidateErr;
+          }
+        }
+        if (!recovered) {
+          throw lastErr || new Error("Gemini API \u914D\u989D\u5DF2\u7528\u5C3D (429 RESOURCE_EXHAUSTED)");
+        }
+      } else {
+        const generateOptions = {
+          model: primaryModel,
+          contents: params.prompt
+        };
+        const modelConfig = buildGeminiConfigForModel(primaryModel, params);
+        if (modelConfig) {
+          generateOptions.config = modelConfig;
+        }
+        result = await aiClient.models.generateContent(generateOptions);
       }
       const usageMeta = result?.usageMetadata;
       let usage = void 0;
@@ -375,7 +442,7 @@ function handleAiEndpointError(res, error, contextName) {
   const isQuota = error?.statusCode === 429 || error?.isQuotaExceeded || error?.message?.includes("429") || error?.message?.includes("RESOURCE_EXHAUSTED") || error?.message?.includes("Quota exceeded") || error?.message?.includes("\u914D\u989D\u7528\u5C3D") || error?.message?.includes("quota");
   const statusMsg = isQuota ? "429 \u914D\u989D\u8D85\u9650/\u8BF7\u6C42\u9891\u7387\u8FC7\u9AD8" : error?.message || `${contextName} \u6267\u884C\u5F02\u5E38`;
   if (isQuota) {
-    console.warn(`[${contextName}] AI Provider \u914D\u989D\u8D85\u9650/\u9650\u6D41\u4FDD\u62A4\u89E6\u53D1 (429/RESOURCE_EXHAUSTED):`, error.message || error);
+    console.info(`[${contextName}] AI Provider \u89E6\u53D1 429 \u914D\u989D\u4FDD\u62A4: ${statusMsg}`);
     return res.status(429).json({
       success: false,
       statusCode: 429,
@@ -383,7 +450,7 @@ function handleAiEndpointError(res, error, contextName) {
       error: error.message || "API quota exceeded or rate limited",
       apiLog: buildApiLogObject({
         appName: contextName || "AI\u63A5\u53E3",
-        modelName: "gemini-3.6-flash",
+        modelName: GEMINI_DEFAULT_TEXT_MODEL,
         interfaceType: "AiEndpoint",
         status: "failed",
         durationMs: 0,
@@ -398,7 +465,7 @@ function handleAiEndpointError(res, error, contextName) {
     error: error.message || `${contextName} failed`,
     apiLog: buildApiLogObject({
       appName: contextName || "AI\u63A5\u53E3",
-      modelName: "gemini-3.6-flash",
+      modelName: GEMINI_DEFAULT_TEXT_MODEL,
       interfaceType: "AiEndpoint",
       status: "failed",
       durationMs: 0,
@@ -1060,7 +1127,7 @@ app.post("/api/test-api", async (req, res) => {
   const startTime = Date.now();
   const cleanKey = apiKey && apiKey.trim() || process.env.GEMINI_API_KEY || "";
   const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, "") : "";
-  const targetModel = model || "gemini-3.6-flash";
+  const targetModel = model || "gemini-4-hydrogen";
   if (!cleanKey) {
     return res.status(400).json({
       success: false,
@@ -2074,7 +2141,7 @@ app.post("/api/gemini/weather-proactive-care", async (req, res) => {
     apiConfig
   } = req.body;
   const startTime = Date.now();
-  const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+  const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
   try {
     const prompt = `\u4F60\u6B63\u5728\u626E\u6F14\u5FAE\u4FE1\u597D\u53CB\u3010${character.name}\u3011(\u5FAE\u4FE1\u53F7: ${character.wxid})\u3002
 \u4EBA\u8BBE\u80CC\u666F\u4E0E\u8BF4\u8BDD\u53E3\u543B\uFF1A
@@ -2169,7 +2236,7 @@ app.post("/api/gemini/analyze-image", async (req, res) => {
   const imageBaseUrl = apiConfig?.imageBaseUrl || apiConfig?.textBaseUrl || "";
   const imageProvider = apiConfig?.imageProvider || apiConfig?.textProvider || "google_gemini";
   const imageProtocol = apiConfig?.imageApiProtocol || apiConfig?.textApiProtocol;
-  const selectedModel = apiConfig?.imageModel || apiConfig?.textModel || "gemini-3.6-flash";
+  const selectedModel = apiConfig?.imageModel || apiConfig?.textModel || "gemini-4-hydrogen";
   const customPrompt = prompt || "\u8BF7\u7528\u4E2D\u6587\u8BE6\u7EC6\u603B\u7ED3\u8BC6\u522B\u8FD9\u5F20\u56FE\u7247\u4E2D\u7684\u6838\u5FC3\u4E8B\u7269\u3001\u6587\u5B57\u3001\u573A\u666F\u4EE5\u53CA\u4E3B\u8981\u7EC6\u8282\u3002";
   try {
     let description = "";
@@ -2197,7 +2264,7 @@ app.post("/api/gemini/analyze-image", async (req, res) => {
       if (isKnownTextOnly) {
         return res.json({
           success: false,
-          error: `\u5F53\u524D\u914D\u7F6E\u7684\u6A21\u578B (${selectedModel}) \u4E3A\u7EAF\u6587\u672C\u6A21\u578B\uFF0C\u4E0D\u652F\u6301\u56FE\u50CF\u8BC6\u522B\u3002\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u5207\u6362\u4E3A\u89C6\u89C9\u6A21\u578B (\u5982 gpt-4o, gemini-3.6-flash)\u3002`,
+          error: `\u5F53\u524D\u914D\u7F6E\u7684\u6A21\u578B (${selectedModel}) \u4E3A\u7EAF\u6587\u672C\u6A21\u578B\uFF0C\u4E0D\u652F\u6301\u56FE\u50CF\u8BC6\u522B\u3002\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u5207\u6362\u4E3A\u89C6\u89C9\u6A21\u578B (\u5982 gpt-4o, gemini-4-hydrogen)\u3002`,
           description: "\u5F53\u524D\u6A21\u578B\u4E0D\u652F\u6301\u56FE\u7247\u8BC6\u522B"
         });
       }
@@ -2247,7 +2314,7 @@ app.post("/api/gemini/analyze-image", async (req, res) => {
       const clientOptions = {
         apiKey: activeKey,
         httpOptions: {
-          headers: { "User-Agent": "aistudio-build-phone" }
+          headers: { "User-Agent": "aistudio-build" }
         }
       };
       if (imageBaseUrl) {
@@ -2264,17 +2331,37 @@ app.post("/api/gemini/analyze-image", async (req, res) => {
         parts = [{ text: `${customPrompt}
 \u56FE\u7247URL: ${imageUrl}` }];
       }
-      const visionModel = selectedModel.includes("gemini") ? selectedModel : "gemini-3.6-flash";
-      let aiResponse;
-      try {
-        aiResponse = await aiClient.models.generateContent({
-          model: visionModel,
-          contents: [{ role: "user", parts }]
-        });
-      } catch (geminiErr) {
+      const visionModel = selectedModel.includes("gemini") ? normalizeOfficialGeminiModel(selectedModel) : GEMINI_DEFAULT_TEXT_MODEL;
+      const isOfficialVision = !imageBaseUrl || imageBaseUrl.includes("googleapis.com");
+      const now = Date.now();
+      const visionCandidates = isOfficialVision ? Array.from(/* @__PURE__ */ new Set([visionModel, ...GEMINI_TEXT_FALLBACK_ORDER])).filter((m) => (geminiModelCooldownUntil.get(m) || 0) <= now) : [visionModel];
+      let aiResponse = null;
+      let lastVisionErr = null;
+      for (const candidateModel of visionCandidates) {
+        try {
+          aiResponse = await aiClient.models.generateContent({
+            model: candidateModel,
+            contents: [{ role: "user", parts }]
+          });
+          break;
+        } catch (geminiErr) {
+          lastVisionErr = geminiErr;
+          const msg = String(geminiErr?.message || "");
+          if (isOfficialVision && isQuotaOrRateLimitError(msg)) {
+            geminiModelCooldownUntil.set(candidateModel, Date.now() + parseRetryCooldownMs(msg));
+            continue;
+          }
+          if (isOfficialVision && isModelUnavailableError(msg)) {
+            geminiModelCooldownUntil.set(candidateModel, Date.now() + 60 * 6e4);
+            continue;
+          }
+          break;
+        }
+      }
+      if (!aiResponse) {
         return res.json({
           success: false,
-          error: `Gemini \u89C6\u89C9\u63A5\u53E3\u8C03\u7528\u5F02\u5E38: ${geminiErr.message || "\u7F51\u7EDC\u6216\u914D\u989D\u53D7\u9650"}`,
+          error: `Gemini \u89C6\u89C9\u63A5\u53E3\u8C03\u7528\u5F02\u5E38: ${lastVisionErr?.message || "\u5F53\u524D\u6A21\u578B\u914D\u989D\u53D7\u9650\u6216\u7F51\u7EDC\u5F02\u5E38"}`,
           description: "\u56FE\u7247\u8BC6\u522B\u8C03\u7528\u5931\u8D25"
         });
       }
@@ -2356,7 +2443,7 @@ app.post("/api/gemini/chat", async (req, res) => {
     apiConfig
   } = req.body;
   const startTime = Date.now();
-  const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || "gemini-3.6-flash";
+  const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || "gemini-4-hydrogen";
   try {
     let contextPrompt = `\u4F60\u6B63\u5728\u626E\u6F14\u4EFF\u771F\u5FAE\u4FE1\u4E2D\u7684 AI \u89D2\u8272\u3002
 \u89D2\u8272\u540D\u79F0\uFF1A${character.name} (\u5FAE\u4FE1\u53F7: ${character.wxid})
@@ -2678,7 +2765,7 @@ app.post("/api/gemini/group-chat", async (req, res) => {
     apiConfig
   } = req.body;
   const startTime = Date.now();
-  const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+  const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
   try {
     if (!aiCandidates || aiCandidates.length === 0) {
       return res.json({ success: true, shouldRespond: false, replies: [], reason: "No AI members in group" });
@@ -2869,7 +2956,7 @@ app.post("/api/gemini/ai-social-turn", async (req, res) => {
   const activeBaseUrl = apiConfig?.textApiConfig?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl;
   const activeProvider = apiConfig?.textApiConfig?.provider || apiConfig?.textProvider || apiConfig?.providerType;
   const activeProtocol = apiConfig?.textApiConfig?.apiProtocol || apiConfig?.textApiProtocol;
-  const selectedModel = apiConfig?.textApiConfig?.model || apiConfig?.textModel || "gemini-3.6-flash";
+  const selectedModel = apiConfig?.textApiConfig?.model || apiConfig?.textModel || "gemini-4-hydrogen";
   try {
     const profileDesc = (c) => c ? `${c.name}(ID:${c.id}) | \u4EBA\u8BBE:${c.persona || "\u666E\u901A\u89D2\u8272"} | \u6027\u683C:${c.personality || "\u81EA\u7136\u771F\u5B9E"} | \u8BB0\u5FC6:${Array.isArray(c.memories) ? c.memories.slice(0, 4).join("\uFF1B") : "\u65E0"}` : "\u672A\u77E5\u6210\u5458";
     const systemInstruction = `\u4F60\u662F AI \u89D2\u8272\u793E\u4EA4\u4E8B\u4EF6\u751F\u6210\u5668\u3002\u5FC5\u987B\u4E25\u683C\u8D34\u5408\u53CC\u65B9\u4EBA\u8BBE\u4E0E\u5F53\u524D\u5BA2\u89C2\u5173\u7CFB\uFF0C\u4E0D\u5F97\u8FDD\u80CC\u5173\u7CFB\u89C4\u5219\u3001\u4E0D\u5F97\u51ED\u7A7A\u7F16\u9020\u672A\u53D1\u751F\u4E8B\u4EF6\u3001\u4E0D\u5F97\u5728\u8F93\u51FA\u6587\u6848\u4E2D\u4F7F\u7528\u201C\u4F5C\u4E3A\u4E00\u4E2AAI\u201D\u6216\u66B4\u9732\u5185\u90E8\u8BC4\u5206\u6570\u5B57\u3002\u4EC5\u8F93\u51FA\u7EAF JSON\u3002`;
@@ -3208,7 +3295,7 @@ app.post("/api/groups/:groupId/sync", (req, res) => {
 });
 app.post("/api/gemini/device-nlp-control", async (req, res) => {
   const { command, devicesSummary, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+  const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
   const prompt = `\u4F60\u662F\u4E00\u4E2A\u667A\u80FD\u5BB6\u5C45\u4E0E\u5916\u90E8\u8BBE\u5907\u6307\u4EE4\u89E3\u6790\u4E2D\u67A2\u3002
 \u7528\u6237\u4E0B\u8FBE\u7684\u81EA\u7136\u8BED\u8A00\u6307\u4EE4\uFF1A
 "${command}"
@@ -3252,7 +3339,7 @@ ${devicesSummary || "(\u6682\u65E0)"}
 });
 app.post("/api/gemini/moments-interact", async (req, res) => {
   const { postContent, userProfile, characters, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+  const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
   try {
     const prompt = `\u7528\u6237\u53D1\u9001\u4E86\u4E00\u6761\u670B\u53CB\u5708\uFF1A
 " ${postContent} "
@@ -3318,7 +3405,7 @@ ${characters.map((c) => `- ID: ${c.id}, \u540D\u5B57: ${c.name}, \u4EBA\u8BBE: $
 });
 app.post("/api/gemini/url-parse", async (req, res) => {
   const { url, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+  const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
   try {
     const prompt = `\u8BF7\u5206\u6790\u4EE5\u4E0B Web \u94FE\u63A5\u5E76\u63D0\u4F9B\u7B80\u6D01\u7CBE\u70BC\u7684\u5185\u5BB9\u6458\u8981\u4E0E\u5173\u952E\u8981\u70B9\uFF1A
 \u94FE\u63A5\u5730\u5740\uFF1A${url}
@@ -3365,7 +3452,7 @@ app.post("/api/gemini/url-parse", async (req, res) => {
 });
 app.post("/api/gemini/fix-css", async (req, res) => {
   const { customCss, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+  const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
   try {
     const prompt = `\u4F60\u662F\u4E00\u4E2A CSS \u4E0E \u624B\u673A\u7AEF UI \u9002\u914D\u4E13\u5BB6\u3002\u8BF7\u68C0\u67E5\u5E76\u4F18\u5316\u4EE5\u4E0B CSS \u4EE3\u7801\uFF1A
 1. \u4FEE\u590D\u8BED\u6CD5\u9519\u8BEF\u6216\u51B2\u7A81\u5C5E\u6027
@@ -3420,7 +3507,7 @@ ${customCss}`;
 });
 app.post("/api/gemini/adapter-json", async (req, res) => {
   const { rawJson, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+  const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
   try {
     const prompt = `\u4F60\u662F\u4E00\u4E2A\u4E13\u4E1A\u7684 JSON \u683C\u5F0F\u89E3\u6790\u4E0E\u9002\u914D\u5DE5\u5177\u3002\u8BF7\u6821\u9A8C\u5E76\u91CD\u6784\u4FEE\u590D\u4EE5\u4E0B\u8F93\u5165\u7684 JSON \u5B57\u7B26\u4E32\uFF0C\u4FEE\u590D\u5176\u4E2D\u53EF\u80FD\u5B58\u5728\u7684\u8BED\u6CD5\u9519\u8BEF\u3001\u683C\u5F0F\u6DF7\u6DC6\u6216\u975E\u6807\u51C6\u5B57\u7B26\uFF0C\u5E76\u8F93\u51FA\u683C\u5F0F\u5316\u597D\uFF08\u5E26 2 \u7A7A\u683C\u7F29\u8FDB\uFF09\u7684\u6807\u51C6\u5408\u6CD5 JSON \u4EE3\u7801\uFF1A
 
@@ -3467,7 +3554,7 @@ ${rawJson}`;
 });
 app.post("/api/gemini/worldbook-ai", async (req, res) => {
   const { title, genre, brief, existingSetting, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+  const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
   try {
     const prompt = `\u4F60\u662F\u4E00\u4E2A\u9876\u7EA7\u4E16\u754C\u89C2\u67B6\u6784\u5E08\u4E0E\u5C0F\u8BF4\u4E16\u754C\u8BBE\u5B9A\u5E08\u3002\u8BF7\u6839\u636E\u4EE5\u4E0B\u8981\u6C42\u6784\u60F3\u6216\u6269\u5199\u4E00\u5957\u4E25\u5BC6\u3001\u5B8F\u5927\u4E14\u5BCC\u6709\u6C89\u6D78\u611F\u7684\u4E16\u754C\u4E66\uFF08WorldBook\uFF09\u8BBE\u5B9A\uFF1A
 - \u4E16\u754C\u540D\u79F0/\u4E3B\u9898\uFF1A${title || "\u672A\u547D\u540D\u4E16\u754C"}
@@ -3547,7 +3634,7 @@ app.post("/api/gemini/offline-chat", async (req, res) => {
     const textCfg = apiConfig?.textApiConfig;
     const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || "";
     const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || "";
-    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || "gemini-3.6-flash";
+    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || "gemini-4-hydrogen";
     const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || "";
     const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || "";
     const customHeaders = apiConfig?.customHeaders || {};
@@ -3696,7 +3783,7 @@ app.post("/api/gemini/offline-summary", async (req, res) => {
     const textCfg = apiConfig?.textApiConfig;
     const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || "";
     const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || "";
-    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || "gemini-3.6-flash";
+    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || "gemini-4-hydrogen";
     const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || "";
     const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || "";
     const customHeaders = apiConfig?.customHeaders || {};
@@ -3764,7 +3851,7 @@ ${transcript}
 app.post("/api/gemini/gomoku-commentary", async (req, res) => {
   try {
     const { character, situation, boardSummary, difficulty, lastMove, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+    const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
     const systemPrompt = `\u4F60\u73B0\u5728\u6B63\u5728\u626E\u6F14\u89D2\u8272\uFF1A${character?.name || "AI\u5BF9\u5F08\u8005"}\u3002
 \u4EBA\u8BBE\u80CC\u666F\uFF1A${character?.persona || "\u806A\u660E\u4E14\u5BCC\u6709\u68CB\u98CE\u7684AI\u5BF9\u624B"}\u3002
 \u8BB0\u5FC6\u8BBE\u5B9A\uFF1A${(character?.memories || []).join("\uFF1B")}\u3002
@@ -3832,7 +3919,7 @@ app.post("/api/gemini/gomoku-commentary", async (req, res) => {
 app.post("/api/gemini/tictactoe-commentary", async (req, res) => {
   try {
     const { character, situation, difficulty, lastMoveIndex, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+    const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
     const situationDescriptions = {
       player_threat: "\u73A9\u5BB6\u51C6\u5907\u5F62\u6210\u4E09\u8FDE\uFF08\u4F8B\u5982\uFF1A\u201C\u55EF\uFF1F\u4F60\u662F\u4E0D\u662F\u60F3\u8D62\u6211\uFF1F\u201D\uFF09",
       ai_block: "AI\u6321\u4F4F\u73A9\u5BB6\u7684\u8FDB\u653B\uFF08\u4F8B\u5982\uFF1A\u201C\u88AB\u6211\u53D1\u73B0\u4E86\u3002\u201D\uFF09",
@@ -3908,7 +3995,7 @@ app.post("/api/gemini/tictactoe-commentary", async (req, res) => {
 app.post("/api/gemini/rps-dialogue", async (req, res) => {
   try {
     const { character, situation, streak, roundResult, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+    const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
     const situationDescriptions = {
       before_throw: "AI\u51FA\u62F3\u524D\u7684\u9884\u5907\u53F0\u8BCD\uFF08\u4F8B\u5982\uFF1A\u201C\u8FD9\u6B21\u6211\u53EF\u4E0D\u4F1A\u8BA9\u4F60\u3002\u201D\uFF09",
       ai_win: "AI\u731C\u62F3\u83B7\u80DC\uFF08\u4F8B\u5982\uFF1A\u201C\u563F\u563F\uFF0C\u8FD9\u5C40\u5F52\u6211\u3002\u201D\uFF09",
@@ -3981,7 +4068,7 @@ app.post("/api/gemini/rps-dialogue", async (req, res) => {
 app.post("/api/gemini/rps-generate-question", async (req, res) => {
   try {
     const { character, targetName, targetPersona, recentQuestions, category, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+    const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
     const categories = ["\u65E5\u5E38", "\u559C\u597D", "\u6E38\u620F\u76F8\u5173", "\u56DE\u5FC6\u4E0E\u5FC3\u4E8B", "\u5047\u8BBE\u60C5\u5883", "\u6027\u683C\u76F8\u5173", "\u4E8C\u9009\u4E00"];
     const chosenCategory = category || categories[Math.floor(Math.random() * categories.length)];
     const systemPrompt = `\u4F60\u73B0\u5728\u6B63\u5728\u626E\u6F14\u89D2\u8272\uFF1A${character?.name || "AI"}\u3002
@@ -4042,7 +4129,7 @@ app.post("/api/gemini/rps-generate-question", async (req, res) => {
 app.post("/api/gemini/rps-answer-question", async (req, res) => {
   try {
     const { character, question, askerName, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+    const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
     const systemPrompt = `\u4F60\u73B0\u5728\u6B63\u5728\u626E\u6F14\u89D2\u8272\uFF1A${character?.name || "AI"}\u3002
 \u6027\u683C\u4E0E\u4EBA\u8BBE\uFF1A${character?.persona || "\u6E29\u67D4\u4F53\u8D34\u7684\u670B\u53CB"}\u3002
 \u8BB0\u5FC6\u5E93\u4E0E\u80CC\u666F\uFF1A${(character?.memories || []).join("\uFF1B")}\u3002
@@ -4104,7 +4191,7 @@ app.post("/api/gemini/proactive-generate", async (req, res) => {
       currentTime,
       apiConfig
     } = req.body;
-    const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || "gemini-3.6-flash";
+    const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || "gemini-4-hydrogen";
     let triggerDescription = "";
     if (triggerType === "inactivity_timeout") {
       const hours = typeof eventData?.hoursInactive === "number" && eventData.hoursInactive > 0 ? eventData.hoursInactive : null;
@@ -4311,7 +4398,7 @@ app.post("/api/import/analyze-structure", async (req, res) => {
     const textCfg = apiConfig?.textApiConfig;
     const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || "";
     const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || "";
-    const selectedModel = textCfg?.model || apiConfig?.textModel || "gemini-3.6-flash";
+    const selectedModel = textCfg?.model || apiConfig?.textModel || "gemini-4-hydrogen";
     const provider = textCfg?.provider || apiConfig?.textProvider || "";
     const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || "";
     const customHeaders = apiConfig?.customHeaders || {};
@@ -4387,7 +4474,7 @@ app.post("/api/gemini/extract-life-events", async (req, res) => {
     if (!messages || messages.length === 0) {
       return res.json({ success: true, events: [] });
     }
-    const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+    const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
     const conversationSnippet = messages.slice(-10).map((m) => `${m.sender === "user" ? userProfile?.name || "\u7528\u6237" : "AI"}: ${m.text || ""}`).join("\n");
     const eventsSnippet = (existingEvents || []).map((e) => `- ID: ${e.id} | \u6807\u9898: ${e.title} | \u7C7B\u578B: ${e.type} | \u72B6\u6001: ${e.status} | \u6458\u8981: ${e.summary}`).join("\n");
     const prompt = `\u4F60\u662F\u4E00\u4E2A\u7CBE\u51C6\u7684\u201C\u7528\u6237\u751F\u6D3B\u72B6\u6001\u4E0E\u8FD1\u51B5\u63D0\u70BC\u5668 (Current Life State Extractor)\u201D\u3002
@@ -4458,7 +4545,7 @@ app.post("/api/gemini/extract-memories", async (req, res) => {
     if (!userMessage || !userMessage.trim()) {
       return res.json({ success: true, extractedMemories: [] });
     }
-    const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+    const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
     const characterName = character?.name || "AI";
     const userName = userProfile?.name || "\u7528\u6237";
     const conversationSnippet = (recentMessages || []).slice(-6).map((m) => `${m.sender === "user" ? userName : characterName}: ${m.text || ""}`).join("\n");
@@ -4527,7 +4614,7 @@ ${userMessage}
 app.post("/api/gemini/proactive-period", async (req, res) => {
   try {
     const { character, userProfile, menstrualInfo, targetStage, apiConfig } = req.body;
-    const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || "gemini-3.6-flash";
+    const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || "gemini-4-hydrogen";
     const startTime = Date.now();
     const stage = targetStage || (menstrualInfo?.daysUntilNextPeriod !== void 0 && menstrualInfo.daysUntilNextPeriod <= 3 && menstrualInfo.daysUntilNextPeriod >= 1 ? "pre_period_3d" : menstrualInfo?.currentPeriodDay ? menstrualInfo.currentPeriodDay >= (menstrualInfo.avgPeriodDuration || 5) ? "period_end_1d" : "in_period_care" : menstrualInfo?.phaseTitle?.includes("\u6392\u5375") ? "ovulation_care" : "in_period_care");
     let stageInstruction = "";
@@ -4630,7 +4717,7 @@ ${stageInstruction}
 app.post("/api/gemini/telepathy-deduce-choice", async (req, res) => {
   try {
     const { character, question, userProfile, characterMemories, recentChats, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+    const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
     const systemPrompt = `\u4F60\u73B0\u5728\u6B63\u5728\u4E0E\u73A9\u5BB6\u8FDB\u884C\u201C\u5FC3\u6709\u7075\u7280\u201D\u9ED8\u5951\u5C0F\u6E38\u620F\u3002
 \u4F60\u7684\u8EAB\u4EFD\u662F\uFF1A${character?.name || "AI\u4F19\u4F34"}
 \u4F60\u7684\u4EBA\u8BBE\u6027\u683C\uFF1A${character?.persona || "\u6E29\u67D4\u8D34\u5FC3"}
@@ -4695,7 +4782,7 @@ ${(question?.options || []).map((o) => `- [${o.id}] ${o.text}`).join("\n")}
 app.post("/api/gemini/telepathy-reaction", async (req, res) => {
   try {
     const { character, questionText, playerChoiceText, aiChoiceText, isMatch, currentStreak, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+    const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
     const systemPrompt = `\u4F60\u73B0\u5728\u6B63\u5728\u4E0E\u73A9\u5BB6\u73A9\u201C\u5FC3\u6709\u7075\u7280\u201D\u9ED8\u5951\u5C0F\u6E38\u620F\u3002
 \u4F60\u7684\u8EAB\u4EFD\u662F\uFF1A${character?.name || "AI\u4F19\u4F34"}
 \u4F60\u7684\u4EBA\u8BBE\u6027\u683C\uFF1A${character?.persona || "\u6E29\u67D4\u8D34\u5FC3"}
@@ -4747,7 +4834,7 @@ app.post("/api/gemini/telepathy-reaction", async (req, res) => {
 app.post("/api/gemini/telepathy-generate-memory", async (req, res) => {
   try {
     const { character, userName, record, apiConfig } = req.body;
-    const selectedModel = apiConfig?.textModel || "gemini-3.6-flash";
+    const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
     const roundsSummary = (record?.rounds || []).map((r) => `\u95EE\u9898\uFF1A\u201C${r.question?.question}\u201D -> \u73A9\u5BB6\u9009\uFF1A\u201C${r.playerChoiceText}\u201D (AI\u9884\u6D4B\uFF1A\u201C${r.aiChoiceText}\u201D, \u662F\u5426\u4E00\u81F4: ${r.isMatch ? "\u662F" : "\u5426"})`).join("\n");
     const systemPrompt = `\u4F60\u662F\u4E00\u4E2A\u957F\u671F\u8BB0\u5FC6\u63D0\u53D6\u4E13\u5BB6\uFF0C\u6B63\u5728\u4E3A AI \u89D2\u8272\u3010${character?.name}\u3011\u8BB0\u5F55\u4E0E\u73A9\u5BB6\u3010${userName || "\u73A9\u5BB6"}\u3011\u7684\u4E92\u52A8\u8BB0\u5FC6\u3002
 
@@ -4798,9 +4885,10 @@ ${roundsSummary}
 app.get("/api/gemini/models", async (req, res) => {
   try {
     const models = [
-      { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash (\u9ED8\u8BA4\u63A8\u8350/\u8D85\u5FEB\u54CD\u5E94)", type: "text" },
-      { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro (\u6DF1\u5EA6\u63A8\u7406\u6A21\u578B)", type: "text" },
-      { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash (\u6700\u65B0\u4F4E\u5EF6\u8FDF)", type: "text" },
+      { id: "gemini-4-hydrogen", name: "Gemini 4 Hydrogen (\u9ED8\u8BA4\u63A8\u8350/\u9AD8\u901F\u6587\u672C)", type: "text" },
+      { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash Lite (\u8F7B\u91CF\u9AD8\u914D\u989D)", type: "text" },
+      { id: "gemini-4-neon", name: "Gemini 4 Neon (\u6DF1\u5EA6\u63A8\u7406/\u9700\u4ED8\u8D39Key)", type: "text" },
+      { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash (\u7ECF\u5178\u4F4E\u5EF6\u8FDF)", type: "text" },
       { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro (\u903B\u8F91\u4E0E\u8BA1\u7B97\u589E\u5F3A)", type: "text" },
       { id: "gpt-4o", name: "GPT-4o (OpenAI \u517C\u5BB9\u53CD\u4EE3)", type: "text" },
       { id: "gpt-4o-mini", name: "GPT-4o Mini (\u8F7B\u91CF\u53CD\u4EE3)", type: "text" },

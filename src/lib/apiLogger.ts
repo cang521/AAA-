@@ -23,7 +23,7 @@ export function recordApiLog(payload: Partial<ApiLogPayload> & { appName: string
     const isFailed = payload.status === 'failed' || Boolean(payload.errorMessage);
     const status: 'success' | 'failed' = isFailed ? 'failed' : 'success';
 
-    const model = payload.modelName || 'gemini-3.6-flash';
+    const model = payload.modelName || 'gemini-4-hydrogen';
     const isOfficialGemini = model.includes('gemini') || payload.appName.includes('Gemini');
     const defaultCostDisplay = isOfficialGemini ? '免费/内置' : '未提供';
 

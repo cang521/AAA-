@@ -49,9 +49,9 @@ export const TEXT_PROVIDER_PRESETS: ProviderPreset[] = [
     id: 'google_gemini',
     name: 'Google Gemini (官方 / 原生)',
     defaultBaseUrl: 'https://generativelanguage.googleapis.com',
-    defaultModel: 'gemini-3.6-flash',
+    defaultModel: 'gemini-4-hydrogen',
     badge: '官方推荐',
-    description: '支持 Gemini 3.6 Flash / 2.5 Pro 及自定义反代端点',
+    description: '支持 Gemini 4 Hydrogen / 3.1 Flash Lite 及自定义反代端点',
   },
   {
     id: 'custom',
@@ -709,7 +709,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             )}
             <StableTextInput
               type="text"
-              placeholder="手动输入模型名 (如: gemini-3.6-flash, deepseek-chat, gpt-4o)"
+              placeholder="手动输入模型名 (如: gemini-4-hydrogen, deepseek-chat, gpt-4o)"
               value={settings.text.model || ''}
               onValueChange={(val) => {
                 addDiagnosticLog({
@@ -1597,7 +1597,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
           <div className="api-diagnostic-label">• Base URL: <span className="api-diagnostic-info text-sky-300">{currentCategoryConfig.baseUrl ? `[有值] len=${currentCategoryConfig.baseUrl.length}` : '[为空] len=0'}</span></div>
           <div className="api-diagnostic-label">• API Key: {formatKeyInfo(currentCategoryConfig.apiKey)}</div>
           <div className="api-diagnostic-label">• Provider: <span className="api-diagnostic-info text-sky-300 font-bold">{currentCategoryConfig.provider || 'google_gemini'}</span></div>
-          <div className="api-diagnostic-label">• Model: <span className="api-diagnostic-info text-sky-300 font-bold">{currentCategoryConfig.model || 'gemini-3.6-flash'}</span></div>
+          <div className="api-diagnostic-label">• Model: <span className="api-diagnostic-info text-sky-300 font-bold">{currentCategoryConfig.model || 'gemini-4-hydrogen'}</span></div>
         </div>
 
         {/* 2. ai_phone_api_settings_v1 校验 */}
