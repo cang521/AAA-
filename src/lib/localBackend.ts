@@ -5,16 +5,87 @@ import { recordApiLog } from './apiLogger';
 
 const LOCAL_BACKEND_PORT = 3000;
 const LOCAL_BACKEND = `http://127.0.0.1:${LOCAL_BACKEND_PORT}`;
-const STARTUP_TIMEOUT_MS = 15000;
+const STARTUP_TIMEOUT_MS = 45000;
 const HEALTH_POLL_INTERVAL_MS = 350;
+const READY_POLL_INTERVAL_MS = 250;
 
 export type BackendStatus = 'stopped' | 'starting' | 'ready' | 'failed';
+
+export type BackendDiagnosticStage =
+  | 'IDLE'
+  | 'OK'
+  | 'NODE_BRIDGE_UNAVAILABLE'
+  | 'NODE_START_FAILED'
+  | 'NODE_RUNTIME_READY_HTTP_FAILED'
+  | 'NODE_RUNTIME_EXITED'
+  | 'HEALTH_CHECK_TIMEOUT';
+
+const DIAGNOSTIC_STAGE_CODES: BackendDiagnosticStage[] = [
+  'NODE_BRIDGE_UNAVAILABLE',
+  'NODE_START_FAILED',
+  'NODE_RUNTIME_READY_HTTP_FAILED',
+  'NODE_RUNTIME_EXITED',
+  'HEALTH_CHECK_TIMEOUT',
+];
+
+export const RUNTIME_EXITED_USER_MESSAGE = '内置后端已异常退出，请重新打开 App 后重试';
+
+export function formatBackendDiagnosticError(
+  stage: BackendDiagnosticStage,
+  detail: string
+): string {
+  const cleanDetail = (detail || '').trim();
+  const prefix = `[${stage}]`;
+  if (!cleanDetail) return prefix;
+  if (cleanDetail.startsWith(prefix)) return cleanDetail;
+  return `${prefix} ${cleanDetail}`;
+}
+
+export class BackendStartupError extends Error {
+  public readonly isBackendUnavailable = true;
+  public readonly stage: BackendDiagnosticStage;
+  public readonly detail: string;
+  public readonly requiresAppRestart: boolean;
+
+  constructor(
+    stage: BackendDiagnosticStage,
+    detail: string,
+    requiresAppRestart = stage === 'NODE_RUNTIME_EXITED'
+  ) {
+    super(formatBackendDiagnosticError(stage, detail));
+    this.name = 'BackendStartupError';
+    this.stage = stage;
+    this.detail = detail;
+    this.requiresAppRestart = requiresAppRestart;
+  }
+}
+
+export function isBackendUnavailableError(err: unknown): boolean {
+  if (!err) return false;
+  if (typeof err === 'object' && (err as any).isBackendUnavailable === true) {
+    return true;
+  }
+  const msg =
+    err instanceof Error
+      ? err.message
+      : typeof err === 'string'
+        ? err
+        : String((err as any)?.message || (err as any)?.error || '');
+  if (!msg) return false;
+  return (
+    DIAGNOSTIC_STAGE_CODES.some((code) => msg.includes(`[${code}]`)) ||
+    msg.includes(RUNTIME_EXITED_USER_MESSAGE)
+  );
+}
 
 export interface BackendDiagnosticLog {
   timestamp: number;
   event: string;
   status: BackendStatus;
+  stage: BackendDiagnosticStage;
   bridgeExists: boolean;
+  hasInvokedNodeStart: boolean;
+  nodeRuntimeExited: boolean;
   startCommandResult: string;
   port: number;
   healthCheckResult: boolean | null;
@@ -24,12 +95,16 @@ export interface BackendDiagnosticLog {
 
 export interface BackendDiagnosticsSnapshot {
   status: BackendStatus;
+  failureStage: BackendDiagnosticStage;
   bridgeExists: boolean;
+  hasInvokedNodeStart: boolean;
+  nodeRuntimeExited: boolean;
   startCommandResult: string;
   port: number;
   lastHealthCheckOk: boolean | null;
   lastHealthCheckAt: number | null;
   failureReason: string;
+  lastNodeErrorDetail: string;
   pendingTaskCount: number;
   logs: BackendDiagnosticLog[];
 }
@@ -38,11 +113,20 @@ type BackendListener = (snapshot: BackendDiagnosticsSnapshot) => void;
 type ResumeCallback = () => void | Promise<void>;
 
 let backendStatus: BackendStatus = Capacitor.isNativePlatform() ? 'stopped' : 'ready';
+let failureStage: BackendDiagnosticStage = Capacitor.isNativePlatform() ? 'IDLE' : 'OK';
 let failureReason = '';
 let startCommandResult = Capacitor.isNativePlatform() ? 'not_started' : 'web_preview_direct';
 let lastHealthCheckOk: boolean | null = Capacitor.isNativePlatform() ? null : true;
 let lastHealthCheckAt: number | null = null;
-let startingPromise: Promise<void> | null = null;
+
+// Process-lifetime guards: @capawesome/capacitor-nodejs only allows Nodejs.start() ONCE per App process.
+let hasInvokedNodeStart = false;
+let nodeRuntimeExited = false;
+let nodeBridgeReadySeen = false;
+let lastNodeErrorDetail = '';
+
+// Single-flight startup lock (no concurrent Nodejs.start() calls).
+let startPromise: Promise<void> | null = null;
 let inFlightQueueWaiters = 0;
 
 const diagnosticLogs: BackendDiagnosticLog[] = [];
@@ -50,12 +134,14 @@ const statusListeners = new Set<BackendListener>();
 const pendingCountProviders = new Set<() => number>();
 const resumeCallbacks = new Set<ResumeCallback>();
 let lifecycleListenersInitialized = false;
+let nodeBridgeListenersRegistered = false;
 
 function hasNativeNodejsBridge(): boolean {
   return (
     Capacitor.isNativePlatform() &&
     typeof Nodejs !== 'undefined' &&
-    typeof Nodejs?.isReady === 'function'
+    typeof Nodejs?.isReady === 'function' &&
+    typeof Nodejs?.start === 'function'
   );
 }
 
@@ -79,7 +165,10 @@ function appendDiagnosticLog(
     timestamp: Date.now(),
     event,
     status: backendStatus,
+    stage: failureStage,
     bridgeExists: hasNativeNodejsBridge(),
+    hasInvokedNodeStart,
+    nodeRuntimeExited,
     startCommandResult,
     port: LOCAL_BACKEND_PORT,
     healthCheckResult,
@@ -87,11 +176,11 @@ function appendDiagnosticLog(
     pendingTaskCount: computePendingTaskCount(),
   };
   diagnosticLogs.push(entry);
-  if (diagnosticLogs.length > 50) {
-    diagnosticLogs.splice(0, diagnosticLogs.length - 50);
+  if (diagnosticLogs.length > 60) {
+    diagnosticLogs.splice(0, diagnosticLogs.length - 60);
   }
   console.log(
-    `[小手机内置后端] ${event} | status=${entry.status} bridge=${entry.bridgeExists} start=${entry.startCommandResult} port=${entry.port} health=${entry.healthCheckResult} pending=${entry.pendingTaskCount}${
+    `[小手机内置后端] ${event} | status=${entry.status} stage=${entry.stage} bridge=${entry.bridgeExists} startedOnce=${entry.hasInvokedNodeStart} exited=${entry.nodeRuntimeExited} start=${entry.startCommandResult} port=${entry.port} health=${entry.healthCheckResult} pending=${entry.pendingTaskCount}${
       entry.failureReason ? ` err=${entry.failureReason}` : ''
     }`
   );
@@ -100,12 +189,16 @@ function appendDiagnosticLog(
 export function getBackendDiagnostics(): BackendDiagnosticsSnapshot {
   return {
     status: backendStatus,
+    failureStage,
     bridgeExists: hasNativeNodejsBridge(),
+    hasInvokedNodeStart,
+    nodeRuntimeExited,
     startCommandResult,
     port: LOCAL_BACKEND_PORT,
     lastHealthCheckOk,
     lastHealthCheckAt,
     failureReason,
+    lastNodeErrorDetail,
     pendingTaskCount: computePendingTaskCount(),
     logs: [...diagnosticLogs],
   };
@@ -144,23 +237,114 @@ export function registerBackendResumeHandler(handler: ResumeCallback): () => voi
   };
 }
 
+function summarizeNodeBridgePayload(rawArg: unknown): {
+  stage: string;
+  fatal: boolean;
+  summary: string;
+} {
+  if (!rawArg || typeof rawArg !== 'object') {
+    const text = rawArg == null ? '' : String(rawArg);
+    return { stage: 'NODE_MESSAGE', fatal: false, summary: text };
+  }
+  const obj = rawArg as Record<string, any>;
+  const stage = String(obj.stage || 'NODE_ERROR');
+  const fatal =
+    obj.fatal === true ||
+    stage === 'REQUIRE_SERVER_FAILED' ||
+    stage === 'UNCAUGHT_EXCEPTION' ||
+    stage === 'HTTP_LISTEN_ERROR' ||
+    stage === 'START_SERVER_EXCEPTION' ||
+    stage === 'START_SERVER_REJECTED' ||
+    stage === 'NODE_PROCESS_EXIT';
+
+  const parts: string[] = [];
+  if (stage) parts.push(stage);
+  if (obj.code) parts.push(`code=${obj.code}`);
+  if (obj.name && obj.name !== 'Error') parts.push(String(obj.name));
+  if (obj.message) parts.push(String(obj.message));
+  const summary = parts.join(': ') || JSON.stringify(obj);
+  return { stage, fatal, summary };
+}
+
+function registerNativeNodeBridgeListeners(): void {
+  if (nodeBridgeListenersRegistered || !hasNativeNodejsBridge()) return;
+  nodeBridgeListenersRegistered = true;
+
+  if (typeof Nodejs.addListener === 'function') {
+    Nodejs.addListener('ready', () => {
+      nodeBridgeReadySeen = true;
+      appendDiagnosticLog('nodejs_event_ready', lastHealthCheckOk);
+      notifyBackendDiagnosticsChanged();
+    }).catch((err: any) => {
+      appendDiagnosticLog(`nodejs_ready_listener_error:${err?.message || err}`, lastHealthCheckOk);
+    });
+
+    Nodejs.addListener('message', (event: { eventName?: string; args?: unknown[] }) => {
+      const eventName = event?.eventName || 'unknown';
+      const firstArg = Array.isArray(event?.args) ? event.args[0] : undefined;
+
+      if (eventName === 'backend_ready') {
+        const info = summarizeNodeBridgePayload(firstArg);
+        appendDiagnosticLog(`node_bridge_ready:${info.summary}`, lastHealthCheckOk);
+        notifyBackendDiagnosticsChanged();
+        return;
+      }
+
+      if (eventName === 'backend_exit') {
+        const info = summarizeNodeBridgePayload(firstArg);
+        nodeRuntimeExited = true;
+        lastNodeErrorDetail = info.summary || 'Node process exited';
+        backendStatus = 'failed';
+        failureStage = 'NODE_RUNTIME_EXITED';
+        failureReason = formatBackendDiagnosticError(
+          'NODE_RUNTIME_EXITED',
+          `${RUNTIME_EXITED_USER_MESSAGE}（${lastNodeErrorDetail}）`
+        );
+        appendDiagnosticLog('node_bridge_exit', false);
+        notifyBackendDiagnosticsChanged();
+        return;
+      }
+
+      if (eventName === 'backend_error') {
+        const info = summarizeNodeBridgePayload(firstArg);
+        lastNodeErrorDetail = info.summary;
+        if (info.fatal) {
+          nodeRuntimeExited = true;
+          backendStatus = 'failed';
+          failureStage = 'NODE_RUNTIME_EXITED';
+          failureReason = formatBackendDiagnosticError(
+            'NODE_RUNTIME_EXITED',
+            `${RUNTIME_EXITED_USER_MESSAGE}（${info.summary}）`
+          );
+        }
+        appendDiagnosticLog(`node_bridge_error:${info.stage}`, false);
+        notifyBackendDiagnosticsChanged();
+      }
+    }).catch((err: any) => {
+      appendDiagnosticLog(`nodejs_message_listener_error:${err?.message || err}`, lastHealthCheckOk);
+    });
+  }
+}
+
 export function initBackendLifecycleListeners(): void {
   if (lifecycleListenersInitialized || typeof window === 'undefined') return;
   lifecycleListenersInitialized = true;
+
+  // Attach bridge diagnostic listeners ONLY. Never eagerly call Nodejs.start() at App launch!
+  registerNativeNodeBridgeListeners();
 
   const handleResume = (source: string) => {
     const pending = computePendingTaskCount();
     appendDiagnosticLog(`lifecycle_resume:${source}`);
     notifyBackendDiagnosticsChanged();
 
-    if (pending > 0 || backendStatus === 'failed' || backendStatus === 'stopped') {
+    // Strictly on-demand: only wake/check on foreground resume when there are active queued tasks.
+    if (pending > 0 && !nodeRuntimeExited) {
       void (async () => {
-        if (pending > 0) {
-          try {
-            await ensureBackendReady(`resume:${source}`);
-          } catch {
-            // Individual task managers still expose retry if startup fails
-          }
+        try {
+          await ensureBackendReady(`resume:${source}`);
+        } catch {
+          // Individual task managers retain tasks as waiting_backend and expose Retry
         }
         resumeCallbacks.forEach((cb) => {
           try {
@@ -213,100 +397,197 @@ export async function pingBackendHealth(timeoutMs = 1500): Promise<boolean> {
   return false;
 }
 
+async function queryNodeBridgeReady(): Promise<{ ready: boolean; error?: string }> {
+  try {
+    const res = await Nodejs.isReady();
+    const ready = Boolean(res?.ready);
+    if (ready) {
+      nodeBridgeReadySeen = true;
+    }
+    return { ready };
+  } catch (err: any) {
+    return { ready: false, error: err?.message || String(err) };
+  }
+}
+
+function buildRuntimeExitedError(): BackendStartupError {
+  const detail = lastNodeErrorDetail
+    ? `${RUNTIME_EXITED_USER_MESSAGE}（${lastNodeErrorDetail}）`
+    : RUNTIME_EXITED_USER_MESSAGE;
+  return new BackendStartupError('NODE_RUNTIME_EXITED', detail, true);
+}
+
 /**
- * Global unified Android embedded Node.js backend lifecycle manager.
- * - Never permanently caches failure: calling again or retrying restarts cleanly.
- * - Shares one single in-flight startup Promise across concurrent callers.
- * - Re-verifies `/api/health` before assuming a previously-ready runtime is still alive.
+ * Strict on-demand Android embedded Node.js backend state machine:
+ * 1. Only one startPromise globally (zero concurrent Nodejs.start() calls).
+ * 2. Check http://127.0.0.1:3000/api/health first -> reuse directly if healthy.
+ * 3. If unhealthy and Nodejs.start() has NOT been called yet in this App process:
+ *    invoke Nodejs.start({ script: 'index.cjs' }) ONCE (requires startMode: 'manual').
+ * 4. Wait for Nodejs.isReady() -> then poll http://127.0.0.1:3000/api/health up to 45s.
+ * 5. Never call Nodejs.start() a second time in the same App process; retries only
+ *    re-check Nodejs.isReady() and /api/health, or explicitly report NODE_RUNTIME_EXITED.
  */
 export async function ensureBackendReady(reason = 'unspecified'): Promise<void> {
   initBackendLifecycleListeners();
 
   if (!Capacitor.isNativePlatform()) {
     backendStatus = 'ready';
+    failureStage = 'OK';
+    failureReason = '';
     startCommandResult = 'web_preview_direct';
     lastHealthCheckOk = true;
     return;
   }
 
-  // If startup is already underway, all callers await the exact same Promise
-  if (startingPromise) {
+  // Single-flight lock: all concurrent callers await the exact same Promise.
+  if (startPromise) {
     appendDiagnosticLog(`join_existing_startup(${reason})`);
     notifyBackendDiagnosticsChanged();
-    return startingPromise;
+    return startPromise;
   }
 
-  // If previously ready, perform a quick live health ping to ensure Node wasn't stopped by OS
-  if (backendStatus === 'ready') {
-    const stillAlive = await pingBackendHealth(1200);
-    if (stillAlive) {
-      return;
-    }
-    backendStatus = 'stopped';
-    failureReason = '';
-    appendDiagnosticLog(`ready_lost_restarting(${reason})`, false);
-    notifyBackendDiagnosticsChanged();
-  }
+  const startedPreviouslyInProcess = hasInvokedNodeStart;
 
-  // Status is 'stopped' or 'failed' -> start (or re-start) fresh
-  backendStatus = 'starting';
-  failureReason = '';
-  startCommandResult = 'initializing';
-  appendDiagnosticLog(`start_requested(${reason})`, null);
-  notifyBackendDiagnosticsChanged();
-
-  startingPromise = (async () => {
+  startPromise = (async () => {
     try {
-      // 1. Immediate health check in case auto-start already finished listening
-      if (await pingBackendHealth(1200)) {
+      // Step 1: Always check /api/health first and reuse immediately if already listening.
+      if (await pingBackendHealth(1500)) {
         backendStatus = 'ready';
-        startCommandResult = 'already_listening';
+        failureStage = 'OK';
         failureReason = '';
-        appendDiagnosticLog('health_ok_immediate', true);
+        if (startCommandResult === 'not_started') {
+          startCommandResult = 'already_listening';
+        }
+        appendDiagnosticLog(`health_ok_reuse(${reason})`, true);
         notifyBackendDiagnosticsChanged();
         return;
       }
 
-      // 2. Check native Node.js Capacitor bridge & start if not ready
-      const bridgeAvailable = hasNativeNodejsBridge();
-      if (!bridgeAvailable) {
+      // Step 2: If Node runtime has already exited/crashed in this process, fail fast honestly.
+      if (nodeRuntimeExited) {
+        throw buildRuntimeExitedError();
+      }
+
+      // Step 3: Verify Capacitor Nodejs bridge exists.
+      if (!hasNativeNodejsBridge()) {
         startCommandResult = 'bridge_missing';
-        throw new Error('Android 原生 Nodejs 插件桥接不可用，请确认 APK 包含 @capawesome/capacitor-nodejs');
+        throw new BackendStartupError(
+          'NODE_BRIDGE_UNAVAILABLE',
+          'Android 原生 Nodejs 插件桥接不可用，请确认 APK 包含 @capawesome/capacitor-nodejs',
+          true
+        );
       }
 
-      let isBridgeReady = false;
-      try {
-        const res = await Nodejs.isReady();
-        isBridgeReady = Boolean(res?.ready);
-      } catch (e: any) {
-        startCommandResult = `isReady_error:${e?.message || e}`;
-        appendDiagnosticLog('nodejs_isReady_exception', false);
-      }
+      backendStatus = 'starting';
+      failureReason = '';
+      appendDiagnosticLog(`startup_check_begin(${reason})`, false);
+      notifyBackendDiagnosticsChanged();
 
-      if (!isBridgeReady) {
+      const deadline = Date.now() + STARTUP_TIMEOUT_MS;
+
+      // Step 4: Call Nodejs.start({ script: 'index.cjs' }) AT MOST ONCE per App process.
+      const initialReadyCheck = await queryNodeBridgeReady();
+      if (!initialReadyCheck.ready && !hasInvokedNodeStart) {
+        hasInvokedNodeStart = true;
+        startCommandResult = 'starting_manual_index_cjs';
+        appendDiagnosticLog('nodejs_start_invoking', null);
+        notifyBackendDiagnosticsChanged();
+
         try {
-          await Nodejs.start();
+          await Nodejs.start({ script: 'index.cjs' });
           startCommandResult = 'start_invoked_ok';
-        } catch (e: any) {
-          const code = String(e?.code || e?.message || '');
-          if (code.includes('NODE_ALREADY_RUNNING') || code.includes('START_MODE_NOT_MANUAL')) {
-            // Normal when startMode === 'auto' or runtime is already booting
-            startCommandResult = `start_skipped:${code}`;
+          appendDiagnosticLog('nodejs_start_resolved', null);
+        } catch (err: any) {
+          const code = String(err?.code || '');
+          const msg = String(err?.message || err || 'unknown error');
+          const combined = code && !msg.includes(code) ? `${code}: ${msg}` : msg;
+
+          if (combined.includes('NODE_ALREADY_RUNNING')) {
+            startCommandResult = 'already_running';
+            appendDiagnosticLog('nodejs_start_already_running', null);
           } else {
-            startCommandResult = `start_error:${code || 'unknown'}`;
+            startCommandResult = `start_failed:${combined}`;
+            throw new BackendStartupError(
+              'NODE_START_FAILED',
+              `调用 Nodejs.start({ script: 'index.cjs' }) 失败: ${combined}`,
+              true
+            );
           }
         }
-        appendDiagnosticLog('nodejs_start_dispatched', null);
+      } else if (startedPreviouslyInProcess) {
+        // Strict rule: never call Nodejs.start() again in the same App process.
+        startCommandResult = initialReadyCheck.ready
+          ? 'recheck_ready_polling_http'
+          : 'recheck_only_no_restart';
+        appendDiagnosticLog('nodejs_recheck_without_restart', false);
       } else {
-        startCommandResult = 'bridge_ready_polling_http';
-        appendDiagnosticLog('nodejs_bridge_ready', null);
+        startCommandResult = 'bridge_already_ready';
+        appendDiagnosticLog('nodejs_bridge_already_ready', null);
       }
 
-      // 3. Poll real HTTP health endpoint up to 15s (never assume start command = HTTP ready)
-      const startTime = Date.now();
-      while (Date.now() - startTime < STARTUP_TIMEOUT_MS) {
+      // Step 5: Wait for Nodejs.isReady() (never polling HTTP blindly before runtime loads bridge,
+      // while still succeeding early if /api/health already responds).
+      let runtimeReady = initialReadyCheck.ready || nodeBridgeReadySeen;
+      let lastIsReadyError = initialReadyCheck.error || '';
+
+      while (!runtimeReady && Date.now() < deadline) {
+        if (nodeRuntimeExited) {
+          throw buildRuntimeExitedError();
+        }
+        if (await pingBackendHealth(1000)) {
+          backendStatus = 'ready';
+          failureStage = 'OK';
+          failureReason = '';
+          appendDiagnosticLog('health_ok_during_ready_wait', true);
+          notifyBackendDiagnosticsChanged();
+          return;
+        }
+        const check = await queryNodeBridgeReady();
+        if (check.ready || nodeBridgeReadySeen) {
+          runtimeReady = true;
+          break;
+        }
+        if (check.error) {
+          lastIsReadyError = check.error;
+        }
+        // If this is a retry check (Nodejs.start was already invoked earlier) and Node is still not ready
+        // after 4 seconds, it will not recover in this process without restarting the App.
+        if (startedPreviouslyInProcess && Date.now() > deadline - (STARTUP_TIMEOUT_MS - 4000)) {
+          nodeRuntimeExited = true;
+          throw buildRuntimeExitedError();
+        }
+        await new Promise((r) => setTimeout(r, READY_POLL_INTERVAL_MS));
+      }
+
+      if (nodeRuntimeExited) {
+        throw buildRuntimeExitedError();
+      }
+
+      if (!runtimeReady) {
+        const extra = [
+          lastIsReadyError ? `isReady 错误: ${lastIsReadyError}` : '',
+          lastNodeErrorDetail ? `Node 日志: ${lastNodeErrorDetail}` : '',
+        ]
+          .filter(Boolean)
+          .join('；');
+        throw new BackendStartupError(
+          'HEALTH_CHECK_TIMEOUT',
+          `等待 Node.js 运行时就绪超时（${Math.round(STARTUP_TIMEOUT_MS / 1000)} 秒）${extra ? `；${extra}` : ''}`,
+          false
+        );
+      }
+
+      appendDiagnosticLog('nodejs_isReady_confirmed_polling_http', null);
+      notifyBackendDiagnosticsChanged();
+
+      // Step 6: Poll http://127.0.0.1:3000/api/health until the 45s startup budget expires.
+      while (Date.now() < deadline) {
+        if (nodeRuntimeExited) {
+          throw buildRuntimeExitedError();
+        }
         if (await pingBackendHealth(1500)) {
           backendStatus = 'ready';
+          failureStage = 'OK';
           failureReason = '';
           appendDiagnosticLog('health_check_passed', true);
           notifyBackendDiagnosticsChanged();
@@ -315,23 +596,50 @@ export async function ensureBackendReady(reason = 'unspecified'): Promise<void> 
         await new Promise((r) => setTimeout(r, HEALTH_POLL_INTERVAL_MS));
       }
 
-      throw new Error(
-        `Android 内置后端启动超时（端口 ${LOCAL_BACKEND_PORT} 在 ${Math.round(
+      // Timed out after Nodejs.isReady() was true -> check if runtime exited or HTTP failed to bind.
+      if (nodeRuntimeExited) {
+        throw buildRuntimeExitedError();
+      }
+      const finalReadyCheck = await queryNodeBridgeReady();
+      if (!finalReadyCheck.ready) {
+        nodeRuntimeExited = true;
+        throw buildRuntimeExitedError();
+      }
+
+      throw new BackendStartupError(
+        'NODE_RUNTIME_READY_HTTP_FAILED',
+        `Node 运行时已就绪，但 127.0.0.1:${LOCAL_BACKEND_PORT}/api/health 在 ${Math.round(
           STARTUP_TIMEOUT_MS / 1000
-        )} 秒内未通过健康检查）`
+        )} 秒内未响应${lastNodeErrorDetail ? `；后端报错: ${lastNodeErrorDetail}` : ''}`,
+        false
       );
     } catch (err: any) {
       backendStatus = 'failed';
-      failureReason = err?.message || 'Android 内置后端未启动';
-      appendDiagnosticLog('startup_failed', false);
+      if (err instanceof BackendStartupError) {
+        failureStage = err.stage;
+        failureReason = err.message;
+        appendDiagnosticLog(`startup_failed:${err.stage}`, false);
+        notifyBackendDiagnosticsChanged();
+        throw err;
+      }
+      const fallbackStage: BackendDiagnosticStage = nodeRuntimeExited
+        ? 'NODE_RUNTIME_EXITED'
+        : 'HEALTH_CHECK_TIMEOUT';
+      const wrapped = new BackendStartupError(
+        fallbackStage,
+        err?.message || 'Android 内置后端启动失败'
+      );
+      failureStage = wrapped.stage;
+      failureReason = wrapped.message;
+      appendDiagnosticLog(`startup_failed:${wrapped.stage}`, false);
       notifyBackendDiagnosticsChanged();
-      throw new Error(failureReason);
+      throw wrapped;
     } finally {
-      startingPromise = null;
+      startPromise = null;
     }
   })();
 
-  return startingPromise;
+  return startPromise;
 }
 
 /**
@@ -420,20 +728,45 @@ export function extractApiPath(input: RequestInfo | URL): string | null {
   return null;
 }
 
-export function createBackendUnavailableResponse(detailMessage?: string): Response {
+export function createBackendUnavailableResponse(
+  detailMessage?: string,
+  stage?: BackendDiagnosticStage
+): Response {
+  const resolvedStage: BackendDiagnosticStage =
+    stage ||
+    (failureStage !== 'OK' && failureStage !== 'IDLE'
+      ? failureStage
+      : nodeRuntimeExited
+        ? 'NODE_RUNTIME_EXITED'
+        : 'HEALTH_CHECK_TIMEOUT');
+
+  const rawDetail =
+    detailMessage ||
+    failureReason ||
+    (nodeRuntimeExited
+      ? RUNTIME_EXITED_USER_MESSAGE
+      : 'Android 内置后端未就绪，请查看诊断信息后重试');
+
+  const fullDiagnosticError = formatBackendDiagnosticError(resolvedStage, rawDetail);
+
   const body = JSON.stringify({
     success: false,
     ok: false,
     statusCode: 503,
-    error: 'Android 内置后端未启动',
-    message: detailMessage || failureReason || 'Android 内置后端未启动，请点击重试或检查运行时状态。',
+    backendUnavailable: true,
+    stage: resolvedStage,
+    requiresAppRestart: resolvedStage === 'NODE_RUNTIME_EXITED',
+    error: fullDiagnosticError,
+    message: fullDiagnosticError,
   });
+
   return new Response(body, {
     status: 503,
     statusText: 'Service Unavailable',
     headers: {
       'Content-Type': 'application/json',
       'X-Android-Backend-Status': backendStatus,
+      'X-Android-Backend-Stage': resolvedStage,
     },
   });
 }
@@ -547,8 +880,8 @@ async function logModelApiResponse(
 /**
  * Unified internal API request wrapper.
  * - Web / Preview: requests /api/... directly.
- * - Capacitor Android: calls ensureBackendReady() (waking/polling 127.0.0.1:3000),
- *   auto-recovers if backend stopped, and forwards to http://127.0.0.1:3000/api/...
+ * - Capacitor Android: starts embedded Node.js on demand (at most once per process),
+ *   verifies /api/health, and forwards to http://127.0.0.1:3000/api/...
  */
 export async function apiFetch(
   input: RequestInfo | URL,
@@ -589,7 +922,13 @@ export async function apiFetch(
     try {
       await ensureBackendReady(`apiFetch:${apiPath}`);
     } catch (wakeErr: any) {
-      const errResp = createBackendUnavailableResponse(wakeErr?.message || failureReason || 'Android 内置后端未启动');
+      const stage: BackendDiagnosticStage | undefined =
+        wakeErr instanceof BackendStartupError ? wakeErr.stage : undefined;
+      const detail =
+        wakeErr instanceof BackendStartupError
+          ? wakeErr.detail
+          : wakeErr?.message || failureReason;
+      const errResp = createBackendUnavailableResponse(detail, stage);
       logModelApiResponse(apiPath, init, errResp, startTime);
       return errResp;
     }
@@ -609,11 +948,23 @@ export async function apiFetch(
       if (contentType.includes('text/html')) {
         const cloned = resp.clone();
         const text = await cloned.text().catch(() => '');
-        if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html') || text.trim().startsWith('<!doctype')) {
-          backendStatus = 'stopped';
+        if (
+          text.trim().startsWith('<!DOCTYPE') ||
+          text.trim().startsWith('<html') ||
+          text.trim().startsWith('<!doctype')
+        ) {
+          backendStatus = 'failed';
+          failureStage = 'NODE_RUNTIME_READY_HTTP_FAILED';
+          failureReason = formatBackendDiagnosticError(
+            'NODE_RUNTIME_READY_HTTP_FAILED',
+            '收到前端静态 HTML 页面而非 API JSON 响应（内置后端未正确提供 API 路由）'
+          );
           appendDiagnosticLog('received_html_instead_of_api', false);
           notifyBackendDiagnosticsChanged();
-          const errResp = createBackendUnavailableResponse('Android 内置后端未启动（收到前端静态页面响应，非 API 数据）');
+          const errResp = createBackendUnavailableResponse(
+            failureReason,
+            'NODE_RUNTIME_READY_HTTP_FAILED'
+          );
           logModelApiResponse(apiPath, init, errResp, startTime);
           return errResp;
         }
@@ -622,13 +973,20 @@ export async function apiFetch(
       logModelApiResponse(apiPath, init, resp, startTime);
       return resp;
     } catch (netErr: any) {
-      // Connection failed -> invalidate ready state so next call or retry can restart backend cleanly
-      backendStatus = 'stopped';
-      failureReason = `127.0.0.1:${LOCAL_BACKEND_PORT} 连接失败: ${netErr?.message || '网络连接拒绝'}`;
+      const stage: BackendDiagnosticStage = nodeRuntimeExited
+        ? 'NODE_RUNTIME_EXITED'
+        : 'NODE_RUNTIME_READY_HTTP_FAILED';
+      const detail = nodeRuntimeExited
+        ? `${RUNTIME_EXITED_USER_MESSAGE}（${netErr?.message || '连接中断'}）`
+        : `127.0.0.1:${LOCAL_BACKEND_PORT} 请求失败: ${netErr?.message || '网络连接拒绝'}`;
+
+      backendStatus = 'failed';
+      failureStage = stage;
+      failureReason = formatBackendDiagnosticError(stage, detail);
       appendDiagnosticLog('apiFetch_connection_failed', false);
       notifyBackendDiagnosticsChanged();
 
-      const errResp = createBackendUnavailableResponse(`Android 内置后端未启动 (${failureReason})`);
+      const errResp = createBackendUnavailableResponse(detail, stage);
       logModelApiResponse(apiPath, init, errResp, startTime);
       return errResp;
     }
@@ -639,7 +997,7 @@ export async function apiFetch(
 }
 
 /**
- * Legacy setup helper - initializes lifecycle listeners on startup.
+ * Legacy setup helper - initializes lifecycle & diagnostic listeners ONLY (no eager Nodejs.start()).
  */
 export function setupLocalBackend() {
   initBackendLifecycleListeners();

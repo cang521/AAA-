@@ -12,6 +12,7 @@ import { saveChatMessage } from '../chatDb';
 import { loadFromStorage } from '../storage';
 import {
   ensureBackendReady,
+  isBackendUnavailableError,
   registerBackendResumeHandler,
   registerPendingTaskCountProvider,
 } from '../localBackend';
@@ -39,7 +40,12 @@ export class AiReplyTaskManager {
     registerPendingTaskCountProvider(() => {
       let count = 0;
       this.characterTaskStates.forEach((status) => {
-        if (status && status !== 'completed' && status !== 'failed') {
+        if (
+          status &&
+          status !== 'completed' &&
+          status !== 'failed' &&
+          status !== 'waiting_backend'
+        ) {
           count += 1;
         }
       });
@@ -71,10 +77,16 @@ export class AiReplyTaskManager {
       // Clear old completed/failed tasks
       await clearCompletedTasks().catch(() => {});
 
-      // Reset stuck running tasks to queued on app restart
+      // Reset stuck running or waiting_backend tasks to queued on next App launch
       const pendingOrRunning = await getPendingOrRunningTasks();
       for (const task of pendingOrRunning) {
-        if (task.status === 'running' || task.status === 'preparing' || task.status === 'generating' || task.status === 'delivering') {
+        if (
+          task.status === 'running' ||
+          task.status === 'preparing' ||
+          task.status === 'generating' ||
+          task.status === 'delivering' ||
+          task.status === 'waiting_backend'
+        ) {
           await updateTaskStatus(task.id, 'queued');
         }
       }
@@ -105,12 +117,22 @@ export class AiReplyTaskManager {
 
   public isCharacterThinking(characterId: string): boolean {
     const status = this.characterTaskStates.get(characterId);
-    return !!status && status !== 'completed' && status !== 'failed';
+    return (
+      !!status &&
+      status !== 'completed' &&
+      status !== 'failed' &&
+      status !== 'waiting_backend'
+    );
   }
 
   public getCharacterTaskState(characterId: string): AiReplyTaskStatus | null {
     const status = this.characterTaskStates.get(characterId);
-    if (status && status !== 'completed' && status !== 'failed') {
+    if (
+      status &&
+      status !== 'completed' &&
+      status !== 'failed' &&
+      status !== 'waiting_backend'
+    ) {
       return status;
     }
     return null;
@@ -273,27 +295,43 @@ export class AiReplyTaskManager {
       await updateTaskStatus(taskId, 'completed');
     } catch (err: any) {
       console.error(`[AiReplyTaskManager] Task ${taskId} failed:`, err);
-      const currentRetry = task.retryCount || 0;
+      const errMessage = err?.message || '模型回复请求失败或超时';
 
-      if (currentRetry < task.maxRetries) {
-        const nextRetry = currentRetry + 1;
-        console.warn(`[AiReplyTaskManager] Retrying task ${taskId} (attempt ${nextRetry}/${task.maxRetries})...`);
-        this.characterTaskStates.set(characterId, 'queued');
-        await updateTaskStatus(taskId, 'queued', { retryCount: nextRetry, error: err?.message });
-        setTimeout(() => this.processQueue(), 2000);
-      } else {
-        this.characterTaskStates.set(characterId, 'failed');
-        await updateTaskStatus(taskId, 'failed', { error: err?.message || 'Execution failed' });
-
-        // Record failed task so UI can show real error and allow user to retry.
-        // DO NOT write a fake warm message pretending the model succeeded!
-        // The original user message is already securely saved in IndexedDB.
+      if (isBackendUnavailableError(err)) {
+        // Backend unavailable: preserve task in waiting_backend without deleting user messages
+        // or blind-retrying Nodejs.start(). Clicking Retry resumes this exact task; next App launch auto-resumes it.
+        task.status = 'waiting_backend';
+        task.error = errMessage;
+        task.updatedAt = Date.now();
+        this.characterTaskStates.set(characterId, 'waiting_backend');
+        await updateTaskStatus(taskId, 'waiting_backend', { error: errMessage });
         this.failedTasks.set(characterId, {
           task,
-          error: task.isReroll
-            ? `重新生成回复失败 (${err?.message || '网络或模型异常'})，原回复已完整保留`
-            : err?.message || '模型回复请求失败或超时',
+          error: errMessage,
         });
+      } else {
+        const currentRetry = task.retryCount || 0;
+
+        if (currentRetry < task.maxRetries) {
+          const nextRetry = currentRetry + 1;
+          console.warn(`[AiReplyTaskManager] Retrying task ${taskId} (attempt ${nextRetry}/${task.maxRetries})...`);
+          this.characterTaskStates.set(characterId, 'queued');
+          await updateTaskStatus(taskId, 'queued', { retryCount: nextRetry, error: errMessage });
+          setTimeout(() => this.processQueue(), 2000);
+        } else {
+          this.characterTaskStates.set(characterId, 'failed');
+          await updateTaskStatus(taskId, 'failed', { error: errMessage });
+
+          // Record failed task so UI can show real error and allow user to retry.
+          // DO NOT write a fake warm message pretending the model succeeded!
+          // The original user message is already securely saved in IndexedDB.
+          this.failedTasks.set(characterId, {
+            task,
+            error: task.isReroll
+              ? `重新生成回复失败 (${errMessage})，原回复已完整保留`
+              : errMessage,
+          });
+        }
       }
     } finally {
       this.activeExecutions.delete(characterId);

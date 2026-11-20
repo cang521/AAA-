@@ -984,7 +984,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
           <div className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-500/40 text-xs flex items-center justify-between gap-2 shadow-sm">
             <div className="flex items-center gap-2 min-w-0">
               <AlertCircle className="w-4 h-4 text-rose-500 dark:text-rose-400 shrink-0" />
-              <span className="text-rose-700 dark:text-rose-200 truncate">
+              <span className="text-rose-700 dark:text-rose-200 break-words whitespace-pre-wrap">
                 {failedTaskError || localErrorMsg}
               </span>
             </div>

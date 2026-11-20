@@ -73366,10 +73366,17 @@ app.use((req, res, next) => {
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
+var PORT = Number(process.env.PORT || 3e3);
+var IS_EMBEDDED_ANDROID = process.env.XIAOSHOUJI_EMBEDDED_NODE === "1";
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, backend: "xiaoshouji-local-node", port: PORT });
+  res.json({
+    ok: true,
+    status: "ok",
+    backend: "xiaoshouji-local-node",
+    port: PORT,
+    embedded: IS_EMBEDDED_ANDROID
+  });
 });
-var PORT = 3e3;
 function buildApiLogObject(params) {
   const isFailed = params.status === "failed" || Boolean(params.error);
   const isOfficial = params.isOfficial !== false && (params.modelName.includes("gemini") || !params.modelName.includes("gpt"));
@@ -78321,26 +78328,81 @@ app.use("/api", (req, res) => {
     message: `\u7AEF\u70B9 ${req.method} ${req.originalUrl} \u4E0D\u5B58\u5728`
   });
 });
-async function startServer() {
-  if (false) {
-    const { createServer: createViteServer } = await null;
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa"
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = import_path.default.join(process.cwd(), "dist");
-    app.use(import_express.default.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(import_path.default.join(distPath, "index.html"));
-    });
+function reportEmbeddedBackendDiagnostic(eventName, payload) {
+  try {
+    const reporter = globalThis.__XIAOSHOUJI_BACKEND_REPORT__;
+    if (typeof reporter === "function") {
+      reporter(eventName, payload);
+    }
+  } catch {
   }
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`\u{1F4F1} Simulated Android AI Phone Server listening on port ${PORT}`);
-  });
 }
-startServer();
+async function startServer() {
+  try {
+    if (!IS_EMBEDDED_ANDROID) {
+      if (false) {
+        const { createServer: createViteServer } = await null;
+        const vite = await createViteServer({
+          server: { middlewareMode: true },
+          appType: "spa"
+        });
+        app.use(vite.middlewares);
+      } else {
+        const distPath = import_path.default.join(process.cwd(), "dist");
+        app.use(import_express.default.static(distPath));
+        app.get("*", (req, res) => {
+          res.sendFile(import_path.default.join(distPath, "index.html"));
+        });
+      }
+    }
+    const listenHost = IS_EMBEDDED_ANDROID ? "127.0.0.1" : "0.0.0.0";
+    const server = app.listen(PORT, listenHost, () => {
+      console.log(
+        `\u{1F4F1} Simulated Android AI Phone Server listening on ${listenHost}:${PORT}${IS_EMBEDDED_ANDROID ? " (Android embedded API-only mode)" : ""}`
+      );
+      reportEmbeddedBackendDiagnostic("backend_ready", {
+        stage: "HTTP_LISTENING",
+        host: listenHost,
+        port: PORT,
+        embedded: IS_EMBEDDED_ANDROID,
+        message: `HTTP server listening on ${listenHost}:${PORT}`
+      });
+    });
+    server.on("error", (err) => {
+      console.error("[Server] HTTP server listen error:", err);
+      reportEmbeddedBackendDiagnostic("backend_error", {
+        stage: "HTTP_LISTEN_ERROR",
+        fatal: true,
+        name: err?.name || "Error",
+        code: err?.code ? String(err.code) : void 0,
+        message: err?.message || String(err),
+        stack: err?.stack || ""
+      });
+    });
+  } catch (err) {
+    console.error("[Server] startServer failed:", err);
+    reportEmbeddedBackendDiagnostic("backend_error", {
+      stage: "START_SERVER_EXCEPTION",
+      fatal: true,
+      name: err?.name || "Error",
+      code: err?.code ? String(err.code) : void 0,
+      message: err?.message || String(err),
+      stack: err?.stack || ""
+    });
+    throw err;
+  }
+}
+startServer().catch((err) => {
+  console.error("[Server] Unhandled startServer rejection:", err);
+  reportEmbeddedBackendDiagnostic("backend_error", {
+    stage: "START_SERVER_REJECTED",
+    fatal: true,
+    name: err?.name || "Error",
+    code: err?.code ? String(err.code) : void 0,
+    message: err?.message || String(err),
+    stack: err?.stack || ""
+  });
+});
 /*! Bundled license information:
 
 depd/index.js:

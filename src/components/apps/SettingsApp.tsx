@@ -1280,10 +1280,15 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
               <div className="text-[10px] font-mono text-zinc-400 space-y-0.5">
                 <div>
-                  原生桥接: {backendDiagnostics.bridgeExists ? '可用' : Capacitor.isNativePlatform() ? '不可用' : 'Web Preview直连'} | 启动结果: {backendDiagnostics.startCommandResult} | 排队任务: {backendDiagnostics.pendingTaskCount}
+                  原生桥接: {backendDiagnostics.bridgeExists ? '可用' : Capacitor.isNativePlatform() ? '不可用' : 'Web Preview直连'} | 阶段: {backendDiagnostics.failureStage} | 启动结果: {backendDiagnostics.startCommandResult} | 排队任务: {backendDiagnostics.pendingTaskCount}
                 </div>
+                {Capacitor.isNativePlatform() && (
+                  <div>
+                    进程内已启动过 Node: {backendDiagnostics.hasInvokedNodeStart ? '是' : '否'} | 运行时已退出: {backendDiagnostics.nodeRuntimeExited ? '是（需重开 App）' : '否'}
+                  </div>
+                )}
                 {backendDiagnostics.failureReason && (
-                  <div className="text-rose-400 break-all">
+                  <div className="text-rose-400 break-words whitespace-pre-wrap">
                     最近异常: {backendDiagnostics.failureReason}
                   </div>
                 )}

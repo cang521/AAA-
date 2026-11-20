@@ -18,11 +18,18 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, backend: 'xiaoshouji-local-node', port: PORT });
-});
+const PORT = Number(process.env.PORT || 3000);
+const IS_EMBEDDED_ANDROID = process.env.XIAOSHOUJI_EMBEDDED_NODE === '1';
 
-const PORT = 3000;
+app.get('/api/health', (_req, res) => {
+  res.json({
+    ok: true,
+    status: 'ok',
+    backend: 'xiaoshouji-local-node',
+    port: PORT,
+    embedded: IS_EMBEDDED_ANDROID,
+  });
+});
 
 interface AiCallParams {
   prompt: string;
@@ -5726,26 +5733,86 @@ app.use('/api', (req, res) => {
   });
 });
 
-// Vite middleware / static serving
-async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+function reportEmbeddedBackendDiagnostic(eventName: string, payload: Record<string, any>) {
+  try {
+    const reporter = (globalThis as any).__XIAOSHOUJI_BACKEND_REPORT__;
+    if (typeof reporter === 'function') {
+      reporter(eventName, payload);
+    }
+  } catch {
+    // ignore bridge reporting errors
   }
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`📱 Simulated Android AI Phone Server listening on port ${PORT}`);
-  });
 }
 
-startServer();
+// Vite middleware / static serving (skipped in Android embedded API-only mode)
+async function startServer() {
+  try {
+    if (!IS_EMBEDDED_ANDROID) {
+      if (process.env.NODE_ENV !== 'production') {
+        const { createServer: createViteServer } = await import('vite');
+        const vite = await createViteServer({
+          server: { middlewareMode: true },
+          appType: 'spa',
+        });
+        app.use(vite.middlewares);
+      } else {
+        const distPath = path.join(process.cwd(), 'dist');
+        app.use(express.static(distPath));
+        app.get('*', (req, res) => {
+          res.sendFile(path.join(distPath, 'index.html'));
+        });
+      }
+    }
+
+    const listenHost = IS_EMBEDDED_ANDROID ? '127.0.0.1' : '0.0.0.0';
+    const server = app.listen(PORT, listenHost, () => {
+      console.log(
+        `📱 Simulated Android AI Phone Server listening on ${listenHost}:${PORT}${
+          IS_EMBEDDED_ANDROID ? ' (Android embedded API-only mode)' : ''
+        }`
+      );
+      reportEmbeddedBackendDiagnostic('backend_ready', {
+        stage: 'HTTP_LISTENING',
+        host: listenHost,
+        port: PORT,
+        embedded: IS_EMBEDDED_ANDROID,
+        message: `HTTP server listening on ${listenHost}:${PORT}`,
+      });
+    });
+
+    server.on('error', (err: any) => {
+      console.error('[Server] HTTP server listen error:', err);
+      reportEmbeddedBackendDiagnostic('backend_error', {
+        stage: 'HTTP_LISTEN_ERROR',
+        fatal: true,
+        name: err?.name || 'Error',
+        code: err?.code ? String(err.code) : undefined,
+        message: err?.message || String(err),
+        stack: err?.stack || '',
+      });
+    });
+  } catch (err: any) {
+    console.error('[Server] startServer failed:', err);
+    reportEmbeddedBackendDiagnostic('backend_error', {
+      stage: 'START_SERVER_EXCEPTION',
+      fatal: true,
+      name: err?.name || 'Error',
+      code: err?.code ? String(err.code) : undefined,
+      message: err?.message || String(err),
+      stack: err?.stack || '',
+    });
+    throw err;
+  }
+}
+
+startServer().catch((err: any) => {
+  console.error('[Server] Unhandled startServer rejection:', err);
+  reportEmbeddedBackendDiagnostic('backend_error', {
+    stage: 'START_SERVER_REJECTED',
+    fatal: true,
+    name: err?.name || 'Error',
+    code: err?.code ? String(err.code) : undefined,
+    message: err?.message || String(err),
+    stack: err?.stack || '',
+  });
+});

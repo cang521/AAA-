@@ -1978,8 +1978,12 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                           <div className="flex items-center gap-2 min-w-0">
                             <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
                             <div className="min-w-0">
-                              <p className="font-semibold">回复生成失败</p>
-                              <p className="wx-secondary-text text-[11px] opacity-85 truncate">
+                              <p className="font-semibold">
+                                {failedTaskInfo.task?.status === 'waiting_backend'
+                                  ? '内置后端未就绪（任务已保留）'
+                                  : '回复生成失败'}
+                              </p>
+                              <p className="wx-secondary-text text-[11px] opacity-85 break-words whitespace-pre-wrap">
                                 {failedTaskInfo.error || '模型生成失败或响应超时'}
                               </p>
                             </div>

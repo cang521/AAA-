@@ -28,7 +28,7 @@ const config: CapacitorConfig = {
 
     Nodejs: {
       nodeDir: 'nodejs',
-      startMode: 'auto',
+      startMode: 'manual',
     },
   },
 };

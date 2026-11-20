@@ -9,6 +9,7 @@ import {
 import {
   apiFetch,
   ensureBackendReady,
+  isBackendUnavailableError,
   registerBackendResumeHandler,
   registerPendingTaskCountProvider,
 } from '../localBackend';
@@ -27,6 +28,7 @@ import { syncGroupToServer } from '../groupService';
 
 export type GroupReplyTaskStatus =
   | 'queued'
+  | 'waiting_backend'
   | 'waking_backend'
   | 'generating'
   | 'delivering'
@@ -160,7 +162,10 @@ class GroupReplyTaskManager {
 
   private constructor() {
     this.tasks = readPersistedTasks().map((t) =>
-      t.status === 'waking_backend' || t.status === 'generating' || t.status === 'delivering'
+      t.status === 'waking_backend' ||
+      t.status === 'waiting_backend' ||
+      t.status === 'generating' ||
+      t.status === 'delivering'
         ? { ...t, status: 'queued' as const, updatedAt: Date.now() }
         : t
     );
@@ -251,7 +256,9 @@ class GroupReplyTaskManager {
   public getGroupFailedTask(groupId: string): { task: GroupReplyTask; error: string } | null {
     const failed = [...this.tasks]
       .reverse()
-      .find((t) => t.groupId === groupId && t.status === 'failed');
+      .find(
+        (t) => t.groupId === groupId && (t.status === 'failed' || t.status === 'waiting_backend')
+      );
     if (!failed) return null;
     return {
       task: failed,
@@ -260,7 +267,9 @@ class GroupReplyTaskManager {
   }
 
   public clearFailedTask(groupId: string): void {
-    const next = this.tasks.filter((t) => !(t.groupId === groupId && t.status === 'failed'));
+    const next = this.tasks.filter(
+      (t) => !(t.groupId === groupId && (t.status === 'failed' || t.status === 'waiting_backend'))
+    );
     if (next.length !== this.tasks.length) {
       this.tasks = next;
       this.notify();
@@ -268,7 +277,9 @@ class GroupReplyTaskManager {
   }
 
   public async retryFailedTask(groupId: string): Promise<boolean> {
-    const failedIdx = this.tasks.findIndex((t) => t.groupId === groupId && t.status === 'failed');
+    const failedIdx = this.tasks.findIndex(
+      (t) => t.groupId === groupId && (t.status === 'failed' || t.status === 'waiting_backend')
+    );
     if (failedIdx === -1) return false;
 
     const failedTask = this.tasks[failedIdx];
@@ -670,7 +681,12 @@ class GroupReplyTaskManager {
       if (!current) return;
 
       const message = err?.message || '群聊 AI 回复生成失败，请检查内置后端或 API 配置';
-      if ((current.retryCount || 0) < current.maxRetries) {
+      if (isBackendUnavailableError(err)) {
+        this.updateTask(taskId, {
+          status: 'waiting_backend',
+          error: message,
+        });
+      } else if ((current.retryCount || 0) < current.maxRetries) {
         const nextRetry = (current.retryCount || 0) + 1;
         this.updateTask(taskId, {
           status: 'queued',

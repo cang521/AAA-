@@ -3,6 +3,7 @@ import { getDb, STORE_REPLY_TASKS } from '../chatDb';
 
 export type AiReplyTaskStatus =
   | 'queued'
+  | 'waiting_backend'
   | 'preparing'
   | 'generating'
   | 'generated'
@@ -87,6 +88,7 @@ export async function getPendingOrRunningTasks(): Promise<AiReplyTask[]> {
     const tasks = await getAllTasks();
     const activeStatuses: AiReplyTaskStatus[] = [
       'queued',
+      'waiting_backend',
       'preparing',
       'generating',
       'generated',
