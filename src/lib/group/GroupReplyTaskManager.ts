@@ -8,7 +8,6 @@ import {
 } from '../../types';
 import {
   apiFetch,
-  ensureBackendReady,
   isBackendUnavailableError,
   registerBackendResumeHandler,
   registerPendingTaskCountProvider,
@@ -54,6 +53,66 @@ export interface GroupReplyTask {
 
 const STORAGE_KEY_GROUP_TASKS = 'phone_group_reply_tasks_v1';
 const nativeNotificationService = NativeNotificationService.getInstance();
+
+/**
+ * Group messages persist sender avatars (often multi-megabyte data URLs) on every
+ * message. Sending those records verbatim duplicates the same image many times
+ * and can exceed the embedded Express JSON limit before the model route runs.
+ * The model only needs textual context, ids and lightweight tool-card payloads.
+ */
+function stripBinaryTransportData(value: unknown, depth = 0): unknown {
+  if (depth > 6 || value == null) return value;
+
+  if (typeof value === 'string') {
+    if (/^data:(image|audio|video)\//i.test(value)) return '[本地媒体已省略]';
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => stripBinaryTransportData(item, depth + 1));
+  }
+
+  if (typeof value !== 'object') return value;
+
+  const blockedKeys = new Set([
+    'avatar',
+    'notificationAvatar',
+    'senderAvatar',
+    'imageUrl',
+    'imageData',
+    'dataUrl',
+    'base64',
+    'audioUrl',
+    'videoUrl',
+  ]);
+  const output: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (blockedKeys.has(key)) continue;
+    output[key] = stripBinaryTransportData(item, depth + 1);
+  }
+  return output;
+}
+
+function buildLeanGroupMessage(message: GroupChatMessage): Record<string, unknown> {
+  return {
+    id: message.id,
+    senderId: message.senderId,
+    senderName: message.senderName,
+    senderType: message.senderType,
+    text: message.messageType === 'image' ? message.text || '[图片]' : message.text,
+    timestamp: message.timestamp,
+    mentionedMemberIds: message.mentionedMemberIds,
+    messageType: message.messageType,
+    quoteMessage: message.quoteMessage
+      ? {
+          id: message.quoteMessage.id,
+          senderName: message.quoteMessage.senderName,
+          text: message.quoteMessage.text,
+        }
+      : undefined,
+    payload: stripBinaryTransportData(message.payload),
+  };
+}
 
 const STATUS_LABEL_MAP: Record<string, string> = {
   strangers: '陌生',
@@ -432,9 +491,9 @@ class GroupReplyTaskManager {
     this.activeGroupIds.add(initial.groupId);
 
     try {
-      // Step 1: Ensure Android embedded backend (or local runtime) is awake and passes /api/health
+      // apiFetch owns the same backend wake/check path used by the rest of the app.
+      // Do not run a second group-only readiness gate before the real request.
       this.updateTask(taskId, { status: 'waking_backend', error: undefined });
-      await ensureBackendReady(`group_chat:${initial.groupId}`);
 
       const task = this.tasks.find((t) => t.id === taskId);
       if (!task) return;
@@ -469,7 +528,6 @@ class GroupReplyTaskManager {
           characterId: m.characterId || baseChar?.id || m.id,
           name: m.name,
           wxid: m.wxid || m.id,
-          avatar: m.avatar,
           persona: m.customPersona || baseChar?.persona || '群内AI成员',
           personality: m.customPersonality || baseChar?.personality || '善意、友好、口吻自然',
           memories: m.memories || baseChar?.memories || [],
@@ -489,35 +547,67 @@ class GroupReplyTaskManager {
       const edges = await getAllRelationshipEdges().catch(() => []);
       const aiRelationships = buildRelationshipSummaryLines(edges, memberLookup);
 
-      const recentMessages = (activeGroup.messages || []).slice(-18);
-      const latestUserMessage =
-        recentMessages
+      const recentSourceMessages = (activeGroup.messages || []).slice(-18);
+      const latestUserSourceMessage =
+        recentSourceMessages
           .slice()
           .reverse()
           .find((m) =>
             task.latestUserMessageId ? m.id === task.latestUserMessageId : m.senderType === 'human'
           ) || null;
 
+      // Never put persisted avatars/image data on the localhost HTTP request.
+      // They remain untouched in IndexedDB and continue rendering in the UI.
+      const recentMessages = recentSourceMessages.map(buildLeanGroupMessage);
+      const latestUserMessage = latestUserSourceMessage
+        ? buildLeanGroupMessage(latestUserSourceMessage)
+        : task.latestUserText
+          ? {
+              id: task.latestUserMessageId,
+              senderId: 'user_main',
+              senderName: userProfile.name || '用户',
+              senderType: 'human',
+              text: task.latestUserText,
+              timestamp: Date.now(),
+            }
+          : null;
+
       // Step 3: Call group-chat orchestrator API
+      const requestBody = {
+        group: {
+          id: activeGroup.id,
+          name: activeGroup.name,
+          notice: activeGroup.notice,
+          // The server prompt only needs identity/type metadata here, never avatars.
+          members: activeGroup.members.map((m) => ({
+            id: m.id,
+            characterId: m.characterId,
+            name: m.name,
+            wxid: m.wxid,
+            memberType: m.memberType,
+            isMuted: m.isMuted,
+          })),
+        },
+        recentMessages,
+        latestUserMessage,
+        mentionedTargets: task.mentionedTargets,
+        aiCandidates: aiCandidateProfiles,
+        aiRelationships,
+        triggeredAiId: chosenTargetId,
+        userProfile: {
+          name: userProfile.name,
+          wxid: userProfile.wxid,
+          bio: userProfile.bio,
+          persona: userProfile.persona,
+          preferences: userProfile.preferences,
+        },
+        apiConfig,
+      };
+
       const res = await apiFetch('/api/gemini/group-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          group: {
-            id: activeGroup.id,
-            name: activeGroup.name,
-            notice: activeGroup.notice,
-            members: activeGroup.members,
-          },
-          recentMessages,
-          latestUserMessage,
-          mentionedTargets: task.mentionedTargets,
-          aiCandidates: aiCandidateProfiles,
-          aiRelationships,
-          triggeredAiId: chosenTargetId,
-          userProfile,
-          apiConfig,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       const data = await res.json().catch(() => null);
