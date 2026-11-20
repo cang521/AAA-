@@ -28,7 +28,6 @@ module.exports = __toCommonJS(server_exports);
 var import_express = __toESM(require("express"), 1);
 var import_path = __toESM(require("path"), 1);
 var import_dotenv = __toESM(require("dotenv"), 1);
-var import_genai = require("@google/genai");
 
 // src/lib/thinkCleaner.ts
 function extractThinkingAndContent(rawText, extraReasoning) {
@@ -88,6 +87,16 @@ app.use((req, res, next) => {
 });
 var PORT = Number(process.env.PORT || 3e3);
 var IS_EMBEDDED_ANDROID = process.env.XIAOSHOUJI_EMBEDDED_NODE === "1";
+var googleGenAiModulePromise = null;
+async function loadGoogleGenAi() {
+  if (!googleGenAiModulePromise) {
+    googleGenAiModulePromise = import("@google/genai").catch((error) => {
+      googleGenAiModulePromise = null;
+      throw error;
+    });
+  }
+  return googleGenAiModulePromise;
+}
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
@@ -301,7 +310,8 @@ async function callAiServiceDetailed(params) {
     const isOfficialGeminiEndpoint = !cleanBaseUrl || cleanBaseUrl.includes("googleapis.com");
     const primaryModel = isOfficialGeminiEndpoint ? normalizeOfficialGeminiModel(targetModel) : targetModel;
     try {
-      const aiClient = new import_genai.GoogleGenAI(clientOptions);
+      const { GoogleGenAI } = await loadGoogleGenAi();
+      const aiClient = new GoogleGenAI(clientOptions);
       let result;
       let usedModel = primaryModel;
       if (isOfficialGeminiEndpoint) {
@@ -2327,7 +2337,8 @@ app.post("/api/gemini/analyze-image", async (req, res) => {
       if (imageBaseUrl) {
         clientOptions.httpOptions.baseUrl = imageBaseUrl;
       }
-      const aiClient = new import_genai.GoogleGenAI(clientOptions);
+      const { GoogleGenAI } = await loadGoogleGenAi();
+      const aiClient = new GoogleGenAI(clientOptions);
       let parts = [];
       if (base64Data) {
         parts = [

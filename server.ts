@@ -1,7 +1,6 @@
 import express from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from '@google/genai';
 import { extractThinkingAndContent, sanitizeReplyText } from './src/lib/thinkCleaner';
 
 dotenv.config();
@@ -20,6 +19,24 @@ app.use((req, res, next) => {
 
 const PORT = Number(process.env.PORT || 3000);
 const IS_EMBEDDED_ANDROID = process.env.XIAOSHOUJI_EMBEDDED_NODE === '1';
+
+// Do not initialize the Google SDK while the Android embedded backend is booting.
+// The mobile runtime is Node 18 and has a reduced standard library. Loading the
+// complete SDK (and google-auth-library) at module evaluation time can abort the
+// server before Express gets a chance to bind /api/health. Load it only when a
+// Gemini request actually needs it; OpenAI-compatible providers and the health
+// endpoint no longer depend on the SDK being mobile-compatible at startup.
+let googleGenAiModulePromise: Promise<typeof import('@google/genai')> | null = null;
+
+async function loadGoogleGenAi() {
+  if (!googleGenAiModulePromise) {
+    googleGenAiModulePromise = import('@google/genai').catch((error) => {
+      googleGenAiModulePromise = null;
+      throw error;
+    });
+  }
+  return googleGenAiModulePromise;
+}
 
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -337,6 +354,7 @@ async function callAiServiceDetailed(params: AiCallParams): Promise<AiCallDetail
     const primaryModel = isOfficialGeminiEndpoint ? normalizeOfficialGeminiModel(targetModel) : targetModel;
 
     try {
+      const { GoogleGenAI } = await loadGoogleGenAi();
       const aiClient = new GoogleGenAI(clientOptions);
       let result: any;
       let usedModel = primaryModel;
@@ -2688,6 +2706,7 @@ app.post('/api/gemini/analyze-image', async (req, res) => {
         clientOptions.httpOptions.baseUrl = imageBaseUrl;
       }
 
+      const { GoogleGenAI } = await loadGoogleGenAi();
       const aiClient = new GoogleGenAI(clientOptions);
 
       let parts: any[] = [];

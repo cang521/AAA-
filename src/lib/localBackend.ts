@@ -135,6 +135,7 @@ const pendingCountProviders = new Set<() => number>();
 const resumeCallbacks = new Set<ResumeCallback>();
 let lifecycleListenersInitialized = false;
 let nodeBridgeListenersRegistered = false;
+let nodeBridgeListenersRegistrationPromise: Promise<void> | null = null;
 
 function hasNativeNodejsBridge(): boolean {
   return (
@@ -266,20 +267,22 @@ function summarizeNodeBridgePayload(rawArg: unknown): {
   return { stage, fatal, summary };
 }
 
-function registerNativeNodeBridgeListeners(): void {
+async function registerNativeNodeBridgeListeners(): Promise<void> {
   if (nodeBridgeListenersRegistered || !hasNativeNodejsBridge()) return;
-  nodeBridgeListenersRegistered = true;
+  if (nodeBridgeListenersRegistrationPromise) {
+    return nodeBridgeListenersRegistrationPromise;
+  }
 
-  if (typeof Nodejs.addListener === 'function') {
-    Nodejs.addListener('ready', () => {
+  nodeBridgeListenersRegistrationPromise = (async () => {
+    if (typeof Nodejs.addListener !== 'function') return;
+
+    const readyListener = Nodejs.addListener('ready', () => {
       nodeBridgeReadySeen = true;
       appendDiagnosticLog('nodejs_event_ready', lastHealthCheckOk);
       notifyBackendDiagnosticsChanged();
-    }).catch((err: any) => {
-      appendDiagnosticLog(`nodejs_ready_listener_error:${err?.message || err}`, lastHealthCheckOk);
     });
 
-    Nodejs.addListener('message', (event: { eventName?: string; args?: unknown[] }) => {
+    const messageListener = Nodejs.addListener('message', (event: { eventName?: string; args?: unknown[] }) => {
       const eventName = event?.eventName || 'unknown';
       const firstArg = Array.isArray(event?.args) ? event.args[0] : undefined;
 
@@ -320,10 +323,32 @@ function registerNativeNodeBridgeListeners(): void {
         appendDiagnosticLog(`node_bridge_error:${info.stage}`, false);
         notifyBackendDiagnosticsChanged();
       }
-    }).catch((err: any) => {
-      appendDiagnosticLog(`nodejs_message_listener_error:${err?.message || err}`, lastHealthCheckOk);
     });
-  }
+
+    const results = await Promise.allSettled([readyListener, messageListener]);
+    const readyResult = results[0];
+    const messageResult = results[1];
+    if (readyResult.status === 'rejected') {
+      appendDiagnosticLog(
+        `nodejs_ready_listener_error:${readyResult.reason?.message || readyResult.reason}`,
+        lastHealthCheckOk
+      );
+    }
+    if (messageResult.status === 'rejected') {
+      appendDiagnosticLog(
+        `nodejs_message_listener_error:${messageResult.reason?.message || messageResult.reason}`,
+        lastHealthCheckOk
+      );
+    }
+    if (readyResult.status === 'fulfilled' && messageResult.status === 'fulfilled') {
+      nodeBridgeListenersRegistered = true;
+      appendDiagnosticLog('nodejs_bridge_listeners_registered', lastHealthCheckOk);
+    }
+  })().finally(() => {
+    nodeBridgeListenersRegistrationPromise = null;
+  });
+
+  return nodeBridgeListenersRegistrationPromise;
 }
 
 export function initBackendLifecycleListeners(): void {
@@ -331,7 +356,7 @@ export function initBackendLifecycleListeners(): void {
   lifecycleListenersInitialized = true;
 
   // Attach bridge diagnostic listeners ONLY. Never eagerly call Nodejs.start() at App launch!
-  registerNativeNodeBridgeListeners();
+  void registerNativeNodeBridgeListeners();
 
   const handleResume = (source: string) => {
     const pending = computePendingTaskCount();
@@ -477,6 +502,11 @@ export async function ensureBackendReady(reason = 'unspecified'): Promise<void> 
           true
         );
       }
+
+      // Listener registration is asynchronous in Capacitor. Await it before
+      // starting Node so a fast bootstrap failure cannot be emitted and lost
+      // before the frontend subscribes to the message channel.
+      await registerNativeNodeBridgeListeners();
 
       backendStatus = 'starting';
       failureReason = '';
