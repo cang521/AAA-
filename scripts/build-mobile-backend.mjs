@@ -1,11 +1,80 @@
 import { build } from 'esbuild';
 import {
   mkdir,
+  readFile,
   rm,
   writeFile
 } from 'node:fs/promises';
 
 const outDir = 'dist/nodejs';
+
+const mobileChildProcessShimPlugin = {
+  name: 'mobile-child-process-shim',
+  setup(buildApi) {
+    buildApi.onResolve({ filter: /^(node:)?child_process$/ }, (args) => ({
+      path: args.path,
+      namespace: 'mobile-child-process-shim',
+    }));
+
+    buildApi.onLoad({ filter: /.*/, namespace: 'mobile-child-process-shim' }, () => ({
+      contents: `
+function unsupported(methodName) {
+  return new Error(
+    '[xiaoshouji-mobile-backend] child_process.' +
+      methodName +
+      '() 在 Android 内置 Node.js 运行时中不受支持（本项目仅使用 API Key，不需要子进程能力）'
+  );
+}
+
+class ChildProcess {
+  constructor() {
+    throw unsupported('ChildProcess');
+  }
+}
+
+function exec() {
+  throw unsupported('exec');
+}
+
+function execFile() {
+  throw unsupported('execFile');
+}
+
+function execFileSync() {
+  throw unsupported('execFileSync');
+}
+
+function execSync() {
+  throw unsupported('execSync');
+}
+
+function fork() {
+  throw unsupported('fork');
+}
+
+function spawn() {
+  throw unsupported('spawn');
+}
+
+function spawnSync() {
+  throw unsupported('spawnSync');
+}
+
+module.exports = {
+  ChildProcess,
+  exec,
+  execFile,
+  execFileSync,
+  execSync,
+  fork,
+  spawn,
+  spawnSync,
+};
+`,
+      loader: 'js',
+    }));
+  },
+};
 
 console.log('开始构建小手机内置后端...');
 
@@ -32,10 +101,30 @@ await build({
   sourcemap: false,
   minify: false,
 
+  plugins: [mobileChildProcessShimPlugin],
+
   define: {
     'process.env.NODE_ENV': '"production"'
   }
 });
+
+// 构建后校验：确保产物不再包含手机 Node 运行时不支持的原生 child_process 导入
+const serverBundlePath = `${outDir}/server.cjs`;
+const serverBundleContent = await readFile(serverBundlePath, 'utf8');
+const forbiddenChildProcessRequires = [
+  'require("child_process")',
+  "require('child_process')",
+  'require("node:child_process")',
+  "require('node:child_process')",
+];
+
+for (const forbidden of forbiddenChildProcessRequires) {
+  if (serverBundleContent.includes(forbidden)) {
+    throw new Error(
+      `[build-mobile-backend] 构建中止：${serverBundlePath} 仍包含原生导入 ${forbidden}`
+    );
+  }
+}
 
 // 真正给手机内置 Node.js 启动的入口。
 // bridge 是插件运行时自带模块。
