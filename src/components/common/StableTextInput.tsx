@@ -5,6 +5,7 @@ export interface StableTextInputProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value'> {
   value?: string;
   onValueChange?: (nextValue: string) => void;
+  onHasTextChange?: (hasText: boolean) => void;
 }
 
 export const StableTextInput = React.forwardRef<HTMLInputElement, StableTextInputProps>(
@@ -13,6 +14,7 @@ export const StableTextInput = React.forwardRef<HTMLInputElement, StableTextInpu
       value,
       defaultValue,
       onValueChange,
+      onHasTextChange,
       onChange,
       onInput,
       onCompositionStart,
@@ -31,6 +33,7 @@ export const StableTextInput = React.forwardRef<HTMLInputElement, StableTextInpu
       value,
       defaultValue,
       onValueChange,
+      onHasTextChange,
       externalRef: ref,
       disabled,
       readOnly,

@@ -227,9 +227,9 @@ export async function executeAiReplyTask(
     }),
   });
 
-  const data = await res.json();
-  if (!data.success) {
-    throw new Error(data.error || '模型生成请求失败');
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.success) {
+    throw new Error(data?.error || data?.message || `模型生成请求失败 (${res.status})`);
   }
 
   // Device actions

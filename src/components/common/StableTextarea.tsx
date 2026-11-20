@@ -5,6 +5,7 @@ export interface StableTextareaProps
   extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'value'> {
   value?: string;
   onValueChange?: (nextValue: string) => void;
+  onHasTextChange?: (hasText: boolean) => void;
   autoResize?: boolean;
   minHeightPx?: number;
   maxHeightPx?: number;
@@ -16,6 +17,7 @@ export const StableTextarea = React.forwardRef<HTMLTextAreaElement, StableTextar
       value,
       defaultValue,
       onValueChange,
+      onHasTextChange,
       autoResize = false,
       minHeightPx = 36,
       maxHeightPx = 132,
@@ -37,6 +39,7 @@ export const StableTextarea = React.forwardRef<HTMLTextAreaElement, StableTextar
       value,
       defaultValue,
       onValueChange,
+      onHasTextChange,
       externalRef: ref,
       disabled,
       readOnly,

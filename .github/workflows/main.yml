@@ -56,26 +56,34 @@ jobs:
 
           BUILD_CODE=$(( ${{ github.run_number }} + 1 ))
           BUILD_NAME="1.1.${BUILD_CODE}"
+          GIT_COMMIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "${GITHUB_SHA::7}")
+          BUILD_TIME_UTC=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
           echo "BUILD_CODE=${BUILD_CODE}" >> $GITHUB_ENV
           echo "BUILD_NAME=${BUILD_NAME}" >> $GITHUB_ENV
           echo "VITE_APP_VERSION_CODE=${BUILD_CODE}" >> $GITHUB_ENV
           echo "VITE_APP_VERSION_NAME=${BUILD_NAME}" >> $GITHUB_ENV
+          echo "VITE_GIT_COMMIT_SHA=${GIT_COMMIT_SHA}" >> $GITHUB_ENV
+          echo "VITE_BUILD_TIME=${BUILD_TIME_UTC}" >> $GITHUB_ENV
           echo "ANDROID_KEYSTORE_PATH=${KEYSTORE_PATH}" >> $GITHUB_ENV
           echo "ANDROID_KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD}" >> $GITHUB_ENV
           echo "ANDROID_KEY_ALIAS=${KEY_ALIAS}" >> $GITHUB_ENV
           echo "ANDROID_KEY_PASSWORD=${KEY_PASSWORD}" >> $GITHUB_ENV
 
-          echo "Successfully configured fixed signing keystore and build version ${BUILD_NAME} (${BUILD_CODE})."
+          echo "Successfully configured fixed signing keystore and build version ${BUILD_NAME} (${BUILD_CODE}) @ ${GIT_COMMIT_SHA}."
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
 
-      - name: Build frontend
-        run: npx vite build
-
-      - name: Build embedded backend
-        run: npm run build:mobile-backend
+      - name: Clean stale build artifacts & Build frontend + embedded backend
+        run: |
+          rm -rf dist android/app/src/main/assets/public
+          npm run build
 
       - name: Verify embedded backend
         shell: bash
@@ -89,13 +97,14 @@ jobs:
       - name: Sync Android
         run: npx cap sync android
 
-      - name: Verify Android Node.js integration
+      - name: Verify Android Node.js & Web assets integration
         shell: bash
         run: |
           echo "====== Capacitor plugins ======"
           cat android/app/src/main/assets/capacitor.plugins.json
           grep -qi "nodejs" android/app/src/main/assets/capacitor.plugins.json
           echo "====== Node project copied to Android assets ======"
+          test -s android/app/src/main/assets/public/index.html
           test -s android/app/src/main/assets/public/nodejs/package.json
           test -s android/app/src/main/assets/public/nodejs/index.cjs
           test -s android/app/src/main/assets/public/nodejs/server.cjs
@@ -109,7 +118,7 @@ jobs:
       - name: Build APK
         working-directory: android
         run: |
-          gradle assembleDebug -PversionCode=${BUILD_CODE} -PversionName="${BUILD_NAME}" --stacktrace --console=plain
+          gradle clean assembleDebug -PversionCode=${BUILD_CODE} -PversionName="${BUILD_NAME}" --stacktrace --console=plain
 
       - name: Verify APK
         shell: bash

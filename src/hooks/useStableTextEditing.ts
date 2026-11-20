@@ -6,6 +6,7 @@ export interface UseStableTextEditingOptions<T extends TextEditableElement> {
   value?: string;
   defaultValue?: string | number | readonly string[];
   onValueChange?: (nextValue: string) => void;
+  onHasTextChange?: (hasText: boolean) => void;
   externalRef?: React.Ref<T>;
   disabled?: boolean;
   readOnly?: boolean;
@@ -50,11 +51,20 @@ export function useStableTextEditing<T extends TextEditableElement>(
   const isComposingRef = useRef(false);
   const lastCompositionEndTimestampRef = useRef(0);
   const lastSyncedValueRef = useRef<string>(initialDefaultValueRef.current);
+  const lastHasTextRef = useRef<boolean>(initialDefaultValueRef.current.trim().length > 0);
   const prevExternalValueRef = useRef<string>(normalizedExternalValue);
   const lastBlurSelectionRef = useRef<{ start: number; end: number } | null>(null);
 
   const latestCallbacksRef = useRef(options);
   latestCallbacksRef.current = options;
+
+  const notifyHasTextIfChanged = useCallback((rawVal: string) => {
+    const nextHasText = rawVal.trim().length > 0;
+    if (nextHasText !== lastHasTextRef.current) {
+      lastHasTextRef.current = nextHasText;
+      latestCallbacksRef.current.onHasTextChange?.(nextHasText);
+    }
+  }, []);
 
   const adjustHeightNow = useCallback(() => {
     if (!autoResize) return;
@@ -86,11 +96,14 @@ export function useStableTextEditing<T extends TextEditableElement>(
       } else if (extRef && typeof extRef === 'object') {
         (extRef as React.MutableRefObject<T | null>).current = node;
       }
-      if (node && autoResize) {
-        adjustHeightNow();
+      if (node) {
+        notifyHasTextIfChanged(node.value);
+        if (autoResize) {
+          adjustHeightNow();
+        }
       }
     },
-    [adjustHeightNow, autoResize]
+    [adjustHeightNow, autoResize, notifyHasTextIfChanged]
   );
 
   // Sync external `value` prop ONLY when the element is NOT focused/editing
@@ -121,6 +134,7 @@ export function useStableTextEditing<T extends TextEditableElement>(
         el.value = '';
         lastSyncedValueRef.current = '';
         lastBlurSelectionRef.current = null;
+        notifyHasTextIfChanged('');
         if (autoResize) {
           adjustHeightNow();
         }
@@ -132,11 +146,12 @@ export function useStableTextEditing<T extends TextEditableElement>(
       el.value = normalizedExternalValue;
       lastSyncedValueRef.current = normalizedExternalValue;
       lastBlurSelectionRef.current = null;
+      notifyHasTextIfChanged(normalizedExternalValue);
       if (autoResize) {
         adjustHeightNow();
       }
     }
-  }, [hasExternalValue, normalizedExternalValue, autoResize, adjustHeightNow]);
+  }, [hasExternalValue, normalizedExternalValue, autoResize, adjustHeightNow, notifyHasTextIfChanged]);
 
   useLayoutEffect(() => {
     if (autoResize) {
@@ -147,6 +162,7 @@ export function useStableTextEditing<T extends TextEditableElement>(
   const syncDomValueOnce = useCallback(
     (el: T) => {
       const nextVal = el.value;
+      notifyHasTextIfChanged(nextVal);
       if (nextVal !== lastSyncedValueRef.current) {
         lastSyncedValueRef.current = nextVal;
         latestCallbacksRef.current.onValueChange?.(nextVal);
@@ -155,13 +171,22 @@ export function useStableTextEditing<T extends TextEditableElement>(
         adjustHeightNow();
       }
     },
-    [adjustHeightNow, autoResize]
+    [adjustHeightNow, autoResize, notifyHasTextIfChanged]
   );
 
   const handleInput: React.FormEventHandler<T> = useCallback(
     (e) => {
       const el = e.currentTarget;
       const nativeEvent = e.nativeEvent as InputEvent | undefined;
+
+      // Always reflect whether DOM is non-empty immediately (turns send button green on 1st char even in IME preedit)
+      notifyHasTextIfChanged(el.value);
+
+      // Android WebView IME sometimes commits without firing compositionend, emitting input with isComposing === false
+      if (isComposingRef.current && nativeEvent && nativeEvent.isComposing === false) {
+        isComposingRef.current = false;
+      }
+
       if (!isComposingRef.current && !nativeEvent?.isComposing) {
         syncDomValueOnce(el);
       } else if (autoResize) {
@@ -169,7 +194,7 @@ export function useStableTextEditing<T extends TextEditableElement>(
       }
       latestCallbacksRef.current.onInput?.(e);
     },
-    [adjustHeightNow, autoResize, syncDomValueOnce]
+    [adjustHeightNow, autoResize, notifyHasTextIfChanged, syncDomValueOnce]
   );
 
   const handleChange: React.ChangeEventHandler<T> = useCallback((e) => {
@@ -187,8 +212,9 @@ export function useStableTextEditing<T extends TextEditableElement>(
 
   const handleCompositionUpdate: React.CompositionEventHandler<T> = useCallback((e) => {
     // Intentionally do NOT update React state, write DOM, or modify cursor during compositionupdate.
+    notifyHasTextIfChanged(e.currentTarget.value);
     latestCallbacksRef.current.onCompositionUpdate?.(e);
-  }, []);
+  }, [notifyHasTextIfChanged]);
 
   const handleCompositionEnd: React.CompositionEventHandler<T> = useCallback(
     (e) => {
@@ -209,17 +235,26 @@ export function useStableTextEditing<T extends TextEditableElement>(
     latestCallbacksRef.current.onFocus?.(e);
   }, []);
 
-  const handleBlur: React.FocusEventHandler<T> = useCallback((e) => {
-    isFocusedRef.current = false;
-    const el = e.currentTarget;
-    if (typeof el.selectionStart === 'number' && typeof el.selectionEnd === 'number') {
-      lastBlurSelectionRef.current = {
-        start: el.selectionStart,
-        end: el.selectionEnd,
-      };
-    }
-    latestCallbacksRef.current.onBlur?.(e);
-  }, []);
+  const handleBlur: React.FocusEventHandler<T> = useCallback(
+    (e) => {
+      isFocusedRef.current = false;
+      const el = e.currentTarget;
+      if (typeof el.selectionStart === 'number' && typeof el.selectionEnd === 'number') {
+        lastBlurSelectionRef.current = {
+          start: el.selectionStart,
+          end: el.selectionEnd,
+        };
+      }
+      if (isComposingRef.current) {
+        isComposingRef.current = false;
+        syncDomValueOnce(el);
+      } else {
+        notifyHasTextIfChanged(el.value);
+      }
+      latestCallbacksRef.current.onBlur?.(e);
+    },
+    [notifyHasTextIfChanged, syncDomValueOnce]
+  );
 
   const isCompositionActive = useCallback(
     (nativeEvent?: Event | { isComposing?: boolean; keyCode?: number }) => {
@@ -238,6 +273,7 @@ export function useStableTextEditing<T extends TextEditableElement>(
     (nextValue: string, cursorPos?: number) => {
       isComposingRef.current = false;
       lastSyncedValueRef.current = nextValue;
+      notifyHasTextIfChanged(nextValue);
       const el = elementRef.current;
       if (el) {
         el.value = nextValue;
@@ -260,7 +296,7 @@ export function useStableTextEditing<T extends TextEditableElement>(
       }
       latestCallbacksRef.current.onValueChange?.(nextValue);
     },
-    [adjustHeightNow, autoResize]
+    [adjustHeightNow, autoResize, notifyHasTextIfChanged]
   );
 
   const insertAtCursor = useCallback(

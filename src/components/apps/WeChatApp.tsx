@@ -299,6 +299,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
   // Input & quote & image attachment states
   const [inputText, setInputText] = useState('');
+  const [hasDraftText, setHasDraftText] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [quoteMsgId, setQuoteMsgId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -306,6 +307,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
   // In-flight send guard & rapid click debounce refs
   const isSubmittingRef = useRef<boolean>(false);
+  const inFlightUserSaveRef = useRef<Promise<ChatMessage | null> | null>(null);
   const lastSendTimestampRef = useRef<number>(0);
   const lastRerollTimestampRef = useRef<number>(0);
   const [failedTaskInfo, setFailedTaskInfo] = useState<{ task: any; error: string } | null>(null);
@@ -318,6 +320,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     onValueChange: (nextValue) => {
       if (isSubmittingRef.current) return;
       setInputText((prev) => (prev === nextValue ? prev : nextValue));
+    },
+    onHasTextChange: (hasText) => {
+      setHasDraftText(hasText);
     },
     externalRef: inputRef,
     autoResize: true,
@@ -340,6 +345,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const clearComposerInput = useCallback(() => {
     composerEditor.clear();
     setInputText('');
+    setHasDraftText(false);
   }, [composerEditor]);
 
   // Modals & Drawers
@@ -806,7 +812,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
   // 1. Single-Click: Send user message ONLY and persist to DB (Does NOT trigger AI reply)
   const handleSendUserOnlyMessage = async (): Promise<ChatMessage | null> => {
-    if (isSubmittingRef.current) return null;
+    if (isSubmittingRef.current) {
+      return inFlightUserSaveRef.current ? await inFlightUserSaveRef.current : null;
+    }
     const now = Date.now();
 
     const rawVal = inputRef.current?.value ?? '';
@@ -842,44 +850,52 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     setTotalHistoryCount((c) => c + 1);
     scrollToBottom(true);
 
-    try {
-      // Authoritative write to IndexedDB first
-      await saveChatMessage(userMsg);
+    const savePromise = (async (): Promise<ChatMessage | null> => {
+      try {
+        // Authoritative write to IndexedDB first
+        await saveChatMessage(userMsg);
 
-      // Clear any prior failure state for this character
-      aiReplyTaskManager.clearFailedTask(activeCharacter.id);
+        // Clear any prior failure state for this character
+        aiReplyTaskManager.clearFailedTask(activeCharacter.id);
 
-      // Asynchronous vision analysis if an image was attached
-      if (imageToSend) {
-        apiFetch('/api/gemini/analyze-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            imageUrl: imageToSend,
-            prompt: '请用中文详细识别并总结描述这张图片中的事物、文字、场景以及主要细节。',
-            apiConfig,
-          }),
-        })
-          .then((res) => res.json())
-          .then(async (visionData) => {
-            if (visionData.success && visionData.description) {
-              userMsg.imageAnalysis = visionData.description;
-              userMsg.imageAnalysisStatus = 'success';
-              await saveChatMessage(userMsg);
-              setDisplayedMessages((prev) =>
-                prev.map((m) => (m.id === userMsg.id ? { ...userMsg } : m))
-              );
-            }
+        // Asynchronous vision analysis if an image was attached
+        if (imageToSend) {
+          apiFetch('/api/gemini/analyze-image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              imageUrl: imageToSend,
+              prompt: '请用中文详细识别并总结描述这张图片中的事物、文字、场景以及主要细节。',
+              apiConfig,
+            }),
           })
-          .catch((err) => console.warn('Vision API call error:', err));
-      }
+            .then((res) => res.json())
+            .then(async (visionData) => {
+              if (visionData.success && visionData.description) {
+                userMsg.imageAnalysis = visionData.description;
+                userMsg.imageAnalysisStatus = 'success';
+                await saveChatMessage(userMsg);
+                setDisplayedMessages((prev) =>
+                  prev.map((m) => (m.id === userMsg.id ? { ...userMsg } : m))
+                );
+              }
+            })
+            .catch((err) => console.warn('Vision API call error:', err));
+        }
 
-      return userMsg;
-    } catch (e) {
-      console.error('Failed to save user message to DB:', e);
-      return null;
+        return userMsg;
+      } catch (e) {
+        console.error('Failed to save user message to DB:', e);
+        return null;
+      }
+    })();
+
+    inFlightUserSaveRef.current = savePromise;
+    try {
+      return await savePromise;
     } finally {
       isSubmittingRef.current = false;
+      inFlightUserSaveRef.current = null;
     }
   };
 
@@ -938,12 +954,18 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const handleSendButtonClick = async () => {
     const now = Date.now();
     const timeDelta = now - lastSendBtnClickTimeRef.current;
-    lastSendBtnClickTimeRef.current = now;
 
-    if (timeDelta < 450) {
+    if (timeDelta > 0 && timeDelta < 320) {
       // === DOUBLE CLICK DETECTED ===
+      lastSendBtnClickTimeRef.current = 0;
+
+      // Ensure click 1's user message save completes before reading latest messages
+      if (inFlightUserSaveRef.current) {
+        await inFlightUserSaveRef.current;
+      }
+
       // 1. If user typed text right before this 2nd click, send that message first
-      const rawText = inputRef.current ? inputRef.current.value : inputText;
+      const rawText = inputRef.current?.value ?? '';
       if (rawText.trim() || selectedImage) {
         await handleSendUserOnlyMessage();
       }
@@ -951,6 +973,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       await handleTriggerAiReply();
     } else {
       // === SINGLE CLICK ===
+      lastSendBtnClickTimeRef.current = now;
       const rawText = inputRef.current?.value ?? '';
       if (rawText.trim() || selectedImage) {
         await handleSendUserOnlyMessage();
@@ -2076,6 +2099,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
                             {/* Auto-growing Multi-line Textarea */}
                             <textarea
+                              key={activeCharacter.id}
                               ref={composerEditor.mergedRef}
                               rows={1}
                               defaultValue=""
@@ -2093,7 +2117,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                                   if (!e.shiftKey) {
                                     // Enter alone: single-click send user message ONLY (does NOT trigger AI)
                                     e.preventDefault();
-                                    handleSendUserOnlyMessage();
+                                    void handleSendUserOnlyMessage();
                                   }
                                 }
                               }}
@@ -2102,16 +2126,15 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
                             {/* Send Button: Single-click sends message, Double-click triggers AI reply */}
                             {(() => {
-                              const canSend = inputText.trim().length > 0 || Boolean(selectedImage);
+                              const canSend = hasDraftText || Boolean(selectedImage);
                               return (
                                 <PressableButton
                                   type="button"
-                                  onClick={handleSendButtonClick}
-                                  disabled={isSubmittingRef.current || (!!activeCharacter && aiReplyTaskManager.isCharacterThinking(activeCharacter.id))}
+                                  onClick={() => void handleSendButtonClick()}
                                   pressScale={0.94}
                                   withRipple={false}
                                   title="单击发送消息 | 快速双击触发AI回复"
-                                  className={`wx-send-button px-3.5 py-2 rounded-xl text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0 self-end mb-0.5 disabled:opacity-40 disabled:pointer-events-none ${
+                                  className={`wx-send-button px-3.5 py-2 rounded-xl text-white font-medium text-xs flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0 self-end mb-0.5 ${
                                     canSend
                                       ? 'wx-send-button--active bg-emerald-600 hover:bg-emerald-500'
                                       : 'bg-zinc-700 hover:bg-zinc-600 opacity-90'
@@ -2684,8 +2707,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                       <button
                         type="button"
                         onClick={() => handleAddMomentComment(post.id)}
-                        disabled={!(commentInputs[post.id] || '').trim()}
-                        className="wx-btn-primary px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-medium disabled:opacity-40 cursor-pointer shrink-0"
+                        className={`wx-btn-primary px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-medium cursor-pointer shrink-0 transition ${
+                          !(commentInputs[post.id] || '').trim() ? 'opacity-50' : 'hover:bg-emerald-500'
+                        }`}
                       >
                         发送
                       </button>

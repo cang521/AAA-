@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { apiFetch, pingBackendHealth } from '../../lib/localBackend';
+import {
+  apiFetch,
+  pingBackendHealth,
+  ensureBackendReady,
+  getBackendDiagnostics,
+  subscribeBackendStatus,
+  BackendDiagnosticsSnapshot,
+} from '../../lib/localBackend';
 import { Capacitor } from '@capacitor/core';
 import { StableTextarea } from '../common/StableTextarea';
 import {
@@ -148,6 +155,43 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   const [selectedCharId, setSelectedCharId] = useState<string>(() => (loadCharacters()[0]?.id || 'char_1'));
   const [archiveConfig, setArchiveConfig] = useState<AiArchiveConfig | null>(null);
   const [contextCountInput, setContextCountInput] = useState<string>('100');
+
+  // Embedded backend live diagnostics
+  const [backendDiagnostics, setBackendDiagnostics] = useState<BackendDiagnosticsSnapshot>(() =>
+    getBackendDiagnostics()
+  );
+  const [isCheckingBackend, setIsCheckingBackend] = useState(false);
+
+  useEffect(() => {
+    setBackendDiagnostics(getBackendDiagnostics());
+    return subscribeBackendStatus((snap) => {
+      setBackendDiagnostics(snap);
+    });
+  }, []);
+
+  const handleCheckOrWakeBackend = async () => {
+    if (isCheckingBackend) return;
+    setIsCheckingBackend(true);
+    try {
+      await ensureBackendReady('settings_manual_check');
+    } catch {
+      // Failure captured in backendDiagnostics
+    } finally {
+      setBackendDiagnostics(getBackendDiagnostics());
+      setIsCheckingBackend(false);
+    }
+  };
+
+  const gitCommitSha = import.meta.env.VITE_GIT_COMMIT_SHA || 'workspace-dev';
+  const buildTimeIso = import.meta.env.VITE_BUILD_TIME || '';
+  const androidWebViewVersion = (() => {
+    if (typeof navigator === 'undefined') return 'Unknown';
+    const ua = navigator.userAgent || '';
+    const chromeMatch = ua.match(/Chrome\/([\d.]+)/i);
+    if (chromeMatch) return `Android WebView / Chrome ${chromeMatch[1]}`;
+    const appleWebkitMatch = ua.match(/AppleWebKit\/([\d.]+)/i);
+    return appleWebkitMatch ? `WebKit ${appleWebkitMatch[1]}` : ua.slice(0, 48);
+  })();
   const [isArchiving, setIsArchiving] = useState(false);
   const [archiveSuccessMsg, setArchiveSuccessMsg] = useState('');
 
@@ -1164,11 +1208,87 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           </div>
         </section>
 
-        {/* 版本信息 */}
-        <div className="pt-4 pb-6 text-center text-xs text-zinc-600 space-y-1">
-          <div>AI OS Phone Kernel v{CURRENT_APP_VERSION_NAME} (Build {CURRENT_APP_VERSION_CODE})</div>
-          <div>Data Schema Specification v{CURRENT_APP_DATA_VERSION}</div>
-        </div>
+        {/* 版本信息 / 关于与内置后端诊断 */}
+        <section className="space-y-2 pt-2">
+          <div className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider px-1 settings-section-heading">
+            <Cpu className="w-3.5 h-3.5 text-zinc-400" />
+            <span>关于与构建诊断信息</span>
+          </div>
+
+          <div className="settings-section-card p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-3 text-xs">
+            <div className="grid grid-cols-1 gap-1.5 text-[11px] font-mono text-zinc-400">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-zinc-500">App 版本:</span>
+                <span className="text-zinc-200 font-semibold">
+                  v{CURRENT_APP_VERSION_NAME} (Build {CURRENT_APP_VERSION_CODE})
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-zinc-500">Git Commit:</span>
+                <span className="text-emerald-400 truncate max-w-[180px]" title={gitCommitSha}>
+                  {gitCommitSha.slice(0, 12)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-zinc-500">构建时间:</span>
+                <span className="text-zinc-300 truncate max-w-[190px]">
+                  {buildTimeIso || '本地实时构建'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-zinc-500">WebView 内核:</span>
+                <span className="text-zinc-300 truncate max-w-[190px]" title={androidWebViewVersion}>
+                  {androidWebViewVersion}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-zinc-500">数据结构规范:</span>
+                <span className="text-zinc-300">v{CURRENT_APP_DATA_VERSION}</span>
+              </div>
+            </div>
+
+            <div className="settings-card-divider pt-2.5 border-t border-zinc-850 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      backendDiagnostics.status === 'ready'
+                        ? 'bg-emerald-400'
+                        : backendDiagnostics.status === 'starting'
+                          ? 'bg-amber-400 animate-pulse'
+                          : backendDiagnostics.status === 'failed'
+                            ? 'bg-rose-500'
+                            : 'bg-zinc-500'
+                    }`}
+                  />
+                  <span className="text-[11px] font-semibold text-zinc-200">
+                    内置后端状态 ({backendDiagnostics.port}): {backendDiagnostics.status}
+                  </span>
+                </div>
+                <PressableButton
+                  type="button"
+                  onClick={() => void handleCheckOrWakeBackend()}
+                  disabled={isCheckingBackend}
+                  className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-[11px] text-zinc-200 font-medium flex items-center gap-1 transition disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isCheckingBackend ? 'animate-spin' : ''}`} />
+                  <span>{isCheckingBackend ? '唤醒中...' : '检测/唤醒'}</span>
+                </PressableButton>
+              </div>
+
+              <div className="text-[10px] font-mono text-zinc-400 space-y-0.5">
+                <div>
+                  原生桥接: {backendDiagnostics.bridgeExists ? '可用' : Capacitor.isNativePlatform() ? '不可用' : 'Web Preview直连'} | 启动结果: {backendDiagnostics.startCommandResult} | 排队任务: {backendDiagnostics.pendingTaskCount}
+                </div>
+                {backendDiagnostics.failureReason && (
+                  <div className="text-rose-400 break-all">
+                    最近异常: {backendDiagnostics.failureReason}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
 
       {/* 数据管理 Full Modal */}

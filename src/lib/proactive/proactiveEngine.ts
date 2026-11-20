@@ -18,7 +18,7 @@ import {
 import { weatherService } from '../weatherService';
 import { systemNativeService } from '../systemNativeService';
 import { proactiveGate } from './ProactiveGate';
-import { apiFetch } from '../localBackend';
+import { apiFetch, ensureBackendReady } from '../localBackend';
 import {
   getRecentChatMessages,
   getMessagesByIds,
@@ -909,6 +909,7 @@ class ProactiveEngine {
       const { structuredMessages } = await this.buildEpisodeStructuredContext(character.id, episode);
       const nowStr = new Date().toLocaleString('zh-CN', { hour12: false });
 
+      await ensureBackendReady(`proactive:${character?.id || 'ai'}`);
       const res = await apiFetch('/api/gemini/proactive-generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -31,7 +31,7 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
   const [currentSession, setCurrentSession] = useState<OfflineSession>(session);
   const [messages, setMessages] = useState<OfflineMessage[]>([]);
   const [totalCount, setTotalCount] = useState(0);
-  const [inputText, setInputText] = useState('');
+  const [hasDraftText, setHasDraftText] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<{ message: string; lastUserText: string } | null>(null);
 
@@ -50,7 +50,7 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerEditor = useStableTextEditing<HTMLTextAreaElement>({
     defaultValue: '',
-    onValueChange: setInputText,
+    onHasTextChange: setHasDraftText,
     externalRef: textareaRef,
     disabled: isSending,
     autoResize: true,
@@ -59,6 +59,7 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
   });
 
   useEffect(() => {
+    setHasDraftText(false);
     loadMessages(0);
   }, [session.id]);
 
@@ -135,7 +136,7 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
 
     if (!overrideText) {
       composerEditor.clear();
-      setInputText('');
+      setHasDraftText(false);
     }
     setSendError(null);
     setIsSending(true);
@@ -348,6 +349,7 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
           </button>
 
           <textarea
+            key={currentSession.id}
             ref={composerEditor.mergedRef}
             rows={1}
             defaultValue=""
@@ -362,7 +364,7 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
             type="submit"
             disabled={isSending}
             className={`p-2.5 mb-0.5 rounded-xl transition shrink-0 shadow-md active:scale-95 cursor-pointer ${
-              inputText.trim().length > 0
+              hasDraftText
                 ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/30'
                 : 'bg-zinc-700 hover:bg-zinc-600 text-zinc-200 opacity-85 shadow-none'
             } disabled:opacity-40`}

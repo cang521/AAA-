@@ -10,6 +10,11 @@ import { executeAiReplyTask } from './AiReplyExecutor';
 import { ChatMessage, AiCharacter } from '../../types';
 import { saveChatMessage } from '../chatDb';
 import { loadFromStorage } from '../storage';
+import {
+  ensureBackendReady,
+  registerBackendResumeHandler,
+  registerPendingTaskCountProvider,
+} from '../localBackend';
 
 type TaskChangeListener = () => void;
 
@@ -21,8 +26,32 @@ export class AiReplyTaskManager {
   private enqueuedMessageIds: Set<string> = new Set(); // Prevent duplicate tasks for same user messages
   private failedTasks: Map<string, { task: AiReplyTask; error: string }> = new Map();
   private isInitialized = false;
+  private lifecycleRegistered = false;
 
-  private constructor() {}
+  private constructor() {
+    this.registerLifecycleHooks();
+  }
+
+  private registerLifecycleHooks(): void {
+    if (this.lifecycleRegistered) return;
+    this.lifecycleRegistered = true;
+
+    registerPendingTaskCountProvider(() => {
+      let count = 0;
+      this.characterTaskStates.forEach((status) => {
+        if (status && status !== 'completed' && status !== 'failed') {
+          count += 1;
+        }
+      });
+      return count;
+    });
+
+    registerBackendResumeHandler(() => {
+      if (this.isInitialized) {
+        void this.processQueue();
+      }
+    });
+  }
 
   public static getInstance(): AiReplyTaskManager {
     if (!AiReplyTaskManager.instance) {
@@ -229,6 +258,7 @@ export class AiReplyTaskManager {
     this.notifyListeners();
 
     try {
+      await ensureBackendReady(`single_chat:${characterId}`);
       await updateTaskStatus(taskId, 'preparing');
       this.notifyListeners();
 

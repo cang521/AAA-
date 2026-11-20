@@ -75,6 +75,8 @@ import { InPhoneNotificationBanner } from './components/agent/InPhoneNotificatio
 import { agentOrchestrator } from './lib/agent/AgentOrchestrator';
 import { proactiveScheduler } from './lib/proactive/ProactiveScheduler';
 import { aiReplyTaskManager } from './lib/aiReply/AiReplyTaskManager';
+import { groupReplyTaskManager } from './lib/group/GroupReplyTaskManager';
+import { setupLocalBackend } from './lib/localBackend';
 import { AgentAskPrompt, InPhoneNotification } from './lib/agent/types';
 import { getApiConfigForEngine } from './lib/apiConfigStore';
 import { clearAllChatMessages } from './lib/chatDb';
@@ -222,9 +224,11 @@ export function App() {
     };
   }, []);
 
-  // Automatically initialize AI reply task manager for background execution & persistence
+  // Automatically initialize local backend lifecycle & AI reply task managers on startup
   useEffect(() => {
+    setupLocalBackend();
     aiReplyTaskManager.init().catch((err) => console.warn('aiReplyTaskManager init warning:', err));
+    groupReplyTaskManager.init();
   }, []);
 
   // Automatically ensure independent local memory vaults exist for each AI character

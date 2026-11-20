@@ -4,8 +4,11 @@ import {
   formatMessageTimeDivider,
   getMessageTimestamp,
 } from '../../../lib/timeUtils';
-import { apiFetch } from '../../../lib/localBackend';
 import { DEFAULT_USER_AVATAR, waitForGroupChatSave } from '../../../lib/storage';
+import {
+  groupReplyTaskManager,
+  GroupReplyTaskStatus,
+} from '../../../lib/group/GroupReplyTaskManager';
 import {
   ChevronLeft,
   MoreHorizontal,
@@ -77,11 +80,14 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   onAddApiLog,
 }) => {
   const [messages, setMessages] = useState<GroupChatMessage[]>(group.messages || []);
-  const [inputText, setInputText] = useState('');
+  const [hasDraftText, setHasDraftText] = useState(false);
   const [quoteMsg, setQuoteMsg] = useState<GroupChatMessage | null>(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showMentionPicker, setShowMentionPicker] = useState(false);
-  const [typingAiName, setTypingAiName] = useState<string | null>(null);
+  const [taskStatusInfo, setTaskStatusInfo] = useState<{
+    status: GroupReplyTaskStatus;
+    targetAiId?: string;
+  } | null>(null);
   const [activeLongPressMsg, setActiveLongPressMsg] = useState<GroupChatMessage | null>(null);
   const [showCoTModal, setShowCoTModal] = useState<string | null>(null);
   const [showPlusMenu, setShowPlusMenu] = useState(false);
@@ -89,13 +95,17 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   const [showPollModal, setShowPollModal] = useState(false);
   const [showRandomDrawModal, setShowRandomDrawModal] = useState(false);
   const [aiVotingPollMsgId, setAiVotingPollMsgId] = useState<string | null>(null);
-  const [aiReplyError, setAiReplyError] = useState<{ message: string; targetAiId?: string } | null>(null);
+  const [localErrorMsg, setLocalErrorMsg] = useState<string | null>(null);
+  const [failedTaskError, setFailedTaskError] = useState<string | null>(null);
+  const [groupToast, setGroupToast] = useState<string | null>(null);
   const [zoomedImageUrl, setZoomedImageUrl] = useState<string | null>(null);
 
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const webPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const isSendingUserMsgRef = useRef<boolean>(false);
+  const inFlightUserSaveRef = useRef<Promise<GroupChatMessage | null> | null>(null);
+  const lastSendBtnClickTimeRef = useRef<number>(0);
   const messagesRef = useRef<GroupChatMessage[]>(group.messages || []);
   const groupRef = useRef<GroupChat>(group);
   groupRef.current = group;
@@ -104,7 +114,6 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   const syncInputValue = useCallback((nextValue: string) => {
     const prevLen = prevDraftLengthRef.current;
     prevDraftLengthRef.current = nextValue.length;
-    setInputText((prev) => (prev === nextValue ? prev : nextValue));
 
     if (nextValue.length > prevLen) {
       const el = inputRef.current;
@@ -118,13 +127,14 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   const composerEditor = useStableTextEditing<HTMLInputElement>({
     defaultValue: '',
     onValueChange: syncInputValue,
+    onHasTextChange: setHasDraftText,
     externalRef: inputRef,
   });
 
   const clearComposerInput = useCallback(() => {
     prevDraftLengthRef.current = 0;
     composerEditor.clear();
-    setInputText('');
+    setHasDraftText(false);
   }, [composerEditor]);
 
   const appendMentionText = useCallback(
@@ -137,12 +147,12 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     [composerEditor]
   );
 
-  // Sync messages from group prop if changed externally
+  // Sync messages from group prop whenever IndexedDB / GroupReplyTaskManager updates the group
   useEffect(() => {
     const next = group.messages || [];
     messagesRef.current = next;
     setMessages(next);
-  }, [group.id, group.messages?.length]);
+  }, [group.id, group.updatedAt, group.messages?.length]);
 
   const scrollToBottom = useCallback((smooth = false) => {
     requestAnimationFrame(() => {
@@ -157,12 +167,31 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
 
   useEffect(() => {
     prevDraftLengthRef.current = 0;
-    setInputText('');
+    setHasDraftText(false);
     setQuoteMsg(null);
     setShowMentionPicker(false);
-    setAiReplyError(null);
+    setLocalErrorMsg(null);
+    setGroupToast(null);
     scrollToBottom(false);
   }, [group.id, scrollToBottom]);
+
+  // Subscribe to persistent GroupReplyTaskManager so waking/generating/failure/retry survive tab switches
+  useEffect(() => {
+    groupReplyTaskManager.setApiLogHandler(onAddApiLog || null);
+    groupReplyTaskManager.init();
+
+    const syncFromManager = () => {
+      setTaskStatusInfo(groupReplyTaskManager.getGroupTaskState(group.id));
+      const failed = groupReplyTaskManager.getGroupFailedTask(group.id);
+      setFailedTaskError(failed ? failed.error : null);
+    };
+
+    syncFromManager();
+    const unsub = groupReplyTaskManager.subscribe(syncFromManager);
+    return () => {
+      unsub();
+    };
+  }, [group.id, onAddApiLog]);
 
   // Save updated messages into group and verify local persistence
   const persistMessages = useCallback(
@@ -194,9 +223,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
         console.error('Failed to persist group messages:', err);
         messagesRef.current = prevMessages;
         setMessages(prevMessages);
-        setAiReplyError({
-          message: err?.message || '用户消息保存失败，请检查存储空间后重试',
-        });
+        setLocalErrorMsg(err?.message || '用户消息保存失败，请检查存储空间后重试');
         return false;
       }
     },
@@ -238,11 +265,12 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
 
   // Helper to extract @mentions from message text
   const extractMentionedIds = (text: string): string[] => {
+    const activeGroup = groupRef.current;
     const mentioned: string[] = [];
     if (text.includes('@所有人') || text.includes('@all')) {
       mentioned.push('@all');
     }
-    for (const member of group.members) {
+    for (const member of activeGroup.members) {
       if (text.includes(`@${member.name}`) || text.includes(`@${member.name.replace(/\s*\(.*?\)/, '')}`)) {
         mentioned.push(member.id);
       }
@@ -250,208 +278,193 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     return Array.from(new Set(mentioned));
   };
 
-  // AI Orchestrator Call
-  const triggerAiResponse = async (
-    currentHistory: GroupChatMessage[],
-    targetAiId?: string,
-    chainDepth = 0
-  ) => {
+  // Resolve target AI ID from a user message's @mentions
+  const resolveTargetAiForMessage = (msg: GroupChatMessage | undefined): {
+    targetAiId?: string;
+    mentionedTargets: string[];
+  } => {
     const activeGroup = groupRef.current;
-    // Get AI candidates in group
-    const aiMembers = activeGroup.members.filter((m) => m.memberType !== 'human' && !m.isMuted);
-    if (aiMembers.length === 0) return;
-
-    // Determine target AI if specified or find candidate
-    let chosenTargetId = targetAiId;
-    if (chosenTargetId && chosenTargetId !== '@all') {
-      const exists = aiMembers.find((m) => m.id === chosenTargetId);
-      if (!exists) chosenTargetId = undefined;
+    const mentioned = msg?.mentionedMemberIds || (msg?.text ? extractMentionedIds(msg.text) : []);
+    if (mentioned.includes('@all')) {
+      return { targetAiId: '@all', mentionedTargets: mentioned };
     }
-
-    const aiCandidateProfiles = aiMembers.map((m) => {
-      // Find base character if exists for extra persona/memories
-      const baseChar = allCharacters.find((c) => c.id === m.characterId || c.id === m.id);
-      return {
-        id: m.id,
-        name: m.name,
-        wxid: m.wxid || m.id,
-        avatar: m.avatar,
-        persona: m.customPersona || baseChar?.persona || '群内AI成员',
-        personality: m.customPersonality || baseChar?.personality || '善意、友好、口吻自然',
-        memories: m.memories || baseChar?.memories || [],
-        customPersona: m.customPersona,
-        customPersonality: m.customPersonality,
-      };
-    });
-
-    // Set typing indicator and clear prior error
-    setAiReplyError(null);
-    const targetName =
-      chosenTargetId && chosenTargetId !== '@all'
-        ? aiMembers.find((m) => m.id === chosenTargetId)?.name || 'AI'
-        : '群内AI伙伴';
-    setTypingAiName(targetName);
-
-    try {
-      const res = await apiFetch('/api/gemini/group-chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          group: {
-            id: activeGroup.id,
-            name: activeGroup.name,
-            notice: activeGroup.notice,
-            members: activeGroup.members,
-          },
-          recentMessages: currentHistory.slice(-15),
-          aiCandidates: aiCandidateProfiles,
-          triggeredAiId: chosenTargetId,
-          userProfile,
-          apiConfig,
-        }),
-      });
-
-      const data = await res.json().catch(() => null);
-      setTypingAiName(null);
-
-      if (!res.ok || !data || data.success === false) {
-        throw new Error(data?.error || data?.message || `群聊 AI 接口请求失败 (${res.status})`);
-      }
-
-      if (data.shouldRespond && data.text) {
-        if (data.log && onAddApiLog) {
-          onAddApiLog(data.log);
-        }
-
-        const responderMember =
-          activeGroup.members.find((m) => m.id === data.responderId) ||
-          activeGroup.members.find((m) => m.memberType !== 'human') ||
-          activeGroup.members[0];
-
-        const aiMsg: GroupChatMessage = {
-          id: 'gmsg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-          groupId: activeGroup.id,
-          senderId: responderMember.id,
-          senderName: responderMember.name,
-          senderAvatar: responderMember.avatar,
-          senderType: responderMember.memberType,
-          text: data.text,
-          timestamp: Date.now(),
-          thinkingProcess: data.thinkingProcess,
-          mentionedMemberIds: data.mentionedMemberIds || [],
-        };
-
-        // Append onto the latest messagesRef.current so rapid consecutive user sends are never overwritten
-        const latestBase =
-          messagesRef.current.length >= currentHistory.length
-            ? messagesRef.current
-            : currentHistory;
-        const updated = latestBase.some((m) => m.id === aiMsg.id)
-          ? latestBase
-          : [...latestBase, aiMsg];
-        await persistMessages(updated);
-        scrollToBottom(true);
-
-        // Evaluate low-frequency AI-to-AI social progression when genuine group interaction occurred
-        if (chainDepth === 0) {
-          scheduleGroupSocialTick(`grp_tick_${aiMsg.id}`, updated);
-        }
-
-        // Check if this AI @-mentioned another AI member in its response
-        if (chainDepth < 1 && data.mentionedMemberIds && data.mentionedMemberIds.length > 0) {
-          const nextTarget = data.mentionedMemberIds.find(
-            (id: string) => id !== responderMember.id && id !== 'user_main' && id !== '@all'
-          );
-          if (nextTarget) {
-            // Natural pause before next AI chimes in
-            setTimeout(() => {
-              void triggerAiResponse(messagesRef.current, nextTarget, chainDepth + 1);
-            }, 1800);
-          }
-        }
-      }
-    } catch (e: any) {
-      console.error('Group chat AI generation error', e);
-      setTypingAiName(null);
-      setAiReplyError({
-        message: e?.message || '群聊 AI 回复生成失败，请检查网络或 API 配置',
-        targetAiId: chosenTargetId,
-      });
-      scrollToBottom(true);
-    }
+    const mentionedAiTarget = mentioned.find((id) =>
+      activeGroup.members.some((m) => m.id === id && m.memberType !== 'human' && !m.isMuted)
+    );
+    return { targetAiId: mentionedAiTarget, mentionedTargets: mentioned };
   };
 
-  // Send message
-  const handleSendMessage = async () => {
-    if (isSendingUserMsgRef.current) return;
+  // 1. Single-click / Enter: send and persist user's own message ONLY (never auto-triggers AI)
+  const handleSendUserOnlyMessage = async (): Promise<GroupChatMessage | null> => {
+    if (isSendingUserMsgRef.current) {
+      return inFlightUserSaveRef.current ? await inFlightUserSaveRef.current : null;
+    }
 
     const rawText = inputRef.current?.value ?? '';
     const text = rawText.trim();
-    if (!text) return;
+    if (!text) return null;
 
     isSendingUserMsgRef.current = true;
-    try {
-      const mentioned = extractMentionedIds(text);
-      const activeGroup = groupRef.current;
+    const activeGroup = groupRef.current;
+    const mentioned = extractMentionedIds(text);
 
-      const userMsg: GroupChatMessage = {
-        id: 'gmsg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-        groupId: activeGroup.id,
-        senderId: 'user_main',
-        senderName: userProfile.name || '小清',
-        senderAvatar: userProfile.avatar || DEFAULT_USER_AVATAR,
-        senderType: 'human',
-        text,
-        timestamp: Date.now(),
-        mentionedMemberIds: mentioned.length > 0 ? mentioned : undefined,
-        quoteMessage: quoteMsg
-          ? {
-              id: quoteMsg.id,
-              senderName: quoteMsg.senderName,
-              text: quoteMsg.text,
-            }
-          : undefined,
-      };
+    const userMsg: GroupChatMessage = {
+      id: 'gmsg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      groupId: activeGroup.id,
+      senderId: 'user_main',
+      senderName: userProfile.name || '小清',
+      senderAvatar: userProfile.avatar || DEFAULT_USER_AVATAR,
+      senderType: 'human',
+      text,
+      timestamp: Date.now(),
+      mentionedMemberIds: mentioned.length > 0 ? mentioned : undefined,
+      quoteMessage: quoteMsg
+        ? {
+            id: quoteMsg.id,
+            senderName: quoteMsg.senderName,
+            text: quoteMsg.text,
+          }
+        : undefined,
+    };
 
+    // Clear input immediately so rapid 2nd tap will not re-read the same text
+    clearComposerInput();
+    setQuoteMsg(null);
+    setShowMentionPicker(false);
+    setLocalErrorMsg(null);
+    groupReplyTaskManager.clearFailedTask(activeGroup.id);
+
+    const savePromise = (async (): Promise<GroupChatMessage | null> => {
       const newHistory = [...messagesRef.current, userMsg];
       const saved = await persistMessages(newHistory);
-      if (!saved) {
-        return;
-      }
-
-      clearComposerInput();
-      setQuoteMsg(null);
-      setShowMentionPicker(false);
+      if (!saved) return null;
       scrollToBottom(true);
+      return userMsg;
+    })();
 
-      // Determine AI target:
-      // - @所有人 -> '@all' (let group members participate)
-      // - @某位AI -> first mentioned unmuted AI ID
-      // - Normal message -> undefined (group orchestrator decides)
-      const mentionedAiTarget = mentioned.find((id) =>
-        activeGroup.members.some((m) => m.id === id && m.memberType !== 'human' && !m.isMuted)
-      );
-      const targetAiId = mentioned.includes('@all') ? '@all' : mentionedAiTarget;
-
-      void triggerAiResponse(newHistory, targetAiId, 0);
-
-      if (inputRef.current) {
-        inputRef.current.focus();
-      }
+    inFlightUserSaveRef.current = savePromise;
+    try {
+      return await savePromise;
     } finally {
       isSendingUserMsgRef.current = false;
+      inFlightUserSaveRef.current = null;
     }
   };
 
-  // Quick summon AI discussion button
+  // 2. Trigger one group AI reply round for trailing unreplied user message(s)
+  const triggerGroupAiForPendingUserMessages = async () => {
+    const activeGroup = groupRef.current;
+    const aiMembers = activeGroup.members.filter((m) => m.memberType !== 'human' && !m.isMuted);
+    if (aiMembers.length === 0) {
+      setLocalErrorMsg('当前群内暂无未静音的 AI 成员可回复');
+      return;
+    }
+
+    if (groupReplyTaskManager.getGroupTaskState(activeGroup.id)) {
+      setGroupToast('群内 AI 正在准备回复中，请稍候...');
+      setTimeout(() => setGroupToast(null), 2000);
+      return;
+    }
+
+    const currentHistory = messagesRef.current;
+    const pendingUserMsgs: GroupChatMessage[] = [];
+    for (let i = currentHistory.length - 1; i >= 0; i--) {
+      if (currentHistory[i].senderType === 'human') {
+        pendingUserMsgs.unshift(currentHistory[i]);
+      } else {
+        break;
+      }
+    }
+
+    if (pendingUserMsgs.length === 0) {
+      setGroupToast('当前没有待回复的用户消息，可点击右上角“召唤讨论”');
+      setTimeout(() => setGroupToast(null), 2200);
+      return;
+    }
+
+    const latestUserMsg = pendingUserMsgs[pendingUserMsgs.length - 1];
+    // Combine @mentions across all trailing user messages in this turn
+    let targetAiId: string | undefined;
+    const combinedMentions = new Set<string>();
+    for (const m of pendingUserMsgs) {
+      const resolved = resolveTargetAiForMessage(m);
+      resolved.mentionedTargets.forEach((t) => combinedMentions.add(t));
+      if (resolved.targetAiId === '@all') {
+        targetAiId = '@all';
+      } else if (resolved.targetAiId && targetAiId !== '@all') {
+        targetAiId = resolved.targetAiId;
+      }
+    }
+
+    const dedupeKey = `${activeGroup.id}:${pendingUserMsgs.map((m) => m.id).join(',')}`;
+    await groupReplyTaskManager.enqueueTask({
+      groupId: activeGroup.id,
+      targetAiId,
+      latestUserMessageId: latestUserMsg.id,
+      latestUserText: pendingUserMsgs.map((m) => m.text).join('\n'),
+      mentionedTargets: Array.from(combinedMentions),
+      chainDepth: 0,
+      dedupeKey,
+    });
+  };
+
+  // 3. WeChat-parity Send Button Click Router:
+  //    Single-click -> sends & persists user message ONLY
+  //    Double-click (within 320ms) -> deduplicates save, wakes backend & triggers ONE group AI reply
+  const handleSendButtonClick = async () => {
+    const now = Date.now();
+    const timeDelta = now - lastSendBtnClickTimeRef.current;
+
+    if (timeDelta > 0 && timeDelta < 320) {
+      // === DOUBLE CLICK ===
+      lastSendBtnClickTimeRef.current = 0;
+
+      // Wait if Click 1's IndexedDB write is still finishing so Click 2 sees the saved message
+      if (inFlightUserSaveRef.current) {
+        await inFlightUserSaveRef.current;
+      }
+
+      // If input still holds unsent text (e.g. direct double-tap), send it once
+      const remainingText = inputRef.current?.value ?? '';
+      if (remainingText.trim()) {
+        const saved = await handleSendUserOnlyMessage();
+        if (!saved) return;
+      }
+
+      await triggerGroupAiForPendingUserMessages();
+    } else {
+      // === SINGLE CLICK ===
+      lastSendBtnClickTimeRef.current = now;
+      const rawText = inputRef.current?.value ?? '';
+      if (rawText.trim()) {
+        await handleSendUserOnlyMessage();
+      }
+    }
+  };
+
+  // Explicit "召唤讨论" header button
   const handleSummonDiscussion = () => {
     const activeGroup = groupRef.current;
     const aiMembers = activeGroup.members.filter((m) => m.memberType !== 'human' && !m.isMuted);
     if (aiMembers.length === 0) {
-      setAiReplyError({ message: '当前群内暂无未静音的 AI 成员可响应讨论' });
+      setLocalErrorMsg('当前群内暂无未静音的 AI 成员可响应讨论');
       return;
     }
-    void triggerAiResponse(messagesRef.current, undefined, 0);
+    if (groupReplyTaskManager.getGroupTaskState(activeGroup.id)) {
+      setGroupToast('群内 AI 正在生成回复中，请稍候...');
+      setTimeout(() => setGroupToast(null), 2000);
+      return;
+    }
+    const lastHuman = [...messagesRef.current].reverse().find((m) => m.senderType === 'human');
+    void groupReplyTaskManager.enqueueTask({
+      groupId: activeGroup.id,
+      targetAiId: undefined,
+      latestUserMessageId: lastHuman?.id,
+      latestUserText: lastHuman?.text,
+      mentionedTargets: [],
+      chainDepth: 0,
+      dedupeKey: `summon:${activeGroup.id}:${messagesRef.current.length}:${Math.floor(Date.now() / 1500)}`,
+    });
   };
 
   const handleInsertMention = (member: GroupMember | 'all') => {
@@ -636,7 +649,14 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     if (!saved) return;
     scrollToBottom(true);
     setShowPlusMenu(false);
-    void triggerAiResponse(next, undefined, 0);
+    void groupReplyTaskManager.enqueueTask({
+      groupId: groupRef.current.id,
+      latestUserMessageId: msg.id,
+      latestUserText: '[图片]',
+      mentionedTargets: [],
+      chainDepth: 0,
+      dedupeKey: `${groupRef.current.id}:${msg.id}`,
+    });
   };
 
   const handleTriggerWebFilePicker = (useCameraCapture: boolean) => {
@@ -929,35 +949,62 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
         );
         })}
 
-        {/* Multi-AI Typing Indicator */}
-        {typingAiName && (
+        {/* Multi-AI Waking / Typing Indicator */}
+        {taskStatusInfo && (
           <div className="flex items-center gap-2 text-xs text-purple-600 dark:text-purple-400 animate-pulse px-2 py-1">
             <div className="w-6 h-6 rounded-full bg-purple-500/20 flex items-center justify-center">
               <Bot className="w-3.5 h-3.5" />
             </div>
-            <span className="text-[11px] font-semibold">{typingAiName} 正在输入...</span>
+            <span className="text-[11px] font-semibold">
+              {taskStatusInfo.status === 'waking_backend'
+                ? '正在唤醒 Android 内置后端...'
+                : taskStatusInfo.status === 'queued'
+                  ? '已加入群聊回复队列，等待执行...'
+                  : `${
+                      (taskStatusInfo.targetAiId &&
+                        taskStatusInfo.targetAiId !== '@all' &&
+                        group.members.find((m) => m.id === taskStatusInfo.targetAiId)?.name) ||
+                      '群内AI伙伴'
+                    } 正在输入...`}
+            </span>
+          </div>
+        )}
+
+        {/* Ephemeral Status Toast */}
+        {groupToast && (
+          <div className="flex justify-center">
+            <span className="px-3 py-1 rounded-full bg-zinc-800/80 text-white text-[11px] shadow-xs">
+              {groupToast}
+            </span>
           </div>
         )}
 
         {/* Visible Group AI Error Banner with Retry */}
-        {aiReplyError && (
+        {(failedTaskError || localErrorMsg) && (
           <div className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-500/40 text-xs flex items-center justify-between gap-2 shadow-sm">
             <div className="flex items-center gap-2 min-w-0">
               <AlertCircle className="w-4 h-4 text-rose-500 dark:text-rose-400 shrink-0" />
-              <span className="text-rose-700 dark:text-rose-200 truncate">{aiReplyError.message}</span>
+              <span className="text-rose-700 dark:text-rose-200 truncate">
+                {failedTaskError || localErrorMsg}
+              </span>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
+              {failedTaskError && (
+                <button
+                  type="button"
+                  onClick={() => void groupReplyTaskManager.retryFailedTask(group.id)}
+                  className="px-2.5 py-1 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] transition flex items-center gap-1 active:scale-95 cursor-pointer shadow-xs"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>重试</span>
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => void triggerAiResponse(messagesRef.current, aiReplyError.targetAiId, 0)}
-                className="px-2.5 py-1 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] transition flex items-center gap-1 active:scale-95 cursor-pointer shadow-xs"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span>重试</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setAiReplyError(null)}
+                onClick={() => {
+                  setLocalErrorMsg(null);
+                  groupReplyTaskManager.clearFailedTask(group.id);
+                }}
                 className="p-1 rounded-lg text-rose-500/80 hover:text-rose-700 dark:hover:text-rose-200 transition cursor-pointer"
                 title="关闭提示"
               >
@@ -1051,7 +1098,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
 
             if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
               e.preventDefault();
-              void handleSendMessage();
+              void handleSendUserOnlyMessage();
             }
           }}
           placeholder="发送群消息，输入 @ 提及成员..."
@@ -1073,24 +1120,19 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
           <Plus className="w-5 h-5" />
         </PressableButton>
 
-        {(() => {
-          const canSend = inputText.trim().length > 0;
-          return (
-            <PressableButton
-              type="button"
-              onClick={() => void handleSendMessage()}
-              withRipple={false}
-              title="发送群消息"
-              className={`wx-send-button ${
-                canSend
-                  ? 'wx-send-button--active bg-[#07C160] hover:bg-[#06ad56] text-white'
-                  : 'bg-zinc-400/80 dark:bg-zinc-700 hover:bg-zinc-500/80 text-white/90'
-              } px-3 py-2 rounded-xl font-bold text-xs shadow-sm transition flex items-center justify-center shrink-0 cursor-pointer`}
-            >
-              <Send className="w-4 h-4" />
-            </PressableButton>
-          );
-        })()}
+        <PressableButton
+          type="button"
+          onClick={() => void handleSendButtonClick()}
+          withRipple={false}
+          title="单击发送群消息 | 快速双击触发 AI 回复"
+          className={`wx-send-button ${
+            hasDraftText
+              ? 'wx-send-button--active bg-[#07C160] hover:bg-[#06ad56] text-white'
+              : 'bg-zinc-400/80 dark:bg-zinc-700 hover:bg-zinc-500/80 text-white/90'
+          } px-3 py-2 rounded-xl font-bold text-xs shadow-sm transition flex items-center justify-center shrink-0 cursor-pointer`}
+        >
+          <Send className="w-4 h-4" />
+        </PressableButton>
       </div>
 
       {/* Group "+" Tools Sheet */}

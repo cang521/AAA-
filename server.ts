@@ -3044,7 +3044,10 @@ app.post('/api/gemini/group-chat', async (req, res) => {
   const {
     group,
     recentMessages = [],
+    latestUserMessage = null,
+    mentionedTargets = [],
     aiCandidates = [],
+    aiRelationships = [],
     triggeredAiId,
     userProfile,
     systemTime,
@@ -3058,7 +3061,7 @@ app.post('/api/gemini/group-chat', async (req, res) => {
 
   try {
     if (!aiCandidates || aiCandidates.length === 0) {
-      return res.json({ success: true, shouldRespond: false, reason: 'No AI members in group' });
+      return res.json({ success: true, shouldRespond: false, replies: [], reason: 'No AI members in group' });
     }
 
     // Format member candidate profiles
@@ -3071,6 +3074,12 @@ app.post('/api/gemini/group-chat', async (req, res) => {
 - 性格与口吻特征: ${personality}
 - 专属长期记忆: ${memories}`;
     }).join('\n\n');
+
+    const relationshipsText = Array.isArray(aiRelationships) && aiRelationships.length > 0
+      ? aiRelationships
+          .map((r: any) => (typeof r === 'string' ? `- ${r}` : `- ${r.summary || `${r.memberAName}与${r.memberBName}:${r.status}`}`))
+          .join('\n')
+      : '暂无特殊已记录的AI成员私人关系，按群内成员性格自然相处。';
 
     // Format recent chat history (including tool cards & images cleanly)
     const historyText = recentMessages.map((m: any) => {
@@ -3093,6 +3102,9 @@ app.post('/api/gemini/group-chat', async (req, res) => {
     }).join('\n');
 
     const nativeTime = systemTime || new Date().toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
+    const latestUserLine = latestUserMessage?.text
+      ? `\n用户刚刚的最新发言：${latestUserMessage.senderName || userProfile?.name || '小清'} 说「${latestUserMessage.text}」`
+      : '';
 
     const systemPrompt = `你是一个高度拟真的多AI微信群聊模拟中枢。
 当前群聊信息：
@@ -3105,19 +3117,25 @@ app.post('/api/gemini/group-chat', async (req, res) => {
 群内当前的所有AI成员设定如下：
 ${candidateProfilesText}
 
+群成员当前已知社会关系与互动氛围：
+${relationshipsText}
+
 【群聊运作核心法则】：
-1. 真实群聊氛围：不要让所有AI机械地全部抢着回答。AI要像真实微信群友一样，根据自己的性格爱好、当前话题相关度、人设背景来决定是否发言。
+1. 真实群聊氛围：不要让所有AI机械地全部抢着回答（除非用户 @所有人 且多位成员有话说）。AI要像真实微信群友一样，根据自己的性格爱好、当前话题相关度、成员间关系和人设背景来决定是否发言及语气。
 2. 独立人格与独立记忆：每个AI的发言必须极其符合其独立的人设性格、用语习惯，绝不能混淆。
-3. @ 互动机制：
+3. 成员关系约束：若某两位AI正在冷战、关系紧张或互删拉黑，在群里遇到时应自然体现出疏离、克制或暗中别扭，不能强行亲热。
+4. @ 互动机制：
    - 如果某位AI被显式 @ 了（例如 @林思微），该AI必须优先回答。
+   - 如果 @所有人，可由1到3位性格各异的成员分别发表简短自然的回应（按对话顺序）。
    - AI发言时也可以自然地 @ 某位群友。
-4. 语言风格：地道自然的微信口语，不要说任何“作为一个AI”、“我是语言模型”之类的出戏内容。可适度使用日常标点和emoji。
+5. 语言风格：地道自然的微信口语，不要说任何“作为一个AI”、“我是语言模型”之类的出戏内容。可适度使用日常标点和emoji。
 `;
 
     let userPrompt = `以下是该群聊最近的对话记录：
 ---
 ${historyText || '(群内暂无更多历史)'}
----
+---${latestUserLine}
+${Array.isArray(mentionedTargets) && mentionedTargets.length > 0 ? `\n本轮触发提及目标：${mentionedTargets.join(', ')}` : ''}
 
 `;
 
@@ -3134,18 +3152,23 @@ ${historyText || '(群内暂无更多历史)'}
   "mentionedMemberIds": ["@提到的成员ID列表，若无则为空数组"]
 }`;
     } else if (triggeredAiId === '@all') {
-      userPrompt += `用户刚刚在群内 @了所有人（全体群成员），邀请大家参与回应。请结合最新对话选择当前最适合率先发言的一位 AI 成员进行回复（shouldRespond 设为 true）。
+      const maxAllResponders = Math.min(3, aiCandidates.length);
+      userPrompt += `用户刚刚在群内 @了所有人（全体群成员），邀请大家参与回应。请结合成员性格与关系，安排 1 到 ${maxAllResponders} 位最适合发言的 AI 成员按顺序分别回应（shouldRespond 设为 true）。
 请以 JSON 格式输出：
 {
   "shouldRespond": true,
-  "responderId": "选择发言的AI的ID",
-  "responderName": "选择发言的AI的名称",
-  "text": "回复内容（地道微信口吻，可包含@其他成员）",
-  "thinkingProcess": "简要分析为什么选择该AI代表群体率先回应",
-  "mentionedMemberIds": ["@提到的成员ID列表，若无则为空数组"]
+  "replies": [
+    {
+      "responderId": "发言AI的ID",
+      "responderName": "发言AI的名称",
+      "text": "该AI的自然微信短消息",
+      "thinkingProcess": "简要分析该成员为何这样回应",
+      "mentionedMemberIds": []
+    }
+  ]
 }`;
     } else {
-      userPrompt += `请评估当前对话流向，决定群内哪一位AI最适合发言（或如果大家都觉得无需插话，也可以保持沉默 shouldRespond: false）。
+      userPrompt += `请评估当前对话流向与成员人设关系，决定群内哪一位AI最适合发言（用户明确双击请求群聊AI回复时，通常应由最合适的一位成员自然接话，shouldRespond: true）。
 请以 JSON 格式输出：
 {
   "shouldRespond": true,
@@ -3184,15 +3207,37 @@ ${historyText || '(群内暂无更多历史)'}
     }
 
     const duration = Date.now() - startTime;
+    const normalizedReplies = Array.isArray(parsed.replies) && parsed.replies.length > 0
+      ? parsed.replies.map((r: any) => ({
+          responderId: r.responderId || aiCandidates[0]?.id,
+          responderName: r.responderName || aiCandidates[0]?.name,
+          text: r.text || '',
+          thinkingProcess: r.thinkingProcess || '',
+          mentionedMemberIds: Array.isArray(r.mentionedMemberIds) ? r.mentionedMemberIds : [],
+        }))
+      : parsed.shouldRespond !== false && parsed.text
+        ? [
+            {
+              responderId: parsed.responderId || aiCandidates[0]?.id,
+              responderName: parsed.responderName || aiCandidates[0]?.name,
+              text: parsed.text || '',
+              thinkingProcess: parsed.thinkingProcess || '',
+              mentionedMemberIds: Array.isArray(parsed.mentionedMemberIds) ? parsed.mentionedMemberIds : [],
+            },
+          ]
+        : [];
+
+    const firstReply = normalizedReplies[0];
 
     res.json({
       success: true,
-      shouldRespond: parsed.shouldRespond !== false,
-      responderId: parsed.responderId || (aiCandidates[0]?.id),
-      responderName: parsed.responderName || (aiCandidates[0]?.name),
-      text: parsed.text || '',
-      thinkingProcess: parsed.thinkingProcess || '',
-      mentionedMemberIds: parsed.mentionedMemberIds || [],
+      shouldRespond: parsed.shouldRespond !== false && normalizedReplies.length > 0,
+      responderId: firstReply?.responderId || parsed.responderId || aiCandidates[0]?.id,
+      responderName: firstReply?.responderName || parsed.responderName || aiCandidates[0]?.name,
+      text: firstReply?.text || parsed.text || '',
+      thinkingProcess: firstReply?.thinkingProcess || parsed.thinkingProcess || '',
+      mentionedMemberIds: firstReply?.mentionedMemberIds || parsed.mentionedMemberIds || [],
+      replies: normalizedReplies,
       log: buildApiLogObject({
         appName: 'WeChatGroup',
         modelName: detailed.modelUsed || selectedModel,
@@ -3200,7 +3245,7 @@ ${historyText || '(群内暂无更多历史)'}
         durationMs: duration,
         usage: detailed.usage,
         isRealTokens: detailed.isRealTokens,
-        purpose: `群聊AI发言: ${parsed.responderName || 'AI'} (耗时 ${duration}ms)`,
+        purpose: `群聊AI发言: ${normalizedReplies.map((r: any) => r.responderName).join('、') || 'AI'} (耗时 ${duration}ms)`,
       }),
     });
   } catch (error: any) {
