@@ -4,10 +4,23 @@ import {
   saveProactiveRuntimeState,
   getCharacterProactiveRuntime,
   getActiveProactiveEpisode,
+  getProactiveEpisodeById,
   startOrGetActiveEpisode,
   appendProactiveMessagesToEpisode,
   appendRejectedAttemptToEpisode,
+  applyAiTemporaryPause,
+  updateEpisodeFollowUpStep,
+  markStepIdExecuted,
 } from './proactiveStore';
+import {
+  validateAndNormalizeProactiveResponse,
+  mapStructuredToLegacyAction,
+} from './proactiveSchema';
+import {
+  scheduleNativeFollowUpStep,
+  scheduleNativeFollowUpAt,
+  syncProactiveStateToNative,
+} from './proactiveNativeBridge';
 import {
   loadCharacters,
   loadUserProfile,
@@ -30,10 +43,12 @@ import { permissionManager } from '../agent/PermissionManager';
 import { nativeNotificationService } from '../NativeNotificationService';
 import { aiReplyTaskManager } from '../aiReply/AiReplyTaskManager';
 import { sanitizeReplyText } from '../thinkCleaner';
+import { isAiInOfflineMode } from '../offline/offlineInteractionState';
 import {
   ChatMessage,
   ProactiveAction,
   ProactiveEpisode,
+  ProactiveFollowUpStep,
   ProactivePlanDecision,
   ProactiveStructuredContextMessage,
 } from '../../types';
@@ -234,6 +249,15 @@ class ProactiveEngine {
       };
     }
 
+    // Per-AI Offline Mode Mutual Exclusion
+    if (isAiInOfflineMode(characterId)) {
+      return {
+        approved: false,
+        rejectReason: '角色当前正在线下模式共处中，暂停微信主动消息',
+        suggestedNextAction: '等待线下模式结束后重新计算间隔',
+      };
+    }
+
     // Check if normal AI reply task is running right now
     if (aiReplyTaskManager.isCharacterThinking(characterId)) {
       return {
@@ -337,7 +361,14 @@ class ProactiveEngine {
         return { triggeredCount: 0 };
       }
 
-      if (proactiveGate.isQuotaExhausted()) {
+      // Strict early local exits BEFORE touching any network or AI API
+      if (permissionManager.isDoNotDisturbToday()) {
+        return { triggeredCount: 0 };
+      }
+      if (settings.pausedUntil && settings.pausedUntil > Date.now()) {
+        return { triggeredCount: 0 };
+      }
+      if (proactiveGate.isQuotaExhausted() || proactiveGate.isInBackoff()) {
         return { triggeredCount: 0 };
       }
 
@@ -368,6 +399,11 @@ class ProactiveEngine {
       let triggeredCount = 0;
 
       for (const char of characters) {
+        // Per-AI Offline Mode Mutual Exclusion: skip ONLY AIs currently in offline mode (0 API calls)
+        if (isAiInOfflineMode(char.id)) {
+          continue;
+        }
+
         const perAiConfig = settings.perAiConfigs[char.id];
         const isCharAllowed =
           perAiConfig?.enabled !== undefined
@@ -709,6 +745,7 @@ class ProactiveEngine {
           episode = startOrGetActiveEpisode({
             characterId: char.id,
             triggerSource: selected.triggerType,
+            eventId: selected.eventId,
             initialIntent: `触发源:${selected.triggerType}`,
             initialTopic:
               selected.eventData?.topicTitle ||
@@ -737,11 +774,81 @@ class ProactiveEngine {
           if (!generated.decision) {
             appendRejectedAttemptToEpisode(latestEpisode.episodeId, {
               triggerType: selected.triggerType,
-              candidateText: generated.text || '',
-              rejectReason: '模型生成失败或返回空结果',
-              suggestedNextAction: '等待下一次检查周期重试',
+              candidateText: '',
+              rejectReason: generated.errorMessage || '模型生成失败、网络异常或返回非合法 JSON',
+              suggestedNextAction: '等待下一次后台巡检再评估',
               source: 'model_plan',
             });
+            break;
+          }
+
+          // Apply AI-requested temporary DND (15m..24h, never shortens existing pause)
+          if (generated.decision.pauseProactiveMinutes && generated.decision.pauseProactiveMinutes > 0) {
+            applyAiTemporaryPause(
+              generated.decision.pauseProactiveMinutes,
+              generated.decision.decisionSummary ||
+                `AI开启临时免打扰 (${generated.decision.pauseProactiveMinutes}分钟)`
+            );
+          }
+
+          // Handle structured cancel / close / defer immediately
+          if (
+            generated.decision.structuredAction === 'cancel' ||
+            generated.decision.structuredAction === 'close'
+          ) {
+            appendRejectedAttemptToEpisode(
+              latestEpisode.episodeId,
+              {
+                triggerType: selected.triggerType,
+                candidateText: '',
+                candidateIntent: generated.decision.intent,
+                proposedAction: 'END_EPISODE',
+                rejectReason:
+                  generated.decision.decisionSummary ||
+                  `模型返回 ${generated.decision.structuredAction}，结束本次主动流程`,
+                source: 'model_plan',
+              },
+              {
+                action: 'END_EPISODE',
+                inferredUserState: generated.decision.inferredUserState,
+                decisionSummary: generated.decision.decisionSummary,
+                closeEpisode: generated.decision.structuredAction === 'close',
+                cancelEpisode: generated.decision.structuredAction === 'cancel',
+              }
+            );
+            break;
+          }
+
+          if (generated.decision.structuredAction === 'defer') {
+            const followUpAtMs = generated.decision.followUpAt || null;
+            appendRejectedAttemptToEpisode(
+              latestEpisode.episodeId,
+              {
+                triggerType: selected.triggerType,
+                candidateText: '',
+                candidateIntent: generated.decision.intent,
+                proposedAction: 'WAIT',
+                rejectReason: generated.decision.decisionSummary || '模型决定暂缓发送 (defer)',
+                suggestedNextAction: generated.decision.suggestedNextAction,
+                source: 'model_plan',
+              },
+              {
+                action: 'WAIT',
+                inferredUserState: generated.decision.inferredUserState,
+                decisionSummary: generated.decision.decisionSummary,
+                suggestedNextAction: generated.decision.suggestedNextAction,
+                followUpAt: followUpAtMs,
+                nextCheckAt: followUpAtMs || generated.decision.nextCheckAt || Date.now() + 90 * 60000,
+              }
+            );
+            if (followUpAtMs && followUpAtMs > Date.now()) {
+              void scheduleNativeFollowUpAt({
+                episodeId: latestEpisode.episodeId,
+                aiId: char.id,
+                eventId: selected.eventId,
+                targetTimestampMs: followUpAtMs,
+              });
+            }
             break;
           }
 
@@ -765,7 +872,6 @@ class ProactiveEngine {
             break;
           }
 
-          // Model explicitly opted WAIT or END_EPISODE -> do not retry, reflect & save immediately
           if (generated.decision.action === 'WAIT' || generated.decision.action === 'END_EPISODE') {
             appendRejectedAttemptToEpisode(
               latestEpisode.episodeId,
@@ -794,7 +900,6 @@ class ProactiveEngine {
             break;
           }
 
-          // Rejected by local review guard: record failure & reflect before deciding whether to retry once
           const isFinalAttempt = attemptIdx >= maxAttempts - 1;
           const waitDelayMins = review.nextCheckDelayMinutes || 90;
           appendRejectedAttemptToEpisode(
@@ -823,8 +928,16 @@ class ProactiveEngine {
           );
         }
 
-        if (approvedDecision && approvedDecision.candidateText.trim()) {
+        if (approvedDecision && (approvedDecision.messages?.length || approvedDecision.candidateText.trim())) {
           const currentEp = getActiveProactiveEpisode(char.id) || episode;
+          const explicitMessages =
+            approvedDecision.messages && approvedDecision.messages.length > 0
+              ? approvedDecision.messages
+              : [approvedDecision.candidateText.trim()];
+          const deterministicMessageIds = explicitMessages.map(
+            (_, idx) => `msg_proactive_${currentEp.episodeId}_init_${idx}`
+          );
+
           const dispatchRes = await proactiveGate.dispatchProactiveMessage({
             aiId: char.id,
             triggerType: selected.triggerType,
@@ -832,11 +945,14 @@ class ProactiveEngine {
             eventId: selected.eventId,
             sourceSystem: 'proactiveEngine',
             eventData: selected.eventData,
-            proposedText: approvedDecision.candidateText,
+            proposedText: explicitMessages.join('\n'),
+            explicitMessages,
+            deterministicMessageIds,
             contextSummary:
               approvedDecision.thinkingProcess ||
               `【主动会话 ${currentEp.episodeId} | ${approvedDecision.action}】${approvedDecision.decisionSummary || selected.triggerType}`,
             episodeId: currentEp.episodeId,
+            stepId: 'initial',
             intent: approvedDecision.intent,
             generatedAt: Date.now(),
           });
@@ -850,6 +966,24 @@ class ProactiveEngine {
                 ? [dispatchRes.messageId]
                 : [];
 
+            const nowSent = Date.now();
+            const followUpEnabled = settings.followUpEnabled !== false;
+            const plan: ProactiveFollowUpStep[] =
+              followUpEnabled && Array.isArray(approvedDecision.followUpPlan)
+                ? approvedDecision.followUpPlan.slice(0, 2).map((step, idx) => ({
+                    ...step,
+                    status: 'pending' as const,
+                    scheduledAt:
+                      idx === 0 ? nowSent + (step.delayMinutes || 15) * 60000 : undefined,
+                    workTag: `proactive_ep_${currentEp.episodeId}`,
+                  }))
+                : [];
+
+            const nextEpisodeStatus =
+              plan.length > 0 && approvedDecision.eventStatus !== 'completed'
+                ? 'waiting_for_user'
+                : 'completed';
+
             appendProactiveMessagesToEpisode(currentEp.episodeId, persistedIds, {
               intent: approvedDecision.intent,
               topic: approvedDecision.topic,
@@ -858,7 +992,30 @@ class ProactiveEngine {
               decisionSummary: approvedDecision.decisionSummary,
               suggestedNextAction: approvedDecision.suggestedNextAction,
               nextCheckAt: approvedDecision.nextCheckAt,
+              status: nextEpisodeStatus,
+              followUpPlan: plan,
+              followUpAt: approvedDecision.followUpAt ?? null,
+              pauseProactiveMinutes: approvedDecision.pauseProactiveMinutes,
+              stepId: 'initial',
             });
+
+            // Schedule first follow-up step (+15m) on Android WorkManager (0 extra API calls when due!)
+            if (plan.length > 0 && nextEpisodeStatus === 'waiting_for_user') {
+              const firstStep = plan[0];
+              void scheduleNativeFollowUpStep({
+                episodeId: currentEp.episodeId,
+                aiId: char.id,
+                stepId: firstStep.stepId,
+                delayMinutes: firstStep.delayMinutes || 15,
+              });
+            } else if (approvedDecision.followUpAt && approvedDecision.followUpAt > nowSent) {
+              void scheduleNativeFollowUpAt({
+                episodeId: currentEp.episodeId,
+                aiId: char.id,
+                eventId: selected.eventId,
+                targetTimestampMs: approvedDecision.followUpAt,
+              });
+            }
 
             if (selected.triggerType === 'life_event_followup' && selected.eventData?.id) {
               const lifeEvtId = selected.eventData.id;
@@ -879,6 +1036,7 @@ class ProactiveEngine {
 
       runtimeState.lastGlobalCheckAt = Date.now();
       saveProactiveRuntimeState(runtimeState);
+      void syncProactiveStateToNative();
 
       return { triggeredCount };
     } catch (e) {
@@ -890,7 +1048,114 @@ class ProactiveEngine {
   }
 
   /**
-   * Helper: Plan & Generate structured proactive decision via backend API using dynamic episode context
+   * Execute a pre-generated unreplied follow-up step (+15m -> +60m after previous) locally.
+   * Performs ALL 9 local pre-send checks and makes ZERO AI API calls!
+   */
+  public async executeScheduledFollowUpStep(
+    episodeId: string,
+    stepId: string,
+    nowMs: number = Date.now()
+  ): Promise<{ sent: boolean; reason?: string; messageIds?: string[]; nextStepScheduled?: string }> {
+    const ep = getProactiveEpisodeById(episodeId);
+    if (!ep) {
+      return { sent: false, reason: '未找到对应主动会话' };
+    }
+
+    const gateCheck = await proactiveGate.canSendFollowUpStep({
+      episodeId,
+      aiId: ep.characterId,
+      stepId,
+      nowMs,
+    });
+
+    if (!gateCheck.allowed) {
+      return { sent: false, reason: gateCheck.reason };
+    }
+
+    const plan = ep.followUpPlan || [];
+    const stepIndex = plan.findIndex((s) => s.stepId === stepId);
+    const step = stepIndex >= 0 ? plan[stepIndex] : null;
+    if (!step || step.status !== 'pending' || step.messages.length === 0) {
+      return { sent: false, reason: '追问步骤无效或已取消' };
+    }
+
+    const deterministicMessageIds = step.messages.map(
+      (_, idx) => `msg_proactive_${episodeId}_${stepId}_${idx}`
+    );
+
+    const dispatchRes = await proactiveGate.dispatchProactiveMessage({
+      aiId: ep.characterId,
+      triggerType: ep.triggerSource || 'inactivity_timeout',
+      priority: 'low',
+      eventId: ep.eventId || `${episodeId}_${stepId}`,
+      sourceSystem: 'proactiveEngine',
+      proposedText: step.messages.join('\n'),
+      explicitMessages: step.messages,
+      deterministicMessageIds,
+      episodeId,
+      stepId,
+      intent: ep.currentIntent || '未回复轻量追问',
+      generatedAt: nowMs,
+      isFollowUpStep: true,
+      skipTypingDelay: true,
+      nowMs,
+    });
+
+    if (!dispatchRes.sent) {
+      return { sent: false, reason: dispatchRes.reason };
+    }
+
+    markStepIdExecuted(episodeId, stepId);
+
+    // Determine whether a 2nd follow-up step (+60m after previous) remains
+    let nextStepScheduled: string | undefined;
+    const remainingStep = plan.slice(stepIndex + 1).find((s) => s.status === 'pending');
+
+    updateEpisodeFollowUpStep(
+      episodeId,
+      stepId,
+      {
+        status: 'sent',
+        executedAt: nowMs,
+        messageIds: dispatchRes.messageIds || deterministicMessageIds,
+      },
+      {
+        sentCount: ep.sentCount + 1,
+        proactiveMessageIds: [
+          ...ep.proactiveMessageIds,
+          ...(dispatchRes.messageIds || deterministicMessageIds).filter(
+            (id) => !ep.proactiveMessageIds.includes(id)
+          ),
+        ],
+        status: remainingStep ? 'waiting_for_user' : 'completed',
+        closedAt: remainingStep ? undefined : nowMs,
+      }
+    );
+
+    if (remainingStep) {
+      const delayMins = remainingStep.delayAfterPreviousMinutes || 60;
+      updateEpisodeFollowUpStep(episodeId, remainingStep.stepId, {
+        scheduledAt: nowMs + delayMins * 60000,
+      });
+      nextStepScheduled = remainingStep.stepId;
+      void scheduleNativeFollowUpStep({
+        episodeId,
+        aiId: ep.characterId,
+        stepId: remainingStep.stepId,
+        delayMinutes: delayMins,
+      });
+    }
+
+    return {
+      sent: true,
+      messageIds: dispatchRes.messageIds,
+      nextStepScheduled,
+    };
+  }
+
+  /**
+   * Helper: Plan & Generate structured proactive decision via backend API using dynamic episode context.
+   * Enforces strict JSON schema validation and handles 429/503/offline/bad-JSON safely.
    */
   public async generateProactiveMessage(
     character: any,
@@ -903,6 +1168,7 @@ class ProactiveEngine {
     thinkingProcess?: string;
     decision?: ProactivePlanDecision;
     episodeId?: string;
+    errorMessage?: string;
   }> {
     try {
       const episode = episodeOverride ?? getActiveProactiveEpisode(character.id);
@@ -938,43 +1204,81 @@ class ProactiveEngine {
       ) {
         console.warn('[proactiveEngine] 检测到 AI 模型配额超限(429 RESOURCE_EXHAUSTED)，开启 30 分钟避让保护');
         proactiveGate.markQuotaExhausted(30 * 60 * 1000);
+        return { text: '', errorMessage: '模型配额超限，已开启本地冷却保护' };
       }
 
-      if (data && data.success) {
-        const action: ProactiveAction = data.action || ((episode?.sentCount || 0) > 0 ? 'CONTINUE' : 'SEND_NEW');
-        const candidateText = sanitizeReplyText(data.candidateText || data.text || '').trim();
-        const delayMins =
-          typeof data.nextCheckDelayMinutes === 'number' && data.nextCheckDelayMinutes > 0
-            ? data.nextCheckDelayMinutes
-            : 90;
+      if (res.status === 503 || data?.isServiceBusy || data?.error?.includes('503')) {
+        proactiveGate.recordServiceBusyBackoff();
+        return { text: '', errorMessage: '当前模型繁忙，请稍后重试' };
+      }
 
-        const decision: ProactivePlanDecision = {
-          action,
-          intent: data.intent || candidate.triggerType,
-          topic: data.topic || episode?.currentTopic || candidate.triggerType,
-          inferredUserState: data.inferredUserState,
-          candidateText,
-          decisionSummary: data.decisionSummary || '',
-          suggestedNextAction: data.suggestedNextAction,
-          nextCheckAt: action === 'WAIT' ? Date.now() + delayMins * 60000 : undefined,
-          thinkingProcess: data.thinkingProcess,
-        };
-
+      if (!data || !data.success || data.schemaError) {
         return {
-          text: candidateText,
-          thinkingProcess: data.thinkingProcess,
-          decision,
-          episodeId: episode?.episodeId,
+          text: '',
+          thinkingProcess: data?.thinkingProcess,
+          errorMessage: data?.error || '模型返回结构校验未通过，已安全丢弃',
         };
       }
-    } catch (e) {
-      console.warn('[proactiveEngine] API call failed for proactive generation:', e);
-    }
 
-    console.warn(
-      `[proactiveEngine] AI 模型生成主动消息失败或为空 (${candidate.triggerType})，严格遵守“禁止死套话与伪造生成成功”要求`
-    );
-    return { text: '' };
+      const validated = validateAndNormalizeProactiveResponse(data);
+      if (!validated.valid || !validated.data) {
+        return {
+          text: '',
+          thinkingProcess: data?.thinkingProcess,
+          errorMessage: validated.error || '结构化 JSON 校验失败',
+        };
+      }
+
+      proactiveGate.resetServiceBusyBackoff();
+      const normalized = validated.data;
+      const legacyAction: ProactiveAction = mapStructuredToLegacyAction(
+        normalized.action,
+        episode?.sentCount || 0
+      );
+      const candidateText = normalized.messages.join('\n');
+      const delayMins =
+        typeof data.nextCheckDelayMinutes === 'number' && data.nextCheckDelayMinutes > 0
+          ? data.nextCheckDelayMinutes
+          : normalized.pauseProactiveMinutes > 0
+          ? normalized.pauseProactiveMinutes
+          : 90;
+
+      const decision: ProactivePlanDecision = {
+        action: legacyAction,
+        structuredAction: normalized.action,
+        intent: normalized.intent || candidate.triggerType,
+        topic: normalized.topic || episode?.currentTopic || candidate.triggerType,
+        inferredUserState: normalized.inferredUserState,
+        candidateText,
+        messages: normalized.messages,
+        pauseProactiveMinutes: normalized.pauseProactiveMinutes,
+        followUpPlan: normalized.followUpPlan,
+        followUpAt: typeof normalized.followUpAt === 'number' ? normalized.followUpAt : null,
+        eventStatus: normalized.eventStatus,
+        decisionSummary: normalized.decisionSummary || '',
+        suggestedNextAction: normalized.suggestedNextAction,
+        nextCheckAt:
+          normalized.action === 'defer'
+            ? (typeof normalized.followUpAt === 'number' ? normalized.followUpAt : Date.now() + delayMins * 60000)
+            : undefined,
+        thinkingProcess: data.thinkingProcess,
+      };
+
+      return {
+        text: candidateText,
+        thinkingProcess: data.thinkingProcess,
+        decision,
+        episodeId: episode?.episodeId,
+      };
+    } catch (e: any) {
+      const msg = String(e?.message || '');
+      if (/503|overloaded|busy/i.test(msg)) {
+        proactiveGate.recordServiceBusyBackoff();
+        return { text: '', errorMessage: '当前模型繁忙，请稍后重试' };
+      }
+      console.warn('[proactiveEngine] API call failed for proactive generation');
+      return { text: '', errorMessage: '网络暂不可用，事件已保留' };
+    }
   }
 
   /**

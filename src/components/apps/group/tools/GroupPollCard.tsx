@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart3, Check, Sparkles, Lock } from 'lucide-react';
-import { GroupPollPayload } from '../../../../types';
+import { AiCharacter, GroupMember, GroupPollPayload } from '../../../../types';
 import { buildGroupPollStats } from '../../../../lib/groupTools';
 
 interface GroupPollCardProps {
@@ -9,6 +9,10 @@ interface GroupPollCardProps {
   canManage: boolean;
   hasAiMembers: boolean;
   isAiVoting?: boolean;
+  votingActorName?: string | null;
+  members?: GroupMember[];
+  allCharacters?: AiCharacter[];
+  userAvatar?: string;
   onCastVote: (selectedOptionIds: string[]) => { error?: string } | void;
   onClosePoll: () => void;
   onRequestAiVotes?: () => void;
@@ -20,6 +24,10 @@ export const GroupPollCard: React.FC<GroupPollCardProps> = ({
   canManage,
   hasAiMembers,
   isAiVoting = false,
+  votingActorName = null,
+  members = [],
+  allCharacters = [],
+  userAvatar,
   onCastVote,
   onClosePoll,
   onRequestAiVotes,
@@ -36,7 +44,7 @@ export const GroupPollCard: React.FC<GroupPollCardProps> = ({
     );
   }, [payload, currentUserId]);
 
-  const stats = buildGroupPollStats(payload);
+  const stats = buildGroupPollStats(payload, members);
   const isExpired = Boolean(payload.deadline && Date.now() > payload.deadline);
   const isClosed = Boolean(payload.closed || isExpired);
   const alreadyVoted = myCurrentIds.length > 0;
@@ -44,6 +52,22 @@ export const GroupPollCard: React.FC<GroupPollCardProps> = ({
   const maxAllowed = payload.multiSelect
     ? Math.max(1, payload.maxSelections || payload.options.length)
     : 1;
+
+  const resolveVoterAvatar = (voterId: string): string | undefined => {
+    if (voterId === currentUserId && userAvatar) return userAvatar;
+    const member = members.find((m) => m.id === voterId || m.characterId === voterId);
+    if (member?.avatar) return member.avatar;
+    const char = allCharacters.find((c) => c.id === voterId);
+    if (char?.avatar) return char.avatar;
+    return undefined;
+  };
+
+  const resolveVoterName = (opt: GroupPollPayload['options'][number], voterId: string): string => {
+    if (opt.voterNames?.[voterId]) return opt.voterNames[voterId];
+    const member = members.find((m) => m.id === voterId || m.characterId === voterId);
+    if (member?.name) return member.name;
+    return voterId;
+  };
 
   const toggleOption = (optId: string) => {
     if (!canVote) return;
@@ -81,9 +105,20 @@ export const GroupPollCard: React.FC<GroupPollCardProps> = ({
             <div className="wx-primary-text font-bold text-[13px] leading-snug break-words">
               {payload.title}
             </div>
-            <div className="wx-muted-text text-[10px] text-zinc-400 mt-0.5">
-              {payload.multiSelect ? `多选(最多${maxAllowed}项)` : '单选'} ·{' '}
-              {payload.anonymous ? '匿名' : '实名'} · {stats.totalVoters}人参与
+            <div className="wx-muted-text text-[10px] text-zinc-400 mt-0.5 flex flex-wrap items-center gap-x-1">
+              <span>{payload.multiSelect ? `多选(最多${maxAllowed}项)` : '单选'}</span>
+              <span>·</span>
+              <span>{payload.anonymous ? '匿名' : '实名'}</span>
+              <span>·</span>
+              <span>{stats.totalVoters}人参与</span>
+              {stats.aiVoterCount > 0 && (
+                <>
+                  <span>·</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                    已有{stats.aiVoterCount}位AI参与
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -94,6 +129,13 @@ export const GroupPollCard: React.FC<GroupPollCardProps> = ({
         )}
       </div>
 
+      {!isClosed && votingActorName && (
+        <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-[10px] font-medium animate-pulse">
+          <Sparkles className="w-3 h-3 shrink-0" />
+          <span className="truncate">{votingActorName} 正在选择……</span>
+        </div>
+      )}
+
       <div className="space-y-1.5">
         {payload.options.map((opt) => {
           const stat = stats.optionStats.find((s) => s.optionId === opt.id);
@@ -102,13 +144,14 @@ export const GroupPollCard: React.FC<GroupPollCardProps> = ({
           const isSelected = payload.multiSelect
             ? draftIds.includes(opt.id)
             : myCurrentIds.includes(opt.id);
-          const voterNames =
-            !payload.anonymous && opt.voterIds.length > 0
-              ? opt.voterIds
-                  .map((id) => opt.voterNames?.[id] || id)
-                  .slice(0, 6)
-                  .join('、')
-              : '';
+          const showVoterDetails = !payload.anonymous && opt.voterIds.length > 0;
+          const displayedVoterIds = showVoterDetails ? opt.voterIds.slice(0, 5) : [];
+          const voterNames = showVoterDetails
+            ? opt.voterIds
+                .map((id) => resolveVoterName(opt, id))
+                .slice(0, 6)
+                .join('、')
+            : '';
 
           return (
             <button
@@ -145,10 +188,35 @@ export const GroupPollCard: React.FC<GroupPollCardProps> = ({
                   {count}票 ({percent}%)
                 </span>
               </div>
-              {voterNames && (
-                <div className="relative mt-1 pl-5 text-[10px] text-zinc-500 dark:text-zinc-400 truncate">
-                  {voterNames}
-                  {opt.voterIds.length > 6 ? ` 等${opt.voterIds.length}人` : ''}
+              {showVoterDetails && (
+                <div className="relative mt-1.5 pl-5 flex items-center gap-1.5 min-w-0">
+                  <div className="flex items-center -space-x-1 shrink-0">
+                    {displayedVoterIds.map((vid) => {
+                      const av = resolveVoterAvatar(vid);
+                      const label = resolveVoterName(opt, vid);
+                      return av ? (
+                        <img
+                          key={vid}
+                          src={av}
+                          alt={label}
+                          title={label}
+                          className="w-4 h-4 rounded-full object-cover border border-white dark:border-zinc-900"
+                        />
+                      ) : (
+                        <span
+                          key={vid}
+                          title={label}
+                          className="w-4 h-4 rounded-full bg-blue-500/20 text-blue-700 dark:text-blue-300 text-[8px] font-bold flex items-center justify-center border border-white dark:border-zinc-900"
+                        >
+                          {label.slice(0, 1)}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  <span className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">
+                    {voterNames}
+                    {opt.voterIds.length > 6 ? ` 等${opt.voterIds.length}人` : ''}
+                  </span>
                 </div>
               )}
             </button>
@@ -178,7 +246,13 @@ export const GroupPollCard: React.FC<GroupPollCardProps> = ({
             className="wx-green-text flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold hover:underline cursor-pointer disabled:opacity-50 py-0.5"
           >
             <Sparkles className="w-3 h-3" />
-            <span>{isAiVoting ? 'AI成员正在思考投票...' : '邀请群内AI参与投票'}</span>
+            <span>
+              {votingActorName
+                ? `${votingActorName} 正在选择……`
+                : isAiVoting
+                  ? '群内AI正在参与投票...'
+                  : '邀请群内AI参与投票'}
+            </span>
           </button>
         ) : (
           <span className="wx-muted-text text-zinc-400">

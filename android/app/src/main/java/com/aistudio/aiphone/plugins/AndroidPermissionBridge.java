@@ -649,6 +649,141 @@ public class AndroidPermissionBridge extends Plugin {
         return builder.build();
     }
 
+    /**
+     * Static notification helper usable from Android WorkManager background workers even when Activity/WebView is closed.
+     * Reuses the unified ai_messages_v1 channel and ACTION_OPEN_AI_CHAT PendingIntent.
+     * Never logs raw message text or Base64 data.
+     */
+    public static boolean postBackgroundAiNotification(
+        Context context,
+        String aiId,
+        String title,
+        String body,
+        long timestamp,
+        String messageId
+    ) {
+        if (context == null || aiId == null || aiId.trim().isEmpty() || body == null || body.trim().isEmpty()) {
+            return false;
+        }
+        try {
+            // Skip notification if app is currently in foreground
+            if (isAppProcessForeground(context)) {
+                return false;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                    return false;
+                }
+            }
+            NotificationManagerCompat nmCompat = NotificationManagerCompat.from(context);
+            if (!nmCompat.areNotificationsEnabled()) {
+                return false;
+            }
+
+            // Ensure channel exists
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
+                    NotificationChannel channel = new NotificationChannel(
+                        CHANNEL_ID,
+                        CHANNEL_NAME,
+                        NotificationManager.IMPORTANCE_HIGH
+                    );
+                    channel.setDescription(CHANNEL_DESCRIPTION);
+                    channel.enableVibration(true);
+                    channel.enableLights(true);
+                    Uri soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+                    if (soundUri != null) {
+                        AudioAttributes attrs = new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build();
+                        channel.setSound(soundUri, attrs);
+                    }
+                    nm.createNotificationChannel(channel);
+                }
+            }
+
+            int notificationId = Math.abs((aiId + ":" + (messageId != null ? messageId : String.valueOf(timestamp))).hashCode());
+            if (notificationId == 0) {
+                notificationId = (int) (timestamp % 1000000);
+            }
+
+            Intent tapIntent = new Intent(context, MainActivity.class);
+            tapIntent.setAction(ACTION_OPEN_AI_CHAT);
+            tapIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
+            tapIntent.putExtra("action", ACTION_OPEN_AI_CHAT);
+            tapIntent.putExtra("aiId", aiId.trim());
+            tapIntent.putExtra("notificationId", notificationId);
+
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+            PendingIntent contentIntent = PendingIntent.getActivity(context, notificationId, tapIntent, flags);
+
+            String activePresetId = LauncherAppearanceManager.getConfirmedActivePresetId(context);
+            int smallIconResId = R.drawable.ic_stat_ai_message;
+            if ("xiaoshouji".equals(activePresetId)) {
+                smallIconResId = R.drawable.ic_stat_ai_message_xiaoshouji;
+            } else if ("cloud_milk".equals(activePresetId)) {
+                smallIconResId = R.drawable.ic_stat_ai_message_cloud_milk;
+            } else if ("starlight".equals(activePresetId)) {
+                smallIconResId = R.drawable.ic_stat_ai_message_starlight;
+            } else if ("minimal".equals(activePresetId)) {
+                smallIconResId = R.drawable.ic_stat_ai_message_minimal;
+            } else if ("default".equals(activePresetId)) {
+                smallIconResId = R.drawable.ic_stat_ai_message_default;
+            }
+
+            String safeTitle = (title != null && !title.trim().isEmpty()) ? title.trim() : "新消息";
+            String groupKey = "ai_chat_" + aiId.trim();
+
+            Notification notification = new NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(smallIconResId)
+                .setContentTitle(safeTitle)
+                .setContentText(body.trim())
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(body.trim()))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setAutoCancel(true)
+                .setWhen(timestamp)
+                .setShowWhen(true)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setGroup(groupKey)
+                .setContentIntent(contentIntent)
+                .setDefaults(NotificationCompat.DEFAULT_ALL)
+                .build();
+
+            nmCompat.notify(notificationId, notification);
+            return true;
+        } catch (Throwable t) {
+            Log.w(NOTIF_TAG, "postBackgroundAiNotification failed: " + t.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    private static boolean isAppProcessForeground(Context context) {
+        try {
+            android.app.ActivityManager am =
+                (android.app.ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+            if (am == null) return false;
+            List<android.app.ActivityManager.RunningAppProcessInfo> procs = am.getRunningAppProcesses();
+            if (procs == null) return false;
+            String pkg = context.getPackageName();
+            for (android.app.ActivityManager.RunningAppProcessInfo proc : procs) {
+                if (pkg.equals(proc.processName)
+                    && proc.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {
+            // Default to false so closed/background delivery is not missed
+        }
+        return false;
+    }
+
     private Drawable resolvePresetFallbackDrawable(Context context, String activePresetId) {
         if ("xiaoshouji".equals(activePresetId)) {
             return ContextCompat.getDrawable(context, R.drawable.ic_preset_xiaoshouji);

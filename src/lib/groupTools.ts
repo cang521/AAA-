@@ -183,16 +183,130 @@ export function castGroupPollVote(
   };
 }
 
-export function buildGroupPollStats(payload: GroupPollPayload) {
+export function validateAndApplyAiPollVote(params: {
+  payload: GroupPollPayload;
+  actorId: string;
+  members: GroupMember[];
+  optionIds: string[];
+  now?: number;
+}): {
+  ok: boolean;
+  payload: GroupPollPayload;
+  appliedOptionIds?: string[];
+  actorName?: string;
+  reason?: string;
+} {
+  const { payload, actorId, members, optionIds } = params;
+  const now = params.now ?? Date.now();
+
+  // 1 & 2. Poll must exist and not be closed or expired
+  if (!payload || !Array.isArray(payload.options)) {
+    return { ok: false, payload, reason: '投票数据不存在' };
+  }
+  if (payload.closed) {
+    return { ok: false, payload, reason: '该投票已结束，禁止补投' };
+  }
+  if (payload.deadline && now > payload.deadline) {
+    return { ok: false, payload, reason: '该投票已超过截止时间，禁止补投' };
+  }
+
+  // 3. actorId must belong to an active AI/NPC member in this group
+  const actorMember = members.find(
+    (m) =>
+      (m.id === actorId || m.characterId === actorId) &&
+      m.memberType !== 'human' &&
+      !m.isMuted
+  );
+  if (!actorMember) {
+    return { ok: false, payload, reason: `成员 ${actorId} 不属于当前群聊的活跃 AI` };
+  }
+
+  // 4. Validate optionIds exist in poll.options
+  const validOptionIds = new Set(payload.options.map((o) => o.id));
+  const uniqueSelected = Array.from(
+    new Set((optionIds || []).map((id) => String(id).trim()).filter(Boolean))
+  ).filter((id) => validOptionIds.has(id));
+  if (uniqueSelected.length === 0) {
+    return { ok: false, payload, reason: '投票选项 ID 不存在或为空' };
+  }
+
+  // 5. Prevent duplicate AI voting (regardless of allowChange / network retry)
+  const canonicalActorId = actorMember.id;
+  const alreadyVoted = payload.options.some(
+    (opt) =>
+      opt.voterIds.includes(canonicalActorId) ||
+      (actorMember.characterId ? opt.voterIds.includes(actorMember.characterId) : false)
+  );
+  if (alreadyVoted) {
+    return { ok: false, payload, reason: `${actorMember.name} 已经投过票，禁止重复投票` };
+  }
+
+  // 6. Validate single-select vs multi-select rule
+  const maxAllowed = payload.multiSelect
+    ? Math.max(1, payload.maxSelections || payload.options.length)
+    : 1;
+  const boundedSelected = uniqueSelected.slice(0, maxAllowed);
+
+  // 7. Apply vote while respecting anonymous setting (never expose voterNames when anonymous)
+  const selectedSet = new Set(boundedSelected);
+  const nextOptions = payload.options.map((opt) => {
+    const nextVoterIds = selectedSet.has(opt.id)
+      ? [...opt.voterIds, canonicalActorId]
+      : [...opt.voterIds];
+    const nextVoterNames = payload.anonymous
+      ? {}
+      : {
+          ...(opt.voterNames || {}),
+          ...(selectedSet.has(opt.id) ? { [canonicalActorId]: actorMember.name } : {}),
+        };
+    return {
+      ...opt,
+      voterIds: nextVoterIds,
+      voterNames: nextVoterNames,
+    };
+  });
+
+  return {
+    ok: true,
+    payload: {
+      ...payload,
+      options: nextOptions,
+    },
+    appliedOptionIds: boundedSelected,
+    actorName: actorMember.name,
+  };
+}
+
+export function buildGroupPollStats(payload: GroupPollPayload, members?: GroupMember[]) {
   const uniqueVoters = new Set<string>();
   let totalOptionVotes = 0;
   for (const opt of payload.options) {
     totalOptionVotes += opt.voterIds.length;
     for (const vid of opt.voterIds) uniqueVoters.add(vid);
   }
+
+  let aiVoterCount = 0;
+  if (Array.isArray(members) && members.length > 0) {
+    const aiIdSet = new Set<string>();
+    for (const m of members) {
+      if (m.memberType !== 'human') {
+        aiIdSet.add(m.id);
+        if (m.characterId) aiIdSet.add(m.characterId);
+      }
+    }
+    uniqueVoters.forEach((vid) => {
+      if (aiIdSet.has(vid)) aiVoterCount += 1;
+    });
+  } else {
+    uniqueVoters.forEach((vid) => {
+      if (vid !== 'user_main') aiVoterCount += 1;
+    });
+  }
+
   const denominator = totalOptionVotes > 0 ? totalOptionVotes : 1;
   return {
     totalVoters: uniqueVoters.size,
+    aiVoterCount,
     totalOptionVotes,
     optionStats: payload.options.map((opt) => ({
       optionId: opt.id,

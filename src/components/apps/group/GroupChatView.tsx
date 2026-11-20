@@ -7,7 +7,7 @@ import {
 import { DEFAULT_USER_AVATAR, waitForGroupChatSave } from '../../../lib/storage';
 import {
   groupReplyTaskManager,
-  GroupReplyTaskStatus,
+  GroupActivePlaybackIndicator,
 } from '../../../lib/group/GroupReplyTaskManager';
 import {
   ChevronLeft,
@@ -21,7 +21,6 @@ import {
   Brain,
   X,
   Users,
-  Bot,
   User,
   Shield,
   MessageCircle,
@@ -48,7 +47,6 @@ import { PressableButton } from '../../ui/interaction';
 import { useStableTextEditing } from '../../../hooks/useStableTextEditing';
 import { compressImage } from '../../../lib/imageCompressor';
 import { appendGroupRelayEntry, castGroupPollVote } from '../../../lib/groupTools';
-import { onGroupInteractionSocialTick } from '../../../lib/social/socialEngine';
 import { GroupPlusMenuSheet } from './tools/GroupPlusMenuSheet';
 import { GroupRelayModal } from './tools/GroupRelayModal';
 import { GroupRelayCard } from './tools/GroupRelayCard';
@@ -56,7 +54,6 @@ import { GroupPollModal } from './tools/GroupPollModal';
 import { GroupPollCard } from './tools/GroupPollCard';
 import { GroupRandomDrawModal } from './tools/GroupRandomDrawModal';
 import { GroupRandomDrawCard } from './tools/GroupRandomDrawCard';
-import { runAiPollVotesForGroup } from './tools/groupPollAiHelper';
 
 interface GroupChatViewProps {
   group: GroupChat;
@@ -84,17 +81,13 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   const [quoteMsg, setQuoteMsg] = useState<GroupChatMessage | null>(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showMentionPicker, setShowMentionPicker] = useState(false);
-  const [taskStatusInfo, setTaskStatusInfo] = useState<{
-    status: GroupReplyTaskStatus;
-    targetAiId?: string;
-  } | null>(null);
+  const [taskStatusInfo, setTaskStatusInfo] = useState<GroupActivePlaybackIndicator | null>(null);
   const [activeLongPressMsg, setActiveLongPressMsg] = useState<GroupChatMessage | null>(null);
   const [showCoTModal, setShowCoTModal] = useState<string | null>(null);
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [showRelayModal, setShowRelayModal] = useState(false);
   const [showPollModal, setShowPollModal] = useState(false);
   const [showRandomDrawModal, setShowRandomDrawModal] = useState(false);
-  const [aiVotingPollMsgId, setAiVotingPollMsgId] = useState<string | null>(null);
   const [localErrorMsg, setLocalErrorMsg] = useState<string | null>(null);
   const [failedTaskError, setFailedTaskError] = useState<string | null>(null);
   const [groupToast, setGroupToast] = useState<string | null>(null);
@@ -110,6 +103,8 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   const groupRef = useRef<GroupChat>(group);
   groupRef.current = group;
   const prevDraftLengthRef = useRef<number>(0);
+  const prevSyncedGroupIdRef = useRef<string>(group.id);
+  const prevSyncedUpdatedAtRef = useRef<number>(group.updatedAt || 0);
 
   const syncInputValue = useCallback((nextValue: string) => {
     const prevLen = prevDraftLengthRef.current;
@@ -147,13 +142,6 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     [composerEditor]
   );
 
-  // Sync messages from group prop whenever IndexedDB / GroupReplyTaskManager updates the group
-  useEffect(() => {
-    const next = group.messages || [];
-    messagesRef.current = next;
-    setMessages(next);
-  }, [group.id, group.updatedAt, group.messages?.length]);
-
   const scrollToBottom = useCallback((smooth = false) => {
     requestAnimationFrame(() => {
       if (messageListRef.current) {
@@ -164,6 +152,21 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
       }
     });
   }, []);
+
+  // Sync messages from group prop whenever IndexedDB / GroupReplyTaskManager updates messages or polls
+  useEffect(() => {
+    const next = group.messages || [];
+    const sameGroup = prevSyncedGroupIdRef.current === group.id;
+    const hasUpdate = (group.updatedAt || 0) !== prevSyncedUpdatedAtRef.current;
+    messagesRef.current = next;
+    setMessages(next);
+
+    if (sameGroup && hasUpdate && next.length > 0) {
+      scrollToBottom(true);
+    }
+    prevSyncedGroupIdRef.current = group.id;
+    prevSyncedUpdatedAtRef.current = group.updatedAt || 0;
+  }, [group.id, group.updatedAt, group.messages, scrollToBottom]);
 
   useEffect(() => {
     prevDraftLengthRef.current = 0;
@@ -230,39 +233,6 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     [onUpdateGroup]
   );
 
-  const scheduleGroupSocialTick = useCallback(
-    (triggerId: string, latestMessages: GroupChatMessage[]) => {
-      const updatedGroupSnapshot: GroupChat = {
-        ...group,
-        messages: latestMessages,
-      };
-      void onGroupInteractionSocialTick({
-        group: updatedGroupSnapshot,
-        triggerId,
-        allCharacters,
-        userProfile,
-        apiConfig,
-        onAddApiLog,
-        onGroupRandomMessage: (targetGroupId, aiChar, text) => {
-          if (targetGroupId !== group.id || !text.trim()) return;
-          const randomMsg: GroupChatMessage = {
-            id: 'gmsg_soc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-            groupId: group.id,
-            senderId: aiChar.id,
-            senderName: aiChar.name,
-            senderAvatar: aiChar.avatar,
-            senderType: 'ai',
-            text,
-            timestamp: Date.now(),
-          };
-          persistMessages([...messagesRef.current, randomMsg]);
-          scrollToBottom(true);
-        },
-      });
-    },
-    [allCharacters, apiConfig, group, onAddApiLog, persistMessages, scrollToBottom, userProfile]
-  );
-
   // Helper to extract @mentions from message text
   const extractMentionedIds = (text: string): string[] => {
     const activeGroup = groupRef.current;
@@ -327,6 +297,9 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
         : undefined,
     };
 
+    // Check if an AI discussion timeline is currently playing/generating/paused so user message can interrupt cleanly
+    const wasRoundActive = groupReplyTaskManager.hasActiveOrPausedRound(activeGroup.id);
+
     // Clear input immediately so rapid 2nd tap will not re-read the same text
     clearComposerInput();
     setQuoteMsg(null);
@@ -339,6 +312,14 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
       const saved = await persistMessages(newHistory);
       if (!saved) return null;
       scrollToBottom(true);
+
+      // Requirement VI: User interjection during an active/paused AI round immediately cancels
+      // remaining unexecuted events, preserves already-displayed messages & votes, and starts a fresh round
+      if (wasRoundActive) {
+        const resolvedTarget = resolveTargetAiForMessage(userMsg);
+        void groupReplyTaskManager.interruptForUserMessage(activeGroup.id, userMsg, resolvedTarget);
+      }
+
       return userMsg;
     })();
 
@@ -399,6 +380,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     const dedupeKey = `${activeGroup.id}:${pendingUserMsgs.map((m) => m.id).join(',')}`;
     await groupReplyTaskManager.enqueueTask({
       groupId: activeGroup.id,
+      triggerType: 'user_double_click',
       targetAiId,
       latestUserMessageId: latestUserMsg.id,
       latestUserText: pendingUserMsgs.map((m) => m.text).join('\n'),
@@ -409,7 +391,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   };
 
   // 3. WeChat-parity Send Button Click Router:
-  //    Single-click -> sends & persists user message ONLY
+  //    Single-click -> sends & persists user message ONLY (or interrupts if AI round is actively playing)
   //    Double-click (within 320ms) -> deduplicates save, wakes backend & triggers ONE group AI reply
   const handleSendButtonClick = async () => {
     const now = Date.now();
@@ -450,14 +432,20 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
       setLocalErrorMsg('当前群内暂无未静音的 AI 成员可响应讨论');
       return;
     }
-    if (groupReplyTaskManager.getGroupTaskState(activeGroup.id)) {
-      setGroupToast('群内 AI 正在生成回复中，请稍候...');
+    const currentState = groupReplyTaskManager.getGroupTaskState(activeGroup.id);
+    if (currentState) {
+      if (currentState.status === 'paused') {
+        groupReplyTaskManager.resumeGroupDiscussion(activeGroup.id);
+        return;
+      }
+      setGroupToast('群内 AI 正在回复中，请稍候...');
       setTimeout(() => setGroupToast(null), 2000);
       return;
     }
     const lastHuman = [...messagesRef.current].reverse().find((m) => m.senderType === 'human');
     void groupReplyTaskManager.enqueueTask({
       groupId: activeGroup.id,
+      triggerType: 'summon_discussion',
       targetAiId: undefined,
       latestUserMessageId: lastHuman?.id,
       latestUserText: lastHuman?.text,
@@ -508,9 +496,8 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
       payload,
     });
     const next = [...messagesRef.current, msg];
-    persistMessages(next);
+    void persistMessages(next);
     scrollToBottom(true);
-    scheduleGroupSocialTick(`grp_relay_${msg.id}`, next);
   };
 
   const handleJoinRelay = (msgId: string, content: string) => {
@@ -532,7 +519,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     const next = messagesRef.current.map((m) =>
       m.id === msgId ? { ...m, payload: res.payload } : m
     );
-    persistMessages(next);
+    void persistMessages(next);
     return {};
   };
 
@@ -543,7 +530,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
       }
       return m;
     });
-    persistMessages(next);
+    void persistMessages(next);
   };
 
   const handlePublishPoll = (payload: GroupPollPayload) => {
@@ -553,9 +540,8 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
       payload,
     });
     const next = [...messagesRef.current, msg];
-    persistMessages(next);
+    void persistMessages(next);
     scrollToBottom(true);
-    scheduleGroupSocialTick(`grp_poll_${msg.id}`, next);
   };
 
   const handleCastPollVote = (msgId: string, selectedOptionIds: string[]) => {
@@ -572,7 +558,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     const next = messagesRef.current.map((m) =>
       m.id === msgId ? { ...m, payload: res.payload } : m
     );
-    persistMessages(next);
+    void persistMessages(next);
     return {};
   };
 
@@ -583,46 +569,36 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
       }
       return m;
     });
-    persistMessages(next);
+    void persistMessages(next);
   };
 
+  // Unified single-API poll voting round (replaces legacy multi-request loop)
   const handleRequestAiPollVotes = async (msgId: string) => {
-    if (aiVotingPollMsgId) return;
+    const activeGroup = groupRef.current;
     const targetMsg = messagesRef.current.find((m) => m.id === msgId);
     if (!targetMsg || targetMsg.messageType !== 'poll' || !targetMsg.payload) return;
 
-    setAiVotingPollMsgId(msgId);
-    try {
-      const { updatedPayload, comments } = await runAiPollVotesForGroup({
-        group,
-        pollPayload: targetMsg.payload as GroupPollPayload,
-        allCharacters,
-        userProfile,
-        apiConfig,
-        onAddApiLog,
-      });
-
-      const updatedMsgs = messagesRef.current.map((m) =>
-        m.id === msgId ? { ...m, payload: updatedPayload } : m
-      );
-
-      // Append optional brief AI comments after voting
-      const commentMessages: GroupChatMessage[] = comments.map((c, idx) => ({
-        id: `gmsg_pv_${Date.now()}_${idx}`,
-        groupId: group.id,
-        senderId: c.aiMemberId,
-        senderName: c.aiName,
-        senderAvatar: c.aiAvatar,
-        senderType: 'ai',
-        text: c.comment,
-        timestamp: Date.now() + idx * 50,
-      }));
-
-      persistMessages([...updatedMsgs, ...commentMessages]);
-      if (commentMessages.length > 0) scrollToBottom(true);
-    } finally {
-      setAiVotingPollMsgId(null);
+    const payload = targetMsg.payload as GroupPollPayload;
+    const isExpired = Boolean(payload.deadline && Date.now() > payload.deadline);
+    if (payload.closed || isExpired) {
+      setGroupToast('该投票已结束，无法再邀请 AI 投票');
+      setTimeout(() => setGroupToast(null), 2000);
+      return;
     }
+
+    const aiMembers = activeGroup.members.filter((m) => m.memberType !== 'human' && !m.isMuted);
+    if (aiMembers.length === 0) {
+      setLocalErrorMsg('当前群内暂无未静音的 AI 成员可参与投票');
+      return;
+    }
+
+    if (groupReplyTaskManager.hasActiveOrPausedRound(activeGroup.id)) {
+      setGroupToast('群内 AI 正在回复中，请稍候再邀请投票');
+      setTimeout(() => setGroupToast(null), 2000);
+      return;
+    }
+
+    await groupReplyTaskManager.enqueuePollVoteRound(activeGroup.id, msgId);
   };
 
   const handlePublishRandomDraw = (payload: GroupRandomDrawPayload) => {
@@ -633,12 +609,13 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
       payload,
     });
     const next = [...messagesRef.current, msg];
-    persistMessages(next);
+    void persistMessages(next);
     scrollToBottom(true);
-    scheduleGroupSocialTick(`grp_draw_${msg.id}`, next);
   };
 
   const handleSendGroupPhotoDataUrl = async (dataUrl: string) => {
+    const activeGroup = groupRef.current;
+    const wasRoundActive = groupReplyTaskManager.hasActiveOrPausedRound(activeGroup.id);
     const msg = createUserToolMessage({
       messageType: 'image',
       imageUrl: dataUrl,
@@ -649,14 +626,19 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     if (!saved) return;
     scrollToBottom(true);
     setShowPlusMenu(false);
-    void groupReplyTaskManager.enqueueTask({
-      groupId: groupRef.current.id,
-      latestUserMessageId: msg.id,
-      latestUserText: '[图片]',
-      mentionedTargets: [],
-      chainDepth: 0,
-      dedupeKey: `${groupRef.current.id}:${msg.id}`,
-    });
+    if (wasRoundActive) {
+      void groupReplyTaskManager.interruptForUserMessage(activeGroup.id, msg);
+    } else {
+      void groupReplyTaskManager.enqueueTask({
+        groupId: activeGroup.id,
+        triggerType: 'image_message',
+        latestUserMessageId: msg.id,
+        latestUserText: '[图片]',
+        mentionedTargets: [],
+        chainDepth: 0,
+        dedupeKey: `${activeGroup.id}:${msg.id}`,
+      });
+    }
   };
 
   const handleTriggerWebFilePicker = (useCameraCapture: boolean) => {
@@ -686,6 +668,16 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
       console.warn('Group photo compression error:', err);
     }
   };
+
+  let lastTypingActorMsgIndex = -1;
+  if (taskStatusInfo?.activeActionType === 'typing' && taskStatusInfo.activeActorId) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].senderId === taskStatusInfo.activeActorId) {
+        lastTypingActorMsgIndex = i;
+        break;
+      }
+    }
+  }
 
   return (
     <div
@@ -844,6 +836,11 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
                       真人
                     </span>
                   )}
+                  {!isMe && lastTypingActorMsgIndex === index && (
+                    <span className="wx-muted-text text-[10px] text-zinc-400 dark:text-zinc-500 ml-0.5 animate-pulse">
+                      正在输入…
+                    </span>
+                  )}
                 </div>
 
                 {/* Quoted Message Preview */}
@@ -887,11 +884,20 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
                       payload={msg.payload as GroupPollPayload}
                       currentUserId="user_main"
                       canManage={isMe}
-                      hasAiMembers={group.members.some((m) => m.memberType === 'ai' && !m.isMuted)}
-                      isAiVoting={aiVotingPollMsgId === msg.id}
+                      hasAiMembers={group.members.some((m) => m.memberType !== 'human' && !m.isMuted)}
+                      isAiVoting={Boolean(taskStatusInfo && taskStatusInfo.activePollId === msg.id)}
+                      votingActorName={
+                        taskStatusInfo?.activeActionType === 'voting' &&
+                        taskStatusInfo.activePollId === msg.id
+                          ? taskStatusInfo.activeActorName || null
+                          : null
+                      }
+                      members={group.members}
+                      allCharacters={allCharacters}
+                      userAvatar={userProfile.avatar || DEFAULT_USER_AVATAR}
                       onCastVote={(optionIds) => handleCastPollVote(msg.id, optionIds)}
                       onClosePoll={() => handleClosePoll(msg.id)}
-                      onRequestAiVotes={() => handleRequestAiPollVotes(msg.id)}
+                      onRequestAiVotes={() => void handleRequestAiPollVotes(msg.id)}
                     />
                   </div>
                 ) : msg.messageType === 'random_draw' && msg.payload ? (
@@ -948,27 +954,6 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
           </React.Fragment>
         );
         })}
-
-        {/* Multi-AI Waking / Typing Indicator */}
-        {taskStatusInfo && (
-          <div className="flex items-center gap-2 text-xs text-purple-600 dark:text-purple-400 animate-pulse px-2 py-1">
-            <div className="w-6 h-6 rounded-full bg-purple-500/20 flex items-center justify-center">
-              <Bot className="w-3.5 h-3.5" />
-            </div>
-            <span className="text-[11px] font-semibold">
-              {taskStatusInfo.status === 'waking_backend'
-                ? '正在唤醒 Android 内置后端...'
-                : taskStatusInfo.status === 'queued'
-                  ? '已加入群聊回复队列，等待执行...'
-                  : `${
-                      (taskStatusInfo.targetAiId &&
-                        taskStatusInfo.targetAiId !== '@all' &&
-                        group.members.find((m) => m.id === taskStatusInfo.targetAiId)?.name) ||
-                      '群内AI伙伴'
-                    } 正在输入...`}
-            </span>
-          </div>
-        )}
 
         {/* Ephemeral Status Toast */}
         {groupToast && (
@@ -1101,7 +1086,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
               void handleSendUserOnlyMessage();
             }
           }}
-          placeholder="发送群消息，输入 @ 提及成员..."
+          placeholder={taskStatusInfo ? '对方正在输入……' : '发送群消息，输入 @ 提及成员...'}
           className="wx-composer-input flex-1 min-w-0 px-3.5 py-2 text-xs rounded-xl bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-300/70 dark:border-zinc-700 focus:outline-none focus:border-emerald-500"
         />
 

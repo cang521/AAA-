@@ -328,12 +328,34 @@ export async function getMessagesPaged(
 /**
  * Save single message into IndexedDB asynchronously (non-blocking)
  */
+/**
+ * O(1) idempotency check to verify whether a message ID is already stored in ChatDB.
+ */
+export async function hasChatMessage(messageId: string): Promise<boolean> {
+  if (!messageId) return false;
+  try {
+    const db = await getDb();
+    return await new Promise<boolean>((resolve) => {
+      const tx = db.transaction([STORE_MESSAGES], 'readonly');
+      const store = tx.objectStore(STORE_MESSAGES);
+      const req = store.getKey(messageId);
+      req.onsuccess = () => resolve(Boolean(req.result));
+      req.onerror = () => resolve(false);
+    });
+  } catch {
+    return false;
+  }
+}
+
 export async function saveChatMessage(msg: ChatMessage): Promise<void> {
   const db = await getDb();
+  const existedBefore = await hasChatMessage(msg.id).catch(() => false);
   await addMessageToStore(db, msg);
 
   // Incrementally update search index instead of clearing full cache
   appendChatMessageToIndexCache(msg);
+
+  const isSystemTimelineEvent = Boolean(msg.isSystemEvent || msg.type === 'offline_session_event');
 
   // Update in-memory metadata cache immediately
   const meta = metaCache.get(msg.characterId) || {
@@ -341,7 +363,9 @@ export async function saveChatMessage(msg: ChatMessage): Promise<void> {
     totalCount: 0,
     lastMessage: null,
   };
-  meta.totalCount += 1;
+  if (!existedBefore && !isSystemTimelineEvent) {
+    meta.totalCount += 1;
+  }
   if (!meta.lastMessage || msg.timestamp >= meta.lastMessage.timestamp) {
     meta.lastMessage = msg;
   }
@@ -353,6 +377,11 @@ export async function saveChatMessage(msg: ChatMessage): Promise<void> {
     message: msg,
   });
 
+  // System timeline events (like offline_session_event cards) do NOT count as regular chat messages or trigger proactive user-reply settlement
+  if (isSystemTimelineEvent) {
+    return;
+  }
+
   // Sync proactive engine timestamps & settle active proactive episode on genuine user message
   try {
     syncProactiveRuntimeOnMessageSaved(
@@ -361,7 +390,12 @@ export async function saveChatMessage(msg: ChatMessage): Promise<void> {
       msg.timestamp
     );
     if (msg.sender === 'user' && msg.sourceType !== 'imported') {
-      const settled = settleActiveEpisodeByUserMessage(msg.characterId, msg.id, msg.timestamp);
+      const settled = settleActiveEpisodeByUserMessage(
+        msg.characterId,
+        msg.id,
+        msg.timestamp,
+        msg.text
+      );
       if (settled && settled.proactiveMessageIds.length > 0) {
         void markProactiveMessagesReplied(msg.characterId, settled.proactiveMessageIds).catch((err) => {
           console.warn('[chatDb] markProactiveMessagesReplied error:', err);
@@ -636,7 +670,12 @@ export async function saveChatMessagesBulk(
       }
     }
     for (const [charId, userMsg] of latestLiveUserByChar.entries()) {
-      const settled = settleActiveEpisodeByUserMessage(charId, userMsg.id, userMsg.timestamp);
+      const settled = settleActiveEpisodeByUserMessage(
+        charId,
+        userMsg.id,
+        userMsg.timestamp,
+        userMsg.text
+      );
       if (settled && settled.proactiveMessageIds.length > 0) {
         void markProactiveMessagesReplied(charId, settled.proactiveMessageIds).catch(() => {});
       }

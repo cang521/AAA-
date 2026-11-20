@@ -26,11 +26,14 @@ import { ProactiveSettings, CustomProactiveEvent, FollowupTopicItem } from '../.
 import {
   loadProactiveSettings,
   saveProactiveSettings,
+  clearTemporaryPause,
 } from '../../lib/proactive/proactiveStore';
 import { proactiveEngine } from '../../lib/proactive/proactiveEngine';
 import { chatMessageBridge } from '../../lib/agent/ChatMessageBridge';
 import { proactiveGate } from '../../lib/proactive/ProactiveGate';
 import { proactiveScheduler } from '../../lib/proactive/ProactiveScheduler';
+import { NativeWorkerStatus } from '../../lib/proactive/proactiveNativeBridge';
+import { permissionManager } from '../../lib/agent/PermissionManager';
 import { loadCharacters, loadUserProfile, loadApiConfig } from '../../lib/storage';
 import { LifeStatePanel } from './LifeStatePanel';
 import { StableTextInput } from '../common/StableTextInput';
@@ -39,10 +42,22 @@ interface ProactiveSettingsPanelProps {
   onBack: () => void;
 }
 
+function formatRemainingDuration(targetMs: number, nowMs: number = Date.now()): string {
+  const diffMin = Math.max(1, Math.ceil((targetMs - nowMs) / 60000));
+  if (diffMin < 60) return `剩余 ${diffMin} 分钟`;
+  const hrs = Math.floor(diffMin / 60);
+  const mins = diffMin % 60;
+  return mins > 0 ? `剩余 ${hrs} 小时 ${mins} 分钟` : `剩余 ${hrs} 小时`;
+}
+
 export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ onBack }) => {
   const [settings, setSettings] = useState<ProactiveSettings>(() => loadProactiveSettings());
   const [characters, setCharacters] = useState(() => loadCharacters());
   const [activeTab, setActiveTab] = useState<'triggers' | 'life_state' | 'characters' | 'anti_harassment' | 'test'>('triggers');
+  const [dndToday, setDndToday] = useState<boolean>(() => permissionManager.isDoNotDisturbToday());
+  const [workerStatus, setWorkerStatus] = useState<NativeWorkerStatus | null>(() =>
+    proactiveScheduler.getLastWorkerStatus()
+  );
 
   // Test Simulation Modal State
   const [showTestModal, setShowTestModal] = useState(false);
@@ -66,14 +81,33 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
 
   useEffect(() => {
     saveProactiveSettings(settings);
+    void proactiveScheduler.refreshWorkerStatus().then((st) => setWorkerStatus(st));
   }, [settings]);
 
+  useEffect(() => {
+    void proactiveScheduler.refreshWorkerStatus().then((st) => setWorkerStatus(st));
+  }, []);
+
+  const handleToggleDndToday = () => {
+    const next = !dndToday;
+    permissionManager.setDoNotDisturbToday(next);
+    setDndToday(next);
+    window.dispatchEvent(new Event('proactive_settings_updated'));
+  };
+
   const handleSetTemporaryPause = (type: '1h' | 'tonight' | 'tomorrow' | 'resume') => {
+    if (type === 'resume') {
+      clearTemporaryPause();
+      setSettings((prev) => ({ ...prev, pausedUntil: undefined, pauseReason: undefined }));
+      return;
+    }
+
     let targetTime: number | undefined;
-    const now = new Date();
+    let reason = '用户手动开启临时免打扰';
 
     if (type === '1h') {
       targetTime = Date.now() + 3600000;
+      reason = '用户手动暂停 1 小时';
     } else if (type === 'tonight') {
       const tonight = new Date();
       tonight.setHours(23, 0, 0, 0);
@@ -81,16 +115,16 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
         tonight.setDate(tonight.getDate() + 1);
       }
       targetTime = tonight.getTime();
+      reason = '用户手动暂停至今晚';
     } else if (type === 'tomorrow') {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       tomorrow.setHours(8, 0, 0, 0);
       targetTime = tomorrow.getTime();
-    } else {
-      targetTime = undefined;
+      reason = '用户手动暂停至明早';
     }
 
-    setSettings((prev) => ({ ...prev, pausedUntil: targetTime }));
+    setSettings((prev) => ({ ...prev, pausedUntil: targetTime, pauseReason: reason }));
   };
 
   const handleTogglePerAi = (charId: string, val: boolean) => {
@@ -262,27 +296,35 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
         </div>
       </div>
 
-      {/* Temporary Pause Bar */}
-      <div className="px-3 py-1.5 bg-zinc-850 border-b border-zinc-800 flex items-center justify-between text-xs shrink-0 gap-1">
-        <div className="flex items-center gap-1.5 text-zinc-300 font-medium">
-          <Clock className="w-3.5 h-3.5 text-amber-400" />
-          <span>临时暂停:</span>
-          {settings.pausedUntil && settings.pausedUntil > Date.now() ? (
-            <span className="text-amber-400 font-bold">
-              暂停至 {new Date(settings.pausedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+      {/* Temporary Pause Bar (with remaining time + pauseReason + manual early resume) */}
+      <div className="px-3 py-2 bg-zinc-850 border-b border-zinc-800 flex items-center justify-between text-xs shrink-0 gap-2">
+        <div className="flex flex-col min-w-0">
+          <div className="flex items-center gap-1.5 text-zinc-300 font-medium">
+            <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span>临时免打扰:</span>
+            {settings.pausedUntil && settings.pausedUntil > Date.now() ? (
+              <span className="text-amber-400 font-bold truncate">
+                {formatRemainingDuration(settings.pausedUntil)}（至{' '}
+                {new Date(settings.pausedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}）
+              </span>
+            ) : (
+              <span className="text-zinc-500 font-normal">未开启（正常运行）</span>
+            )}
+          </div>
+          {settings.pausedUntil && settings.pausedUntil > Date.now() && settings.pauseReason && (
+            <span className="text-[10px] text-amber-200/80 pl-5 truncate">
+              原因：{settings.pauseReason}（仅拦截主动消息，正常聊天不受影响）
             </span>
-          ) : (
-            <span className="text-zinc-500 font-normal">正常运行中</span>
           )}
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           {settings.pausedUntil && settings.pausedUntil > Date.now() ? (
             <button
               onClick={() => handleSetTemporaryPause('resume')}
-              className="px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 text-[10px] font-semibold transition"
+              className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 text-[10px] font-semibold transition"
             >
-              立即恢复
+              提前解除
             </button>
           ) : (
             <>
@@ -1072,32 +1114,117 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
               </label>
             </div>
 
-            {/* Notification Mode */}
+            {/* Today DND ("今天别管我") */}
             <div className="p-3.5 rounded-2xl bg-zinc-850 border border-zinc-800 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Bell className="w-4 h-4 text-emerald-400" />
+                <div className="w-8 h-8 rounded-xl bg-rose-500/20 text-rose-400 flex items-center justify-center">
+                  <Shield className="w-4 h-4" />
+                </div>
                 <div>
-                  <h3 className="font-bold text-zinc-200">Android / 系统后台通知</h3>
-                  <p className="text-[10px] text-zinc-400">收到主动消息时同步触发系统通知弹窗</p>
+                  <h3 className="text-xs font-bold text-zinc-100">今天别管我（当日全局免打扰）</h3>
+                  <p className="text-[10px] text-zinc-400">开启后今日停止所有 AI 主动消息与未回复追问，次日自动恢复</p>
                 </div>
               </div>
               <button
-                onClick={() =>
-                  setSettings((p) => ({
-                    ...p,
-                    systemNotificationsEnabled: !p.systemNotificationsEnabled,
-                  }))
-                }
+                onClick={handleToggleDndToday}
                 className={`w-8 h-4.5 rounded-full relative transition-colors ${
-                  settings.systemNotificationsEnabled ? 'bg-emerald-500' : 'bg-zinc-700'
+                  dndToday ? 'bg-rose-500' : 'bg-zinc-700'
                 }`}
               >
                 <span
                   className={`absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full bg-white transition-transform ${
-                    settings.systemNotificationsEnabled ? 'translate-x-3.5' : 'translate-x-0'
+                    dndToday ? 'translate-x-3.5' : 'translate-x-0'
                   }`}
                 />
               </button>
+            </div>
+
+            {/* Android Native Background Worker & Follow-up Chain Switches */}
+            <div className="p-3.5 rounded-2xl bg-zinc-850 border border-zinc-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Smartphone className="w-4 h-4 text-sky-400" />
+                  <div>
+                    <h3 className="font-bold text-zinc-200">Android 后台每小时本地巡检</h3>
+                    <p className="text-[10px] text-zinc-400">
+                      通过原生 WorkManager 后台运行（不打开 App 也能触发，无真实事件时 0 次 API 调用）
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() =>
+                    setSettings((p) => ({
+                      ...p,
+                      androidBackgroundEnabled: p.androidBackgroundEnabled === false ? true : false,
+                    }))
+                  }
+                  className={`w-8 h-4.5 rounded-full relative transition-colors shrink-0 ${
+                    settings.androidBackgroundEnabled !== false ? 'bg-emerald-500' : 'bg-zinc-700'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full bg-white transition-transform ${
+                      settings.androidBackgroundEnabled !== false ? 'translate-x-3.5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-zinc-800/80">
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-indigo-400" />
+                  <div>
+                    <h3 className="font-bold text-zinc-200">未回复轻量追问（15分钟 + 1小时）</h3>
+                    <p className="text-[10px] text-zinc-400">
+                      未回复时最多追问 2 次后停止；你一旦回复或表示在忙，立即取消后续追问
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() =>
+                    setSettings((p) => ({
+                      ...p,
+                      followUpEnabled: p.followUpEnabled === false ? true : false,
+                    }))
+                  }
+                  className={`w-8 h-4.5 rounded-full relative transition-colors shrink-0 ${
+                    settings.followUpEnabled !== false ? 'bg-emerald-500' : 'bg-zinc-700'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full bg-white transition-transform ${
+                      settings.followUpEnabled !== false ? 'translate-x-3.5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-zinc-800/80">
+                <div className="flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-emerald-400" />
+                  <div>
+                    <h3 className="font-bold text-zinc-200">Android 系统后台通知</h3>
+                    <p className="text-[10px] text-zinc-400">后台写入消息成功后同步推送系统通知，点击直达聊天</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() =>
+                    setSettings((p) => ({
+                      ...p,
+                      systemNotificationsEnabled: !p.systemNotificationsEnabled,
+                    }))
+                  }
+                  className={`w-8 h-4.5 rounded-full relative transition-colors shrink-0 ${
+                    settings.systemNotificationsEnabled ? 'bg-emerald-500' : 'bg-zinc-700'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full bg-white transition-transform ${
+                      settings.systemNotificationsEnabled ? 'translate-x-3.5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1209,24 +1336,38 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
                   </span>
                 </div>
                 <div>
-                  <span className="text-zinc-500 block text-[10px]">Scheduler 状态：</span>
-                  <span className="text-emerald-400 font-bold">
-                    {proactiveScheduler.isSchedulerActive() ? '⚡ ACTIVE (12m)' : '⚪ IDLE'}
+                  <span className="text-zinc-500 block text-[10px]">WorkManager 后台任务：</span>
+                  <span
+                    className={
+                      workerStatus?.registered || proactiveScheduler.isSchedulerActive()
+                        ? 'text-emerald-400 font-bold'
+                        : 'text-zinc-400 font-bold'
+                    }
+                  >
+                    {workerStatus?.isAndroidNative
+                      ? workerStatus.registered
+                        ? `✅ REGISTERED (1h / ${workerStatus.state})`
+                        : `⚪ ${workerStatus.state}`
+                      : proactiveScheduler.isSchedulerActive()
+                      ? '⚡ READY (Android 1h)'
+                      : '⚪ IDLE'}
                   </span>
                 </div>
                 <div>
-                  <span className="text-zinc-500 block text-[10px]">最近一次巡检：</span>
+                  <span className="text-zinc-500 block text-[10px]">最近一次后台巡检：</span>
                   <span>
-                    {proactiveScheduler.getLastCheckTime()
-                      ? new Date(proactiveScheduler.getLastCheckTime()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                      : '等待首检'}
+                    {workerStatus?.lastInspectionAt || proactiveScheduler.getLastCheckTime()
+                      ? new Date(
+                          workerStatus?.lastInspectionAt || proactiveScheduler.getLastCheckTime()
+                        ).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                      : '等待后台每小时巡检'}
                   </span>
                 </div>
               </div>
 
               <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-[10px] space-y-1">
                 <div className="flex items-center justify-between">
-                  <span className="text-zinc-400 font-medium block">最近一次 ProactiveGate 网关判定：</span>
+                  <span className="text-zinc-400 font-medium block">最近一次本地巡检 / Gate 判定：</span>
                   {proactiveGate.isQuotaExhausted() && (
                     <button
                       type="button"
@@ -1241,15 +1382,16 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
                   )}
                 </div>
                 <p className="text-amber-300 font-mono bg-black/40 p-1.5 rounded-lg border border-zinc-800">
-                  {proactiveGate.getLastRejectReason()}
+                  {workerStatus?.lastInspectionSummary || proactiveGate.getLastRejectReason()}
                 </p>
               </div>
 
               <div className="p-2.5 rounded-xl bg-blue-950/30 border border-blue-500/20 text-[10px] text-blue-300 space-y-1">
-                <span className="font-semibold block text-blue-200">📱 Android 运行边界与能力说明：</span>
+                <span className="font-semibold block text-blue-200">📱 Android 原生后台运行机制说明：</span>
                 <p className="leading-relaxed text-zinc-400">
-                  • 进程存活（前台/后台挂起）：Scheduler 12分钟周期与 Resume 触发正常运行。<br />
-                  • 进程被系统强杀（Process Killed）：受原生 Android WebView 限制，进程杀死后无法在离线状态下自动请求网络生成 AI 消息。下次打开 App 时自动补检触发。
+                  • 由 Android WorkManager 每小时执行一次本地巡检，不依赖打开 App 或停留在前台。<br />
+                  • 打开 App、回到前台或进入聊天界面绝不会触发主动消息或调用模型 API。<br />
+                  • 仅在存在真实事件且通过全部 12 步本地拦截后才调用 API；未回复追问（15分钟+1小时）由独立后台定时任务执行，不额外消耗 API。
                 </p>
               </div>
             </div>

@@ -1,16 +1,40 @@
 import React, { useState } from 'react';
-import { Heart, Activity, Sparkles, X, Zap, Shield, Eye, Smile } from 'lucide-react';
-import { CharacterState } from '../../lib/offline/OfflineStateEngine';
+import {
+  Heart,
+  Activity,
+  Sparkles,
+  X,
+  Shield,
+  Eye,
+  Smile,
+  Thermometer,
+  ChevronDown,
+  ChevronUp,
+  Lock,
+} from 'lucide-react';
+import { CharacterState, OfflineStateEngine } from '../../lib/offline/OfflineStateEngine';
+import { OfflineFontScaleClasses, getOfflineFontScaleClasses } from '../../lib/offline/offlineDisplaySettings';
 
 interface OfflineStateMiniPanelProps {
   state: CharacterState;
   characterName: string;
+  fontScale?: OfflineFontScaleClasses;
+  showIntimateState?: boolean;
 }
 
-export const OfflineStateMiniPanel: React.FC<OfflineStateMiniPanelProps> = ({ state, characterName }) => {
+export const OfflineStateMiniPanel: React.FC<OfflineStateMiniPanelProps> = ({
+  state: rawState,
+  characterName,
+  fontScale,
+  showIntimateState = true,
+}) => {
   const [showFullModal, setShowFullModal] = useState(false);
+  const [intimateExpanded, setIntimateExpanded] = useState(false);
 
-  // Blush label helper
+  const state = OfflineStateEngine.hydrateState(rawState);
+  const scale = fontScale || getOfflineFontScaleClasses('lg');
+  const hasActiveIntimate = Boolean(showIntimateState && state.intimateState?.active);
+
   const getBlushLabel = (b: number) => {
     if (b >= 70) return '通红发烫';
     if (b >= 40) return '脸颊泛红';
@@ -20,89 +44,129 @@ export const OfflineStateMiniPanel: React.FC<OfflineStateMiniPanelProps> = ({ st
 
   return (
     <>
-      {/* Compact Mini Panel (Top-Left Content Area) */}
-      <div
+      {/* Compact Mini Panel */}
+      <button
+        type="button"
         onClick={() => setShowFullModal(true)}
-        className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-zinc-900/80 backdrop-blur-md border border-zinc-750/80 text-[11px] text-zinc-200 cursor-pointer hover:bg-zinc-800/90 transition shadow-sm select-none"
-        title="点击查看角色详细心理与生理状态仪表盘"
+        className={`max-w-full inline-flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1.5 rounded-xl bg-zinc-900/90 backdrop-blur-md border border-zinc-750/80 ${scale.stateMini} text-zinc-200 cursor-pointer hover:border-indigo-500/50 transition shadow-sm select-none text-left`}
+        title="点击查看角色详细身体与情绪状态"
       >
-        <div className="flex items-center gap-1 font-mono text-rose-400 font-bold">
-          <Heart className="w-3 h-3 text-rose-500 fill-rose-500 animate-pulse" />
+        <span className="inline-flex items-center gap-1 font-mono text-rose-500 font-bold">
+          <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500 animate-pulse" />
           <span>{state.heartRate}</span>
-        </div>
+        </span>
 
-        <span className="text-zinc-600">·</span>
+        <span className="text-zinc-500">·</span>
 
         <span className="text-zinc-300">呼吸 {state.breathing}</span>
 
-        <span className="text-zinc-600">·</span>
+        <span className="text-zinc-500">·</span>
 
-        <span className="text-amber-300">脸颊 {getBlushLabel(state.blush)}</span>
+        <span className="inline-flex items-center gap-0.5 font-mono text-sky-500 font-medium">
+          <Thermometer className="w-3 h-3" />
+          {state.bodyTemp.toFixed(1)}°C
+        </span>
+
+        <span className="text-zinc-500">·</span>
+
+        <span className="text-amber-500">脸颊 {getBlushLabel(state.blush)}</span>
 
         {state.emotion && state.emotion.length > 0 && (
           <>
-            <span className="text-zinc-600">·</span>
-            <span className="text-emerald-300 font-medium">{state.emotion.join(' · ')}</span>
+            <span className="text-zinc-500">·</span>
+            <span className="text-emerald-500 font-medium">{state.emotion.join(' · ')}</span>
           </>
         )}
-      </div>
+
+        {hasActiveIntimate && (
+          <>
+            <span className="text-zinc-500">·</span>
+            <span className="text-pink-500 font-medium inline-flex items-center gap-0.5">
+              <Lock className="w-2.5 h-2.5" />
+              私密状态
+            </span>
+          </>
+        )}
+      </button>
 
       {/* Full State Dashboard Modal */}
       {showFullModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-sm rounded-3xl bg-zinc-900 border border-zinc-750 p-5 space-y-4 text-zinc-100 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setShowFullModal(false)}
+        >
+          <div
+            className={`w-full max-w-sm rounded-3xl bg-zinc-900 border border-zinc-750 p-5 space-y-4 text-zinc-100 shadow-2xl max-h-[85vh] overflow-y-auto ${scale.stateModalText}`}
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <div className="flex items-center gap-2">
                 <Heart className="w-5 h-5 text-rose-500 fill-rose-500/30" />
-                <h3 className="font-bold text-sm text-zinc-100">{characterName} 的实时模拟状态</h3>
+                <h3 className="font-bold text-zinc-100">{characterName} 的当前状态</h3>
               </div>
               <button
+                type="button"
                 onClick={() => setShowFullModal(false)}
-                className="p-1 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+                className="p-1.5 rounded-full text-zinc-400 hover:bg-zinc-800 transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Core Metrics Meters */}
-            <div className="space-y-3 text-xs">
-              {/* Heart Rate & Breathing */}
-              <div className="grid grid-cols-2 gap-2">
-                <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-1">
-                  <span className="text-[10px] text-zinc-400 flex items-center gap-1 font-semibold">
-                    <Heart className="w-3 h-3 text-rose-400" /> 心率 BPM
+            {/* Regular Metrics */}
+            <div className="space-y-3">
+              {/* Row 1: Heart Rate, Breathing, Body Temp */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="p-2.5 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-1">
+                  <span className="text-[11px] text-zinc-400 flex items-center gap-1 font-semibold">
+                    <Heart className="w-3 h-3 text-rose-500" /> 心率
                   </span>
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-xl font-bold font-mono text-rose-400">{state.heartRate}</span>
-                    <span className="text-[10px] text-zinc-500">次/分</span>
+                  <div className="flex items-baseline gap-0.5">
+                    <span className="text-lg font-bold font-mono text-rose-500">{state.heartRate}</span>
+                    <span className="text-[10px] text-zinc-500">bpm</span>
                   </div>
                   <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-rose-500 transition-all duration-300"
-                      style={{ width: `${Math.min(100, Math.max(0, ((state.heartRate - 50) / 100) * 100))}%` }}
+                      style={{ width: `${Math.min(100, Math.max(0, ((state.heartRate - 50) / 110) * 100))}%` }}
                     />
                   </div>
                 </div>
 
-                <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-1">
-                  <span className="text-[10px] text-zinc-400 flex items-center gap-1 font-semibold">
-                    <Activity className="w-3 h-3 text-blue-400" /> 呼吸状态
+                <div className="p-2.5 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-1">
+                  <span className="text-[11px] text-zinc-400 flex items-center gap-1 font-semibold">
+                    <Thermometer className="w-3 h-3 text-sky-500" /> 体温
                   </span>
-                  <div className="text-sm font-bold text-blue-300 pt-1">{state.breathing}</div>
-                  <span className="text-[10px] text-zinc-500 block truncate">胸口微起伏</span>
+                  <div className="flex items-baseline gap-0.5">
+                    <span className="text-lg font-bold font-mono text-sky-500">{state.bodyTemp.toFixed(1)}</span>
+                    <span className="text-[10px] text-zinc-500">°C</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-sky-500 transition-all duration-300"
+                      style={{ width: `${Math.min(100, Math.max(0, ((state.bodyTemp - 36.0) / 2.5) * 100))}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-1">
+                  <span className="text-[11px] text-zinc-400 flex items-center gap-1 font-semibold">
+                    <Activity className="w-3 h-3 text-indigo-500" /> 呼吸
+                  </span>
+                  <div className="font-bold text-indigo-500 pt-1 leading-tight break-words">{state.breathing}</div>
                 </div>
               </div>
 
-              {/* Blush & Emotion */}
+              {/* Row 2: Blush & Emotion */}
               <div className="grid grid-cols-2 gap-2">
                 <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-1">
-                  <span className="text-[10px] text-zinc-400 flex items-center gap-1 font-semibold">
-                    <Sparkles className="w-3 h-3 text-amber-400" /> 脸红红润度
+                  <span className="text-[11px] text-zinc-400 flex items-center gap-1 font-semibold">
+                    <Sparkles className="w-3 h-3 text-amber-500" /> 脸红程度
                   </span>
                   <div className="flex items-baseline gap-1">
-                    <span className="text-lg font-bold font-mono text-amber-300">{state.blush}%</span>
-                    <span className="text-[10px] text-zinc-500">({getBlushLabel(state.blush)})</span>
+                    <span className="text-base font-bold font-mono text-amber-500">{state.blush}%</span>
+                    <span className="text-[11px] text-zinc-500">({getBlushLabel(state.blush)})</span>
                   </div>
                   <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
                     <div
@@ -113,12 +177,15 @@ export const OfflineStateMiniPanel: React.FC<OfflineStateMiniPanelProps> = ({ st
                 </div>
 
                 <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-1">
-                  <span className="text-[10px] text-zinc-400 flex items-center gap-1 font-semibold">
-                    <Smile className="w-3 h-3 text-emerald-400" /> 心理情绪
+                  <span className="text-[11px] text-zinc-400 flex items-center gap-1 font-semibold">
+                    <Smile className="w-3 h-3 text-emerald-500" /> 当前情绪
                   </span>
                   <div className="flex flex-wrap gap-1 pt-1">
                     {state.emotion.map((e, idx) => (
-                      <span key={idx} className="px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px]">
+                      <span
+                        key={idx}
+                        className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 text-[11px] font-medium"
+                      >
                         {e}
                       </span>
                     ))}
@@ -126,54 +193,123 @@ export const OfflineStateMiniPanel: React.FC<OfflineStateMiniPanelProps> = ({ st
                 </div>
               </div>
 
-              {/* Tension, Arousal & Energy */}
+              {/* Row 3: Tension & Energy */}
+              <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2.5">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-zinc-400">紧张度</span>
+                    <span className="font-mono text-purple-500 font-bold">{state.tension}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-purple-500 transition-all duration-300"
+                      style={{ width: `${state.tension}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-zinc-400">体力精力</span>
+                    <span className="font-mono text-emerald-500 font-bold">{state.energy}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 transition-all duration-300"
+                      style={{ width: `${state.energy}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 4: Physical State & Behavior */}
               <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-zinc-400">紧绷 / 戒备程度:</span>
-                    <span className="font-mono text-purple-300 font-bold">{state.tension}%</span>
-                  </div>
-                  <div className="w-full h-1 bg-zinc-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-purple-500 transition-all duration-300" style={{ width: `${state.tension}%` }} />
-                  </div>
+                <div className="flex items-start gap-2 text-zinc-300">
+                  <Shield className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+                  <span className="leading-relaxed">
+                    <strong className="text-zinc-100">身体状态：</strong>
+                    {state.physicalState}
+                  </span>
                 </div>
-
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-zinc-400">兴奋 / 心动指数:</span>
-                    <span className="font-mono text-pink-300 font-bold">{state.arousal}%</span>
-                  </div>
-                  <div className="w-full h-1 bg-zinc-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-pink-500 transition-all duration-300" style={{ width: `${state.arousal}%` }} />
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-zinc-400">体力精力状态:</span>
-                    <span className="font-mono text-emerald-300 font-bold">{state.energy}%</span>
-                  </div>
-                  <div className="w-full h-1 bg-zinc-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${state.energy}%` }} />
-                  </div>
+                <div className="flex items-start gap-2 text-zinc-300">
+                  <Eye className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                  <span className="leading-relaxed">
+                    <strong className="text-zinc-100">当前行为：</strong>
+                    {state.behavior}
+                  </span>
                 </div>
               </div>
 
-              {/* Physical State & Behavior Descriptions */}
-              <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-1.5 text-[11px]">
-                <div className="flex items-start gap-2 text-zinc-300">
-                  <Shield className="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5" />
-                  <span><strong>肢体表现：</strong>{state.physicalState}</span>
+              {/* Optional Collapsible Intimate State (ONLY when active AND enabled in Display Settings) */}
+              {hasActiveIntimate && state.intimateState && (
+                <div className="rounded-2xl bg-zinc-950 border border-pink-500/35 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setIntimateExpanded((prev) => !prev)}
+                    className="w-full px-3.5 py-2.5 flex items-center justify-between text-pink-500 font-semibold cursor-pointer hover:bg-pink-500/10 transition"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5" />
+                      <span>私密状态</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-normal">
+                      {intimateExpanded ? '收起' : '展开查看'}
+                      {intimateExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </span>
+                  </button>
+
+                  {intimateExpanded && (
+                    <div className="px-3.5 pb-3.5 pt-1 space-y-2.5 border-t border-pink-500/20">
+                      {typeof state.intimateState.arousal === 'number' && (
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-zinc-400">亲密唤起</span>
+                            <span className="font-mono text-pink-500 font-bold">{state.intimateState.arousal}%</span>
+                          </div>
+                          <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-pink-500 transition-all duration-300"
+                              style={{ width: `${state.intimateState.arousal}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {typeof state.intimateState.sensitivity === 'number' && (
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-zinc-400">敏感度</span>
+                            <span className="font-mono text-rose-500 font-bold">
+                              {state.intimateState.sensitivity}%
+                            </span>
+                          </div>
+                          <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-rose-500 transition-all duration-300"
+                              style={{ width: `${state.intimateState.sensitivity}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {state.intimateState.physiologicalState && (
+                        <p className="text-zinc-300 leading-relaxed">
+                          <strong className="text-zinc-100">实时感受：</strong>
+                          {state.intimateState.physiologicalState}
+                        </p>
+                      )}
+
+                      {state.intimateState.notes && (
+                        <p className="text-zinc-400 leading-relaxed text-[12px]">{state.intimateState.notes}</p>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-start gap-2 text-zinc-300">
-                  <Eye className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-                  <span><strong>举止神态：</strong>{state.behavior}</span>
-                </div>
-              </div>
+              )}
             </div>
 
-            <p className="text-[10px] text-zinc-500 text-center leading-relaxed">
-              * 状态数据由 AI 根据场景氛围、对话走势与情绪起伏实时推演呈现，继承前一轮状态连续变化。
+            <p className="text-[11px] text-zinc-500 text-center leading-relaxed">
+              状态随当前剧情与对话自然连续变化，仅用于本场相处呈现。
             </p>
           </div>
         </div>

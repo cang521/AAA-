@@ -24,11 +24,12 @@ import {
   RotateCcw,
   Image as ImageIcon,
 } from 'lucide-react';
-import { GroupChat, GroupMember, GroupJoinRequest, AiCharacter, UserProfile } from '../../../types';
+import { GroupActivityLevel, GroupChat, GroupMember, GroupJoinRequest, AiCharacter, UserProfile } from '../../../types';
 import { DEFAULT_AI_AVATAR } from '../../../lib/storage';
 import { generateGroupInviteCode } from '../../../lib/storage';
 import { syncGroupToServer } from '../../../lib/groupService';
 import { resolveGroupAvatarState } from '../../../lib/groupAvatar';
+import { GROUP_ACTIVITY_PRESETS } from '../../../lib/group/groupRoundTypes';
 import { EditGroupAiMemberModal } from './EditGroupAiMemberModal';
 import { GroupAvatar } from './GroupAvatar';
 import { StableTextInput } from '../../common/StableTextInput';
@@ -585,6 +586,57 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* Group Activity Level Selector (安静 / 自然 / 热闹) */}
+              <div className="wx-sub-card p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-750 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="wx-primary-text font-bold text-xs text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-500 wx-green-text" />
+                    <span>群聊活跃度</span>
+                  </span>
+                  <span className="wx-muted-text text-[10px] text-zinc-400">
+                    仅影响当前群聊 AI 发言节奏
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(['quiet', 'natural', 'lively'] as GroupActivityLevel[]).map((level) => {
+                    const preset = GROUP_ACTIVITY_PRESETS[level];
+                    const isActive = (group.activityLevel || 'natural') === level;
+                    return (
+                      <button
+                        key={level}
+                        type="button"
+                        onClick={() =>
+                          handleUpdateGroupAndSync({
+                            ...group,
+                            activityLevel: level,
+                            updatedAt: Date.now(),
+                          })
+                        }
+                        className={`py-2 px-2 rounded-xl border text-center transition cursor-pointer ${
+                          isActive
+                            ? 'wx-btn-primary bg-emerald-600 border-emerald-600 text-white shadow-xs'
+                            : 'wx-card bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:border-emerald-400'
+                        }`}
+                      >
+                        <div className="font-bold text-xs">{preset.label}</div>
+                        <div
+                          className={`text-[9px] mt-0.5 ${
+                            isActive ? 'text-white/85' : 'text-zinc-400'
+                          }`}
+                        >
+                          {preset.minAiCount}~{preset.maxAiCount}位AI
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <p className="wx-muted-text text-[10px] text-zinc-500 dark:text-zinc-400 leading-snug">
+                  {GROUP_ACTIVITY_PRESETS[group.activityLevel || 'natural'].shortDesc}
+                </p>
               </div>
 
               {/* Invite Code & Real User Invitation */}

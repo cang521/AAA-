@@ -1,23 +1,33 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Sparkles, Clock, Heart, BookOpen, ChevronRight, User } from 'lucide-react';
+import { Search, Sparkles, Clock, BookOpen, ChevronRight, User, AlertCircle } from 'lucide-react';
 import { OfflineSession, getAllSavedSessions } from '../../lib/offline/OfflineSessionDb';
-import { AiCharacter, ChatMessage } from '../../types';
+import { formatOfflineTimeRange, formatOfflineDuration } from '../../lib/offline/offlineTimeFormat';
+import { AiCharacter, ChatMessage, UserProfile, ApiConfig } from '../../types';
 import { OfflineHistoryDetailModal } from './OfflineHistoryDetailModal';
 import { StableTextInput } from '../common/StableTextInput';
 
 interface OfflineHistoryProps {
   characters: AiCharacter[];
+  userProfile?: UserProfile;
+  apiConfig?: ApiConfig;
   onShareToChat?: (cardMsg: ChatMessage) => void;
+  onUpdateCharacters?: (chars: AiCharacter[]) => void;
 }
 
-export const OfflineHistory: React.FC<OfflineHistoryProps> = ({ characters, onShareToChat }) => {
+export const OfflineHistory: React.FC<OfflineHistoryProps> = ({
+  characters,
+  userProfile,
+  apiConfig,
+  onShareToChat,
+  onUpdateCharacters,
+}) => {
   const [sessions, setSessions] = useState<OfflineSession[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCharacterFilter, setSelectedCharacterFilter] = useState<string>('all');
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   useEffect(() => {
-    refreshHistory();
+    void refreshHistory();
   }, []);
 
   const refreshHistory = async () => {
@@ -33,6 +43,7 @@ export const OfflineHistory: React.FC<OfflineHistoryProps> = ({ characters, onSh
       const q = searchQuery.toLowerCase();
       const match =
         s.sceneSnapshot.name.toLowerCase().includes(q) ||
+        (s.eventTitle || '').toLowerCase().includes(q) ||
         (s.eventSummary || '').toLowerCase().includes(q) ||
         (s.characterName || '').toLowerCase().includes(q);
       if (!match) return false;
@@ -41,7 +52,7 @@ export const OfflineHistory: React.FC<OfflineHistoryProps> = ({ characters, onSh
   });
 
   const activeCharForDetail = characters.find(
-    (c) => c.id === (sessions.find((s) => s.id === activeSessionId)?.characterId)
+    (c) => c.id === sessions.find((s) => s.id === activeSessionId)?.characterId
   );
 
   return (
@@ -50,14 +61,13 @@ export const OfflineHistory: React.FC<OfflineHistoryProps> = ({ characters, onSh
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-indigo-400" />
+            <Sparkles className="w-5 h-5 text-indigo-500" />
             历史线下经历库 ({filteredSessions.length})
           </h2>
         </div>
 
         {/* Filter Bar */}
         <div className="flex items-center gap-2">
-          {/* Search Box */}
           <div className="flex-1 relative">
             <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
             <StableTextInput
@@ -69,7 +79,6 @@ export const OfflineHistory: React.FC<OfflineHistoryProps> = ({ characters, onSh
             />
           </div>
 
-          {/* Character Filter Select */}
           <select
             value={selectedCharacterFilter}
             onChange={(e) => setSelectedCharacterFilter(e.target.value)}
@@ -88,24 +97,25 @@ export const OfflineHistory: React.FC<OfflineHistoryProps> = ({ characters, onSh
       {/* History List */}
       {filteredSessions.length === 0 ? (
         <div className="p-8 text-center bg-zinc-900/50 rounded-3xl border border-zinc-800 space-y-2">
-          <BookOpen className="w-8 h-8 text-zinc-600 mx-auto" />
+          <BookOpen className="w-8 h-8 text-zinc-500 mx-auto" />
           <p className="text-xs text-zinc-400 font-medium">尚无已保存的线下历史经历</p>
           <p className="text-[11px] text-zinc-500">
-            发起线下模式并在结束后点击“保存”，体验记录将自动珍藏于此。
+            发起线下相处并在结束后点击“保存并同步记忆”，经历记录将珍藏于此并同步至微信时间线。
           </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-2.5 max-h-[60vh] overflow-y-auto pr-1">
           {filteredSessions.map((s) => {
             const char = characters.find((c) => c.id === s.characterId);
-            const dateStr = new Date(s.startedAt).toLocaleDateString('zh-CN');
+            const rangeStr = formatOfflineTimeRange(s.startedAt, s.endedAt);
+            const durationStr = formatOfflineDuration(s.durationMinutes, s.startedAt, s.endedAt);
             return (
               <div
                 key={s.id}
                 onClick={() => setActiveSessionId(s.id)}
-                className="p-3.5 rounded-2xl bg-zinc-850/80 border border-zinc-750 hover:border-indigo-500/50 transition cursor-pointer select-none space-y-2 group shadow-sm active:scale-98"
+                className="p-3.5 rounded-2xl bg-zinc-850/80 border border-zinc-750 hover:border-indigo-500/50 transition cursor-pointer select-none space-y-2 group shadow-sm active:scale-[0.99]"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <img
                       src={char?.avatar || s.characterAvatar || ''}
@@ -113,19 +123,36 @@ export const OfflineHistory: React.FC<OfflineHistoryProps> = ({ characters, onSh
                       className="w-10 h-10 rounded-2xl object-cover border border-zinc-700 shrink-0"
                     />
                     <div className="min-w-0">
-                      <h4 className="font-bold text-sm text-zinc-100 group-hover:text-indigo-300 transition truncate">
-                        {s.sceneSnapshot.name}
-                      </h4>
-                      <p className="text-[10px] text-zinc-400 flex items-center gap-1 mt-0.5">
-                        <User className="w-3 h-3 text-indigo-400" /> {s.characterName || char?.name} · {dateStr}
+                      <div className="flex items-center gap-1.5">
+                        <h4 className="font-bold text-sm text-zinc-100 group-hover:text-indigo-500 transition truncate">
+                          {s.eventTitle || s.sceneSnapshot.name}
+                        </h4>
+                        {s.summaryStatus === 'summary_pending' && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-500 text-[10px] font-semibold shrink-0">
+                            <AlertCircle className="w-3 h-3" /> 待补总结
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-zinc-400 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 mt-0.5">
+                        <span className="inline-flex items-center gap-0.5">
+                          <User className="w-3 h-3 text-indigo-500" />
+                          {s.characterName || char?.name}
+                        </span>
+                        <span>·</span>
+                        <span className="font-mono">{rangeStr}</span>
+                        <span>·</span>
+                        <span className="inline-flex items-center gap-0.5 text-indigo-500">
+                          <Clock className="w-3 h-3" />
+                          {durationStr}
+                        </span>
                       </p>
                     </div>
                   </div>
-                  <ChevronRight className="w-4 h-4 text-zinc-500 group-hover:text-indigo-300 group-hover:translate-x-0.5 transition shrink-0" />
+                  <ChevronRight className="w-4 h-4 text-zinc-500 group-hover:text-indigo-500 group-hover:translate-x-0.5 transition shrink-0" />
                 </div>
 
                 {s.eventSummary && (
-                  <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed bg-zinc-950/60 p-2 rounded-xl border border-zinc-800">
+                  <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed bg-zinc-950/60 p-2.5 rounded-xl border border-zinc-800">
                     {s.eventSummary}
                   </p>
                 )}
@@ -140,9 +167,12 @@ export const OfflineHistory: React.FC<OfflineHistoryProps> = ({ characters, onSh
         isOpen={!!activeSessionId}
         sessionId={activeSessionId}
         character={activeCharForDetail}
+        userProfile={userProfile}
+        apiConfig={apiConfig}
         onClose={() => setActiveSessionId(null)}
-        onDeleted={() => refreshHistory()}
+        onDeleted={() => void refreshHistory()}
         onShareToChat={onShareToChat}
+        onUpdateCharacters={onUpdateCharacters}
       />
     </div>
   );

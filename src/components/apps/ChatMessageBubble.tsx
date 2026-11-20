@@ -1,7 +1,8 @@
 import React from 'react';
 import { ChatMessage } from '../../types';
-import { Brain } from 'lucide-react';
+import { Brain, Sparkles, ChevronRight, Clock } from 'lucide-react';
 import { OfflineShareCard } from '../offline/OfflineShareCard';
+import { formatOfflineTimeRange, formatOfflineDuration } from '../../lib/offline/offlineTimeFormat';
 
 interface ChatMessageBubbleProps {
   msg: ChatMessage;
@@ -17,6 +18,55 @@ interface ChatMessageBubbleProps {
 
 export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
   ({ msg, isUser, avatar, name, quoteText, isHighlighted, onOpenCoT, onContextMenu, onOpenOfflineDetail }) => {
+    // Unified Timeline System Event Card for completed Offline Sessions
+    if (msg.type === 'offline_session_event' && msg.offlineEventData) {
+      const ev = msg.offlineEventData;
+      const timeRange = formatOfflineTimeRange(ev.startedAt, ev.endedAt);
+      const durationStr = formatOfflineDuration(ev.durationMinutes, ev.startedAt, ev.endedAt);
+      return (
+        <div id={`msg-bubble-${msg.id}`} className="w-full flex justify-center my-2 px-2">
+          <button
+            type="button"
+            onClick={() => {
+              if (onOpenOfflineDetail && ev.sessionId) {
+                onOpenOfflineDetail(ev.sessionId);
+              }
+            }}
+            className="w-full max-w-[320px] text-left p-3.5 rounded-2xl bg-zinc-900/90 border border-indigo-500/30 hover:border-indigo-400/60 shadow-sm transition active:scale-[0.99] cursor-pointer space-y-2"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-indigo-400">
+                <Sparkles className="w-3.5 h-3.5" />
+                线下经历
+              </span>
+              <span className="inline-flex items-center gap-1 text-[10px] text-zinc-400 font-mono">
+                <Clock className="w-3 h-3" />
+                {durationStr}
+              </span>
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-zinc-100 leading-snug">
+                你和{ev.characterName || name}在「{ev.sceneName}」度过了一段时间
+              </p>
+              <p className="text-[11px] text-zinc-400 font-mono">{timeRange}</p>
+            </div>
+
+            {ev.summary && (
+              <p className="text-[11px] text-zinc-300 line-clamp-2 leading-relaxed">
+                {ev.summary}
+              </p>
+            )}
+
+            <div className="flex items-center justify-between pt-1.5 border-t border-zinc-800/80 text-[11px] font-semibold text-indigo-400">
+              <span>查看经历</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </div>
+          </button>
+        </div>
+      );
+    }
+
     if (msg.type === 'offline_share_card' && msg.offlineCardData) {
       return (
         <div
@@ -116,6 +166,8 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
     return (
       prev.msg.id === next.msg.id &&
       prev.msg.text === next.msg.text &&
+      prev.msg.type === next.msg.type &&
+      prev.msg.offlineEventData === next.msg.offlineEventData &&
       prev.msg.imageUrl === next.msg.imageUrl &&
       prev.msg.imageAnalysisStatus === next.msg.imageAnalysisStatus &&
       prev.msg.thinkingProcess === next.msg.thinkingProcess &&

@@ -1,9 +1,11 @@
 import { ChatMessage, AiCharacter } from '../../types';
 import { loadCharacters, saveCharacters } from '../storage';
-import { saveChatMessage } from '../chatDb';
+import { hasChatMessage, saveChatMessage } from '../chatDb';
 import { sanitizeReplyText } from '../thinkCleaner';
 import { splitMessageIntoSentenceBubbles, calculateTypingDelay, getMultiBubbleConfig } from '../wechatMultiBubble';
 import { nativeNotificationService } from '../NativeNotificationService';
+import { looksLikeRawJsonLeak } from '../proactive/proactiveSchema';
+import { isMessageIdExecuted, markMessageIdExecuted } from '../proactive/proactiveStore';
 
 export interface ProactiveMessageResult {
   message: ChatMessage;
@@ -15,11 +17,15 @@ export interface ProactiveBridgeOptions {
   triggerSource?: string;
   triggerType?: string;
   eventId?: string;
-  sourceSystem?: 'proactiveEngine' | 'agent';
+  sourceSystem?: 'proactiveEngine' | 'agent' | 'androidBackgroundWorker';
   priority?: 'high' | 'medium' | 'low';
   episodeId?: string;
+  stepId?: string;
   intent?: string;
   generatedAt?: number;
+  explicitMessages?: string[];
+  deterministicMessageIds?: string[];
+  skipTypingDelay?: boolean;
 }
 
 const SINGLE_BUBBLE_EVENT_TRIGGERS = new Set([
@@ -56,8 +62,11 @@ class ChatMessageBridge {
   }
 
   /**
-   * Persist AI proactive messages with support for multi-bubble reply splitting,
-   * unified turnId grouping, and complete proactiveMeta persistence.
+   * Persist AI proactive messages with:
+   * - Support for explicit structured messages[] array or multi-bubble splitting
+   * - Deterministic messageId idempotency (checks executedMessageIds + ChatDB before writing)
+   * - Strict persist-first -> confirm saved -> post system notification ordering
+   * - Raw JSON leak guard
    */
   public async postProactiveMultiBubbleMessage(
     aiId: string,
@@ -67,50 +76,85 @@ class ChatMessageBridge {
   ): Promise<ProactiveMessageResult[]> {
     const characters = loadCharacters();
     const character = characters.find((c) => c.id === aiId) || characters[0];
+    if (!character) return [];
 
-    const cleanRawText = sanitizeReplyText(rawText || '');
     const triggerType = options?.triggerType || options?.triggerSource || 'proactive';
     const isSingleBubbleEvent = SINGLE_BUBBLE_EVENT_TRIGGERS.has(triggerType);
-
     const multiBubbleConfig = getMultiBubbleConfig();
-    const shouldSplit = multiBubbleConfig.enabled && !isSingleBubbleEvent;
-    const rawBubbles = shouldSplit
-      ? splitMessageIntoSentenceBubbles(cleanRawText, {
-          maxBubbles: Math.min(3, multiBubbleConfig.maxBubbles || 3),
-        })
-      : [cleanRawText];
 
-    const bubbles = rawBubbles.map((b) => sanitizeReplyText(b)).filter((s) => s.trim().length > 0);
+    let bubbles: string[] = [];
+    if (Array.isArray(options?.explicitMessages) && options.explicitMessages.length > 0) {
+      bubbles = options.explicitMessages
+        .map((m) => sanitizeReplyText(m || '').trim())
+        .filter((s) => s.length > 0 && !looksLikeRawJsonLeak(s))
+        .slice(0, 3);
+    } else {
+      const cleanRawText = sanitizeReplyText(rawText || '').trim();
+      if (!cleanRawText || looksLikeRawJsonLeak(cleanRawText)) {
+        return [];
+      }
+      const shouldSplit = multiBubbleConfig.enabled && !isSingleBubbleEvent;
+      const rawBubbles = shouldSplit
+        ? splitMessageIntoSentenceBubbles(cleanRawText, {
+            maxBubbles: Math.min(3, multiBubbleConfig.maxBubbles || 3),
+          })
+        : [cleanRawText];
+
+      bubbles = rawBubbles
+        .map((b) => sanitizeReplyText(b).trim())
+        .filter((s) => s.length > 0 && !looksLikeRawJsonLeak(s));
+    }
+
     if (bubbles.length === 0) {
-      bubbles.push(cleanRawText || '嗨，最近怎么样？');
+      return [];
     }
 
     const results: ProactiveMessageResult[] = [];
     const baseTimestamp = Date.now();
     const shouldNotifySystem = options?.notifySystem ?? false;
-    const turnId = `turn_proactive_${character.id}_${baseTimestamp}_${Math.random().toString(36).slice(2, 6)}`;
+    const stepTag = options?.stepId || 'init';
+    const turnId = options?.episodeId
+      ? `turn_proactive_${options.episodeId}_${stepTag}`
+      : `turn_proactive_${character.id}_${baseTimestamp}_${Math.random().toString(36).slice(2, 6)}`;
     const generatedAt = options?.generatedAt || baseTimestamp;
 
     for (let i = 0; i < bubbles.length; i++) {
       const bubbleText = bubbles[i];
-      if (i > 0) {
+
+      const messageId =
+        options?.deterministicMessageIds?.[i] ||
+        (options?.episodeId
+          ? `msg_proactive_${options.episodeId}_${stepTag}_${i}`
+          : `msg_proactive_${baseTimestamp}_${i}_${Math.random().toString(36).slice(2, 6)}`);
+
+      // Idempotency guard: skip if already executed or already exists in ChatDB
+      if (isMessageIdExecuted(messageId)) {
+        continue;
+      }
+      const alreadyInDb = await hasChatMessage(messageId).catch(() => false);
+      if (alreadyInDb) {
+        markMessageIdExecuted(messageId);
+        continue;
+      }
+
+      if (i > 0 && !options?.skipTypingDelay) {
         const delay = calculateTypingDelay(bubbleText, multiBubbleConfig.speed);
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
 
-      const messageId = 'msg_proactive_' + baseTimestamp + '_' + i + '_' + Math.random().toString(36).slice(2, 6);
       const newMessage: ChatMessage = {
         id: messageId,
         characterId: character.id,
         sender: 'ai',
         text: bubbleText.trim(),
-        timestamp: baseTimestamp + i * 200, // slight sequential timestamp offset
+        timestamp: baseTimestamp + i * 200,
         turnId,
         turnBubbleIndex: i,
         turnTotalBubbles: bubbles.length,
         isProactive: true,
         proactiveMeta: {
           episodeId: options?.episodeId,
+          stepId: options?.stepId,
           triggerType,
           eventId: options?.eventId,
           sourceSystem: options?.sourceSystem || 'proactiveEngine',
@@ -123,18 +167,25 @@ class ChatMessageBridge {
         },
         thinkingProcess:
           i === 0
-            ? `【AI主动消息决策链】\n• 会话ID：${options?.episodeId || 'standalone'}\n• 触发类型：${triggerType}\n• 意图：${options?.intent || '主动关怀'}\n• 触发上下文：${contextSummary}\n• 输出气泡数：${bubbles.length} 条`
+            ? `【AI主动消息决策链】\n• 会话ID：${options?.episodeId || 'standalone'}\n• 步骤：${stepTag}\n• 触发类型：${triggerType}\n• 意图：${options?.intent || '主动关怀'}\n• 触发上下文：${contextSummary}\n• 输出气泡数：${bubbles.length} 条`
             : `${contextSummary}\n\n[主动连发第 ${i + 1}/${bubbles.length} 条气泡]`,
       };
 
-      // 1. Save to Messages store (Authoritative IndexedDB)
+      // 1. Save to Messages store FIRST (Authoritative IndexedDB) and confirm write succeeded
+      let persisted = false;
       try {
         await saveChatMessage(newMessage);
+        persisted = true;
+        markMessageIdExecuted(messageId);
       } catch (e) {
         console.error('[ChatMessageBridge] Failed to save to ChatDB IndexedDB:', e);
       }
 
-      // 2. Post system notification per bubble when permitted and app is in background
+      if (!persisted) {
+        continue;
+      }
+
+      // 2. Post system notification ONLY AFTER confirmed persisted, with identical text
       if (shouldNotifySystem) {
         try {
           const notifRes = await nativeNotificationService.notifyAiMessage(character, newMessage.text, {
@@ -156,19 +207,23 @@ class ChatMessageBridge {
       results.push({ message: newMessage, character });
     }
 
-    // 3. Increment unread badge for the character by total bubbles count
+    if (results.length === 0) {
+      return [];
+    }
+
+    // 3. Increment unread badge for the character by actual persisted bubbles count
     const updatedCharacters = characters.map((c) => {
       if (c.id === character.id) {
         return {
           ...c,
-          unreadAiCount: (c.unreadAiCount || 0) + bubbles.length,
+          unreadAiCount: (c.unreadAiCount || 0) + results.length,
         };
       }
       return c;
     });
     saveCharacters(updatedCharacters);
 
-    // 4. Emit custom events
+    // 4. Emit custom events so UI reflects new messages immediately
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('ai_proactive_message_received', {

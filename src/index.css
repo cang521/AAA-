@@ -350,6 +350,15 @@ textarea,
   border: 1px solid #59B6E8 !important;
 }
 
+[data-theme="light"] .bg-indigo-600.text-white,
+[data-theme="cloud_milk"] .bg-indigo-600.text-white,
+[data-theme="default"] .bg-indigo-600.text-white,
+[data-theme="light"] .bg-rose-600.text-white,
+[data-theme="cloud_milk"] .bg-rose-600.text-white,
+[data-theme="default"] .bg-rose-600.text-white {
+  color: #FFFFFF !important;
+}
+
 [data-theme="light"] .chat-bubble-ai,
 [data-theme="cloud_milk"] .chat-bubble-ai,
 [data-theme="default"] .chat-bubble-ai,

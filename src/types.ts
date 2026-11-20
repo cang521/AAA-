@@ -107,15 +107,17 @@ export type HistoryImportance = 'P0' | 'P1' | 'P2' | 'P3' | 'P4';
 
 export interface ProactiveMessageMeta {
   episodeId?: string;
+  stepId?: string;
   triggerType?: string;
   eventId?: string;
-  sourceSystem?: 'proactiveEngine' | 'agent';
+  sourceSystem?: 'proactiveEngine' | 'agent' | 'androidBackgroundWorker';
   priority?: string;
   intent?: string;
   generatedAt?: number;
   bubbleIndex?: number;
   totalBubbles?: number;
   repliedByUser?: boolean;
+  fromBackgroundWorker?: boolean;
 }
 
 export type ProactiveAction =
@@ -125,7 +127,50 @@ export type ProactiveAction =
   | 'WAIT'
   | 'END_EPISODE';
 
-export type ProactiveEpisodeStatus = 'active' | 'answered' | 'closed';
+export type ProactiveStructuredAction = 'send' | 'defer' | 'cancel' | 'close';
+
+export type ProactiveEventStatus =
+  | 'waiting_for_user'
+  | 'scheduled'
+  | 'answered'
+  | 'completed'
+  | 'cancelled';
+
+export type ProactiveEpisodeStatus =
+  | 'active'
+  | 'waiting_for_user'
+  | 'scheduled'
+  | 'answered'
+  | 'completed'
+  | 'cancelled'
+  | 'closed';
+
+export interface ProactiveFollowUpStep {
+  stepId: string;
+  delayMinutes?: number;
+  delayAfterPreviousMinutes?: number;
+  scheduledAt?: number;
+  messages: string[];
+  status: 'pending' | 'sent' | 'cancelled';
+  executedAt?: number;
+  messageIds?: string[];
+  workTag?: string;
+}
+
+export interface ProactiveStructuredApiResponse {
+  action: ProactiveStructuredAction;
+  messages: string[];
+  pauseProactiveMinutes: number;
+  followUpPlan: ProactiveFollowUpStep[];
+  followUpAt: string | number | null;
+  eventStatus: ProactiveEventStatus;
+  intent: string;
+  topic?: string;
+  inferredUserState?: string;
+  decisionSummary?: string;
+  suggestedNextAction?: string;
+  thinkingProcess?: string;
+}
 
 export interface ProactiveRejectedAttempt {
   id: string;
@@ -147,6 +192,7 @@ export interface ProactiveEpisode {
   updatedAt: number;
   closedAt?: number;
   triggerSource: string;
+  eventId?: string;
   currentIntent: string;
   currentTopic: string;
   inferredUserState?: string;
@@ -156,11 +202,17 @@ export interface ProactiveEpisode {
   attemptCount: number;
   sentCount: number;
   nextCheckAt?: number;
+  followUpAt?: number | null;
+  followUpPlan?: ProactiveFollowUpStep[];
+  executedStepIds?: string[];
+  executedMessageIds?: string[];
+  pauseProactiveMinutes?: number;
   lastAction?: ProactiveAction;
   lastDecisionSummary?: string;
   suggestedNextAction?: string;
   answeredAt?: number;
   answeredByMessageId?: string;
+  cancelReason?: string;
 }
 
 export interface ProactiveStructuredContextMessage {
@@ -179,10 +231,16 @@ export interface ProactiveStructuredContextMessage {
 
 export interface ProactivePlanDecision {
   action: ProactiveAction;
+  structuredAction?: ProactiveStructuredAction;
   intent: string;
   topic?: string;
   inferredUserState?: string;
   candidateText: string;
+  messages?: string[];
+  pauseProactiveMinutes?: number;
+  followUpPlan?: ProactiveFollowUpStep[];
+  followUpAt?: number | null;
+  eventStatus?: ProactiveEventStatus;
   decisionSummary: string;
   suggestedNextAction?: string;
   nextCheckAt?: number;
@@ -206,7 +264,8 @@ export interface ChatMessage {
   turnTotalBubbles?: number;
   isProactive?: boolean;
   proactiveMeta?: ProactiveMessageMeta;
-  type?: 'text' | 'offline_share_card';
+  isSystemEvent?: boolean;
+  type?: 'text' | 'offline_share_card' | 'offline_session_event';
   offlineCardData?: {
     sessionId: string;
     sceneName: string;
@@ -214,6 +273,21 @@ export interface ChatMessage {
     characterAvatar?: string;
     dateStr: string;
     summaryText?: string;
+  };
+  offlineEventData?: {
+    eventId: string;
+    sessionId: string;
+    characterId: string;
+    characterName: string;
+    title: string;
+    sceneName: string;
+    location?: string;
+    summary: string;
+    startedAt: number;
+    endedAt: number;
+    durationMinutes: number;
+    timezone?: string;
+    clickable: boolean;
   };
   sourceType?: HistorySourceType;
   importance?: HistoryImportance;
@@ -295,6 +369,8 @@ export interface GroupRandomDrawPayload {
   drawnAt: number;
 }
 
+export type GroupActivityLevel = 'quiet' | 'natural' | 'lively';
+
 export interface GroupChatMessage {
   id: string;
   groupId: string;
@@ -306,6 +382,7 @@ export interface GroupChatMessage {
   timestamp: number;
   messageType?: GroupMessageType;
   imageUrl?: string;
+  imageAnalysisText?: string;
   payload?: GroupRelayPayload | GroupPollPayload | GroupRandomDrawPayload;
   isRecalled?: boolean;
   mentionedMemberIds?: string[]; // Member IDs or ['@all']
@@ -316,6 +393,9 @@ export interface GroupChatMessage {
     text: string;
   };
   thinkingProcess?: string;
+  roundId?: string;
+  eventId?: string;
+  bubbleIndex?: number;
 }
 
 export interface GroupJoinRequest {
@@ -338,6 +418,8 @@ export interface GroupChat {
   avatarMode?: 'auto' | 'custom';
   customAvatar?: string;
   notice?: string;
+  activityLevel?: GroupActivityLevel;
+  contextSummary?: string;
   ownerId: string;
   members: GroupMember[];
   messages: GroupChatMessage[];
@@ -699,11 +781,14 @@ export interface ProactiveSettings {
   minCooldownMinutes: number; // default 120 (2h)
   allowHighPriorityBypassQuiet: boolean; // default true
 
-  // System Notification
+  // System Notification & Android Background Worker
   systemNotificationsEnabled: boolean;
+  androidBackgroundEnabled?: boolean; // Android WorkManager hourly local inspection (default true)
+  followUpEnabled?: boolean; // Unreplied 15m + 1h follow-up chain (default true)
 
-  // Temporary Pause
+  // Temporary Pause (DND)
   pausedUntil?: number;
+  pauseReason?: string;
 
   // App Usage Proactive Engagement
   appUsage?: {

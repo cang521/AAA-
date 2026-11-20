@@ -16,6 +16,7 @@ import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 import com.aistudio.aiphone.plugins.AndroidPermissionBridge;
 import com.aistudio.aiphone.plugins.LauncherAppearanceManager;
+import com.aistudio.aiphone.plugins.ProactiveBackgroundPlugin;
 
 public class MainActivity extends BridgeActivity {
     private int currentSystemBgColor = Color.parseColor("#FFFFFF");
@@ -25,6 +26,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(AndroidPermissionBridge.class);
+        registerPlugin(ProactiveBackgroundPlugin.class);
         super.onCreate(savedInstanceState);
 
         if (LauncherAppearanceManager.reconcileOnLaunch(this, getIntent())) {

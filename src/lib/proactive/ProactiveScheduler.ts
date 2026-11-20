@@ -1,28 +1,37 @@
 /**
  * ProactiveScheduler.ts
- * Real-time background scheduler for AI Proactive Message System.
- * 
- * Automatically triggers proactive evaluation at key lifecycle points:
- * 1. App Startup
- * 2. App Resume / Return to Foreground (visibilitychange / window focus)
- * 3. Capacitor App Resume
- * 4. Periodic 12-minute background interval
- * 
- * Features O(1) debouncing & single-instance guard to prevent duplicate loops.
+ * Native-first background scheduler controller for AI Proactive Message System.
+ *
+ * CRITICAL LIFECYCLE RULES:
+ * - Opening the App, returning to foreground, visibilitychange, window focus,
+ *   Capacitor appStateChange, or entering WeChat/chat/character views MUST NEVER
+ *   trigger proactive message evaluations or AI API calls!
+ * - Removed: 3-second startup check, 12-minute foreground setInterval, visibilitychange/focus triggers.
+ * - On App startup, start() ONLY:
+ *   1. Registers native store sync/cancellation hooks.
+ *   2. Idempotently ensures Android WorkManager 1-hour PeriodicWorkRequest is registered
+ *      (with ExistingPeriodicWorkPolicy.KEEP — never fires immediately on open!).
+ *   3. Drains & merges any messages already created by Android background workers into ChatDB.
+ *   4. Passively syncs state changes (settings, DND, pausedUntil, chat saves) to Android native storage.
  */
 
-import { proactiveEngine } from './proactiveEngine';
-import { proactiveGate } from './ProactiveGate';
-import { eventManager } from '../agent/EventManager';
-import { deviceContextManager } from '../agent/DeviceContextManager';
+import {
+  ensureHourlyAndroidWorkerRegistered,
+  drainAndMergeNativeInbox,
+  syncProactiveStateToNative,
+  initProactiveNativeStoreHooks,
+  scheduleDebouncedNativeSync,
+  getNativeWorkerStatus,
+  NativeWorkerStatus,
+} from './proactiveNativeBridge';
+import { loadProactiveRuntimeState, loadProactiveSettings } from './proactiveStore';
+import { subscribeChatDb } from '../chatDb';
 
 class ProactiveSchedulerService {
   private static instance: ProactiveSchedulerService;
   private isStarted = false;
-  private isEvaluating = false;
-  private lastCheckTime = 0;
-  private timerId: any = null;
-  private checkIntervalMs = 12 * 60 * 1000; // Every 12 minutes
+  private lastWorkerStatus: NativeWorkerStatus | null = null;
+  private cleanupFns: Array<() => void> = [];
 
   private constructor() {}
 
@@ -34,116 +43,104 @@ class ProactiveSchedulerService {
   }
 
   public isSchedulerActive(): boolean {
-    return this.isStarted;
+    const settings = loadProactiveSettings();
+    return this.isStarted && settings.enabled && settings.androidBackgroundEnabled !== false;
   }
 
   public getLastCheckTime(): number {
-    return this.lastCheckTime;
+    if (this.lastWorkerStatus?.lastInspectionAt) {
+      return this.lastWorkerStatus.lastInspectionAt;
+    }
+    return loadProactiveRuntimeState().lastGlobalCheckAt || 0;
   }
 
-  public getNextEstimatedCheckTime(): number {
-    if (!this.lastCheckTime) return Date.now();
-    return this.lastCheckTime + this.checkIntervalMs;
+  public getLastWorkerStatus(): NativeWorkerStatus | null {
+    return this.lastWorkerStatus;
+  }
+
+  public async refreshWorkerStatus(): Promise<NativeWorkerStatus> {
+    const status = await getNativeWorkerStatus();
+    this.lastWorkerStatus = status;
+    return status;
   }
 
   /**
-   * Start the scheduler and attach all lifecycle event listeners
+   * Initialize native Android WorkManager background binding & passive inbox hydration.
+   * ZERO proactive trigger checks and ZERO AI API calls are made here!
    */
   public start(): void {
     if (this.isStarted) return;
     this.isStarted = true;
 
-    // 1. Initial check on startup (delayed 3s to allow UI load)
-    setTimeout(() => {
-      this.triggerCheck('App 启动事件巡检');
-    }, 3000);
+    initProactiveNativeStoreHooks();
 
-    // 2. Periodic interval
-    this.timerId = setInterval(() => {
-      this.triggerCheck('周期性 12 分钟背景巡检');
-    }, this.checkIntervalMs);
+    // 1. Drain any messages already saved by Android WorkManager while App was closed (0 API calls),
+    //    then idempotently ensure the 1-hour PeriodicWorkRequest is registered, then sync latest state.
+    void (async () => {
+      try {
+        await drainAndMergeNativeInbox();
+        await ensureHourlyAndroidWorkerRegistered();
+        await syncProactiveStateToNative();
+        this.lastWorkerStatus = await getNativeWorkerStatus();
+      } catch (e) {
+        console.warn('[ProactiveScheduler] Native background initialization warning:', e);
+      }
+    })();
 
-    // 3. Browser / Web visibility listener
-    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-      const handleVisibilityChange = () => {
-        if (document.visibilityState === 'visible') {
-          this.triggerCheck('App 回到前台 (visibilitychange)');
-        }
+    if (typeof window !== 'undefined') {
+      // Passive settings sync: updates WorkManager registration & native SharedPreferences only
+      const handleSettingsUpdated = () => {
+        void ensureHourlyAndroidWorkerRegistered();
+        scheduleDebouncedNativeSync();
       };
+      window.addEventListener('proactive_settings_updated', handleSettingsUpdated);
+      this.cleanupFns.push(() => window.removeEventListener('proactive_settings_updated', handleSettingsUpdated));
 
-      const handleWindowFocus = () => {
-        this.triggerCheck('App 重新获得焦点 (focus)');
-      };
-
-      document.addEventListener('visibilitychange', handleVisibilityChange);
-      window.addEventListener('focus', handleWindowFocus);
-
-      // Capacitor App Resume event if Capacitor is available
-      if ((window as any).Capacitor) {
+      // Passive Capacitor resume listener: ONLY drains already-saved native background inbox!
+      // Strictly NEVER triggers proactive checks or AI API calls on resume!
+      if ((window as any).Capacitor?.Plugins?.App?.addListener) {
         try {
-          const AppPlugin = (window as any).Capacitor.Plugins?.App;
-          if (AppPlugin && AppPlugin.addListener) {
-            AppPlugin.addListener('appStateChange', (state: { isActive: boolean }) => {
+          const promise = (window as any).Capacitor.Plugins.App.addListener(
+            'appStateChange',
+            (state: { isActive: boolean }) => {
               if (state.isActive) {
-                this.triggerCheck('Android Capacitor App Resume');
+                void drainAndMergeNativeInbox().then(() => {
+                  scheduleDebouncedNativeSync();
+                });
               }
-            });
+            }
+          );
+          if (promise && typeof promise.then === 'function') {
+            promise
+              .then((handle: { remove: () => Promise<void> }) => {
+                this.cleanupFns.push(() => {
+                  handle.remove().catch(() => {});
+                });
+              })
+              .catch(() => {});
           }
-        } catch (e) {
-          console.warn('[ProactiveScheduler] Capacitor App listener error:', e);
+        } catch {
+          // ignore
         }
       }
     }
-  }
 
-  /**
-   * Triggers evaluation cycle with 2-minute debouncing
-   */
-  public async triggerCheck(reason: string): Promise<void> {
-    const now = Date.now();
-    // Debounce check: at least 2 minutes between execution cycles
-    if (this.isEvaluating || now - this.lastCheckTime < 2 * 60 * 1000) {
-      return;
-    }
-
-    this.isEvaluating = true;
-    this.lastCheckTime = now;
-
-    try {
-      // 1. Emit Agent periodic event so LocalRuleEngine & AgentOrchestrator receive real events
-      const context = await deviceContextManager.getContext();
-      eventManager.emit('PERIODIC_EVALUATION', {
-        reason,
-        app: context.currentApp,
-        durationMinutes: context.foregroundDurationMinutes,
-        batteryLevel: context.batteryLevel,
-        isCharging: context.isCharging,
-      });
-
-      // Also emit app usage tick if app usage is active
-      if (context.foregroundDurationMinutes >= 15) {
-        eventManager.emit('APP_USAGE_TICK', {
-          appName: context.currentApp,
-          durationMinutes: context.foregroundDurationMinutes,
-        });
-      }
-
-      // 2. Execute ProactiveEngine Evaluation (skipped gracefully if quota is exhausted)
-      if (!proactiveGate.isQuotaExhausted()) {
-        await proactiveEngine.checkAndTriggerProactiveMessages();
-      }
-    } catch (e) {
-      console.error('[ProactiveScheduler] Evaluation error:', e);
-    } finally {
-      this.isEvaluating = false;
-    }
+    // Passive ChatDB change listener: keeps native snapshot's lastUserMsgAt & recent messages fresh
+    const unsubDb = subscribeChatDb(() => {
+      scheduleDebouncedNativeSync();
+    });
+    this.cleanupFns.push(unsubDb);
   }
 
   public stop(): void {
-    if (this.timerId) {
-      clearInterval(this.timerId);
-      this.timerId = null;
+    for (const fn of this.cleanupFns) {
+      try {
+        fn();
+      } catch {
+        // ignore
+      }
     }
+    this.cleanupFns = [];
     this.isStarted = false;
   }
 }

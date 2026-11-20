@@ -2,16 +2,34 @@
  * OfflineSessionDb.ts
  * IndexedDB Database for Offline Scene Mode (PhoneSimOfflineSessionDB_v1)
  * Stores: sessions, sessionMessages, sceneTemplates
+ *
+ * Non-destructive migration (v1 -> v2):
+ * - NEVER deletes, drops, or recreates existing stores or user records.
+ * - Adds optional indexes ('by_event_id', 'by_client_msg_id') incrementally.
+ * - Normalizes legacy v1 records seamlessly on read.
  */
+
+import { OfflineAwarenessMode } from './offlineAwareness';
+import { OfflineMessageSegment } from './offlineSegments';
+import { getDeviceTimeZone } from './offlineTimeFormat';
+
+export type OfflineMessageStatus = 'sending' | 'sent' | 'failed';
+export type OfflineSummaryStatus = 'idle' | 'ready' | 'summary_pending';
 
 export interface OfflineMessage {
   id: string;
   sessionId: string;
   sender: 'user' | 'ai' | 'system';
   text: string;
-  action?: string; // e.g. （偏过脸去，耳根泛红）
+  action?: string; // Legacy field retained for backward compatibility
+  segments?: OfflineMessageSegment[]; // Structured action/dialogue segments
+  clientMessageId?: string; // Stable client ID for idempotent send & retry
+  requestId?: string; // Request correlation ID
+  status?: OfflineMessageStatus; // 'sending' | 'sent' | 'failed'
   timestamp: number;
-  state?: any; // Snapshot of character state after this message
+  createdAt?: number;
+  updatedAt?: number;
+  state?: any; // Snapshot of CharacterState after this message
 }
 
 export interface SceneTemplate {
@@ -29,10 +47,12 @@ export interface SceneTemplate {
 
 export interface OfflineSession {
   id: string;
+  eventId?: string; // Unified timeline event ID (OFFLINE_SESSION_STARTED / ENDED)
   characterId: string;
   characterName?: string;
   characterAvatar?: string;
   sceneTemplateId?: string;
+  sceneName?: string;
   sceneSnapshot: {
     name: string;
     location: string;
@@ -42,26 +62,88 @@ export interface OfflineSession {
   };
   startedAt: number;
   endedAt?: number;
+  durationMinutes?: number;
+  timezone?: string;
+  awarenessMode?: OfflineAwarenessMode;
+  awarenessSource?: 'persona';
+  awarenessLocked?: boolean;
+  contextSummary?: string; // Rolling in-session summary for messages older than 30..60 window
+  interactionMode?: 'FACE_TO_FACE';
   status: 'active' | 'ended_pending_decision' | 'saved' | 'deleted';
+  summaryStatus?: OfflineSummaryStatus;
+  summaryError?: string;
   stateHistory: { timestamp: number; state: any }[];
+  eventTitle?: string;
   eventSummary?: string;
   relationshipChanges?: string[];
+  emotionChanges?: string[];
   importantEvents?: string[];
+  keyExpressions?: string[];
+  unfinishedTopics?: string[];
+  followUpWorthyTopics?: string[];
   aiReflection?: string;
   candidateMemories?: string[];
   finalMemoryId?: string;
+  wechatEventMessageId?: string; // Idempotent link to WeChat timeline card
   createdAt: number;
   updatedAt: number;
 }
 
 const DB_NAME = 'PhoneSimOfflineSessionDB_v1';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const STORE_SESSIONS = 'sessions';
 const STORE_MESSAGES = 'sessionMessages';
 const STORE_TEMPLATES = 'sceneTemplates';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
+
+/**
+ * Forward-compatible hydrator for legacy v1 OfflineSession records
+ */
+export function normalizeOfflineSession(raw: OfflineSession): OfflineSession {
+  if (!raw) return raw;
+  const startedAt = raw.startedAt || raw.createdAt || Date.now();
+  const endedAt = raw.endedAt;
+  const durationMinutes =
+    typeof raw.durationMinutes === 'number'
+      ? raw.durationMinutes
+      : endedAt && endedAt >= startedAt
+      ? Math.max(1, Math.round((endedAt - startedAt) / 60000))
+      : undefined;
+
+  return {
+    ...raw,
+    eventId: raw.eventId || `offline_evt_${raw.id}`,
+    sceneName: raw.sceneName || raw.sceneSnapshot?.name || '线下场景',
+    timezone: raw.timezone || getDeviceTimeZone(),
+    interactionMode: raw.interactionMode || 'FACE_TO_FACE',
+    awarenessMode: raw.awarenessMode || 'immersive_character',
+    awarenessSource: raw.awarenessSource || 'persona',
+    awarenessLocked: raw.awarenessLocked ?? true,
+    durationMinutes,
+    summaryStatus:
+      raw.summaryStatus ||
+      (raw.eventSummary && raw.eventSummary.trim().length > 0 ? 'ready' : 'idle'),
+    stateHistory: Array.isArray(raw.stateHistory) ? raw.stateHistory : [],
+  };
+}
+
+/**
+ * Forward-compatible hydrator for legacy v1 OfflineMessage records
+ */
+export function normalizeOfflineMessage(raw: OfflineMessage): OfflineMessage {
+  if (!raw) return raw;
+  const ts = raw.timestamp || raw.createdAt || Date.now();
+  return {
+    ...raw,
+    timestamp: ts,
+    createdAt: raw.createdAt || ts,
+    updatedAt: raw.updatedAt || ts,
+    status: raw.status || 'sent',
+    clientMessageId: raw.clientMessageId || raw.id,
+  };
+}
 
 export function getOfflineDb(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
@@ -76,18 +158,31 @@ export function getOfflineDb(): Promise<IDBDatabase> {
 
     req.onupgradeneeded = () => {
       const db = req.result;
+      const tx = req.transaction;
 
+      let sessionsStore: IDBObjectStore;
       if (!db.objectStoreNames.contains(STORE_SESSIONS)) {
-        const store = db.createObjectStore(STORE_SESSIONS, { keyPath: 'id' });
-        store.createIndex('by_character', 'characterId', { unique: false });
-        store.createIndex('by_status', 'status', { unique: false });
-        store.createIndex('by_updated', 'updatedAt', { unique: false });
+        sessionsStore = db.createObjectStore(STORE_SESSIONS, { keyPath: 'id' });
+        sessionsStore.createIndex('by_character', 'characterId', { unique: false });
+        sessionsStore.createIndex('by_status', 'status', { unique: false });
+        sessionsStore.createIndex('by_updated', 'updatedAt', { unique: false });
+      } else {
+        sessionsStore = tx!.objectStore(STORE_SESSIONS);
+      }
+      if (!sessionsStore.indexNames.contains('by_event_id')) {
+        sessionsStore.createIndex('by_event_id', 'eventId', { unique: false });
       }
 
+      let messagesStore: IDBObjectStore;
       if (!db.objectStoreNames.contains(STORE_MESSAGES)) {
-        const store = db.createObjectStore(STORE_MESSAGES, { keyPath: 'id' });
-        store.createIndex('by_session', 'sessionId', { unique: false });
-        store.createIndex('by_session_time', ['sessionId', 'timestamp'], { unique: false });
+        messagesStore = db.createObjectStore(STORE_MESSAGES, { keyPath: 'id' });
+        messagesStore.createIndex('by_session', 'sessionId', { unique: false });
+        messagesStore.createIndex('by_session_time', ['sessionId', 'timestamp'], { unique: false });
+      } else {
+        messagesStore = tx!.objectStore(STORE_MESSAGES);
+      }
+      if (!messagesStore.indexNames.contains('by_client_msg_id')) {
+        messagesStore.createIndex('by_client_msg_id', 'clientMessageId', { unique: false });
       }
 
       if (!db.objectStoreNames.contains(STORE_TEMPLATES)) {
@@ -109,11 +204,12 @@ export function getOfflineDb(): Promise<IDBDatabase> {
 
 export async function saveOfflineSession(session: OfflineSession): Promise<void> {
   const db = await getOfflineDb();
+  const normalized = normalizeOfflineSession(session);
+  normalized.updatedAt = Date.now();
   return new Promise((resolve, reject) => {
     const tx = db.transaction([STORE_SESSIONS], 'readwrite');
     const store = tx.objectStore(STORE_SESSIONS);
-    session.updatedAt = Date.now();
-    const req = store.put(session);
+    const req = store.put(normalized);
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
@@ -125,7 +221,24 @@ export async function getOfflineSession(sessionId: string): Promise<OfflineSessi
     const tx = db.transaction([STORE_SESSIONS], 'readonly');
     const store = tx.objectStore(STORE_SESSIONS);
     const req = store.get(sessionId);
-    req.onsuccess = () => resolve(req.result || null);
+    req.onsuccess = () => resolve(req.result ? normalizeOfflineSession(req.result) : null);
+    req.onerror = () => resolve(null);
+  });
+}
+
+export async function getOfflineSessionByEventId(eventId: string): Promise<OfflineSession | null> {
+  if (!eventId) return null;
+  const db = await getOfflineDb();
+  return new Promise((resolve) => {
+    const tx = db.transaction([STORE_SESSIONS], 'readonly');
+    const store = tx.objectStore(STORE_SESSIONS);
+    if (!store.indexNames.contains('by_event_id')) {
+      resolve(null);
+      return;
+    }
+    const index = store.index('by_event_id');
+    const req = index.get(eventId);
+    req.onsuccess = () => resolve(req.result ? normalizeOfflineSession(req.result) : null);
     req.onerror = () => resolve(null);
   });
 }
@@ -138,7 +251,7 @@ export async function getSavedSessionsForCharacter(characterId: string): Promise
     const index = store.index('by_character');
     const req = index.getAll(characterId);
     req.onsuccess = () => {
-      const all: OfflineSession[] = req.result || [];
+      const all: OfflineSession[] = (req.result || []).map(normalizeOfflineSession);
       const saved = all.filter((s) => s.status === 'saved');
       saved.sort((a, b) => b.updatedAt - a.updatedAt);
       resolve(saved);
@@ -155,7 +268,7 @@ export async function getAllSavedSessions(): Promise<OfflineSession[]> {
     const index = store.index('by_status');
     const req = index.getAll('saved');
     req.onsuccess = () => {
-      const saved: OfflineSession[] = req.result || [];
+      const saved: OfflineSession[] = (req.result || []).map(normalizeOfflineSession);
       saved.sort((a, b) => b.updatedAt - a.updatedAt);
       resolve(saved);
     };
@@ -171,7 +284,7 @@ export async function getActiveSessionForCharacter(characterId: string): Promise
     const index = store.index('by_character');
     const req = index.getAll(characterId);
     req.onsuccess = () => {
-      const all: OfflineSession[] = req.result || [];
+      const all: OfflineSession[] = (req.result || []).map(normalizeOfflineSession);
       const active = all.find((s) => s.status === 'active' || s.status === 'ended_pending_decision');
       resolve(active || null);
     };
@@ -179,7 +292,7 @@ export async function getActiveSessionForCharacter(characterId: string): Promise
   });
 }
 
-export async function getAnyActiveSession(): Promise<OfflineSession | null> {
+export async function getAllActiveSessions(): Promise<OfflineSession[]> {
   const db = await getOfflineDb();
   return new Promise((resolve) => {
     const tx = db.transaction([STORE_SESSIONS], 'readonly');
@@ -187,26 +300,27 @@ export async function getAnyActiveSession(): Promise<OfflineSession | null> {
     const index = store.index('by_status');
     const req = index.getAll('active');
     req.onsuccess = () => {
-      const list: OfflineSession[] = req.result || [];
-      if (list.length > 0) {
-        list.sort((a, b) => b.updatedAt - a.updatedAt);
-        resolve(list[0]);
-      } else {
-        resolve(null);
-      }
+      const list: OfflineSession[] = (req.result || []).map(normalizeOfflineSession);
+      list.sort((a, b) => b.updatedAt - a.updatedAt);
+      resolve(list);
     };
-    req.onerror = () => resolve(null);
+    req.onerror = () => resolve([]);
   });
+}
+
+export async function getAnyActiveSession(): Promise<OfflineSession | null> {
+  const list = await getAllActiveSessions();
+  return list.length > 0 ? list[0] : null;
 }
 
 export async function deleteOfflineSession(sessionId: string): Promise<void> {
   const db = await getOfflineDb();
-  // 1. Delete session
   const tx1 = db.transaction([STORE_SESSIONS], 'readwrite');
   tx1.objectStore(STORE_SESSIONS).delete(sessionId);
-  await new Promise<void>((res) => { tx1.oncomplete = () => res(); });
+  await new Promise<void>((res) => {
+    tx1.oncomplete = () => res();
+  });
 
-  // 2. Delete all messages for session
   const messages = await getAllSessionMessages(sessionId);
   if (messages.length > 0) {
     const tx2 = db.transaction([STORE_MESSAGES], 'readwrite');
@@ -214,22 +328,73 @@ export async function deleteOfflineSession(sessionId: string): Promise<void> {
     for (const m of messages) {
       store2.delete(m.id);
     }
-    await new Promise<void>((res) => { tx2.oncomplete = () => res(); });
+    await new Promise<void>((res) => {
+      tx2.oncomplete = () => res();
+    });
   }
 }
 
 // =========================================================================
-// Session Messages DB Methods (Paginated)
+// Session Messages DB Methods (Idempotent Upsert & Paginated Read)
 // =========================================================================
 
-export async function saveOfflineMessage(msg: OfflineMessage): Promise<void> {
+/**
+ * Idempotent upsert by `id` or matching `clientMessageId` in the same session.
+ * Prevents duplicate user/AI messages during retries or rapid re-submissions.
+ */
+export async function saveOfflineMessage(msg: OfflineMessage): Promise<OfflineMessage> {
   const db = await getOfflineDb();
+  const now = Date.now();
+  const normalized: OfflineMessage = {
+    ...msg,
+    clientMessageId: msg.clientMessageId || msg.id,
+    status: msg.status || 'sent',
+    createdAt: msg.createdAt || msg.timestamp || now,
+    updatedAt: now,
+  };
+
   return new Promise((resolve, reject) => {
     const tx = db.transaction([STORE_MESSAGES], 'readwrite');
     const store = tx.objectStore(STORE_MESSAGES);
-    const req = store.put(msg);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
+
+    const doPut = (finalMsg: OfflineMessage) => {
+      const req = store.put(finalMsg);
+      req.onsuccess = () => resolve(finalMsg);
+      req.onerror = () => reject(req.error);
+    };
+
+    // If clientMessageId exists on index, check whether an existing record with a different key shares it
+    if (normalized.clientMessageId && store.indexNames.contains('by_client_msg_id')) {
+      const idx = store.index('by_client_msg_id');
+      const lookupReq = idx.getAll(normalized.clientMessageId);
+      lookupReq.onsuccess = () => {
+        const matches: OfflineMessage[] = (lookupReq.result || []).filter(
+          (m: OfflineMessage) => m.sessionId === normalized.sessionId
+        );
+        if (matches.length > 0) {
+          const primary = matches[0];
+          // Remove any stray duplicates with same clientMessageId
+          for (let i = 1; i < matches.length; i++) {
+            if (matches[i].id !== primary.id) {
+              store.delete(matches[i].id);
+            }
+          }
+          const merged: OfflineMessage = {
+            ...primary,
+            ...normalized,
+            id: primary.id,
+            createdAt: primary.createdAt || normalized.createdAt,
+            updatedAt: now,
+          };
+          doPut(merged);
+        } else {
+          doPut(normalized);
+        }
+      };
+      lookupReq.onerror = () => doPut(normalized);
+    } else {
+      doPut(normalized);
+    }
   });
 }
 
@@ -241,7 +406,20 @@ export async function getAllSessionMessages(sessionId: string): Promise<OfflineM
     const index = store.index('by_session_time');
     const range = IDBKeyRange.bound([sessionId, 0], [sessionId, Date.now() + 86400000000]);
     const req = index.getAll(range);
-    req.onsuccess = () => resolve(req.result || []);
+    req.onsuccess = () => {
+      const rawList: OfflineMessage[] = (req.result || []).map(normalizeOfflineMessage);
+      // Defensive dedup by id / clientMessageId preserving latest update
+      const dedupMap = new Map<string, OfflineMessage>();
+      for (const m of rawList) {
+        const key = m.clientMessageId || m.id;
+        const prev = dedupMap.get(key);
+        if (!prev || (m.updatedAt || 0) >= (prev.updatedAt || 0)) {
+          dedupMap.set(key, m);
+        }
+      }
+      const list = Array.from(dedupMap.values()).sort((a, b) => a.timestamp - b.timestamp);
+      resolve(list);
+    };
     req.onerror = () => resolve([]);
   });
 }
@@ -249,15 +427,11 @@ export async function getAllSessionMessages(sessionId: string): Promise<OfflineM
 export async function getPaginatedSessionMessages(
   sessionId: string,
   offset: number = 0,
-  limit: number = 40
+  limit: number = 60
 ): Promise<{ messages: OfflineMessage[]; totalCount: number }> {
   const all = await getAllSessionMessages(sessionId);
   const totalCount = all.length;
 
-  // Chronological list
-  all.sort((a, b) => a.timestamp - b.timestamp);
-
-  // Return slice from end (recent window for chat UI)
   let sliced: OfflineMessage[];
   if (offset === 0) {
     sliced = all.slice(Math.max(0, totalCount - limit));

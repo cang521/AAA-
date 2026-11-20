@@ -1,234 +1,193 @@
+import { ApiLog, GroupChatMessage } from '../../types';
 import {
-  AiCharacter,
-  ApiLog,
-  AiRelationshipEdge,
-  GroupChat,
-  GroupChatMessage,
-  UserProfile,
-} from '../../types';
-import {
-  apiFetch,
   isBackendUnavailableError,
   registerBackendResumeHandler,
   registerPendingTaskCountProvider,
 } from '../localBackend';
+import { executeGroupTimelinePlan, PlaybackControlSignal } from './GroupEventExecutor';
+import { orchestrateGroupRound } from './GroupRoundOrchestrator';
 import {
-  getCachedGroupChats,
-  hydrateGroupChatsFromDb,
-  saveGroupChatsToDb,
-  waitForGroupChatSave,
-} from '../groupChatDb';
-import { getAllRelationshipEdges } from '../social/socialDb';
-import { NativeNotificationService } from '../NativeNotificationService';
-import { onGroupInteractionSocialTick } from '../social/socialEngine';
-import { loadApiConfig, loadCharacters, loadUserProfile } from '../storage';
-import { sanitizeReplyText } from '../thinkCleaner';
-import { syncGroupToServer } from '../groupService';
+  GroupActivePlaybackIndicator,
+  GroupReplyTask,
+  GroupReplyTaskStatus,
+  GroupRoundTriggerType,
+} from './groupRoundTypes';
+import {
+  loadLatestGroupFromStore,
+  readPersistedGroupTasks,
+  writePersistedGroupTasks,
+} from './GroupStateStore';
 
-export type GroupReplyTaskStatus =
-  | 'queued'
-  | 'waiting_backend'
-  | 'waking_backend'
-  | 'generating'
-  | 'delivering'
-  | 'completed'
-  | 'failed';
-
-export interface GroupReplyTask {
-  id: string;
-  groupId: string;
-  targetAiId?: string;
-  latestUserMessageId?: string;
-  latestUserText?: string;
-  mentionedTargets: string[];
-  dedupeKey: string;
-  chainDepth: number;
-  status: GroupReplyTaskStatus;
-  retryCount: number;
-  maxRetries: number;
-  error?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-const STORAGE_KEY_GROUP_TASKS = 'phone_group_reply_tasks_v1';
-const nativeNotificationService = NativeNotificationService.getInstance();
-
-/**
- * Group messages persist sender avatars (often multi-megabyte data URLs) on every
- * message. Sending those records verbatim duplicates the same image many times
- * and can exceed the embedded Express JSON limit before the model route runs.
- * The model only needs textual context, ids and lightweight tool-card payloads.
- */
-function stripBinaryTransportData(value: unknown, depth = 0): unknown {
-  if (depth > 6 || value == null) return value;
-
-  if (typeof value === 'string') {
-    if (/^data:(image|audio|video)\//i.test(value)) return '[本地媒体已省略]';
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((item) => stripBinaryTransportData(item, depth + 1));
-  }
-
-  if (typeof value !== 'object') return value;
-
-  const blockedKeys = new Set([
-    'avatar',
-    'notificationAvatar',
-    'senderAvatar',
-    'imageUrl',
-    'imageData',
-    'dataUrl',
-    'base64',
-    'audioUrl',
-    'videoUrl',
-  ]);
-  const output: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    if (blockedKeys.has(key)) continue;
-    output[key] = stripBinaryTransportData(item, depth + 1);
-  }
-  return output;
-}
-
-function buildLeanGroupMessage(message: GroupChatMessage): Record<string, unknown> {
-  return {
-    id: message.id,
-    senderId: message.senderId,
-    senderName: message.senderName,
-    senderType: message.senderType,
-    text: message.messageType === 'image' ? message.text || '[图片]' : message.text,
-    timestamp: message.timestamp,
-    mentionedMemberIds: message.mentionedMemberIds,
-    messageType: message.messageType,
-    quoteMessage: message.quoteMessage
-      ? {
-          id: message.quoteMessage.id,
-          senderName: message.quoteMessage.senderName,
-          text: message.quoteMessage.text,
-        }
-      : undefined,
-    payload: stripBinaryTransportData(message.payload),
-  };
-}
-
-const STATUS_LABEL_MAP: Record<string, string> = {
-  strangers: '陌生',
-  acquaintances: '认识/点头之交',
-  friend_request_pending: '好友申请中',
-  friends: '好友',
-  close_friends: '挚友/密友',
-  tense: '关系紧张',
-  unfriended: '已互删',
-  blocked: '已拉黑',
-};
-
-const CONFLICT_LABEL_MAP: Record<string, string> = {
-  none: '',
-  dissatisfied: '轻微不满',
-  bickering: '拌嘴中',
-  tense: '气氛紧张',
-  cold_war: '冷战中',
-  serious_conflict: '严重矛盾',
-  reconciled: '刚和好',
-};
-
-function readPersistedTasks(): GroupReplyTask[] {
-  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_GROUP_TASKS);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writePersistedTasks(tasks: GroupReplyTask[]): void {
-  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
-  try {
-    const activeOnly = tasks
-      .filter((t) => t.status !== 'completed')
-      .slice(-30);
-    localStorage.setItem(STORAGE_KEY_GROUP_TASKS, JSON.stringify(activeOnly));
-  } catch {
-    // ignore storage quota errors for ephemeral task queue
-  }
-}
-
-function buildRelationshipSummaryLines(
-  edges: AiRelationshipEdge[],
-  memberMap: Map<string, { id: string; name: string }>
-): Array<{
-  pairId: string;
-  memberAId: string;
-  memberAName: string;
-  memberBId: string;
-  memberBName: string;
-  status: string;
-  conflictStage: string;
-  summary: string;
-}> {
-  const summaries: Array<{
-    pairId: string;
-    memberAId: string;
-    memberAName: string;
-    memberBId: string;
-    memberBName: string;
-    status: string;
-    conflictStage: string;
-    summary: string;
-  }> = [];
-
-  for (const edge of edges) {
-    const mA = memberMap.get(edge.entityAId);
-    const mB = memberMap.get(edge.entityBId);
-    if (!mA || !mB) continue;
-
-    const statusLabel = STATUS_LABEL_MAP[edge.status] || edge.status;
-    const conflictLabel = edge.conflictStage ? CONFLICT_LABEL_MAP[edge.conflictStage] || '' : '';
-    const impAB = edge.aToB?.lastImpression ? `；${mA.name}对${mB.name}印象：${edge.aToB.lastImpression}` : '';
-    const impBA = edge.bToA?.lastImpression ? `；${mB.name}对${mA.name}印象：${edge.bToA.lastImpression}` : '';
-
-    summaries.push({
-      pairId: edge.id,
-      memberAId: mA.id,
-      memberAName: mA.name,
-      memberBId: mB.id,
-      memberBName: mB.name,
-      status: edge.status,
-      conflictStage: edge.conflictStage || 'none',
-      summary: `${mA.name} 与 ${mB.name} 当前关系：${statusLabel}${conflictLabel ? `（${conflictLabel}）` : ''}${impAB}${impBA}`,
-    });
-  }
-  return summaries;
-}
+export type {
+  GroupActivePlaybackIndicator,
+  GroupReplyTask,
+  GroupReplyTaskStatus,
+  GroupRoundTriggerType,
+} from './groupRoundTypes';
 
 type Listener = () => void;
+
+class GroupPlaybackController {
+  public readonly taskId: string;
+  public cancelled = false;
+  public paused = false;
+  public indicator: GroupActivePlaybackIndicator | null = null;
+
+  private wakeWaiters = new Set<() => void>();
+  private activeTimer: ReturnType<typeof setTimeout> | null = null;
+  private activeTimerResolve: (() => void) | null = null;
+
+  constructor(taskId: string, initiallyPaused = false) {
+    this.taskId = taskId;
+    this.paused = initiallyPaused;
+  }
+
+  public pause(): void {
+    if (this.cancelled || this.paused) return;
+    this.paused = true;
+    this.interruptActiveTimer();
+    if (this.indicator) {
+      this.indicator = { ...this.indicator, status: 'paused' };
+    }
+  }
+
+  public resume(): void {
+    if (this.cancelled || !this.paused) return;
+    this.paused = false;
+    if (this.indicator) {
+      this.indicator = { ...this.indicator, status: 'delivering' };
+    }
+    this.flushWaiters();
+  }
+
+  public cancel(): void {
+    if (this.cancelled) return;
+    this.cancelled = true;
+    this.paused = false;
+    this.indicator = null;
+    this.interruptActiveTimer();
+    this.flushWaiters();
+  }
+
+  private interruptActiveTimer(): void {
+    if (this.activeTimer !== null) {
+      clearTimeout(this.activeTimer);
+      this.activeTimer = null;
+    }
+    if (this.activeTimerResolve) {
+      const resolve = this.activeTimerResolve;
+      this.activeTimerResolve = null;
+      resolve();
+    }
+  }
+
+  private flushWaiters(): void {
+    const waiters = Array.from(this.wakeWaiters);
+    this.wakeWaiters.clear();
+    waiters.forEach((fn) => fn());
+  }
+
+  private waitUntilResumedOrCancelled(): Promise<void> {
+    if (!this.paused || this.cancelled) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.wakeWaiters.add(resolve);
+    });
+  }
+
+  public createSignal(): PlaybackControlSignal {
+    return {
+      isCancelled: () => this.cancelled,
+      isPaused: () => this.paused,
+      waitWhilePausedOrSleep: async (ms: number): Promise<'ok' | 'cancelled'> => {
+        let remaining = Math.max(0, ms);
+        while (remaining > 0) {
+          if (this.cancelled) return 'cancelled';
+          if (this.paused) {
+            await this.waitUntilResumedOrCancelled();
+            if (this.cancelled) return 'cancelled';
+          }
+
+          const sliceStart = Date.now();
+          await new Promise<void>((resolve) => {
+            this.activeTimerResolve = resolve;
+            this.activeTimer = setTimeout(() => {
+              this.activeTimer = null;
+              this.activeTimerResolve = null;
+              resolve();
+            }, remaining);
+          });
+
+          if (this.cancelled) return 'cancelled';
+          const elapsed = Date.now() - sliceStart;
+          if (this.paused) {
+            remaining = Math.max(0, remaining - elapsed);
+          } else {
+            remaining = 0;
+          }
+        }
+
+        if (this.paused && !this.cancelled) {
+          await this.waitUntilResumedOrCancelled();
+        }
+        return this.cancelled ? 'cancelled' : 'ok';
+      },
+    };
+  }
+}
+
+function isRunningStatus(status: GroupReplyTaskStatus): boolean {
+  return (
+    status === 'queued' ||
+    status === 'waking_backend' ||
+    status === 'generating' ||
+    status === 'delivering'
+  );
+}
+
+function isActiveOrPausedStatus(status: GroupReplyTaskStatus): boolean {
+  return isRunningStatus(status) || status === 'paused';
+}
+
+function hasRemainingPlanEvents(task: GroupReplyTask): boolean {
+  if (!task.plan || !Array.isArray(task.plan.events) || task.plan.events.length === 0) {
+    return false;
+  }
+  const doneSet = new Set(task.executedEventIds || []);
+  return task.plan.events.some((ev) => !doneSet.has(ev.eventId));
+}
 
 class GroupReplyTaskManager {
   private static instance: GroupReplyTaskManager;
   private tasks: GroupReplyTask[] = [];
   private listeners = new Set<Listener>();
   private activeGroupIds = new Set<string>();
+  private controllersByGroupId = new Map<string, GroupPlaybackController>();
   private recentDedupeTimestamps = new Map<string, number>();
-  private apiLogCallback: ((log: ApiLog) => void) | null = null;
   private initialized = false;
   private lifecycleHooksRegistered = false;
 
   private constructor() {
-    this.tasks = readPersistedTasks().map((t) =>
-      t.status === 'waking_backend' ||
-      t.status === 'waiting_backend' ||
-      t.status === 'generating' ||
-      t.status === 'delivering'
-        ? { ...t, status: 'queued' as const, updatedAt: Date.now() }
-        : t
-    );
-    writePersistedTasks(this.tasks);
+    const now = Date.now();
+    this.tasks = readPersistedGroupTasks()
+      .filter((t) => t.status !== 'completed' && t.status !== 'stopped' && t.status !== 'interrupted')
+      .map((t) => {
+        if (t.status === 'paused' && hasRemainingPlanEvents(t)) {
+          // Keep user-paused rounds paused across restarts without calling the model again
+          return { ...t, updatedAt: now };
+        }
+        if (
+          t.status === 'waking_backend' ||
+          t.status === 'waiting_backend' ||
+          t.status === 'generating' ||
+          t.status === 'delivering' ||
+          t.status === 'paused'
+        ) {
+          // If plan already exists with unexecuted events, executeTask will resume locally (0 API calls)
+          return { ...t, status: 'queued' as const, updatedAt: now };
+        }
+        return t;
+      });
+    writePersistedGroupTasks(this.tasks);
     this.registerLifecycleHooks();
   }
 
@@ -244,19 +203,18 @@ class GroupReplyTaskManager {
     this.lifecycleHooksRegistered = true;
 
     registerPendingTaskCountProvider(
-      () =>
-        this.tasks.filter(
-          (t) =>
-            t.status === 'queued' ||
-            t.status === 'waking_backend' ||
-            t.status === 'generating' ||
-            t.status === 'delivering'
-        ).length
+      () => this.tasks.filter((t) => isRunningStatus(t.status)).length
     );
 
     registerBackendResumeHandler(() => {
-      const hasQueued = this.tasks.some((t) => t.status === 'queued');
-      if (hasQueued) {
+      const hasWaitingOrQueued = this.tasks.some(
+        (t) => t.status === 'queued' || t.status === 'waiting_backend'
+      );
+      if (hasWaitingOrQueued) {
+        this.tasks = this.tasks.map((t) =>
+          t.status === 'waiting_backend' ? { ...t, status: 'queued', updatedAt: Date.now() } : t
+        );
+        this.notify();
         void this.processQueue();
       }
     });
@@ -274,8 +232,13 @@ class GroupReplyTaskManager {
     }
   }
 
-  public setApiLogHandler(cb: ((log: ApiLog) => void) | null): void {
-    this.apiLogCallback = cb;
+  /**
+   * Preserved for backward API compatibility.
+   * Note: `apiFetch` already records the single `/api/gemini/group-chat` API monitor log
+   * via `recordApiLog(data.log)`, so we intentionally avoid double-logging here.
+   */
+  public setApiLogHandler(_cb: ((log: ApiLog) => void) | null): void {
+    // Intentionally no-op: apiFetch owns single-entry API monitoring for /api/gemini/group-chat
   }
 
   public subscribe(listener: Listener): () => void {
@@ -286,7 +249,7 @@ class GroupReplyTaskManager {
   }
 
   private notify(): void {
-    writePersistedTasks(this.tasks);
+    writePersistedGroupTasks(this.tasks);
     this.listeners.forEach((fn) => {
       try {
         fn();
@@ -296,20 +259,45 @@ class GroupReplyTaskManager {
     });
   }
 
-  public getGroupTaskState(groupId: string): {
-    status: GroupReplyTaskStatus;
-    targetAiId?: string;
-  } | null {
+  public hasActiveOrPausedRound(groupId: string): boolean {
+    return this.tasks.some((t) => t.groupId === groupId && isActiveOrPausedStatus(t.status));
+  }
+
+  public getGroupTaskState(groupId: string): GroupActivePlaybackIndicator | null {
     const active = this.tasks.find(
-      (t) =>
-        t.groupId === groupId &&
-        (t.status === 'queued' ||
-          t.status === 'waking_backend' ||
-          t.status === 'generating' ||
-          t.status === 'delivering')
+      (t) => t.groupId === groupId && isActiveOrPausedStatus(t.status)
     );
     if (!active) return null;
-    return { status: active.status, targetAiId: active.targetAiId };
+
+    const controller = this.controllersByGroupId.get(groupId);
+    if (controller && controller.taskId === active.id && controller.indicator) {
+      return {
+        ...controller.indicator,
+        status: controller.paused ? 'paused' : active.status,
+        targetAiId: active.targetAiId,
+        activePollId: controller.indicator.activePollId || active.targetPollId,
+      };
+    }
+
+    const totalEventCount = active.plan?.events?.length;
+    const executedCount = active.executedEventIds?.length || 0;
+    const remainingEventCount =
+      typeof totalEventCount === 'number' ? Math.max(0, totalEventCount - executedCount) : undefined;
+
+    return {
+      status: active.status,
+      roundId: active.roundId,
+      targetAiId: active.targetAiId,
+      activeActionType:
+        active.triggerType === 'invite_poll_vote' && active.status === 'generating'
+          ? 'voting'
+          : active.status === 'generating'
+            ? 'thinking'
+            : undefined,
+      activePollId: active.targetPollId,
+      remainingEventCount,
+      totalEventCount,
+    };
   }
 
   public getGroupFailedTask(groupId: string): { task: GroupReplyTask; error: string } | null {
@@ -354,9 +342,137 @@ class GroupReplyTaskManager {
     return true;
   }
 
+  /**
+   * Pause the currently playing group discussion timeline locally.
+   * Already-displayed messages & votes remain untouched; unexecuted events stay queued.
+   */
+  public pauseGroupDiscussion(groupId: string): boolean {
+    const active = this.tasks.find(
+      (t) => t.groupId === groupId && (t.status === 'delivering' || t.status === 'generating')
+    );
+    if (!active) return false;
+
+    const controller = this.controllersByGroupId.get(groupId);
+    if (controller && controller.taskId === active.id) {
+      controller.pause();
+    }
+    this.updateTask(active.id, { status: 'paused' });
+    return true;
+  }
+
+  /**
+   * Resume a paused group discussion timeline locally (ZERO extra model API calls).
+   */
+  public resumeGroupDiscussion(groupId: string): boolean {
+    const pausedTask = this.tasks.find(
+      (t) => t.groupId === groupId && t.status === 'paused'
+    );
+    if (!pausedTask) return false;
+
+    const controller = this.controllersByGroupId.get(groupId);
+    if (controller && controller.taskId === pausedTask.id && !controller.cancelled) {
+      controller.resume();
+      this.updateTask(pausedTask.id, { status: 'delivering' });
+      return true;
+    }
+
+    // Restored paused task after App restart: queue local playback directly
+    this.updateTask(pausedTask.id, { status: 'queued' });
+    void this.processQueue();
+    return true;
+  }
+
+  /**
+   * Stop the currently running or paused group discussion immediately.
+   * Keeps already-persisted messages & votes and discards remaining unexecuted events.
+   */
+  public stopGroupDiscussion(groupId: string): boolean {
+    const controller = this.controllersByGroupId.get(groupId);
+    if (controller) {
+      controller.cancel();
+      this.controllersByGroupId.delete(groupId);
+    }
+
+    const beforeLen = this.tasks.length;
+    this.tasks = this.tasks.filter(
+      (t) => !(t.groupId === groupId && isActiveOrPausedStatus(t.status))
+    );
+    if (this.tasks.length !== beforeLen || controller) {
+      this.activeGroupIds.delete(groupId);
+      this.notify();
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * User Mid-Round Interjection (Requirement VI):
+   * - Immediately cancels any remaining unexecuted events of the current round
+   * - Keeps all already-displayed messages & applied votes
+   * - Marks the old roundId as interrupted and removes it from active queue
+   * - Enqueues ONE fresh unified round with the user's new message in latest context
+   */
+  public async interruptForUserMessage(
+    groupId: string,
+    userMsg: GroupChatMessage,
+    options?: {
+      targetAiId?: string;
+      mentionedTargets?: string[];
+    }
+  ): Promise<GroupReplyTask | null> {
+    const controller = this.controllersByGroupId.get(groupId);
+    if (controller) {
+      controller.cancel();
+      this.controllersByGroupId.delete(groupId);
+    }
+
+    // Mark and drop any active/paused round for this group
+    this.tasks = this.tasks
+      .map((t) =>
+        t.groupId === groupId && isActiveOrPausedStatus(t.status)
+          ? { ...t, status: 'interrupted' as const, interruptedByUser: true, updatedAt: Date.now() }
+          : t
+      )
+      .filter((t) => t.status !== 'interrupted');
+
+    this.activeGroupIds.delete(groupId);
+    this.notify();
+
+    return this.enqueueTask({
+      groupId,
+      triggerType: 'user_interrupt',
+      targetAiId: options?.targetAiId,
+      latestUserMessageId: userMsg.id,
+      latestUserText: userMsg.text,
+      mentionedTargets: options?.mentionedTargets || userMsg.mentionedMemberIds || [],
+      chainDepth: 0,
+      dedupeKey: `${groupId}:interrupt:${userMsg.id}`,
+    });
+  }
+
+  /**
+   * Invite group AIs to participate in a poll using ONE unified /api/gemini/group-chat round.
+   * Replaces legacy per-AI multi-request voting loops.
+   */
+  public async enqueuePollVoteRound(
+    groupId: string,
+    pollMessageId: string
+  ): Promise<GroupReplyTask | null> {
+    return this.enqueueTask({
+      groupId,
+      triggerType: 'invite_poll_vote',
+      targetPollId: pollMessageId,
+      mentionedTargets: [],
+      chainDepth: 0,
+      dedupeKey: `poll:${groupId}:${pollMessageId}:${Math.floor(Date.now() / 1500)}`,
+    });
+  }
+
   public async enqueueTask(params: {
     groupId: string;
+    triggerType?: GroupRoundTriggerType;
     targetAiId?: string;
+    targetPollId?: string;
     latestUserMessageId?: string;
     latestUserText?: string;
     mentionedTargets?: string[];
@@ -364,22 +480,18 @@ class GroupReplyTaskManager {
     dedupeKey?: string;
   }): Promise<GroupReplyTask | null> {
     const existingActive = this.tasks.find(
-      (t) =>
-        t.groupId === params.groupId &&
-        (t.status === 'queued' ||
-          t.status === 'waking_backend' ||
-          t.status === 'generating' ||
-          t.status === 'delivering')
+      (t) => t.groupId === params.groupId && isActiveOrPausedStatus(t.status)
     );
     if (existingActive) {
-      console.warn('[GroupReplyTaskManager] 当前群聊正在生成 AI 回复，忽略重复触发');
+      console.warn('[GroupReplyTaskManager] 当前群聊已有进行中或已暂停的讨论回合，忽略重复触发');
       return null;
     }
 
+    const triggerType: GroupRoundTriggerType = params.triggerType || 'user_double_click';
     const dedupeKey =
       params.dedupeKey ||
-      `${params.groupId}:${params.latestUserMessageId || 'summon'}:${params.targetAiId || 'auto'}:d${
-        params.chainDepth || 0
+      `${params.groupId}:${triggerType}:${params.latestUserMessageId || params.targetPollId || 'summon'}:${
+        params.targetAiId || 'auto'
       }`;
 
     const now = Date.now();
@@ -391,12 +503,19 @@ class GroupReplyTaskManager {
     this.recentDedupeTimestamps.set(dedupeKey, now);
 
     // Clear previous failed task for this group once user triggers a fresh round
-    this.tasks = this.tasks.filter((t) => !(t.groupId === params.groupId && t.status === 'failed'));
+    this.tasks = this.tasks.filter(
+      (t) => !(t.groupId === params.groupId && (t.status === 'failed' || t.status === 'waiting_backend'))
+    );
 
+    const suffix = Math.random().toString(36).slice(2, 6);
+    const roundId = `r_${now}_${suffix}`;
     const task: GroupReplyTask = {
-      id: `grptask_${params.groupId}_${now}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `grptask_${params.groupId}_${now}_${suffix}`,
+      roundId,
       groupId: params.groupId,
+      triggerType,
       targetAiId: params.targetAiId,
+      targetPollId: params.targetPollId,
       latestUserMessageId: params.latestUserMessageId,
       latestUserText: params.latestUserText,
       mentionedTargets: params.mentionedTargets || [],
@@ -405,6 +524,8 @@ class GroupReplyTaskManager {
       status: 'queued',
       retryCount: 0,
       maxRetries: 1,
+      executedEventIds: [],
+      executedBubbleKeys: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -438,335 +559,107 @@ class GroupReplyTaskManager {
     }
   }
 
-  private async loadLatestGroup(groupId: string): Promise<{
-    groups: GroupChat[];
-    group: GroupChat | undefined;
-  }> {
-    const cached = getCachedGroupChats();
-    const groups = cached ?? (await hydrateGroupChatsFromDb());
-    return {
-      groups,
-      group: groups.find((g) => g.id === groupId),
-    };
-  }
-
-  private async appendAiMessagesAndPersist(
-    groupId: string,
-    newMsgs: GroupChatMessage[]
-  ): Promise<GroupChat | null> {
-    if (newMsgs.length === 0) return null;
-    const { groups, group } = await this.loadLatestGroup(groupId);
-    if (!group) return null;
-
-    const existingIds = new Set((group.messages || []).map((m) => m.id));
-    const uniqueNew = newMsgs.filter((m) => !existingIds.has(m.id));
-    if (uniqueNew.length === 0) return group;
-
-    const updatedGroup: GroupChat = {
-      ...group,
-      messages: [...(group.messages || []), ...uniqueNew],
-      updatedAt: Date.now(),
-    };
-
-    const nextGroups = groups.map((g) => (g.id === groupId ? updatedGroup : g));
-    await saveGroupChatsToDb(nextGroups);
-    const saved = await waitForGroupChatSave();
-    if (!saved) {
-      throw new Error('群聊 AI 回复写入本地数据库失败');
-    }
-
-    try {
-      void syncGroupToServer(updatedGroup);
-    } catch {
-      // non-fatal
-    }
-
-    return updatedGroup;
-  }
-
   private async executeTask(taskId: string): Promise<void> {
     const initial = this.tasks.find((t) => t.id === taskId);
     if (!initial) return;
 
     this.activeGroupIds.add(initial.groupId);
+    const controller = new GroupPlaybackController(taskId, false);
+    this.controllersByGroupId.set(initial.groupId, controller);
 
     try {
-      // apiFetch owns the same backend wake/check path used by the rest of the app.
-      // Do not run a second group-only readiness gate before the real request.
-      this.updateTask(taskId, { status: 'waking_backend', error: undefined });
+      let currentTask = this.tasks.find((t) => t.id === taskId);
+      if (!currentTask || controller.cancelled) return;
 
-      const task = this.tasks.find((t) => t.id === taskId);
-      if (!task) return;
+      // Step 1: Plan the round via ONE unified /api/gemini/group-chat call (skip if plan already persisted!)
+      if (!currentTask.plan || !hasRemainingPlanEvents(currentTask)) {
+        if (!currentTask.plan) {
+          this.updateTask(taskId, { status: 'generating', error: undefined });
 
-      // Step 2: Gather authoritative group state, characters, and AI relationships
-      this.updateTask(taskId, { status: 'generating' });
+          const { group: activeGroup } = await loadLatestGroupFromStore(currentTask.groupId);
+          if (!activeGroup) {
+            throw new Error('群聊不存在或已被删除');
+          }
+          if (controller.cancelled) return;
 
-      const { group: activeGroup } = await this.loadLatestGroup(task.groupId);
-      if (!activeGroup) {
-        throw new Error('群聊不存在或已被删除');
-      }
+          const plan = await orchestrateGroupRound({
+            group: activeGroup,
+            task: currentTask,
+          });
 
-      const aiMembers = activeGroup.members.filter((m) => m.memberType !== 'human' && !m.isMuted);
-      if (aiMembers.length === 0) {
-        throw new Error('当前群内暂无未静音的 AI 成员可回复');
-      }
+          if (controller.cancelled) return;
 
-      const allCharacters: AiCharacter[] = loadCharacters();
-      const userProfile: UserProfile = loadUserProfile();
-      const apiConfig = loadApiConfig();
-
-      let chosenTargetId = task.targetAiId;
-      if (chosenTargetId && chosenTargetId !== '@all') {
-        const exists = aiMembers.some((m) => m.id === chosenTargetId);
-        if (!exists) chosenTargetId = undefined;
-      }
-
-      const aiCandidateProfiles = aiMembers.map((m) => {
-        const baseChar = allCharacters.find((c) => c.id === m.characterId || c.id === m.id);
-        return {
-          id: m.id,
-          characterId: m.characterId || baseChar?.id || m.id,
-          name: m.name,
-          wxid: m.wxid || m.id,
-          persona: m.customPersona || baseChar?.persona || '群内AI成员',
-          personality: m.customPersonality || baseChar?.personality || '善意、友好、口吻自然',
-          memories: m.memories || baseChar?.memories || [],
-          customPersona: m.customPersona,
-          customPersonality: m.customPersonality,
-        };
-      });
-
-      const memberLookup = new Map<string, { id: string; name: string }>();
-      activeGroup.members.forEach((m) => {
-        memberLookup.set(m.id, { id: m.id, name: m.name });
-        if (m.characterId) {
-          memberLookup.set(m.characterId, { id: m.id, name: m.name });
+          currentTask = this.updateTask(taskId, {
+            plan,
+            roundId: plan.roundId,
+            status: controller.paused ? 'paused' : 'delivering',
+            error: undefined,
+          });
+          if (!currentTask) return;
         }
-      });
+      } else {
+        // Resuming a persisted timeline after App restart: ZERO model API calls
+        currentTask = this.updateTask(taskId, {
+          status: controller.paused ? 'paused' : 'delivering',
+          error: undefined,
+        });
+        if (!currentTask) return;
+      }
 
-      const edges = await getAllRelationshipEdges().catch(() => []);
-      const aiRelationships = buildRelationshipSummaryLines(edges, memberLookup);
-
-      const recentSourceMessages = (activeGroup.messages || []).slice(-18);
-      const latestUserSourceMessage =
-        recentSourceMessages
-          .slice()
-          .reverse()
-          .find((m) =>
-            task.latestUserMessageId ? m.id === task.latestUserMessageId : m.senderType === 'human'
-          ) || null;
-
-      // Never put persisted avatars/image data on the localhost HTTP request.
-      // They remain untouched in IndexedDB and continue rendering in the UI.
-      const recentMessages = recentSourceMessages.map(buildLeanGroupMessage);
-      const latestUserMessage = latestUserSourceMessage
-        ? buildLeanGroupMessage(latestUserSourceMessage)
-        : task.latestUserText
-          ? {
-              id: task.latestUserMessageId,
-              senderId: 'user_main',
-              senderName: userProfile.name || '用户',
-              senderType: 'human',
-              text: task.latestUserText,
-              timestamp: Date.now(),
+      // Step 2: Purely local timeline playback (messages + real poll votes)
+      const outcome = await executeGroupTimelinePlan({
+        task: currentTask,
+        signal: controller.createSignal(),
+        callbacks: {
+          onIndicatorChange: (indicator) => {
+            if (controller.cancelled) return;
+            controller.indicator = indicator
+              ? {
+                  ...indicator,
+                  status: controller.paused ? 'paused' : indicator.status,
+                }
+              : null;
+            this.notify();
+          },
+          onBubbleExecuted: (bubbleKey) => {
+            const idx = this.tasks.findIndex((t) => t.id === taskId);
+            if (idx === -1) return;
+            const existing = this.tasks[idx].executedBubbleKeys || [];
+            if (!existing.includes(bubbleKey)) {
+              this.tasks[idx] = {
+                ...this.tasks[idx],
+                executedBubbleKeys: [...existing, bubbleKey],
+                updatedAt: Date.now(),
+              };
+              writePersistedGroupTasks(this.tasks);
             }
-          : null;
-
-      // Step 3: Call group-chat orchestrator API
-      const requestBody = {
-        group: {
-          id: activeGroup.id,
-          name: activeGroup.name,
-          notice: activeGroup.notice,
-          // The server prompt only needs identity/type metadata here, never avatars.
-          members: activeGroup.members.map((m) => ({
-            id: m.id,
-            characterId: m.characterId,
-            name: m.name,
-            wxid: m.wxid,
-            memberType: m.memberType,
-            isMuted: m.isMuted,
-          })),
+          },
+          onEventExecuted: (eventId) => {
+            const idx = this.tasks.findIndex((t) => t.id === taskId);
+            if (idx === -1) return;
+            const existing = this.tasks[idx].executedEventIds || [];
+            if (!existing.includes(eventId)) {
+              this.tasks[idx] = {
+                ...this.tasks[idx],
+                executedEventIds: [...existing, eventId],
+                updatedAt: Date.now(),
+              };
+              this.notify();
+            }
+          },
         },
-        recentMessages,
-        latestUserMessage,
-        mentionedTargets: task.mentionedTargets,
-        aiCandidates: aiCandidateProfiles,
-        aiRelationships,
-        triggeredAiId: chosenTargetId,
-        userProfile: {
-          name: userProfile.name,
-          wxid: userProfile.wxid,
-          bio: userProfile.bio,
-          persona: userProfile.persona,
-          preferences: userProfile.preferences,
-        },
-        apiConfig,
-      };
-
-      const res = await apiFetch('/api/gemini/group-chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
       });
 
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data || data.success === false) {
-        throw new Error(data?.error || data?.message || `群聊 AI 接口请求失败 (${res.status})`);
+      if (outcome === 'cancelled' || controller.cancelled) {
+        return;
       }
 
-      if (data.log && this.apiLogCallback) {
-        try {
-          this.apiLogCallback(data.log);
-        } catch {
-          // ignore
-        }
-      }
-
-      // Normalize single or multi-reply output (supporting @所有人 multiple responders)
-      const rawReplies: Array<{
-        responderId?: string;
-        responderName?: string;
-        text?: string;
-        thinkingProcess?: string;
-        mentionedMemberIds?: string[];
-      }> = Array.isArray(data.replies) && data.replies.length > 0
-        ? data.replies
-        : data.shouldRespond !== false && data.text
-          ? [
-              {
-                responderId: data.responderId,
-                responderName: data.responderName,
-                text: data.text,
-                thinkingProcess: data.thinkingProcess,
-                mentionedMemberIds: data.mentionedMemberIds,
-              },
-            ]
-          : [];
-
-      const validReplies = rawReplies
-        .map((r) => ({
-          ...r,
-          cleanText: sanitizeReplyText(r.text || '').trim(),
-        }))
-        .filter((r) => r.cleanText.length > 0);
-
-      if (data.shouldRespond !== false && validReplies.length === 0) {
-        throw new Error('模型未返回有效文本内容，请检查模型配置后重试');
-      }
-
-      this.updateTask(taskId, { status: 'delivering' });
-
-      let latestUpdatedGroup: GroupChat | null = activeGroup;
-      let lastAiMsg: GroupChatMessage | null = null;
-
-      for (let i = 0; i < validReplies.length; i++) {
-        const r = validReplies[i];
-        if (i > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 650));
-        }
-
-        const responderMember =
-          activeGroup.members.find((m) => m.id === r.responderId) ||
-          activeGroup.members.find((m) => m.name === r.responderName && m.memberType !== 'human') ||
-          activeGroup.members.find((m) => m.memberType !== 'human') ||
-          activeGroup.members[0];
-
-        const aiMsg: GroupChatMessage = {
-          id: `gmsg_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
-          groupId: activeGroup.id,
-          senderId: responderMember.id,
-          senderName: responderMember.name,
-          senderAvatar: responderMember.avatar,
-          senderType: responderMember.memberType,
-          text: r.cleanText,
-          timestamp: Date.now() + i * 20,
-          thinkingProcess: r.thinkingProcess || '',
-          mentionedMemberIds: Array.isArray(r.mentionedMemberIds) ? r.mentionedMemberIds : [],
-        };
-
-        lastAiMsg = aiMsg;
-        latestUpdatedGroup = await this.appendAiMessagesAndPersist(activeGroup.id, [aiMsg]);
-
-        const baseChar = allCharacters.find(
-          (c) => c.id === responderMember.characterId || c.id === responderMember.id
-        );
-        void nativeNotificationService
-          .notifyAiMessage(
-            {
-              id: baseChar?.id || responderMember.id,
-              name: `${activeGroup.name} · ${responderMember.name}`,
-              avatar: responderMember.avatar,
-              notificationAvatar: baseChar?.notificationAvatar,
-            },
-            aiMsg.text,
-            {
-              messageId: aiMsg.id,
-              bubbleIndex: i,
-              timestamp: aiMsg.timestamp,
-              triggerSource: 'group_chat_ai',
-            }
-          )
-          .catch(() => {});
-      }
-
+      // Round finished cleanly: remove task from queue (ZERO follow-up/chain API calls!)
       this.updateTask(taskId, { status: 'completed', error: undefined });
       this.tasks = this.tasks.filter((t) => t.id !== taskId);
       this.notify();
-
-      if (task.chainDepth === 0 && latestUpdatedGroup && lastAiMsg) {
-        void onGroupInteractionSocialTick({
-          group: latestUpdatedGroup,
-          triggerId: `grp_tick_${lastAiMsg.id}`,
-          allCharacters,
-          userProfile,
-          apiConfig,
-          onAddApiLog: this.apiLogCallback || undefined,
-          onGroupRandomMessage: (targetGroupId, aiChar, text) => {
-            if (targetGroupId !== activeGroup.id || !text.trim()) return;
-            const randomMsg: GroupChatMessage = {
-              id: `gmsg_soc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-              groupId: activeGroup.id,
-              senderId: aiChar.id,
-              senderName: aiChar.name,
-              senderAvatar: aiChar.avatar,
-              senderType: 'ai',
-              text,
-              timestamp: Date.now(),
-            };
-            void this.appendAiMessagesAndPersist(activeGroup.id, [randomMsg]);
-          },
-        });
-      }
-
-      // If AI @-mentioned another unmuted AI member in a 1-to-1 targeted response, allow 1 natural follow-up
-      if (
-        task.chainDepth < 1 &&
-        lastAiMsg &&
-        lastAiMsg.mentionedMemberIds &&
-        lastAiMsg.mentionedMemberIds.length > 0 &&
-        validReplies.length === 1
-      ) {
-        const nextTarget = lastAiMsg.mentionedMemberIds.find(
-          (id) =>
-            id !== lastAiMsg?.senderId &&
-            id !== 'user_main' &&
-            id !== '@all' &&
-            aiMembers.some((m) => m.id === id)
-        );
-        if (nextTarget) {
-          setTimeout(() => {
-            void this.enqueueTask({
-              groupId: activeGroup.id,
-              targetAiId: nextTarget,
-              chainDepth: task.chainDepth + 1,
-              mentionedTargets: [nextTarget],
-              dedupeKey: `chain:${activeGroup.id}:${lastAiMsg?.id}:${nextTarget}`,
-            });
-          }, 1500);
-        }
-      }
     } catch (err: any) {
+      if (controller.cancelled) return;
       const current = this.tasks.find((t) => t.id === taskId);
       if (!current) return;
 
@@ -776,7 +669,7 @@ class GroupReplyTaskManager {
           status: 'waiting_backend',
           error: message,
         });
-      } else if ((current.retryCount || 0) < current.maxRetries) {
+      } else if (!current.plan && (current.retryCount || 0) < current.maxRetries) {
         const nextRetry = (current.retryCount || 0) + 1;
         this.updateTask(taskId, {
           status: 'queued',
@@ -793,7 +686,10 @@ class GroupReplyTaskManager {
         });
       }
     } finally {
-      this.activeGroupIds.delete(initial.groupId);
+      if (this.controllersByGroupId.get(initial.groupId) === controller) {
+        this.controllersByGroupId.delete(initial.groupId);
+        this.activeGroupIds.delete(initial.groupId);
+      }
       void this.processQueue();
     }
   }

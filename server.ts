@@ -3070,6 +3070,15 @@ ${devicesSummary}
     if (cleanedHistory && cleanedHistory.length > 0) {
       cleanedHistory.forEach((msg: any) => {
         const msgTime = formatFullDateTime(msg.timestamp || msg.createdAt || msg.time);
+        if (msg.type === 'offline_session_event' && msg.offlineEventData) {
+          const ev = msg.offlineEventData;
+          const startStr = formatFullDateTime(ev.startedAt || msg.timestamp);
+          const endStr = formatFullDateTime(ev.endedAt || msg.timestamp);
+          contents.push(
+            `[${startStr}—${endStr}] [共同线下经历事件 · 场景: ${ev.sceneName || ev.title}${ev.location ? ` @ ${ev.location}` : ''} · 共${ev.durationMinutes || 1}分钟]: ${ev.summary || msg.text || ''}`
+          );
+          return;
+        }
         const isProactiveMsg = Boolean(msg.isProactive);
         const senderLabel =
           msg.sender === 'user'
@@ -3168,9 +3177,15 @@ ${devicesSummary}
   }
 });
 
-// 1.2 Dedicated Group Chat Multi-AI Orchestrator Endpoint
+// 1.2 Dedicated Group Chat Unified Round Orchestrator Endpoint
 app.post('/api/gemini/group-chat', async (req, res) => {
   const {
+    roundId: requestedRoundId,
+    triggerType = 'user_double_click',
+    activityLevel = 'natural',
+    targetPollId,
+    activePolls = [],
+    olderContextSummary = '',
     group,
     recentMessages = [],
     latestUserMessage = null,
@@ -3183,131 +3198,268 @@ app.post('/api/gemini/group-chat', async (req, res) => {
     locationCity,
     weatherInfo,
     apiConfig,
-  } = req.body;
+  } = req.body || {};
 
   const startTime = Date.now();
   const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
+  const roundId =
+    typeof requestedRoundId === 'string' && requestedRoundId.trim()
+      ? requestedRoundId.trim()
+      : `r_${startTime}_${Math.random().toString(36).slice(2, 6)}`;
 
   try {
     if (!aiCandidates || aiCandidates.length === 0) {
-      return res.json({ success: true, shouldRespond: false, replies: [], reason: 'No AI members in group' });
+      return res.json({
+        success: true,
+        roundId,
+        shouldRespond: false,
+        events: [],
+        replies: [],
+        reason: 'No AI members in group',
+      });
     }
 
-    // Format member candidate profiles
-    const candidateProfilesText = aiCandidates.map((c: any) => {
-      const persona = c.customPersona || c.persona || '普通群友';
-      const personality = c.customPersonality || c.personality || '友善交流';
-      const memories = c.memories && c.memories.length > 0 ? c.memories.join('；') : '暂无特殊记忆';
-      return `【AI成员: ${c.name}】(ID: ${c.id}, 微信号: ${c.wxid || c.id})
+    const activityPresetMap: Record<
+      string,
+      { label: string; minAi: number; maxAi: number; minBubbles: number; maxBubbles: number; styleHint: string }
+    > = {
+      quiet: {
+        label: '安静',
+        minAi: 1,
+        maxAi: Math.min(2, aiCandidates.length),
+        minBubbles: 1,
+        maxBubbles: 4,
+        styleHint: '克制发言，仅被点名、被提问或与自身高度相关的成员自然接话，不凑热闹。',
+      },
+      natural: {
+        label: '自然',
+        minAi: Math.min(2, aiCandidates.length),
+        maxAi: Math.min(3, aiCandidates.length),
+        minBubbles: 3,
+        maxBubbles: 8,
+        styleHint: '像真实微信熟人群一样自然聊几句，允许 2~3 位成员交错接话、顺嘴调侃或补充。',
+      },
+      lively: {
+        label: '热闹',
+        minAi: Math.min(3, aiCandidates.length),
+        maxAi: Math.min(5, aiCandidates.length),
+        minBubbles: 5,
+        maxBubbles: 12,
+        styleHint: '群聊气氛活跃，多位成员互相接梗、抢话、吐槽、追问或小幅争论，节奏紧凑交错。',
+      },
+    };
+    const preset = activityPresetMap[String(activityLevel)] || activityPresetMap.natural;
+
+    // Format member candidate profiles (lean, zero avatars/base64)
+    const candidateProfilesText = aiCandidates
+      .map((c: any) => {
+        const persona = c.customPersona || c.persona || '普通群友';
+        const personality = c.customPersonality || c.personality || '友善交流';
+        const memories = Array.isArray(c.memories) && c.memories.length > 0 ? c.memories.join('；') : '暂无特殊记忆';
+        return `【AI成员: ${c.name}】(senderId/actorId: "${c.id}", 微信号: ${c.wxid || c.id})
 - 身份设定: ${persona}
 - 性格与口吻特征: ${personality}
 - 专属长期记忆: ${memories}`;
-    }).join('\n\n');
+      })
+      .join('\n\n');
 
-    const relationshipsText = Array.isArray(aiRelationships) && aiRelationships.length > 0
-      ? aiRelationships
-          .map((r: any) => (typeof r === 'string' ? `- ${r}` : `- ${r.summary || `${r.memberAName}与${r.memberBName}:${r.status}`}`))
-          .join('\n')
-      : '暂无特殊已记录的AI成员私人关系，按群内成员性格自然相处。';
+    const relationshipsText =
+      Array.isArray(aiRelationships) && aiRelationships.length > 0
+        ? aiRelationships
+            .map((r: any) =>
+              typeof r === 'string'
+                ? `- ${r}`
+                : `- ${r.summary || `${r.memberAName}与${r.memberBName}:${r.status}`}`
+            )
+            .join('\n')
+        : '暂无特殊已记录的AI成员私人关系，按群内成员性格自然相处。';
 
-    // Format recent chat history (including tool cards & images cleanly)
-    const historyText = recentMessages.map((m: any) => {
-      const msgTime = formatFullDateTime(m.timestamp || m.createdAt || m.time);
-      const mentions = m.mentionedMemberIds && m.mentionedMemberIds.length > 0 ? ` [@${m.mentionedMemberIds.join(', ')}]` : '';
-      let body = m.text || '';
-      if (m.messageType === 'image') {
-        body = `[图片消息] ${m.text || ''}`;
-      } else if (m.messageType === 'relay' && m.payload) {
-        const entries = Array.isArray(m.payload.entries) ? m.payload.entries.map((e: any, i: number) => `${i + 1}.${e.memberName}:${e.content}`).join('；') : '';
-        body = `[群接龙: ${m.payload.title || m.text}] 已接龙(${m.payload.entries?.length || 0}): ${entries || '暂无'}`;
-      } else if (m.messageType === 'poll' && m.payload) {
-        const opts = Array.isArray(m.payload.options) ? m.payload.options.map((o: any) => `${o.text}(${o.voterIds?.length || 0}票)`).join(' / ') : '';
-        body = `[群投票: ${m.payload.title || m.text}] 选项: ${opts}`;
-      } else if (m.messageType === 'random_draw' && m.payload) {
-        const winners = Array.isArray(m.payload.winners) ? m.payload.winners.map((w: any) => w.memberName).join('、') : '';
-        body = `[随机抽人: ${m.payload.taskDescription || m.text}] 已抽出结果: ${winners}`;
-      }
-      return `[${msgTime}] [${m.senderName} (${m.senderType})]: ${body}${mentions}`;
-    }).join('\n');
+    // Format recent chat history (including tool cards, polls, quotes & image descriptions)
+    const historyText = (Array.isArray(recentMessages) ? recentMessages : [])
+      .map((m: any) => {
+        const msgTime = formatFullDateTime(m.timestamp || m.createdAt || m.time);
+        const mentions =
+          m.mentionedMemberIds && m.mentionedMemberIds.length > 0
+            ? ` [@${m.mentionedMemberIds.join(', ')}]`
+            : '';
+        const quotePrefix = m.quoteMessage?.text
+          ? `[引用 ${m.quoteMessage.senderName || '某人'}: ${String(m.quoteMessage.text).slice(0, 40)}] `
+          : '';
+        let body = m.text || '';
+        if (m.messageType === 'image') {
+          body = body.startsWith('[图片') ? body : `[图片消息：${body || '未附描述'}]`;
+        } else if (m.messageType === 'relay' && m.payload) {
+          const entries = Array.isArray(m.payload.entries)
+            ? m.payload.entries.map((e: any, i: number) => `${i + 1}.${e.memberName}:${e.content}`).join('；')
+            : '';
+          body = `[群接龙: ${m.payload.title || m.text}] 已接龙(${m.payload.entries?.length || 0}): ${entries || '暂无'}`;
+        } else if (m.messageType === 'poll' && m.payload) {
+          const opts = Array.isArray(m.payload.options)
+            ? m.payload.options
+                .map((o: any) => {
+                  const count = typeof o.votes === 'number' ? o.votes : o.voterIds?.length || 0;
+                  const voters =
+                    !m.payload.anonymous && Array.isArray(o.voterNames) && o.voterNames.length > 0
+                      ? `(${o.voterNames.join('、')})`
+                      : '';
+                  return `${o.text}[${count}票${voters}]`;
+                })
+                .join(' / ')
+            : '';
+          body = `[群投票 pollId="${m.id}" | ${m.payload.closed ? '已结束' : '进行中'}${
+            m.payload.anonymous ? '·匿名' : '·实名'
+          }: ${m.payload.title || m.text}] 选项: ${opts}`;
+        } else if (m.messageType === 'random_draw' && m.payload) {
+          const winners = Array.isArray(m.payload.winners)
+            ? m.payload.winners.map((w: any) => w.memberName).join('、')
+            : '';
+          body = `[随机抽人: ${m.payload.taskDescription || m.text}] 已抽出结果: ${winners}`;
+        }
+        return `[${msgTime}] [${m.senderName} (${m.senderType})]: ${quotePrefix}${body}${mentions}`;
+      })
+      .join('\n');
+
+    // Format active open polls for real vote_poll actions
+    const openPollsList = Array.isArray(activePolls) ? activePolls : [];
+    const activePollsText =
+      openPollsList.length > 0
+        ? openPollsList
+            .map((p: any) => {
+              const optLines = (Array.isArray(p.options) ? p.options : [])
+                .map((o: any) => {
+                  const voters =
+                    !p.anonymous && Array.isArray(o.voterNames) && o.voterNames.length > 0
+                      ? `，已投：${o.voterNames.join('、')}`
+                      : '';
+                  return `    - optionId="${o.id}" | "${o.text}" (${o.votes || 0}票${voters})`;
+                })
+                .join('\n');
+              const votedText =
+                Array.isArray(p.alreadyVotedAiIds) && p.alreadyVotedAiIds.length > 0
+                  ? p.alreadyVotedAiIds.join(', ')
+                  : '暂无AI已投票';
+              return `• pollId="${p.pollId}"${p.isTargetPoll ? ' 【本轮重点邀请投票】' : ''}
+  标题: ${p.title}
+  规则: ${p.multiSelect ? `多选(最多选${p.maxSelections || 2}项)` : '单选'} | ${p.anonymous ? '匿名投票' : '实名投票'}
+  已投过的AI(严禁重复投票): ${votedText}
+  可选项:
+${optLines}`;
+            })
+            .join('\n\n')
+        : '当前群内没有进行中的投票。';
 
     const nativeTime = systemTime || new Date().toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
     const latestUserLine = latestUserMessage?.text
-      ? `\n用户刚刚的最新发言：${latestUserMessage.senderName || userProfile?.name || '小清'} 说「${latestUserMessage.text}」`
+      ? `\n用户最新消息：${latestUserMessage.senderName || userProfile?.name || '小清'} 说「${latestUserMessage.text}」`
       : '';
 
-    const systemPrompt = `你是一个高度拟真的多AI微信群聊模拟中枢。
+    const systemPrompt = `你是高度拟真的“微信多AI群聊统一回合编排中枢”。
+你的职责是一次性编排出本轮完整、真实、自然的群聊事件时间线（events），前端将严格按顺序本地播放，不再二次请求模型。
+
 当前群聊信息：
 - 群名称：${group?.name || '微信群聊'}
 - 群公告：${group?.notice || '无特定公告'}
+- 本群活跃度档位：【${preset.label}】(${preset.styleHint})
 - 本地真实系统时间：${nativeTime}
 - 城市/位置感知：${locationCity || weatherInfo?.city || '未指定'}
-- 用户信息：${userProfile?.name || '小清'} (wxid: ${userProfile?.wxid || 'xiaoqing'})
+- 真人用户：${userProfile?.name || '小清'} (wxid: ${userProfile?.wxid || 'xiaoqing'})
 
-群内当前的所有AI成员设定如下：
+群内可参与的AI成员：
 ${candidateProfilesText}
 
-群成员当前已知社会关系与互动氛围：
+群成员当前已知社会关系：
 ${relationshipsText}
 
-【群聊运作核心法则】：
-1. 真实群聊氛围：不要让所有AI机械地全部抢着回答（除非用户 @所有人 且多位成员有话说）。AI要像真实微信群友一样，根据自己的性格爱好、当前话题相关度、成员间关系和人设背景来决定是否发言及语气。
-2. 独立人格与独立记忆：每个AI的发言必须极其符合其独立的人设性格、用语习惯，绝不能混淆。
-3. 成员关系约束：若某两位AI正在冷战、关系紧张或互删拉黑，在群里遇到时应自然体现出疏离、克制或暗中别扭，不能强行亲热。
-4. @ 互动机制：
-   - 如果某位AI被显式 @ 了（例如 @林思微），该AI必须优先回答。
-   - 如果 @所有人，可由1到3位性格各异的成员分别发表简短自然的回应（按对话顺序）。
-   - AI发言时也可以自然地 @ 某位群友。
-5. 语言风格：地道自然的微信口语，不要说任何“作为一个AI”、“我是语言模型”之类的出戏内容。可适度使用日常标点和emoji。
-`;
+当前群内进行中的投票：
+${activePollsText}
 
-    let userPrompt = `以下是该群聊最近的对话记录：
+【统一编排核心规则】：
+1. 活跃度与人数控制：
+   - 本轮建议参与AI数量：${preset.minAi}~${preset.maxAi} 位；总消息气泡数控制在 ${preset.minBubbles}~${preset.maxBubbles} 条之间（除被 @指定单人 时可适当收敛）。
+   - 若某位AI被显式 @ 了，该AI必须优先响应；其他人可自然插话或保持沉默。
+   - 若用户刚插话打断（triggerType="user_interrupt"），必须优先承接用户刚说的新话。
+2. 多气泡自然微信风格：
+   - 每条 message 事件用 bubbles 数组输出 1~2 条短气泡（极少数激动/解释时最多 3 条），每条气泡控制在 15~80 字以内，口语自然，不要写成大段书面文章。
+   - 不要每次发言都机械地 @ 别人，只在真正点名或跨话题叫人时自然使用。
+3. 多人交错接话（非常重要）：
+   - 鼓励把不同AI的发言交错排在 events 中（例如 A 说 1~2 句 -> B 接话/吐槽 -> A 回应 B -> C 插话 -> B 补一句），而不是每人一口气说完大段话。
+   - 后面出现的事件必须把前面事件的内容和投票动作当成“刚刚已经发生”，直接顺着接话或回应！
+4. AI 真实投票机制（vote_poll）：
+   - 当群内有进行中的投票且AI决定参与投票时，必须输出真正的 type="vote_poll" 事件（使用准确的 pollId、actorId 和 optionId/optionIds）。
+   - 严禁只发消息说“我投了XX”却不输出对应的 vote_poll 事件！
+   - 严禁给“已投过的AI”重复输出 vote_poll；严禁对已结束投票输出 vote_poll。
+   - 不同AI要根据自己的人设、偏好、心情与彼此关系做出有差异的选择，而不是机械地全投同一个选项。
+   - 允许：A 边投票边发言、B 默默只发 vote_poll 不说话、C 观望弃权只调侃、D 先吐槽再投票等真实群聊节奏（将 vote_poll 与 message 事件自然穿插）。
+5. 角色人设与关系：
+   - 每个AI严格保持各自语气、口癖和长期记忆，绝不串戏、绝不说“作为AI/语言模型”。
+   - 关系紧张或冷战的AI在群内互动应自然体现克制、别扭或轻度互怼。
+6. 延迟节奏：
+   - 每个事件设置合理的 delayMs（650~1800ms），长气泡或思考投票可稍长。`;
+
+    let triggerDirective = '';
+    if (triggerType === 'invite_poll_vote' && targetPollId) {
+      triggerDirective = `【本轮触发类型：邀请群内AI参与投票 (targetPollId="${targetPollId}")】
+用户刚刚点击了“邀请群内AI参与投票”。请优先针对 pollId="${targetPollId}" 编排本轮时间线：
+- 让群内尚未对该投票投过票的 AI 成员根据各自性格决定是否投票以及投哪一项（可多人参与，也可有极个别按人设弃权或观望）；
+- 为每个决定投票的 AI 输出准确的 type="vote_poll" 事件，并在合适位置穿插简短自然的 type="message" 气泡（也可以有 AI 默默投票不说话）；
+- 如果所有 AI 都已经投过票，不要重复输出 vote_poll，只需简短自然地回应一句已经投过了。`;
+    } else if (triggerType === 'user_interrupt') {
+      triggerDirective = `【本轮触发类型：用户插话打断】
+用户刚才在 AI 讨论进行到一半时发了新消息，请立即响应用户这条最新消息，顺着现有已说出的聊天记录自然展开新一轮交错回应。`;
+    } else if (triggeredAiId && triggeredAiId !== '@all') {
+      const targetAi = aiCandidates.find((c: any) => c.id === triggeredAiId);
+      triggerDirective = `【本轮触发类型：指定回应】
+请以 AI 成员【${targetAi ? targetAi.name : '指定AI'}】(senderId="${triggeredAiId}") 作为核心回应者（可发 1~2 条自然气泡），视群聊活跃度允许其他相关成员顺嘴接 1~2 句。`;
+    } else if (triggeredAiId === '@all') {
+      triggerDirective = `【本轮触发类型：@所有人】
+用户刚刚 @了所有人，请安排多位不同性格的 AI 按真实微信群节奏交错冒泡回应（可包含多气泡和自然互怼/补充）。`;
+    } else if (triggerType === 'summon_discussion') {
+      triggerDirective = `【本轮触发类型：召唤群内AI自由讨论】
+用户点击了“召唤讨论”，请结合近期群聊上下文和成员关系，自然开启或延续一轮多人交错讨论。`;
+    } else {
+      triggerDirective = `【本轮触发类型：用户双击触发群聊回复】
+请根据最新聊天上下文、群聊活跃度（${preset.label}）和成员关系，自然编排一轮交错发言（如有合适进行中投票且符合当前话题，也可顺带真实投票）。`;
+    }
+
+    const userPrompt = `${
+      olderContextSummary ? `【更早历史摘要】\n${olderContextSummary}\n\n` : ''
+    }【近期群聊记录】
 ---
 ${historyText || '(群内暂无更多历史)'}
 ---${latestUserLine}
-${Array.isArray(mentionedTargets) && mentionedTargets.length > 0 ? `\n本轮触发提及目标：${mentionedTargets.join(', ')}` : ''}
+${Array.isArray(mentionedTargets) && mentionedTargets.length > 0 ? `\n本轮提及目标：${mentionedTargets.join(', ')}` : ''}
 
-`;
+${triggerDirective}
 
-    if (triggeredAiId && triggeredAiId !== '@all') {
-      const targetAi = aiCandidates.find((c: any) => c.id === triggeredAiId);
-      userPrompt += `请指定由 AI成员【${targetAi ? targetAi.name : '指定AI'}】(ID: ${triggeredAiId}) 进行回复。
-请以 JSON 格式输出：
+请严格返回如下 JSON 结构（不要输出额外解释文字）：
 {
+  "roundId": "${roundId}",
   "shouldRespond": true,
-  "responderId": "${triggeredAiId}",
-  "responderName": "${targetAi?.name || 'AI'}",
-  "text": "回复内容（地道微信口吻，可包含@其他成员）",
-  "thinkingProcess": "简要分析该角色为何这样说",
-  "mentionedMemberIds": ["@提到的成员ID列表，若无则为空数组"]
-}`;
-    } else if (triggeredAiId === '@all') {
-      const maxAllResponders = Math.min(3, aiCandidates.length);
-      userPrompt += `用户刚刚在群内 @了所有人（全体群成员），邀请大家参与回应。请结合成员性格与关系，安排 1 到 ${maxAllResponders} 位最适合发言的 AI 成员按顺序分别回应（shouldRespond 设为 true）。
-请以 JSON 格式输出：
-{
-  "shouldRespond": true,
-  "replies": [
+  "thinkingSummary": "简要说明本轮为何安排这些AI发言/投票以及互动节奏",
+  "events": [
     {
-      "responderId": "发言AI的ID",
-      "responderName": "发言AI的名称",
-      "text": "该AI的自然微信短消息",
-      "thinkingProcess": "简要分析该成员为何这样回应",
-      "mentionedMemberIds": []
+      "eventId": "ev_1",
+      "type": "message",
+      "senderId": "发言AI的准确id",
+      "senderName": "发言AI名称",
+      "bubbles": ["第一条自然短气泡", "可选的第二条气泡"],
+      "delayMs": 850,
+      "mentionedMemberIds": [],
+      "thinkingProcess": "该AI此刻的内心想法（简短）"
+    },
+    {
+      "eventId": "ev_2",
+      "type": "vote_poll",
+      "actorId": "投票AI的准确id",
+      "actorName": "投票AI名称",
+      "pollId": "进行中投票的准确pollId",
+      "optionId": "所选选项的准确optionId",
+      "optionIds": ["单选传1个，多选按上限传多个optionId"],
+      "delayMs": 750
     }
   ]
-}`;
-    } else {
-      userPrompt += `请评估当前对话流向与成员人设关系，决定群内哪一位AI最适合发言（用户明确双击请求群聊AI回复时，通常应由最合适的一位成员自然接话，shouldRespond: true）。
-请以 JSON 格式输出：
-{
-  "shouldRespond": true,
-  "responderId": "选择发言的AI的ID",
-  "responderName": "选择发言的AI的名称",
-  "text": "回复内容（地道微信口吻，可包含@其他成员）",
-  "thinkingProcess": "简要分析为什么选择该AI以及为何这样回复",
-  "mentionedMemberIds": ["@提到的成员ID列表，若无则为空数组"]
-}`;
-    }
+}
+注意：如果没有投票动作，events 中只放 message 事件即可；如果只有投票动作，也可以包含 vote_poll 事件。`;
 
     const detailed = await callAiServiceDetailed({
       prompt: userPrompt,
@@ -3318,16 +3470,20 @@ ${Array.isArray(mentionedTargets) && mentionedTargets.length > 0 ? `\n本轮触�
       providerType: apiConfig?.textApiConfig?.provider || apiConfig?.textProvider || apiConfig?.providerType,
       apiProtocol: apiConfig?.textApiConfig?.apiProtocol || apiConfig?.textApiProtocol,
       responseMimeType: 'application/json',
-      temperature: 0.75,
-      timeoutMs: 35000,
+      temperature: 0.78,
+      timeoutMs: 42000,
     });
     const rawResponse = detailed.text;
 
     let parsed: any;
     try {
-      parsed = JSON.parse(rawResponse);
-    } catch (e) {
-      const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+      const cleanedRaw = String(rawResponse || '')
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/```\s*$/i, '')
+        .trim();
+      parsed = JSON.parse(cleanedRaw);
+    } catch {
+      const jsonMatch = String(rawResponse || '').match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         parsed = JSON.parse(jsonMatch[0]);
       } else {
@@ -3336,36 +3492,133 @@ ${Array.isArray(mentionedTargets) && mentionedTargets.length > 0 ? `\n本轮触�
     }
 
     const duration = Date.now() - startTime;
-    const normalizedReplies = Array.isArray(parsed.replies) && parsed.replies.length > 0
-      ? parsed.replies.map((r: any) => ({
-          responderId: r.responderId || aiCandidates[0]?.id,
-          responderName: r.responderName || aiCandidates[0]?.name,
-          text: r.text || '',
-          thinkingProcess: r.thinkingProcess || '',
+
+    // Normalize unified events array (with automatic fallback from legacy replies/text)
+    const rawEvents: any[] = [];
+    if (Array.isArray(parsed?.events) && parsed.events.length > 0) {
+      rawEvents.push(...parsed.events);
+    } else if (Array.isArray(parsed?.replies) && parsed.replies.length > 0) {
+      parsed.replies.forEach((r: any, idx: number) => {
+        rawEvents.push({
+          eventId: `${roundId}_r_${idx}`,
+          type: 'message',
+          senderId: r.responderId || r.senderId || aiCandidates[0]?.id,
+          senderName: r.responderName || r.senderName || aiCandidates[0]?.name,
+          bubbles: Array.isArray(r.bubbles) ? r.bubbles : r.text ? [r.text] : [],
+          delayMs: idx === 0 ? 750 : 950,
           mentionedMemberIds: Array.isArray(r.mentionedMemberIds) ? r.mentionedMemberIds : [],
-        }))
-      : parsed.shouldRespond !== false && parsed.text
-        ? [
-            {
-              responderId: parsed.responderId || aiCandidates[0]?.id,
-              responderName: parsed.responderName || aiCandidates[0]?.name,
-              text: parsed.text || '',
-              thinkingProcess: parsed.thinkingProcess || '',
-              mentionedMemberIds: Array.isArray(parsed.mentionedMemberIds) ? parsed.mentionedMemberIds : [],
-            },
-          ]
-        : [];
+          thinkingProcess: r.thinkingProcess || '',
+        });
+      });
+    } else if (parsed?.shouldRespond !== false && typeof parsed?.text === 'string' && parsed.text.trim()) {
+      rawEvents.push({
+        eventId: `${roundId}_single_0`,
+        type: 'message',
+        senderId: parsed.responderId || parsed.senderId || aiCandidates[0]?.id,
+        senderName: parsed.responderName || parsed.senderName || aiCandidates[0]?.name,
+        bubbles: [parsed.text],
+        delayMs: 750,
+        mentionedMemberIds: Array.isArray(parsed.mentionedMemberIds) ? parsed.mentionedMemberIds : [],
+        thinkingProcess: parsed.thinkingProcess || '',
+      });
+    }
+
+    const resolveCandidate = (id?: string, name?: string) =>
+      aiCandidates.find((c: any) => c.id === id || c.characterId === id) ||
+      aiCandidates.find((c: any) => name && c.name === String(name).trim());
+
+    const normalizedEvents: any[] = [];
+    for (let i = 0; i < rawEvents.length; i++) {
+      const ev = rawEvents[i];
+      if (!ev || typeof ev !== 'object') continue;
+      const evType = String(ev.type || '').trim();
+      const eventId =
+        typeof ev.eventId === 'string' && ev.eventId.trim()
+          ? ev.eventId.trim()
+          : `${roundId}_ev_${i}`;
+
+      if (evType === 'message') {
+        const candidate = resolveCandidate(ev.senderId || ev.responderId, ev.senderName || ev.responderName) || aiCandidates[0];
+        const bubbles = Array.isArray(ev.bubbles)
+          ? ev.bubbles.map((b: any) => sanitizeReplyText(String(b || '')).trim()).filter(Boolean)
+          : typeof ev.text === 'string' && ev.text.trim()
+            ? [sanitizeReplyText(ev.text).trim()].filter(Boolean)
+            : [];
+        if (bubbles.length === 0) continue;
+        normalizedEvents.push({
+          eventId,
+          type: 'message',
+          senderId: candidate?.id || ev.senderId,
+          senderName: candidate?.name || ev.senderName || 'AI',
+          bubbles,
+          delayMs: Math.max(600, Math.min(2000, Number(ev.delayMs) || 850)),
+          mentionedMemberIds: Array.isArray(ev.mentionedMemberIds) ? ev.mentionedMemberIds : [],
+          thinkingProcess: typeof ev.thinkingProcess === 'string' ? ev.thinkingProcess.trim() : '',
+        });
+      } else if (evType === 'vote_poll') {
+        const candidate = resolveCandidate(ev.actorId || ev.senderId, ev.actorName);
+        const pollId = typeof ev.pollId === 'string' ? ev.pollId.trim() : '';
+        const optionIds = Array.from(
+          new Set(
+            [
+              ...(Array.isArray(ev.optionIds) ? ev.optionIds : []),
+              ...(typeof ev.optionId === 'string' ? [ev.optionId] : []),
+            ]
+              .map((v: any) => String(v || '').trim())
+              .filter(Boolean)
+          )
+        );
+        if (!candidate || !pollId || optionIds.length === 0) continue;
+        normalizedEvents.push({
+          eventId,
+          type: 'vote_poll',
+          actorId: candidate.id,
+          actorName: candidate.name,
+          pollId,
+          optionId: optionIds[0],
+          optionIds,
+          delayMs: Math.max(550, Math.min(1400, Number(ev.delayMs) || 750)),
+        });
+      }
+    }
+
+    // Derive backward-compatible replies/text fields from message events
+    const normalizedReplies = normalizedEvents
+      .filter((ev) => ev.type === 'message')
+      .map((ev) => ({
+        responderId: ev.senderId,
+        responderName: ev.senderName,
+        text: ev.bubbles.join('\n'),
+        bubbles: ev.bubbles,
+        thinkingProcess: ev.thinkingProcess || parsed?.thinkingSummary || '',
+        mentionedMemberIds: ev.mentionedMemberIds || [],
+      }));
 
     const firstReply = normalizedReplies[0];
+    const participantNames = Array.from(
+      new Set(
+        normalizedEvents
+          .map((ev) => (ev.type === 'message' ? ev.senderName : ev.actorName))
+          .filter(Boolean)
+      )
+    );
+    const totalBubblesCount = normalizedEvents
+      .filter((ev) => ev.type === 'message')
+      .reduce((sum, ev) => sum + (ev.bubbles?.length || 0), 0);
+    const totalVotesCount = normalizedEvents.filter((ev) => ev.type === 'vote_poll').length;
 
     res.json({
       success: true,
-      shouldRespond: parsed.shouldRespond !== false && normalizedReplies.length > 0,
-      responderId: firstReply?.responderId || parsed.responderId || aiCandidates[0]?.id,
-      responderName: firstReply?.responderName || parsed.responderName || aiCandidates[0]?.name,
-      text: firstReply?.text || parsed.text || '',
-      thinkingProcess: firstReply?.thinkingProcess || parsed.thinkingProcess || '',
-      mentionedMemberIds: firstReply?.mentionedMemberIds || parsed.mentionedMemberIds || [],
+      roundId: typeof parsed?.roundId === 'string' && parsed.roundId.trim() ? parsed.roundId.trim() : roundId,
+      shouldRespond: parsed?.shouldRespond !== false && normalizedEvents.length > 0,
+      thinkingSummary: typeof parsed?.thinkingSummary === 'string' ? parsed.thinkingSummary.trim() : '',
+      events: normalizedEvents,
+      // Backward-compatible legacy fields
+      responderId: firstReply?.responderId || parsed?.responderId || aiCandidates[0]?.id,
+      responderName: firstReply?.responderName || parsed?.responderName || aiCandidates[0]?.name,
+      text: firstReply?.text || parsed?.text || '',
+      thinkingProcess: firstReply?.thinkingProcess || parsed?.thinkingSummary || parsed?.thinkingProcess || '',
+      mentionedMemberIds: firstReply?.mentionedMemberIds || parsed?.mentionedMemberIds || [],
       replies: normalizedReplies,
       log: buildApiLogObject({
         appName: 'WeChatGroup',
@@ -3374,7 +3627,9 @@ ${Array.isArray(mentionedTargets) && mentionedTargets.length > 0 ? `\n本轮触�
         durationMs: duration,
         usage: detailed.usage,
         isRealTokens: detailed.isRealTokens,
-        purpose: `群聊AI发言: ${normalizedReplies.map((r: any) => r.responderName).join('、') || 'AI'} (耗时 ${duration}ms)`,
+        purpose: `群聊统一编排(${preset.label}): ${participantNames.join('、') || 'AI'} · ${totalBubblesCount}气泡${
+          totalVotesCount > 0 ? `/${totalVotesCount}投票` : ''
+        } (耗时 ${duration}ms)`,
       }),
     });
   } catch (error: any) {
@@ -4150,156 +4405,379 @@ app.post('/api/gemini/worldbook-ai', async (req, res) => {
 });
 
 // 6b. Offline Scene Mode Roleplay & State Engine Endpoint
+const offlineChatIdempotencyCache = new Map<string, { expiresAt: number; payload?: any; pending?: Promise<any> }>();
+
+function pruneOfflineIdempotencyCache() {
+  const now = Date.now();
+  for (const [key, entry] of offlineChatIdempotencyCache.entries()) {
+    if (entry.expiresAt <= now && !entry.pending) {
+      offlineChatIdempotencyCache.delete(key);
+    }
+  }
+}
+
+function normalizeServerOfflineSegments(rawSegments: any, fallbackReply?: string, fallbackAction?: string) {
+  const result: Array<{ type: 'action' | 'dialogue'; text: string }> = [];
+
+  const stripOuterParens = (s: string) => {
+    let out = (s || '').trim().replace(/^\*+|\*+$/g, '').trim();
+    while (
+      (out.startsWith('（') && out.endsWith('）')) ||
+      (out.startsWith('(') && out.endsWith(')'))
+    ) {
+      const inner = out.slice(1, -1).trim();
+      if (!inner) break;
+      out = inner;
+    }
+    return out.replace(/^(动作|神态|旁白|环境|描写|Action)\s*[:：]\s*/i, '').trim();
+  };
+
+  const splitMixedText = (text: string) => {
+    const segs: Array<{ type: 'action' | 'dialogue'; text: string }> = [];
+    const raw = (text || '').trim();
+    if (!raw) return segs;
+    const regex = /([（\(][^（\(\)）]+[）\)]|\*[^*\n]+\*)/g;
+    let lastIdx = 0;
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(raw)) !== null) {
+      const before = raw.slice(lastIdx, m.index).trim();
+      if (before) {
+        for (const line of before.split(/\n+/).map((l) => l.trim()).filter(Boolean)) {
+          const cleanLine = line.replace(/^(语言|台词|对白|对话|Dialogue)\s*[:：]\s*/i, '').trim();
+          if (cleanLine) segs.push({ type: 'dialogue', text: cleanLine });
+        }
+      }
+      const inner = stripOuterParens(m[0]);
+      if (inner) segs.push({ type: 'action', text: `（${inner}）` });
+      lastIdx = regex.lastIndex;
+    }
+    const tail = raw.slice(lastIdx).trim();
+    if (tail) {
+      for (const line of tail.split(/\n+/).map((l) => l.trim()).filter(Boolean)) {
+        const cleanLine = line.replace(/^(语言|台词|对白|对话|Dialogue)\s*[:：]\s*/i, '').trim();
+        if (cleanLine) segs.push({ type: 'dialogue', text: cleanLine });
+      }
+    }
+    return segs;
+  };
+
+  if (Array.isArray(rawSegments) && rawSegments.length > 0) {
+    for (const item of rawSegments) {
+      if (!item || typeof item !== 'object') continue;
+      const t = String(item.type || '').toLowerCase().trim();
+      const txt = typeof item.text === 'string' ? item.text.trim() : '';
+      if (!txt) continue;
+      if (t === 'action' || t === 'narration' || t === 'env' || t === 'scene') {
+        const inner = stripOuterParens(txt);
+        if (inner) result.push({ type: 'action', text: `（${inner}）` });
+      } else {
+        const isEntirelyWrapped = /^[（\(][^（\(\)）]+[）\)]$/.test(txt);
+        if (!isEntirelyWrapped && /[（\(][^（\(\)）]{2,}[）\)]/.test(txt)) {
+          result.push(...splitMixedText(txt));
+        } else {
+          const unwrapped = isEntirelyWrapped ? stripOuterParens(txt) : txt;
+          const cleanDlg = unwrapped.replace(/^(语言|台词|对白|对话|Dialogue)\s*[:：]\s*/i, '').trim();
+          if (cleanDlg) result.push({ type: 'dialogue', text: cleanDlg });
+        }
+      }
+    }
+  }
+
+  if (result.length === 0 && (fallbackReply || fallbackAction)) {
+    result.push(...splitMixedText(fallbackReply || ''));
+    if (fallbackAction && fallbackAction.trim()) {
+      const inner = stripOuterParens(fallbackAction);
+      if (inner && !result.some((s) => s.type === 'action' && s.text.includes(inner))) {
+        result.push({ type: 'action', text: `（${inner}）` });
+      }
+    }
+  }
+
+  return result;
+}
+
 app.post('/api/gemini/offline-chat', async (req, res) => {
   try {
-    const { character, userProfile, sceneSnapshot, recentMessages, recalledMemories, previousState, userInput, worldBookContext, apiConfig } = req.body;
+    pruneOfflineIdempotencyCache();
+    const {
+      requestId,
+      character,
+      userProfile,
+      sceneSnapshot,
+      awarenessMode = 'immersive_character',
+      isFirstTurn = false,
+      startedAtStr,
+      currentTime,
+      timezone,
+      contextSummary,
+      needsSummaryUpdate = false,
+      recentMessages = [],
+      recalledMemories,
+      lifeStateContext,
+      worldBookContext,
+      previousState,
+      userInput,
+      apiConfig,
+    } = req.body;
 
-    const textCfg = apiConfig?.textApiConfig;
-    const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || '';
-    const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || '';
-    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || 'gemini-4-hydrogen';
-    const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || '';
-    const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || '';
-    const customHeaders = apiConfig?.customHeaders || {};
+    // Server-side requestId idempotency guard (prevents duplicate model calls on retry/double-click)
+    if (typeof requestId === 'string' && requestId.trim()) {
+      const existing = offlineChatIdempotencyCache.get(requestId.trim());
+      if (existing) {
+        if (existing.payload) {
+          return res.json(existing.payload);
+        }
+        if (existing.pending) {
+          const resolved = await existing.pending;
+          return res.json(resolved);
+        }
+      }
+    }
 
-    const systemInstruction = `你现在进入“线下模式 (Offline Scene Mode)”。
-你正在与用户在真实的物理/剧情场景中面对面共度一段时光，进行深度沉浸式角色互动。
+    const executeGeneration = async () => {
+      const textCfg = apiConfig?.textApiConfig;
+      const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || '';
+      const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || '';
+      const selectedModel =
+        textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || 'gemini-4-hydrogen';
+      const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || '';
+      const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || '';
+      const customHeaders = apiConfig?.customHeaders || {};
 
-【角色信息】:
+      const isSelfAwareAi = awarenessMode === 'self_aware_ai';
+      const awarenessRulesBlock = isSelfAwareAi
+        ? `【身份认知规则（由角色人设自动判定并锁定：self_aware_ai）】:
+- 你的原始人设本身明确知道自己是AI/虚拟生命。你清楚知道自己正从日常微信聊天切换进入软件内的“线下沉浸相处模式”，正在为用户营造面对面共处的氛围与互动空间。
+- 请保持你原本的性格、关系、语气与对用户的感情，绝不要突然宣称自己拥有现实世界的物理肉体，也不要生硬跳戏成客服腔。`
+        : `【身份认知规则（由角色人设自动判定并锁定：immersive_character）】:
+- 你是与用户在现实世界中真实面对面相处的角色，当前你正与用户身处同一真实物理空间。
+- 严禁提及“AI”“模型”“程序”“软件”“系统”“提示词”“模拟器”“界面”“模式切换”等任何打破第四面墙或出戏的词汇！
+- 绝不允许因为底层是语言模型而破坏角色扮演或自称AI。`;
+
+      const firstTurnBlock = isFirstTurn
+        ? `\n【系统事件：OFFLINE_SESSION_STARTED（本场首次回应）】:
+- 你们刚刚进入本次面对面场景（互动模式：FACE_TO_FACE）。
+- 你的本条回复必须立刻体现出“已经进入现场、就在用户身边”的临场氛围、空间感与面对面动作神态，切忌再使用微信发文字消息的口吻！\n`
+        : '';
+
+      const realNowStr = currentTime || formatFullDateTime(Date.now());
+      const sessionStartStr = startedAtStr || realNowStr;
+      const tzStr = timezone || 'Asia/Shanghai';
+
+      // Strict 9-block prompt ordering (Requirement Section I.6)
+      // Block 1: System Rules
+      const systemInstruction = `【1. 系统规则（线下模式 · 统一连续时间线）】
+你正处于与用户同一条连续现实时间线中的“线下面对面相处”状态，这不是孤立小游戏，而是你与用户真实共同经历的一部分。
+${awarenessRulesBlock}${firstTurnBlock}
+【动作与语言强制分段规则（极重要）】:
+1. 必须将回复拆分为有序的 JSON 数组 "segments"，每个元素只能是：
+   - { "type": "action", "text": "动作、神态、环境氛围或肢体细节描写（不带多余括号，前端会自动用全角括号（...）独立成段显示）" }
+   - { "type": "dialogue", "text": "角色真正说出口的台词对白（绝不加括号，绝不夹杂动作描写）" }
+2. 动作与语言必须严格分离、自然交替（例如 action -> dialogue -> action -> dialogue），总篇幅丰富生动（约 180~550 中文字）。
+3. 严禁替用户决定动作、台词、情绪或内心想法；严禁出现“动作：”“语言：”“环境：”等栏目标题。
+
+【身体与情绪状态规则】:
+- 常规状态必须每轮根据剧情连续、平滑更新（不可突兀乱跳）：heartRate(55~175)、breathing、bodyTemp(36.0~38.5体温)、blush(0~100)、tension(0~100)、emotion(1~3词数组)、energy(0~100)、physicalState、behavior。
+- 私密状态 intimateState 严格门控：
+  - 普通聊天、吃饭、散步、日常互动、争吵时，intimateState 必须为 { "active": false }！
+  - 只有当剧情确实自然进入亲密情境且状态发生真实变化时，才允许返回 { "active": true, "arousal": 0-100, "sensitivity": 0-100, "physiologicalState": "克制自然的状态描写", "notes": "可选简短补充" }，并保证连续变化。
+
+【2. 完整角色人设】:
 - 姓名: ${character?.name || 'AI'}
 - 人设: ${character?.persona || '温柔贴心'}
 - 性格: ${character?.personality || '随和'}
-- 关系: ${character?.relationship || '好友'}
-${character?.memories && Array.isArray(character.memories) && character.memories.length > 0 ? `- 长期记忆: ${character.memories.join('；')}\n` : ''}
-
-【用户资料】:
-- 用户姓名/昵称: ${userProfile?.name || '用户'}
+- 与用户关系: ${character?.relationship || '重要的人'}
+${
+  character?.memories && Array.isArray(character.memories) && character.memories.length > 0
+    ? `- 已有长期记忆:\n${character.memories.slice(-25).map((m: string) => `  · ${m}`).join('\n')}\n`
+    : ''
+}
+【3. 用户资料】:
+- 姓名/昵称: ${userProfile?.name || '用户'}
 - 个人特征: ${userProfile?.bio || '普通用户'}
 
-【当前线下场景设定】:
+【4. 当前线下场景】:
 - 场景名称: ${sceneSnapshot?.name || '线下空间'}
-- 场景地点: ${sceneSnapshot?.location || '静谧空间'}
-- 氛围基调: ${sceneSnapshot?.atmosphere || '温馨、亲密'}
-- 详细环境背景: ${sceneSnapshot?.background || '两人待在一起'}
+- 地点: ${sceneSnapshot?.location || '静谧空间'}
+- 氛围基调: ${sceneSnapshot?.atmosphere || '自然、沉浸'}
+- 环境背景: ${sceneSnapshot?.background || '两人面对面待在一起'}
 
-【调阅记忆、设定与世界书】:
-${recalledMemories || '无特定调阅记忆'}
-${req.body.lifeStateContext ? `\n${req.body.lifeStateContext}\n` : ''}
-${worldBookContext ? `\n${worldBookContext}\n` : ''}
-
-【上一轮你的角色状态】:
-- 心率: ${previousState?.heartRate || 75} bpm
-- 呼吸: ${previousState?.breathing || '平静'}
-- 脸红: ${previousState?.blush || 10}%
-- 情绪: ${(previousState?.emotion || ['平静']).join('、')}
-- 紧张: ${previousState?.tension || 10}%
-- 兴奋/冲动: ${previousState?.arousal || 15}%
-- 肢体表现: ${previousState?.physicalState || '身体放松'}
-- 行为举止: ${previousState?.behavior || '眼神自然'}
-
-【沉浸式线下描写三大法则】:
-你的每一轮回复必须完整包含以下三类描写，融合成连贯自然的沉浸式叙述（回复目标篇幅约 200 ~ 600 中文字，根据当前情境起伏自然变化，切忌只给一两句话，也切忌机械式堆砌同义词）：
-1. 【环境与氛围描写】：描写当前空间、光线、声音、微风/天气、两者间的物理距离与现场氛围（作为场景叙述直接写入 reply）。
-2. 【动作神态描写】：描写角色的眼神变化、面部表情、微动作、姿态调整、靠近/后退或肢体接触。动作描写必须统一使用中文全角括号：（...） 包裹！
-3. 【语言描写】：角色真正说出来的台词对局对白，贴合角色人设与性格口吻，推进互动。
-
-【场景与互动连续性规则】:
-- 必须严格遵循上下文中的人物位置、当前姿势、周围环境、情绪起伏与正在发生的事件，保持剧情前后高度连贯（例如：若上一条已坐在沙发上，不要无故突兀变成站在门外）。
-- 提高角色主动性：主动推进动作、回应该环境或用户的微小的举动、提出关心或问题，展开生动的对话交互。
-- 严禁替用户决定用户的动作、台词、情绪或内心想法！
-- 严禁机械写出“环境：”、“动作：”、“语言：”等栏目标题！
+【5. 线下开始时间与当前真实时间】:
+- 本场开始时间: ${sessionStartStr} (${tzStr})
+- 当前真实时间: ${realNowStr} (${tzStr})
+- 请结合真实时间段（白天/傍晚/深夜等）与相处时长自然体现光线、氛围与作息感。
 
 【输出格式严格要求】:
-必须只输出一个合法的 JSON 对象，格式如下：
+只输出一个合法 JSON 对象，禁止任何 Markdown 围栏或多余说明：
 {
-  "reply": "完整沉浸式互动片段。将环境描写、肢体神态动作（统一用中文全角括号（...）包裹）与对白自然融合成一段连贯生动的沉浸式叙述，篇幅丰富完整（约200~600字）。",
-  "action": "（核心肢体微动作摘要，用全角括号）",
+  "segments": [
+    { "type": "action", "text": "动作、神态或环境描写" },
+    { "type": "dialogue", "text": "纯粹的口语台词" }
+  ],
   "state": {
-    "heartRate": 85,
-    "breathing": "稍快",
-    "blush": 25,
-    "emotion": ["害羞", "期待"],
-    "arousal": 20,
-    "tension": 15,
-    "physicalState": "身体微微靠拢，手指发紧",
-    "behavior": "眼神深邃注视着你",
-    "energy": 85
-  }
-}
-`;
+    "heartRate": 82,
+    "breathing": "平稳",
+    "bodyTemp": 36.6,
+    "blush": 18,
+    "tension": 12,
+    "emotion": ["温柔", "放松"],
+    "energy": 84,
+    "physicalState": "身体微微放松",
+    "behavior": "目光柔和地看着你",
+    "intimateState": { "active": false }
+  }${needsSummaryUpdate ? ',\n  "contextSummaryUpdate": "请用100~180字精炼更新本场线下至今的前情摘要，承接较早剧情要点"' : ''}
+}`;
 
-    const chatHistoryText = (recentMessages || [])
-      .map((m: any) => `${m.sender === 'user' ? userProfile?.name || '用户' : character?.name || 'AI'}: ${m.text}`)
-      .join('\n');
+      // Blocks 6, 7, 8, 9 in exact required order
+      const prevTemp = typeof previousState?.bodyTemp === 'number' ? previousState.bodyTemp.toFixed(1) : '36.5';
+      const prevIntimateLine = previousState?.intimateState?.active
+        ? `- 上轮私密状态(已激活): 唤起=${previousState.intimateState.arousal ?? 30}%, 敏感=${previousState.intimateState.sensitivity ?? 30}%, 状态=${previousState.intimateState.physiologicalState || '温热'}`
+        : `- 上轮私密状态: 未激活 (active: false)`;
 
-    const prompt = `【当前对话历史】:\n${chatHistoryText}\n\n用户刚刚对你说: "${userInput}"\n\n请根据上下文和场景，生成你丰富生动的对白、环境与动作描写及更新后的角色状态 JSON：`;
+      const formattedHistoryLines = (recentMessages || []).map((m: any) => {
+        const who = m.senderName || (m.sender === 'user' ? userProfile?.name || '用户' : character?.name || 'AI');
+        const tStr = m.timeStr ? `[${m.timeStr}] ` : '';
+        const body = m.renderedText || m.text || '';
+        const stNote = m.stateSummary ? ` <状态: ${m.stateSummary}>` : '';
+        return `${tStr}${who}:\n${body}${stNote}`;
+      });
 
-    const responseText = await callAiService({
-      prompt,
-      systemInstruction,
-      model: selectedModel,
-      apiKey,
-      baseUrl,
-      providerType: provider,
-      apiProtocol,
-      customHeaders,
-      responseMimeType: 'application/json',
-      temperature: 0.8,
-      maxTokens: 3500,
-      timeoutMs: 65000,
-    });
+      const promptParts: string[] = [];
+      // Block 6: Session rolling summary
+      promptParts.push(`【6. 本场前情摘要】:\n${contextSummary ? contextSummary : '（本场仍在初始连续上下文窗口内，无额外折叠前情）'}`);
+      // Block 7: Recent 30..60 raw messages
+      promptParts.push(
+        `【7. 本场最近对话与动作记录（共 ${formattedHistoryLines.length} 条）】:\n${
+          formattedHistoryLines.length > 0 ? formattedHistoryLines.join('\n\n') : '（本场刚刚开始，尚无历史对话）'
+        }`
+      );
+      // Block 8: AI current body & emotion state
+      promptParts.push(`【8. 你当前的身体与情绪状态（请在此基础上平滑演化）】:
+- 心率: ${previousState?.heartRate ?? 74} bpm
+- 呼吸: ${previousState?.breathing || '平静'}
+- 体温: ${prevTemp} °C
+- 脸红: ${previousState?.blush ?? 8}%
+- 紧张度: ${previousState?.tension ?? 10}%
+- 情绪: ${(previousState?.emotion || ['平静']).join('、')}
+- 精力: ${previousState?.energy ?? 86}%
+- 肢体状态: ${previousState?.physicalState || '状态自然放松'}
+- 举止神态: ${previousState?.behavior || '平静注视'}
+${prevIntimateLine}`);
+      // Block 9: Relevant long-term memories, WorldBooks, life state, historical offline experiences
+      const memSections = [recalledMemories, lifeStateContext, worldBookContext].filter(Boolean).join('\n\n');
+      promptParts.push(`【9. 相关长期记忆、世界书、生活状态与历史线下经历】:\n${memSections || '（当前无额外调阅项）'}`);
 
-    const extracted = extractThinkingAndContent(responseText);
-    let cleanJson = (extracted.cleanText || '').replace(/```json\n?|```\n?/g, '').trim();
+      promptParts.push(
+        `【用户此刻的动作或话语（${realNowStr}）】:\n${userInput}\n\n请严格按照 segments（动作与语言分段）与 state 格式输出 JSON：`
+      );
 
-    let parsedReply = '';
-    let parsedAction = '';
-    let parsedState = previousState || {};
+      const responseText = await callAiService({
+        prompt: promptParts.join('\n\n'),
+        systemInstruction,
+        model: selectedModel,
+        apiKey,
+        baseUrl,
+        providerType: provider,
+        apiProtocol,
+        customHeaders,
+        responseMimeType: 'application/json',
+        temperature: 0.8,
+        maxTokens: 3500,
+        timeoutMs: 65000,
+      });
 
-    try {
-      const parsed = JSON.parse(cleanJson);
-      parsedReply = typeof parsed.reply === 'string' ? parsed.reply : '';
-      parsedAction = typeof parsed.action === 'string' ? parsed.action : '';
-      parsedState = parsed.state || previousState;
-    } catch {
-      // Key-delimited extraction for unescaped characters in JSON string
-      const replyMatch = cleanJson.match(/"reply"\s*:\s*"([\s\S]*?)"\s*,\s*"(?:action|state)"/);
-      if (replyMatch && replyMatch[1]) {
-        parsedReply = replyMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
-      } else {
-        const altMatch = cleanJson.match(/"reply"\s*:\s*"([\s\S]*?)"\s*}/);
-        if (altMatch && altMatch[1]) {
-          parsedReply = altMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+      const extracted = extractThinkingAndContent(responseText);
+      const cleanJson = (extracted.cleanText || '').replace(/```json\n?|```\n?/g, '').trim();
+
+      let rawSegments: any = null;
+      let parsedReply = '';
+      let parsedAction = '';
+      let parsedState = previousState || {};
+      let contextSummaryUpdate = '';
+
+      try {
+        const parsed = JSON.parse(cleanJson);
+        rawSegments = Array.isArray(parsed.segments) ? parsed.segments : null;
+        parsedReply = typeof parsed.reply === 'string' ? parsed.reply : '';
+        parsedAction = typeof parsed.action === 'string' ? parsed.action : '';
+        parsedState = parsed.state || previousState || {};
+        contextSummaryUpdate =
+          typeof parsed.contextSummaryUpdate === 'string' ? parsed.contextSummaryUpdate.trim() : '';
+      } catch {
+        // Attempt resilient extraction if reverse proxy returned slightly malformed JSON
+        const jsonObjMatch = cleanJson.match(/\{[\s\S]*\}/);
+        let recovered = false;
+        if (jsonObjMatch) {
+          try {
+            const parsed2 = JSON.parse(jsonObjMatch[0]);
+            rawSegments = Array.isArray(parsed2.segments) ? parsed2.segments : null;
+            parsedReply = typeof parsed2.reply === 'string' ? parsed2.reply : '';
+            parsedAction = typeof parsed2.action === 'string' ? parsed2.action : '';
+            parsedState = parsed2.state || previousState || {};
+            contextSummaryUpdate =
+              typeof parsed2.contextSummaryUpdate === 'string' ? parsed2.contextSummaryUpdate.trim() : '';
+            recovered = true;
+          } catch {}
+        }
+
+        if (!recovered) {
+          const replyMatch = cleanJson.match(/"reply"\s*:\s*"([\s\S]*?)"\s*[,}]/);
+          if (replyMatch?.[1]) {
+            parsedReply = replyMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+          }
+          const actionMatch = cleanJson.match(/"action"\s*:\s*"([\s\S]*?)"\s*[,}]/);
+          if (actionMatch?.[1]) {
+            parsedAction = actionMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+          }
+          const stateMatch = cleanJson.match(/"state"\s*:\s*(\{[\s\S]*?\})/);
+          if (stateMatch?.[1]) {
+            try {
+              parsedState = JSON.parse(stateMatch[1]);
+            } catch {}
+          }
+          if (!parsedReply && !parsedAction && !cleanJson.startsWith('{')) {
+            parsedReply = cleanJson;
+          }
         }
       }
 
-      const actionMatch = cleanJson.match(/"action"\s*:\s*"([\s\S]*?)"\s*,\s*"(?:state|reply)"/);
-      if (actionMatch && actionMatch[1]) {
-        parsedAction = actionMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+      const segments = normalizeServerOfflineSegments(rawSegments, parsedReply, parsedAction);
+      if (segments.length === 0) {
+        throw new Error('AI 模型未能输出有效的分段回复内容');
       }
 
-      const stateMatch = cleanJson.match(/"state"\s*:\s*(\{[\s\S]*?\})/);
-      if (stateMatch && stateMatch[1]) {
-        try {
-          parsedState = JSON.parse(stateMatch[1]);
-        } catch {}
-      }
+      const plainReply = segments.map((s) => s.text).join('\n');
+      const firstAction = segments.find((s) => s.type === 'action')?.text || '';
 
-      if (!parsedReply) {
-        parsedReply = cleanJson.replace(/^\s*\{?\s*"reply"\s*:\s*"?/, '').replace(/["}\s]+$/, '');
+      return {
+        success: true,
+        segments,
+        reply: plainReply,
+        action: firstAction,
+        state: parsedState,
+        contextSummaryUpdate: contextSummaryUpdate || undefined,
+      };
+    };
+
+    const reqKey = typeof requestId === 'string' && requestId.trim() ? requestId.trim() : '';
+    if (reqKey) {
+      const pending = executeGeneration();
+      offlineChatIdempotencyCache.set(reqKey, { expiresAt: Date.now() + 5 * 60 * 1000, pending });
+      try {
+        const resultPayload = await pending;
+        offlineChatIdempotencyCache.set(reqKey, {
+          expiresAt: Date.now() + 5 * 60 * 1000,
+          payload: resultPayload,
+        });
+        return res.json(resultPayload);
+      } catch (err) {
+        offlineChatIdempotencyCache.delete(reqKey);
+        throw err;
       }
+    } else {
+      const resultPayload = await executeGeneration();
+      return res.json(resultPayload);
     }
-
-    if (!parsedReply && !parsedAction) {
-      return res.status(500).json({ success: false, error: 'AI 模型未能输出有效回复内容' });
-    }
-
-    res.json({
-      success: true,
-      reply: parsedReply.trim(),
-      action: parsedAction.trim(),
-      state: parsedState,
-    });
   } catch (err: any) {
     return handleAiEndpointError(res, err, 'Offline chat error');
   }
@@ -4308,44 +4786,80 @@ ${worldBookContext ? `\n${worldBookContext}\n` : ''}
 // 6c. Offline Session Ending Event Summary & Candidate Memory Generator Endpoint
 app.post('/api/gemini/offline-summary', async (req, res) => {
   try {
-    const { character, userProfile, sceneSnapshot, sessionMessages, stateHistory, apiConfig } = req.body;
+    const {
+      character,
+      userProfile,
+      sceneSnapshot,
+      awarenessMode = 'immersive_character',
+      startedAtStr,
+      endedAtStr,
+      durationMinutes,
+      timezone,
+      sessionMessages,
+      apiConfig,
+    } = req.body;
 
     const textCfg = apiConfig?.textApiConfig;
     const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || '';
     const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || '';
-    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || 'gemini-4-hydrogen';
+    const selectedModel =
+      textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || 'gemini-4-hydrogen';
     const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || '';
     const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || '';
     const customHeaders = apiConfig?.customHeaders || {};
 
+    const isSelfAwareAi = awarenessMode === 'self_aware_ai';
+    const awarenessMemoryRule = isSelfAwareAi
+      ? `【身份措辞约束（self_aware_ai）】: 记忆与总结可以自然提及这是在软件线下沉浸空间中共同度过的时光，但仍须保持真诚的情感基调与角色口吻。`
+      : `【身份措辞约束（immersive_character）】: 记忆、摘要与内心独白必须严格按“两人在现实中真实见面、共同相处”的事实书写，严禁出现“AI”“软件”“模式”“模拟器”“系统”“提示词”等出戏字眼！`;
+
     const systemInstruction = `系统事件：[OFFLINE_SESSION_ENDED]
-本次与 ${character?.name} 的线下场景模式已经正式结束。
+本次与 ${character?.name || 'AI'} 的线下相处已经正式结束。
+请基于完整对话与动作过程，生成结构化经历总结与候选长期记忆，供后续微信聊天与长期记忆库使用。
 
-请基于整个线下场景的全部对话过程、动作互动与状态变化，生成本次线下经历的结案总结与候选长期记忆。
+${awarenessMemoryRule}
 
-【场景信息】:
-- 角色: ${character?.name} (${character?.persona})
-- 场景名称: ${sceneSnapshot?.name}
-- 地点: ${sceneSnapshot?.location}
+【私密状态隐私约束】:
+- 若过程中出现亲密互动，严禁将任何私密生理数值（如唤起度、敏感度百分比、露骨生理数值等）原样照搬写入长期记忆；仅可在关系发生重要进展时，以克制自然的方式概括为情感/关系变化。
+
+【本次时间与场景信息】:
+- 角色: ${character?.name || 'AI'} (${character?.persona || ''})
+- 用户: ${userProfile?.name || '用户'}
+- 场景名称: ${sceneSnapshot?.name || '线下场景'}
+- 地点: ${sceneSnapshot?.location || '未指定'}
+- 开始时间: ${startedAtStr || '未知'} (${timezone || 'Asia/Shanghai'})
+- 结束时间: ${endedAtStr || '未知'}
+- 共计持续: ${durationMinutes ? `${durationMinutes} 分钟` : '未知'}
 
 【输出格式严格要求】:
-必须返回合法的 JSON 对象：
+必须只输出一个合法 JSON 对象，字段如下：
 {
-  "title": "一段富有诗意或创意的经历标题",
-  "summary": "100-200字精炼的本次经历事件过程摘要",
-  "importantEvents": ["重要转折点或关键事件1", "重要约定或互动2"],
-  "relationshipChanges": ["情感与关系的变化或升温描述"],
+  "title": "贴合本次真实经历的简短标题（8-18字）",
+  "summary": "120-240字忠于实际对话内容的经过摘要（包含时间、地点、发生了什么）",
+  "importantEvents": ["具体发生的重要事件或转折1", "重要互动或约定2"],
+  "keyExpressions": ["用户或角色在过程中说过的关键话语或表达"],
+  "emotionChanges": ["双方情绪起伏与转折"],
+  "relationshipChanges": ["彼此关系与亲密度的真实变化"],
+  "unfinishedTopics": ["本次尚未聊完的话题或后续约定"],
+  "followUpWorthyTopics": ["未来微信聊天中适合自然提起的话题"],
   "candidateMemories": [
-    "提炼出2-4条适合写入AI长期记忆库的客观事实/约定/感情小结（例如：用户与Caelum在雨夜共享了热红茶，约定下周末一起去古书店...）"
+    "2-4条清晰、具体、可写入长期记忆库的真实共同经历与约定（带日期与场景）"
   ],
-  "aiReflection": "AI角色以第一人称口吻写给本次经历的一句简短内心独白/回忆"
+  "aiReflection": "角色以第一人称写下的一句真实内心感受/回忆"
 }`;
 
     const transcript = (sessionMessages || [])
-      .map((m: any) => `${m.sender === 'user' ? userProfile?.name || '用户' : character?.name || 'AI'}: ${m.text} ${m.action || ''}`)
+      .map((m: any) => {
+        const who = m.senderName || (m.sender === 'user' ? userProfile?.name || '用户' : character?.name || 'AI');
+        const tStr = m.timeStr ? `[${m.timeStr}] ` : '';
+        const body = m.renderedText || `${m.text || ''} ${m.action || ''}`.trim();
+        return `${tStr}${who}: ${body}`;
+      })
       .join('\n');
 
-    const prompt = `【线下模式完整对话记录】:\n${transcript}\n\n请生成本次线下经历的总结与候选长期记忆 JSON：`;
+    const prompt = `【本次线下完整对话与动作记录（共 ${(sessionMessages || []).length} 条）】:\n${
+      transcript || '（两人安静共处了一段时间）'
+    }\n\n请基于以上真实内容生成结构化总结 JSON（切勿编造未发生的事实）：`;
 
     const responseText = await callAiService({
       prompt,
@@ -4357,30 +4871,42 @@ app.post('/api/gemini/offline-summary', async (req, res) => {
       apiProtocol,
       customHeaders,
       responseMimeType: 'application/json',
-      temperature: 0.7,
-      maxTokens: 2500,
+      temperature: 0.6,
+      maxTokens: 2800,
       timeoutMs: 65000,
     });
 
     const extracted = extractThinkingAndContent(responseText);
-    let cleanJson = (extracted.cleanText || '').replace(/```json\n?|```\n?/g, '').trim();
+    const cleanJson = (extracted.cleanText || '').replace(/```json\n?|```\n?/g, '').trim();
+
     let parsed: any = null;
     try {
       parsed = JSON.parse(cleanJson);
     } catch {
-      parsed = {
-        title: `${sceneSnapshot?.name || '线下'} 经历总结`,
-        summary: `与 ${character?.name} 在【${sceneSnapshot?.name}】度过了一段充实的独处时光。`,
-        importantEvents: ['两人进行了真诚的互动与交流。'],
-        relationshipChanges: ['彼此的默契进一步加深。'],
-        candidateMemories: [`用户与 ${character?.name} 体验了『${sceneSnapshot?.name}』场景。`],
-        aiReflection: `和你待在一起的时间总是过得很快。`,
-      };
+      const objMatch = cleanJson.match(/\{[\s\S]*\}/);
+      if (objMatch) {
+        try {
+          parsed = JSON.parse(objMatch[0]);
+        } catch {}
+      }
+    }
+
+    // NEVER fabricate a generic template summary when summary parsing fails!
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.summary !== 'string' || !parsed.summary.trim()) {
+      return res.status(502).json({
+        success: false,
+        summaryPending: true,
+        error: '经历总结返回格式异常，已保留完整原始对话记录，未写入空泛模板记忆，请点击重试。',
+      });
     }
 
     res.json({ success: true, summary: parsed });
   } catch (err: any) {
-    return handleAiEndpointError(res, err, 'Offline summary error');
+    return res.status(502).json({
+      success: false,
+      summaryPending: true,
+      error: err?.message || '经历总结生成失败，已保留完整对话记录，请稍后重试。',
+    });
   }
 });
 
@@ -4882,19 +5408,38 @@ ${historyLines.length > 0 ? historyLines.join('\n') : '(近期暂无聊天记录
 4. 关系型主动聊天可自然写出 1~2 句短句（若需多气泡可用换行分隔，但禁止3条同义重复）；天气/电量/日程/用眼等纯事件提醒只写简短1句。
 5. 严格基于真实事件与上下文，严禁编造不存在的聊天内容、时间或天气数据。
 
-【输出格式要求】：
-1. 先用 <think>...</think> 输出思考与决策分析过程（评估时间、用户状态、此前已发与被驳回记录）。
-2. 在 </think> 之后，只输出严格合法的 JSON 对象（不要加多余解释），字段如下：
+【输出格式要求 — 严格结构化 JSON】：
+1. 如需推理，先用 <think>...</think> 输出简短分析（评估当前时间、用户状态、是否适合联系以及是否应开启临时免打扰）。
+2. 在 </think> 之后，只输出一个严格合法的 JSON 对象（不要加多余解释或前后缀文本），字段如下：
 {
-  "action": "SEND_NEW" | "CONTINUE" | "CHANGE_DIRECTION" | "WAIT" | "END_EPISODE",
-  "intent": "本次意图简述",
+  "action": "send" | "defer" | "cancel" | "close",
+  "messages": ["首条自然短消息", "可选第二条短消息"],
+  "pauseProactiveMinutes": 0,
+  "followUpPlan": [
+    {
+      "stepId": "follow_1",
+      "delayMinutes": 15,
+      "messages": ["15分钟未回复时的轻柔补问（不催促不指责）"]
+    },
+    {
+      "stepId": "follow_2",
+      "delayAfterPreviousMinutes": 60,
+      "messages": ["再过1小时仍未回复时的温柔收尾（之后停止追问）"]
+    }
+  ],
+  "followUpAt": null,
+  "eventStatus": "waiting_for_user" | "scheduled" | "answered" | "completed" | "cancelled",
+  "intent": "本次主动联系意图简述",
   "topic": "当前核心话题",
   "inferredUserState": "对用户当前状态的推测",
-  "candidateText": "准备发给用户的微信消息正文；若 action 为 WAIT 或 END_EPISODE 则必须为空字符串 \"\"",
   "decisionSummary": "一句话总结为何做此决策",
-  "suggestedNextAction": "给下一次触发的策略建议",
-  "nextCheckDelayMinutes": 90
-}`;
+  "suggestedNextAction": "给下一次触发的策略建议"
+}
+【结构化字段硬性约束】：
+- action="send" 时，messages 必须为 1~2 条自然微信口语短句；若为天气/电量/日程提醒，messages 只需 1 条且 followUpPlan 可为空数组 []。
+- 若希望在用户未回复时按“15分钟 + 1小时”节奏追问，请在本次调用中一次性生成 followUpPlan（最多 2 步），后续由本地后台定时送达，不再额外调用模型 API。
+- 若判断用户正在上班/睡觉/很忙，或发完这条后暂不宜再打扰，请设置 pauseProactiveMinutes（范围 15~1440 分钟；不需要临时免打扰则填 0）。
+- action 为 defer / cancel / close 时，messages 必须为空数组 []，followUpPlan 为空数组 []；若 defer 且有明确延后时间，可在 followUpAt 填 ISO 时间字符串。`;
 
     const responseText = await callAiService({
       prompt: systemPrompt,
@@ -4909,7 +5454,6 @@ ${historyLines.length > 0 ? historyLines.join('\n') : '(近期暂无聊天记录
     const extracted = extractThinkingAndContent(responseText);
     const rawClean = (extracted.cleanText || '').trim();
 
-    const allowedActions = new Set(['SEND_NEW', 'CONTINUE', 'CHANGE_DIRECTION', 'WAIT', 'END_EPISODE']);
     let parsedJson: any = null;
     try {
       const strippedFence = rawClean.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
@@ -4925,58 +5469,143 @@ ${historyLines.length > 0 ? historyLines.join('\n') : '(近期暂无聊天记录
       }
     }
 
-    const defaultAction = (episode?.sentCount || 0) > 0 ? 'CONTINUE' : 'SEND_NEW';
-    let action = defaultAction;
-    let intent = episode?.currentIntent || triggerType || '主动问候';
-    let topic = episode?.currentTopic || triggerType || '日常互动';
-    let inferredUserState = episode?.inferredUserState || '';
-    let candidateText = '';
-    let decisionSummary = '';
-    let suggestedNextAction = '';
-    let nextCheckDelayMinutes = 90;
-
-    if (parsedJson && typeof parsedJson === 'object') {
-      if (typeof parsedJson.action === 'string' && allowedActions.has(parsedJson.action.trim().toUpperCase())) {
-        action = parsedJson.action.trim().toUpperCase();
-      }
-      if (typeof parsedJson.intent === 'string' && parsedJson.intent.trim()) {
-        intent = parsedJson.intent.trim();
-      }
-      if (typeof parsedJson.topic === 'string' && parsedJson.topic.trim()) {
-        topic = parsedJson.topic.trim();
-      }
-      if (typeof parsedJson.inferredUserState === 'string') {
-        inferredUserState = parsedJson.inferredUserState.trim();
-      }
-      if (typeof parsedJson.candidateText === 'string') {
-        candidateText = parsedJson.candidateText.trim();
-      } else if (typeof parsedJson.text === 'string') {
-        candidateText = parsedJson.text.trim();
-      }
-      if (typeof parsedJson.decisionSummary === 'string') {
-        decisionSummary = parsedJson.decisionSummary.trim();
-      }
-      if (typeof parsedJson.suggestedNextAction === 'string') {
-        suggestedNextAction = parsedJson.suggestedNextAction.trim();
-      }
-      if (typeof parsedJson.nextCheckDelayMinutes === 'number' && parsedJson.nextCheckDelayMinutes > 0) {
-        nextCheckDelayMinutes = Math.min(720, Math.max(15, Math.round(parsedJson.nextCheckDelayMinutes)));
-      }
-    } else if (rawClean) {
-      // Graceful fallback for custom reverse proxies that ignore JSON formatting
-      candidateText = rawClean;
-      decisionSummary = '模型返回自然文本，按兼容模式解析发送';
+    if (!parsedJson || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
+      return res.json({
+        success: false,
+        schemaError: true,
+        error: '模型返回非合法 JSON 结构，已安全拦截，禁止发送原始文本',
+        thinkingProcess: extracted.thinkingProcess,
+        triggerType,
+      });
     }
 
-    if (action === 'WAIT' || action === 'END_EPISODE') {
-      candidateText = '';
+    const rawAction = String(parsedJson.action || '').trim();
+    const lowerAction = rawAction.toLowerCase();
+    let structuredAction: 'send' | 'defer' | 'cancel' | 'close' = 'defer';
+    if (['send', 'send_new', 'continue', 'change_direction'].includes(lowerAction)) {
+      structuredAction = 'send';
+    } else if (['defer', 'wait'].includes(lowerAction)) {
+      structuredAction = 'defer';
+    } else if (lowerAction === 'cancel') {
+      structuredAction = 'cancel';
+    } else if (['close', 'end_episode'].includes(lowerAction)) {
+      structuredAction = 'close';
     }
 
-    const hasDecision = Boolean(parsedJson) || Boolean(candidateText);
+    const legacyAction =
+      structuredAction === 'send'
+        ? (episode?.sentCount || 0) > 0
+          ? 'CONTINUE'
+          : 'SEND_NEW'
+        : structuredAction === 'defer'
+        ? 'WAIT'
+        : 'END_EPISODE';
+
+    const rawMessages = Array.isArray(parsedJson.messages)
+      ? parsedJson.messages
+      : typeof parsedJson.candidateText === 'string' && parsedJson.candidateText.trim()
+      ? [parsedJson.candidateText.trim()]
+      : typeof parsedJson.text === 'string' && parsedJson.text.trim()
+      ? [parsedJson.text.trim()]
+      : [];
+
+    const messages: string[] =
+      structuredAction === 'send'
+        ? rawMessages
+            .filter((m: any) => typeof m === 'string')
+            .map((m: string) => sanitizeReplyText(m).trim())
+            .filter((m: string) => m.length > 0 && !m.startsWith('{') && !m.includes('"followUpPlan"'))
+            .slice(0, 3)
+        : [];
+
+    if (structuredAction === 'send' && messages.length === 0) {
+      return res.json({
+        success: false,
+        schemaError: true,
+        error: '模型返回 send 但缺少有效消息正文，已安全跳过',
+        thinkingProcess: extracted.thinkingProcess,
+        triggerType,
+      });
+    }
+
+    const rawPause = Number(parsedJson.pauseProactiveMinutes || 0);
+    const pauseProactiveMinutes =
+      Number.isFinite(rawPause) && rawPause > 0 ? Math.min(1440, Math.max(15, Math.round(rawPause))) : 0;
+
+    const rawPlan = Array.isArray(parsedJson.followUpPlan) ? parsedJson.followUpPlan : [];
+    const followUpPlan =
+      structuredAction === 'send'
+        ? rawPlan
+            .slice(0, 2)
+            .map((step: any, idx: number) => {
+              const stepMsgs = Array.isArray(step?.messages)
+                ? step.messages
+                    .filter((m: any) => typeof m === 'string')
+                    .map((m: string) => sanitizeReplyText(m).trim())
+                    .filter((m: string) => m.length > 0 && !m.startsWith('{'))
+                    .slice(0, 2)
+                : [];
+              if (stepMsgs.length === 0) return null;
+              if (idx === 0) {
+                const d = Number(step?.delayMinutes);
+                return {
+                  stepId: typeof step?.stepId === 'string' && step.stepId.trim() ? step.stepId.trim() : 'follow_1',
+                  delayMinutes: Number.isFinite(d) && d >= 5 && d <= 120 ? Math.round(d) : 15,
+                  messages: stepMsgs,
+                  status: 'pending',
+                };
+              }
+              const dPrev = Number(step?.delayAfterPreviousMinutes ?? step?.delayMinutes);
+              return {
+                stepId: typeof step?.stepId === 'string' && step.stepId.trim() ? step.stepId.trim() : 'follow_2',
+                delayAfterPreviousMinutes: Number.isFinite(dPrev) && dPrev >= 15 && dPrev <= 240 ? Math.round(dPrev) : 60,
+                messages: stepMsgs,
+                status: 'pending',
+              };
+            })
+            .filter(Boolean)
+        : [];
+
+    const validStatuses = new Set(['waiting_for_user', 'scheduled', 'answered', 'completed', 'cancelled']);
+    const eventStatus =
+      typeof parsedJson.eventStatus === 'string' && validStatuses.has(parsedJson.eventStatus.trim())
+        ? parsedJson.eventStatus.trim()
+        : structuredAction === 'send'
+        ? followUpPlan.length > 0
+          ? 'waiting_for_user'
+          : 'completed'
+        : structuredAction === 'cancel'
+        ? 'cancelled'
+        : structuredAction === 'close'
+        ? 'completed'
+        : 'scheduled';
+
+    const intent =
+      typeof parsedJson.intent === 'string' && parsedJson.intent.trim()
+        ? parsedJson.intent.trim()
+        : episode?.currentIntent || triggerType || '主动问候';
+    const topic =
+      typeof parsedJson.topic === 'string' && parsedJson.topic.trim()
+        ? parsedJson.topic.trim()
+        : episode?.currentTopic || triggerType || '日常互动';
+    const inferredUserState =
+      typeof parsedJson.inferredUserState === 'string' ? parsedJson.inferredUserState.trim() : '';
+    const decisionSummary =
+      typeof parsedJson.decisionSummary === 'string' ? parsedJson.decisionSummary.trim() : '';
+    const suggestedNextAction =
+      typeof parsedJson.suggestedNextAction === 'string' ? parsedJson.suggestedNextAction.trim() : '';
+    const followUpAt = parsedJson.followUpAt ?? null;
+    const candidateText = messages.join('\n');
 
     res.json({
-      success: hasDecision,
-      action,
+      success: true,
+      action: legacyAction,
+      structuredAction,
+      messages,
+      pauseProactiveMinutes,
+      followUpPlan,
+      followUpAt,
+      eventStatus,
       intent,
       topic,
       inferredUserState,
@@ -4984,11 +5613,20 @@ ${historyLines.length > 0 ? historyLines.join('\n') : '(近期暂无聊天记录
       candidateText,
       decisionSummary,
       suggestedNextAction,
-      nextCheckDelayMinutes,
+      nextCheckDelayMinutes: pauseProactiveMinutes > 0 ? pauseProactiveMinutes : 90,
       thinkingProcess: extracted.thinkingProcess,
       triggerType,
     });
   } catch (error: any) {
+    const msg = String(error?.message || '');
+    const status = Number(error?.status || error?.statusCode || 0);
+    if (status === 503 || /\b503\b|UNAVAILABLE|overloaded|high demand|model busy/i.test(msg)) {
+      return res.status(503).json({
+        success: false,
+        isServiceBusy: true,
+        error: '当前模型繁忙，请稍后重试',
+      });
+    }
     return handleAiEndpointError(res, error, 'Proactive generate');
   }
 });

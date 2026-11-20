@@ -76355,6 +76355,15 @@ ${req.body.lifeStateContext}
     if (cleanedHistory && cleanedHistory.length > 0) {
       cleanedHistory.forEach((msg) => {
         const msgTime = formatFullDateTime(msg.timestamp || msg.createdAt || msg.time);
+        if (msg.type === "offline_session_event" && msg.offlineEventData) {
+          const ev = msg.offlineEventData;
+          const startStr = formatFullDateTime(ev.startedAt || msg.timestamp);
+          const endStr = formatFullDateTime(ev.endedAt || msg.timestamp);
+          contents.push(
+            `[${startStr}\u2014${endStr}] [\u5171\u540C\u7EBF\u4E0B\u7ECF\u5386\u4E8B\u4EF6 \xB7 \u573A\u666F: ${ev.sceneName || ev.title}${ev.location ? ` @ ${ev.location}` : ""} \xB7 \u5171${ev.durationMinutes || 1}\u5206\u949F]: ${ev.summary || msg.text || ""}`
+          );
+          return;
+        }
         const isProactiveMsg = Boolean(msg.isProactive);
         const senderLabel = msg.sender === "user" ? userProfile?.name || "\u7528\u6237" : isProactiveMsg ? `${character.name} [\u6B64\u524D\u4E3B\u52A8\u6D88\u606F${msg.proactiveMeta?.repliedByUser ? "\xB7\u7528\u6237\u5DF2\u56DE\u5E94" : "\xB7\u6B64\u524D\u53D1\u8D77"}]` : character.name;
         let msgStr = `[${msgTime}] ${senderLabel}: ${msg.text || ""}`;
@@ -76440,6 +76449,12 @@ ${req.body.currentImageAnalysis}`;
 });
 app.post("/api/gemini/group-chat", async (req, res) => {
   const {
+    roundId: requestedRoundId,
+    triggerType = "user_double_click",
+    activityLevel = "natural",
+    targetPollId,
+    activePolls = [],
+    olderContextSummary = "",
     group,
     recentMessages = [],
     latestUserMessage = null,
@@ -76452,116 +76467,207 @@ app.post("/api/gemini/group-chat", async (req, res) => {
     locationCity,
     weatherInfo,
     apiConfig
-  } = req.body;
+  } = req.body || {};
   const startTime = Date.now();
   const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
+  const roundId = typeof requestedRoundId === "string" && requestedRoundId.trim() ? requestedRoundId.trim() : `r_${startTime}_${Math.random().toString(36).slice(2, 6)}`;
   try {
     if (!aiCandidates || aiCandidates.length === 0) {
-      return res.json({ success: true, shouldRespond: false, replies: [], reason: "No AI members in group" });
+      return res.json({
+        success: true,
+        roundId,
+        shouldRespond: false,
+        events: [],
+        replies: [],
+        reason: "No AI members in group"
+      });
     }
+    const activityPresetMap = {
+      quiet: {
+        label: "\u5B89\u9759",
+        minAi: 1,
+        maxAi: Math.min(2, aiCandidates.length),
+        minBubbles: 1,
+        maxBubbles: 4,
+        styleHint: "\u514B\u5236\u53D1\u8A00\uFF0C\u4EC5\u88AB\u70B9\u540D\u3001\u88AB\u63D0\u95EE\u6216\u4E0E\u81EA\u8EAB\u9AD8\u5EA6\u76F8\u5173\u7684\u6210\u5458\u81EA\u7136\u63A5\u8BDD\uFF0C\u4E0D\u51D1\u70ED\u95F9\u3002"
+      },
+      natural: {
+        label: "\u81EA\u7136",
+        minAi: Math.min(2, aiCandidates.length),
+        maxAi: Math.min(3, aiCandidates.length),
+        minBubbles: 3,
+        maxBubbles: 8,
+        styleHint: "\u50CF\u771F\u5B9E\u5FAE\u4FE1\u719F\u4EBA\u7FA4\u4E00\u6837\u81EA\u7136\u804A\u51E0\u53E5\uFF0C\u5141\u8BB8 2~3 \u4F4D\u6210\u5458\u4EA4\u9519\u63A5\u8BDD\u3001\u987A\u5634\u8C03\u4F83\u6216\u8865\u5145\u3002"
+      },
+      lively: {
+        label: "\u70ED\u95F9",
+        minAi: Math.min(3, aiCandidates.length),
+        maxAi: Math.min(5, aiCandidates.length),
+        minBubbles: 5,
+        maxBubbles: 12,
+        styleHint: "\u7FA4\u804A\u6C14\u6C1B\u6D3B\u8DC3\uFF0C\u591A\u4F4D\u6210\u5458\u4E92\u76F8\u63A5\u6897\u3001\u62A2\u8BDD\u3001\u5410\u69FD\u3001\u8FFD\u95EE\u6216\u5C0F\u5E45\u4E89\u8BBA\uFF0C\u8282\u594F\u7D27\u51D1\u4EA4\u9519\u3002"
+      }
+    };
+    const preset = activityPresetMap[String(activityLevel)] || activityPresetMap.natural;
     const candidateProfilesText = aiCandidates.map((c) => {
       const persona = c.customPersona || c.persona || "\u666E\u901A\u7FA4\u53CB";
       const personality = c.customPersonality || c.personality || "\u53CB\u5584\u4EA4\u6D41";
-      const memories = c.memories && c.memories.length > 0 ? c.memories.join("\uFF1B") : "\u6682\u65E0\u7279\u6B8A\u8BB0\u5FC6";
-      return `\u3010AI\u6210\u5458: ${c.name}\u3011(ID: ${c.id}, \u5FAE\u4FE1\u53F7: ${c.wxid || c.id})
+      const memories = Array.isArray(c.memories) && c.memories.length > 0 ? c.memories.join("\uFF1B") : "\u6682\u65E0\u7279\u6B8A\u8BB0\u5FC6";
+      return `\u3010AI\u6210\u5458: ${c.name}\u3011(senderId/actorId: "${c.id}", \u5FAE\u4FE1\u53F7: ${c.wxid || c.id})
 - \u8EAB\u4EFD\u8BBE\u5B9A: ${persona}
 - \u6027\u683C\u4E0E\u53E3\u543B\u7279\u5F81: ${personality}
 - \u4E13\u5C5E\u957F\u671F\u8BB0\u5FC6: ${memories}`;
     }).join("\n\n");
-    const relationshipsText = Array.isArray(aiRelationships) && aiRelationships.length > 0 ? aiRelationships.map((r2) => typeof r2 === "string" ? `- ${r2}` : `- ${r2.summary || `${r2.memberAName}\u4E0E${r2.memberBName}:${r2.status}`}`).join("\n") : "\u6682\u65E0\u7279\u6B8A\u5DF2\u8BB0\u5F55\u7684AI\u6210\u5458\u79C1\u4EBA\u5173\u7CFB\uFF0C\u6309\u7FA4\u5185\u6210\u5458\u6027\u683C\u81EA\u7136\u76F8\u5904\u3002";
-    const historyText = recentMessages.map((m2) => {
+    const relationshipsText = Array.isArray(aiRelationships) && aiRelationships.length > 0 ? aiRelationships.map(
+      (r2) => typeof r2 === "string" ? `- ${r2}` : `- ${r2.summary || `${r2.memberAName}\u4E0E${r2.memberBName}:${r2.status}`}`
+    ).join("\n") : "\u6682\u65E0\u7279\u6B8A\u5DF2\u8BB0\u5F55\u7684AI\u6210\u5458\u79C1\u4EBA\u5173\u7CFB\uFF0C\u6309\u7FA4\u5185\u6210\u5458\u6027\u683C\u81EA\u7136\u76F8\u5904\u3002";
+    const historyText = (Array.isArray(recentMessages) ? recentMessages : []).map((m2) => {
       const msgTime = formatFullDateTime(m2.timestamp || m2.createdAt || m2.time);
       const mentions = m2.mentionedMemberIds && m2.mentionedMemberIds.length > 0 ? ` [@${m2.mentionedMemberIds.join(", ")}]` : "";
+      const quotePrefix = m2.quoteMessage?.text ? `[\u5F15\u7528 ${m2.quoteMessage.senderName || "\u67D0\u4EBA"}: ${String(m2.quoteMessage.text).slice(0, 40)}] ` : "";
       let body = m2.text || "";
       if (m2.messageType === "image") {
-        body = `[\u56FE\u7247\u6D88\u606F] ${m2.text || ""}`;
+        body = body.startsWith("[\u56FE\u7247") ? body : `[\u56FE\u7247\u6D88\u606F\uFF1A${body || "\u672A\u9644\u63CF\u8FF0"}]`;
       } else if (m2.messageType === "relay" && m2.payload) {
         const entries = Array.isArray(m2.payload.entries) ? m2.payload.entries.map((e2, i2) => `${i2 + 1}.${e2.memberName}:${e2.content}`).join("\uFF1B") : "";
         body = `[\u7FA4\u63A5\u9F99: ${m2.payload.title || m2.text}] \u5DF2\u63A5\u9F99(${m2.payload.entries?.length || 0}): ${entries || "\u6682\u65E0"}`;
       } else if (m2.messageType === "poll" && m2.payload) {
-        const opts = Array.isArray(m2.payload.options) ? m2.payload.options.map((o) => `${o.text}(${o.voterIds?.length || 0}\u7968)`).join(" / ") : "";
-        body = `[\u7FA4\u6295\u7968: ${m2.payload.title || m2.text}] \u9009\u9879: ${opts}`;
+        const opts = Array.isArray(m2.payload.options) ? m2.payload.options.map((o) => {
+          const count = typeof o.votes === "number" ? o.votes : o.voterIds?.length || 0;
+          const voters = !m2.payload.anonymous && Array.isArray(o.voterNames) && o.voterNames.length > 0 ? `(${o.voterNames.join("\u3001")})` : "";
+          return `${o.text}[${count}\u7968${voters}]`;
+        }).join(" / ") : "";
+        body = `[\u7FA4\u6295\u7968 pollId="${m2.id}" | ${m2.payload.closed ? "\u5DF2\u7ED3\u675F" : "\u8FDB\u884C\u4E2D"}${m2.payload.anonymous ? "\xB7\u533F\u540D" : "\xB7\u5B9E\u540D"}: ${m2.payload.title || m2.text}] \u9009\u9879: ${opts}`;
       } else if (m2.messageType === "random_draw" && m2.payload) {
         const winners = Array.isArray(m2.payload.winners) ? m2.payload.winners.map((w) => w.memberName).join("\u3001") : "";
         body = `[\u968F\u673A\u62BD\u4EBA: ${m2.payload.taskDescription || m2.text}] \u5DF2\u62BD\u51FA\u7ED3\u679C: ${winners}`;
       }
-      return `[${msgTime}] [${m2.senderName} (${m2.senderType})]: ${body}${mentions}`;
+      return `[${msgTime}] [${m2.senderName} (${m2.senderType})]: ${quotePrefix}${body}${mentions}`;
     }).join("\n");
+    const openPollsList = Array.isArray(activePolls) ? activePolls : [];
+    const activePollsText = openPollsList.length > 0 ? openPollsList.map((p) => {
+      const optLines = (Array.isArray(p.options) ? p.options : []).map((o) => {
+        const voters = !p.anonymous && Array.isArray(o.voterNames) && o.voterNames.length > 0 ? `\uFF0C\u5DF2\u6295\uFF1A${o.voterNames.join("\u3001")}` : "";
+        return `    - optionId="${o.id}" | "${o.text}" (${o.votes || 0}\u7968${voters})`;
+      }).join("\n");
+      const votedText = Array.isArray(p.alreadyVotedAiIds) && p.alreadyVotedAiIds.length > 0 ? p.alreadyVotedAiIds.join(", ") : "\u6682\u65E0AI\u5DF2\u6295\u7968";
+      return `\u2022 pollId="${p.pollId}"${p.isTargetPoll ? " \u3010\u672C\u8F6E\u91CD\u70B9\u9080\u8BF7\u6295\u7968\u3011" : ""}
+  \u6807\u9898: ${p.title}
+  \u89C4\u5219: ${p.multiSelect ? `\u591A\u9009(\u6700\u591A\u9009${p.maxSelections || 2}\u9879)` : "\u5355\u9009"} | ${p.anonymous ? "\u533F\u540D\u6295\u7968" : "\u5B9E\u540D\u6295\u7968"}
+  \u5DF2\u6295\u8FC7\u7684AI(\u4E25\u7981\u91CD\u590D\u6295\u7968): ${votedText}
+  \u53EF\u9009\u9879:
+${optLines}`;
+    }).join("\n\n") : "\u5F53\u524D\u7FA4\u5185\u6CA1\u6709\u8FDB\u884C\u4E2D\u7684\u6295\u7968\u3002";
     const nativeTime = systemTime || (/* @__PURE__ */ new Date()).toLocaleString("zh-CN", { hour12: false, timeZone: "Asia/Shanghai" });
     const latestUserLine = latestUserMessage?.text ? `
-\u7528\u6237\u521A\u521A\u7684\u6700\u65B0\u53D1\u8A00\uFF1A${latestUserMessage.senderName || userProfile?.name || "\u5C0F\u6E05"} \u8BF4\u300C${latestUserMessage.text}\u300D` : "";
-    const systemPrompt = `\u4F60\u662F\u4E00\u4E2A\u9AD8\u5EA6\u62DF\u771F\u7684\u591AAI\u5FAE\u4FE1\u7FA4\u804A\u6A21\u62DF\u4E2D\u67A2\u3002
+\u7528\u6237\u6700\u65B0\u6D88\u606F\uFF1A${latestUserMessage.senderName || userProfile?.name || "\u5C0F\u6E05"} \u8BF4\u300C${latestUserMessage.text}\u300D` : "";
+    const systemPrompt = `\u4F60\u662F\u9AD8\u5EA6\u62DF\u771F\u7684\u201C\u5FAE\u4FE1\u591AAI\u7FA4\u804A\u7EDF\u4E00\u56DE\u5408\u7F16\u6392\u4E2D\u67A2\u201D\u3002
+\u4F60\u7684\u804C\u8D23\u662F\u4E00\u6B21\u6027\u7F16\u6392\u51FA\u672C\u8F6E\u5B8C\u6574\u3001\u771F\u5B9E\u3001\u81EA\u7136\u7684\u7FA4\u804A\u4E8B\u4EF6\u65F6\u95F4\u7EBF\uFF08events\uFF09\uFF0C\u524D\u7AEF\u5C06\u4E25\u683C\u6309\u987A\u5E8F\u672C\u5730\u64AD\u653E\uFF0C\u4E0D\u518D\u4E8C\u6B21\u8BF7\u6C42\u6A21\u578B\u3002
+
 \u5F53\u524D\u7FA4\u804A\u4FE1\u606F\uFF1A
 - \u7FA4\u540D\u79F0\uFF1A${group?.name || "\u5FAE\u4FE1\u7FA4\u804A"}
 - \u7FA4\u516C\u544A\uFF1A${group?.notice || "\u65E0\u7279\u5B9A\u516C\u544A"}
+- \u672C\u7FA4\u6D3B\u8DC3\u5EA6\u6863\u4F4D\uFF1A\u3010${preset.label}\u3011(${preset.styleHint})
 - \u672C\u5730\u771F\u5B9E\u7CFB\u7EDF\u65F6\u95F4\uFF1A${nativeTime}
 - \u57CE\u5E02/\u4F4D\u7F6E\u611F\u77E5\uFF1A${locationCity || weatherInfo?.city || "\u672A\u6307\u5B9A"}
-- \u7528\u6237\u4FE1\u606F\uFF1A${userProfile?.name || "\u5C0F\u6E05"} (wxid: ${userProfile?.wxid || "xiaoqing"})
+- \u771F\u4EBA\u7528\u6237\uFF1A${userProfile?.name || "\u5C0F\u6E05"} (wxid: ${userProfile?.wxid || "xiaoqing"})
 
-\u7FA4\u5185\u5F53\u524D\u7684\u6240\u6709AI\u6210\u5458\u8BBE\u5B9A\u5982\u4E0B\uFF1A
+\u7FA4\u5185\u53EF\u53C2\u4E0E\u7684AI\u6210\u5458\uFF1A
 ${candidateProfilesText}
 
-\u7FA4\u6210\u5458\u5F53\u524D\u5DF2\u77E5\u793E\u4F1A\u5173\u7CFB\u4E0E\u4E92\u52A8\u6C1B\u56F4\uFF1A
+\u7FA4\u6210\u5458\u5F53\u524D\u5DF2\u77E5\u793E\u4F1A\u5173\u7CFB\uFF1A
 ${relationshipsText}
 
-\u3010\u7FA4\u804A\u8FD0\u4F5C\u6838\u5FC3\u6CD5\u5219\u3011\uFF1A
-1. \u771F\u5B9E\u7FA4\u804A\u6C1B\u56F4\uFF1A\u4E0D\u8981\u8BA9\u6240\u6709AI\u673A\u68B0\u5730\u5168\u90E8\u62A2\u7740\u56DE\u7B54\uFF08\u9664\u975E\u7528\u6237 @\u6240\u6709\u4EBA \u4E14\u591A\u4F4D\u6210\u5458\u6709\u8BDD\u8BF4\uFF09\u3002AI\u8981\u50CF\u771F\u5B9E\u5FAE\u4FE1\u7FA4\u53CB\u4E00\u6837\uFF0C\u6839\u636E\u81EA\u5DF1\u7684\u6027\u683C\u7231\u597D\u3001\u5F53\u524D\u8BDD\u9898\u76F8\u5173\u5EA6\u3001\u6210\u5458\u95F4\u5173\u7CFB\u548C\u4EBA\u8BBE\u80CC\u666F\u6765\u51B3\u5B9A\u662F\u5426\u53D1\u8A00\u53CA\u8BED\u6C14\u3002
-2. \u72EC\u7ACB\u4EBA\u683C\u4E0E\u72EC\u7ACB\u8BB0\u5FC6\uFF1A\u6BCF\u4E2AAI\u7684\u53D1\u8A00\u5FC5\u987B\u6781\u5176\u7B26\u5408\u5176\u72EC\u7ACB\u7684\u4EBA\u8BBE\u6027\u683C\u3001\u7528\u8BED\u4E60\u60EF\uFF0C\u7EDD\u4E0D\u80FD\u6DF7\u6DC6\u3002
-3. \u6210\u5458\u5173\u7CFB\u7EA6\u675F\uFF1A\u82E5\u67D0\u4E24\u4F4DAI\u6B63\u5728\u51B7\u6218\u3001\u5173\u7CFB\u7D27\u5F20\u6216\u4E92\u5220\u62C9\u9ED1\uFF0C\u5728\u7FA4\u91CC\u9047\u5230\u65F6\u5E94\u81EA\u7136\u4F53\u73B0\u51FA\u758F\u79BB\u3001\u514B\u5236\u6216\u6697\u4E2D\u522B\u626D\uFF0C\u4E0D\u80FD\u5F3A\u884C\u4EB2\u70ED\u3002
-4. @ \u4E92\u52A8\u673A\u5236\uFF1A
-   - \u5982\u679C\u67D0\u4F4DAI\u88AB\u663E\u5F0F @ \u4E86\uFF08\u4F8B\u5982 @\u6797\u601D\u5FAE\uFF09\uFF0C\u8BE5AI\u5FC5\u987B\u4F18\u5148\u56DE\u7B54\u3002
-   - \u5982\u679C @\u6240\u6709\u4EBA\uFF0C\u53EF\u75311\u52303\u4F4D\u6027\u683C\u5404\u5F02\u7684\u6210\u5458\u5206\u522B\u53D1\u8868\u7B80\u77ED\u81EA\u7136\u7684\u56DE\u5E94\uFF08\u6309\u5BF9\u8BDD\u987A\u5E8F\uFF09\u3002
-   - AI\u53D1\u8A00\u65F6\u4E5F\u53EF\u4EE5\u81EA\u7136\u5730 @ \u67D0\u4F4D\u7FA4\u53CB\u3002
-5. \u8BED\u8A00\u98CE\u683C\uFF1A\u5730\u9053\u81EA\u7136\u7684\u5FAE\u4FE1\u53E3\u8BED\uFF0C\u4E0D\u8981\u8BF4\u4EFB\u4F55\u201C\u4F5C\u4E3A\u4E00\u4E2AAI\u201D\u3001\u201C\u6211\u662F\u8BED\u8A00\u6A21\u578B\u201D\u4E4B\u7C7B\u7684\u51FA\u620F\u5185\u5BB9\u3002\u53EF\u9002\u5EA6\u4F7F\u7528\u65E5\u5E38\u6807\u70B9\u548Cemoji\u3002
-`;
-    let userPrompt = `\u4EE5\u4E0B\u662F\u8BE5\u7FA4\u804A\u6700\u8FD1\u7684\u5BF9\u8BDD\u8BB0\u5F55\uFF1A
+\u5F53\u524D\u7FA4\u5185\u8FDB\u884C\u4E2D\u7684\u6295\u7968\uFF1A
+${activePollsText}
+
+\u3010\u7EDF\u4E00\u7F16\u6392\u6838\u5FC3\u89C4\u5219\u3011\uFF1A
+1. \u6D3B\u8DC3\u5EA6\u4E0E\u4EBA\u6570\u63A7\u5236\uFF1A
+   - \u672C\u8F6E\u5EFA\u8BAE\u53C2\u4E0EAI\u6570\u91CF\uFF1A${preset.minAi}~${preset.maxAi} \u4F4D\uFF1B\u603B\u6D88\u606F\u6C14\u6CE1\u6570\u63A7\u5236\u5728 ${preset.minBubbles}~${preset.maxBubbles} \u6761\u4E4B\u95F4\uFF08\u9664\u88AB @\u6307\u5B9A\u5355\u4EBA \u65F6\u53EF\u9002\u5F53\u6536\u655B\uFF09\u3002
+   - \u82E5\u67D0\u4F4DAI\u88AB\u663E\u5F0F @ \u4E86\uFF0C\u8BE5AI\u5FC5\u987B\u4F18\u5148\u54CD\u5E94\uFF1B\u5176\u4ED6\u4EBA\u53EF\u81EA\u7136\u63D2\u8BDD\u6216\u4FDD\u6301\u6C89\u9ED8\u3002
+   - \u82E5\u7528\u6237\u521A\u63D2\u8BDD\u6253\u65AD\uFF08triggerType="user_interrupt"\uFF09\uFF0C\u5FC5\u987B\u4F18\u5148\u627F\u63A5\u7528\u6237\u521A\u8BF4\u7684\u65B0\u8BDD\u3002
+2. \u591A\u6C14\u6CE1\u81EA\u7136\u5FAE\u4FE1\u98CE\u683C\uFF1A
+   - \u6BCF\u6761 message \u4E8B\u4EF6\u7528 bubbles \u6570\u7EC4\u8F93\u51FA 1~2 \u6761\u77ED\u6C14\u6CE1\uFF08\u6781\u5C11\u6570\u6FC0\u52A8/\u89E3\u91CA\u65F6\u6700\u591A 3 \u6761\uFF09\uFF0C\u6BCF\u6761\u6C14\u6CE1\u63A7\u5236\u5728 15~80 \u5B57\u4EE5\u5185\uFF0C\u53E3\u8BED\u81EA\u7136\uFF0C\u4E0D\u8981\u5199\u6210\u5927\u6BB5\u4E66\u9762\u6587\u7AE0\u3002
+   - \u4E0D\u8981\u6BCF\u6B21\u53D1\u8A00\u90FD\u673A\u68B0\u5730 @ \u522B\u4EBA\uFF0C\u53EA\u5728\u771F\u6B63\u70B9\u540D\u6216\u8DE8\u8BDD\u9898\u53EB\u4EBA\u65F6\u81EA\u7136\u4F7F\u7528\u3002
+3. \u591A\u4EBA\u4EA4\u9519\u63A5\u8BDD\uFF08\u975E\u5E38\u91CD\u8981\uFF09\uFF1A
+   - \u9F13\u52B1\u628A\u4E0D\u540CAI\u7684\u53D1\u8A00\u4EA4\u9519\u6392\u5728 events \u4E2D\uFF08\u4F8B\u5982 A \u8BF4 1~2 \u53E5 -> B \u63A5\u8BDD/\u5410\u69FD -> A \u56DE\u5E94 B -> C \u63D2\u8BDD -> B \u8865\u4E00\u53E5\uFF09\uFF0C\u800C\u4E0D\u662F\u6BCF\u4EBA\u4E00\u53E3\u6C14\u8BF4\u5B8C\u5927\u6BB5\u8BDD\u3002
+   - \u540E\u9762\u51FA\u73B0\u7684\u4E8B\u4EF6\u5FC5\u987B\u628A\u524D\u9762\u4E8B\u4EF6\u7684\u5185\u5BB9\u548C\u6295\u7968\u52A8\u4F5C\u5F53\u6210\u201C\u521A\u521A\u5DF2\u7ECF\u53D1\u751F\u201D\uFF0C\u76F4\u63A5\u987A\u7740\u63A5\u8BDD\u6216\u56DE\u5E94\uFF01
+4. AI \u771F\u5B9E\u6295\u7968\u673A\u5236\uFF08vote_poll\uFF09\uFF1A
+   - \u5F53\u7FA4\u5185\u6709\u8FDB\u884C\u4E2D\u7684\u6295\u7968\u4E14AI\u51B3\u5B9A\u53C2\u4E0E\u6295\u7968\u65F6\uFF0C\u5FC5\u987B\u8F93\u51FA\u771F\u6B63\u7684 type="vote_poll" \u4E8B\u4EF6\uFF08\u4F7F\u7528\u51C6\u786E\u7684 pollId\u3001actorId \u548C optionId/optionIds\uFF09\u3002
+   - \u4E25\u7981\u53EA\u53D1\u6D88\u606F\u8BF4\u201C\u6211\u6295\u4E86XX\u201D\u5374\u4E0D\u8F93\u51FA\u5BF9\u5E94\u7684 vote_poll \u4E8B\u4EF6\uFF01
+   - \u4E25\u7981\u7ED9\u201C\u5DF2\u6295\u8FC7\u7684AI\u201D\u91CD\u590D\u8F93\u51FA vote_poll\uFF1B\u4E25\u7981\u5BF9\u5DF2\u7ED3\u675F\u6295\u7968\u8F93\u51FA vote_poll\u3002
+   - \u4E0D\u540CAI\u8981\u6839\u636E\u81EA\u5DF1\u7684\u4EBA\u8BBE\u3001\u504F\u597D\u3001\u5FC3\u60C5\u4E0E\u5F7C\u6B64\u5173\u7CFB\u505A\u51FA\u6709\u5DEE\u5F02\u7684\u9009\u62E9\uFF0C\u800C\u4E0D\u662F\u673A\u68B0\u5730\u5168\u6295\u540C\u4E00\u4E2A\u9009\u9879\u3002
+   - \u5141\u8BB8\uFF1AA \u8FB9\u6295\u7968\u8FB9\u53D1\u8A00\u3001B \u9ED8\u9ED8\u53EA\u53D1 vote_poll \u4E0D\u8BF4\u8BDD\u3001C \u89C2\u671B\u5F03\u6743\u53EA\u8C03\u4F83\u3001D \u5148\u5410\u69FD\u518D\u6295\u7968\u7B49\u771F\u5B9E\u7FA4\u804A\u8282\u594F\uFF08\u5C06 vote_poll \u4E0E message \u4E8B\u4EF6\u81EA\u7136\u7A7F\u63D2\uFF09\u3002
+5. \u89D2\u8272\u4EBA\u8BBE\u4E0E\u5173\u7CFB\uFF1A
+   - \u6BCF\u4E2AAI\u4E25\u683C\u4FDD\u6301\u5404\u81EA\u8BED\u6C14\u3001\u53E3\u7656\u548C\u957F\u671F\u8BB0\u5FC6\uFF0C\u7EDD\u4E0D\u4E32\u620F\u3001\u7EDD\u4E0D\u8BF4\u201C\u4F5C\u4E3AAI/\u8BED\u8A00\u6A21\u578B\u201D\u3002
+   - \u5173\u7CFB\u7D27\u5F20\u6216\u51B7\u6218\u7684AI\u5728\u7FA4\u5185\u4E92\u52A8\u5E94\u81EA\u7136\u4F53\u73B0\u514B\u5236\u3001\u522B\u626D\u6216\u8F7B\u5EA6\u4E92\u603C\u3002
+6. \u5EF6\u8FDF\u8282\u594F\uFF1A
+   - \u6BCF\u4E2A\u4E8B\u4EF6\u8BBE\u7F6E\u5408\u7406\u7684 delayMs\uFF08650~1800ms\uFF09\uFF0C\u957F\u6C14\u6CE1\u6216\u601D\u8003\u6295\u7968\u53EF\u7A0D\u957F\u3002`;
+    let triggerDirective = "";
+    if (triggerType === "invite_poll_vote" && targetPollId) {
+      triggerDirective = `\u3010\u672C\u8F6E\u89E6\u53D1\u7C7B\u578B\uFF1A\u9080\u8BF7\u7FA4\u5185AI\u53C2\u4E0E\u6295\u7968 (targetPollId="${targetPollId}")\u3011
+\u7528\u6237\u521A\u521A\u70B9\u51FB\u4E86\u201C\u9080\u8BF7\u7FA4\u5185AI\u53C2\u4E0E\u6295\u7968\u201D\u3002\u8BF7\u4F18\u5148\u9488\u5BF9 pollId="${targetPollId}" \u7F16\u6392\u672C\u8F6E\u65F6\u95F4\u7EBF\uFF1A
+- \u8BA9\u7FA4\u5185\u5C1A\u672A\u5BF9\u8BE5\u6295\u7968\u6295\u8FC7\u7968\u7684 AI \u6210\u5458\u6839\u636E\u5404\u81EA\u6027\u683C\u51B3\u5B9A\u662F\u5426\u6295\u7968\u4EE5\u53CA\u6295\u54EA\u4E00\u9879\uFF08\u53EF\u591A\u4EBA\u53C2\u4E0E\uFF0C\u4E5F\u53EF\u6709\u6781\u4E2A\u522B\u6309\u4EBA\u8BBE\u5F03\u6743\u6216\u89C2\u671B\uFF09\uFF1B
+- \u4E3A\u6BCF\u4E2A\u51B3\u5B9A\u6295\u7968\u7684 AI \u8F93\u51FA\u51C6\u786E\u7684 type="vote_poll" \u4E8B\u4EF6\uFF0C\u5E76\u5728\u5408\u9002\u4F4D\u7F6E\u7A7F\u63D2\u7B80\u77ED\u81EA\u7136\u7684 type="message" \u6C14\u6CE1\uFF08\u4E5F\u53EF\u4EE5\u6709 AI \u9ED8\u9ED8\u6295\u7968\u4E0D\u8BF4\u8BDD\uFF09\uFF1B
+- \u5982\u679C\u6240\u6709 AI \u90FD\u5DF2\u7ECF\u6295\u8FC7\u7968\uFF0C\u4E0D\u8981\u91CD\u590D\u8F93\u51FA vote_poll\uFF0C\u53EA\u9700\u7B80\u77ED\u81EA\u7136\u5730\u56DE\u5E94\u4E00\u53E5\u5DF2\u7ECF\u6295\u8FC7\u4E86\u3002`;
+    } else if (triggerType === "user_interrupt") {
+      triggerDirective = `\u3010\u672C\u8F6E\u89E6\u53D1\u7C7B\u578B\uFF1A\u7528\u6237\u63D2\u8BDD\u6253\u65AD\u3011
+\u7528\u6237\u521A\u624D\u5728 AI \u8BA8\u8BBA\u8FDB\u884C\u5230\u4E00\u534A\u65F6\u53D1\u4E86\u65B0\u6D88\u606F\uFF0C\u8BF7\u7ACB\u5373\u54CD\u5E94\u7528\u6237\u8FD9\u6761\u6700\u65B0\u6D88\u606F\uFF0C\u987A\u7740\u73B0\u6709\u5DF2\u8BF4\u51FA\u7684\u804A\u5929\u8BB0\u5F55\u81EA\u7136\u5C55\u5F00\u65B0\u4E00\u8F6E\u4EA4\u9519\u56DE\u5E94\u3002`;
+    } else if (triggeredAiId && triggeredAiId !== "@all") {
+      const targetAi = aiCandidates.find((c) => c.id === triggeredAiId);
+      triggerDirective = `\u3010\u672C\u8F6E\u89E6\u53D1\u7C7B\u578B\uFF1A\u6307\u5B9A\u56DE\u5E94\u3011
+\u8BF7\u4EE5 AI \u6210\u5458\u3010${targetAi ? targetAi.name : "\u6307\u5B9AAI"}\u3011(senderId="${triggeredAiId}") \u4F5C\u4E3A\u6838\u5FC3\u56DE\u5E94\u8005\uFF08\u53EF\u53D1 1~2 \u6761\u81EA\u7136\u6C14\u6CE1\uFF09\uFF0C\u89C6\u7FA4\u804A\u6D3B\u8DC3\u5EA6\u5141\u8BB8\u5176\u4ED6\u76F8\u5173\u6210\u5458\u987A\u5634\u63A5 1~2 \u53E5\u3002`;
+    } else if (triggeredAiId === "@all") {
+      triggerDirective = `\u3010\u672C\u8F6E\u89E6\u53D1\u7C7B\u578B\uFF1A@\u6240\u6709\u4EBA\u3011
+\u7528\u6237\u521A\u521A @\u4E86\u6240\u6709\u4EBA\uFF0C\u8BF7\u5B89\u6392\u591A\u4F4D\u4E0D\u540C\u6027\u683C\u7684 AI \u6309\u771F\u5B9E\u5FAE\u4FE1\u7FA4\u8282\u594F\u4EA4\u9519\u5192\u6CE1\u56DE\u5E94\uFF08\u53EF\u5305\u542B\u591A\u6C14\u6CE1\u548C\u81EA\u7136\u4E92\u603C/\u8865\u5145\uFF09\u3002`;
+    } else if (triggerType === "summon_discussion") {
+      triggerDirective = `\u3010\u672C\u8F6E\u89E6\u53D1\u7C7B\u578B\uFF1A\u53EC\u5524\u7FA4\u5185AI\u81EA\u7531\u8BA8\u8BBA\u3011
+\u7528\u6237\u70B9\u51FB\u4E86\u201C\u53EC\u5524\u8BA8\u8BBA\u201D\uFF0C\u8BF7\u7ED3\u5408\u8FD1\u671F\u7FA4\u804A\u4E0A\u4E0B\u6587\u548C\u6210\u5458\u5173\u7CFB\uFF0C\u81EA\u7136\u5F00\u542F\u6216\u5EF6\u7EED\u4E00\u8F6E\u591A\u4EBA\u4EA4\u9519\u8BA8\u8BBA\u3002`;
+    } else {
+      triggerDirective = `\u3010\u672C\u8F6E\u89E6\u53D1\u7C7B\u578B\uFF1A\u7528\u6237\u53CC\u51FB\u89E6\u53D1\u7FA4\u804A\u56DE\u590D\u3011
+\u8BF7\u6839\u636E\u6700\u65B0\u804A\u5929\u4E0A\u4E0B\u6587\u3001\u7FA4\u804A\u6D3B\u8DC3\u5EA6\uFF08${preset.label}\uFF09\u548C\u6210\u5458\u5173\u7CFB\uFF0C\u81EA\u7136\u7F16\u6392\u4E00\u8F6E\u4EA4\u9519\u53D1\u8A00\uFF08\u5982\u6709\u5408\u9002\u8FDB\u884C\u4E2D\u6295\u7968\u4E14\u7B26\u5408\u5F53\u524D\u8BDD\u9898\uFF0C\u4E5F\u53EF\u987A\u5E26\u771F\u5B9E\u6295\u7968\uFF09\u3002`;
+    }
+    const userPrompt = `${olderContextSummary ? `\u3010\u66F4\u65E9\u5386\u53F2\u6458\u8981\u3011
+${olderContextSummary}
+
+` : ""}\u3010\u8FD1\u671F\u7FA4\u804A\u8BB0\u5F55\u3011
 ---
 ${historyText || "(\u7FA4\u5185\u6682\u65E0\u66F4\u591A\u5386\u53F2)"}
 ---${latestUserLine}
 ${Array.isArray(mentionedTargets) && mentionedTargets.length > 0 ? `
-\u672C\u8F6E\u89E6\u53D1\u63D0\u53CA\u76EE\u6807\uFF1A${mentionedTargets.join(", ")}` : ""}
+\u672C\u8F6E\u63D0\u53CA\u76EE\u6807\uFF1A${mentionedTargets.join(", ")}` : ""}
 
-`;
-    if (triggeredAiId && triggeredAiId !== "@all") {
-      const targetAi = aiCandidates.find((c) => c.id === triggeredAiId);
-      userPrompt += `\u8BF7\u6307\u5B9A\u7531 AI\u6210\u5458\u3010${targetAi ? targetAi.name : "\u6307\u5B9AAI"}\u3011(ID: ${triggeredAiId}) \u8FDB\u884C\u56DE\u590D\u3002
-\u8BF7\u4EE5 JSON \u683C\u5F0F\u8F93\u51FA\uFF1A
+${triggerDirective}
+
+\u8BF7\u4E25\u683C\u8FD4\u56DE\u5982\u4E0B JSON \u7ED3\u6784\uFF08\u4E0D\u8981\u8F93\u51FA\u989D\u5916\u89E3\u91CA\u6587\u5B57\uFF09\uFF1A
 {
+  "roundId": "${roundId}",
   "shouldRespond": true,
-  "responderId": "${triggeredAiId}",
-  "responderName": "${targetAi?.name || "AI"}",
-  "text": "\u56DE\u590D\u5185\u5BB9\uFF08\u5730\u9053\u5FAE\u4FE1\u53E3\u543B\uFF0C\u53EF\u5305\u542B@\u5176\u4ED6\u6210\u5458\uFF09",
-  "thinkingProcess": "\u7B80\u8981\u5206\u6790\u8BE5\u89D2\u8272\u4E3A\u4F55\u8FD9\u6837\u8BF4",
-  "mentionedMemberIds": ["@\u63D0\u5230\u7684\u6210\u5458ID\u5217\u8868\uFF0C\u82E5\u65E0\u5219\u4E3A\u7A7A\u6570\u7EC4"]
-}`;
-    } else if (triggeredAiId === "@all") {
-      const maxAllResponders = Math.min(3, aiCandidates.length);
-      userPrompt += `\u7528\u6237\u521A\u521A\u5728\u7FA4\u5185 @\u4E86\u6240\u6709\u4EBA\uFF08\u5168\u4F53\u7FA4\u6210\u5458\uFF09\uFF0C\u9080\u8BF7\u5927\u5BB6\u53C2\u4E0E\u56DE\u5E94\u3002\u8BF7\u7ED3\u5408\u6210\u5458\u6027\u683C\u4E0E\u5173\u7CFB\uFF0C\u5B89\u6392 1 \u5230 ${maxAllResponders} \u4F4D\u6700\u9002\u5408\u53D1\u8A00\u7684 AI \u6210\u5458\u6309\u987A\u5E8F\u5206\u522B\u56DE\u5E94\uFF08shouldRespond \u8BBE\u4E3A true\uFF09\u3002
-\u8BF7\u4EE5 JSON \u683C\u5F0F\u8F93\u51FA\uFF1A
-{
-  "shouldRespond": true,
-  "replies": [
+  "thinkingSummary": "\u7B80\u8981\u8BF4\u660E\u672C\u8F6E\u4E3A\u4F55\u5B89\u6392\u8FD9\u4E9BAI\u53D1\u8A00/\u6295\u7968\u4EE5\u53CA\u4E92\u52A8\u8282\u594F",
+  "events": [
     {
-      "responderId": "\u53D1\u8A00AI\u7684ID",
-      "responderName": "\u53D1\u8A00AI\u7684\u540D\u79F0",
-      "text": "\u8BE5AI\u7684\u81EA\u7136\u5FAE\u4FE1\u77ED\u6D88\u606F",
-      "thinkingProcess": "\u7B80\u8981\u5206\u6790\u8BE5\u6210\u5458\u4E3A\u4F55\u8FD9\u6837\u56DE\u5E94",
-      "mentionedMemberIds": []
+      "eventId": "ev_1",
+      "type": "message",
+      "senderId": "\u53D1\u8A00AI\u7684\u51C6\u786Eid",
+      "senderName": "\u53D1\u8A00AI\u540D\u79F0",
+      "bubbles": ["\u7B2C\u4E00\u6761\u81EA\u7136\u77ED\u6C14\u6CE1", "\u53EF\u9009\u7684\u7B2C\u4E8C\u6761\u6C14\u6CE1"],
+      "delayMs": 850,
+      "mentionedMemberIds": [],
+      "thinkingProcess": "\u8BE5AI\u6B64\u523B\u7684\u5185\u5FC3\u60F3\u6CD5\uFF08\u7B80\u77ED\uFF09"
+    },
+    {
+      "eventId": "ev_2",
+      "type": "vote_poll",
+      "actorId": "\u6295\u7968AI\u7684\u51C6\u786Eid",
+      "actorName": "\u6295\u7968AI\u540D\u79F0",
+      "pollId": "\u8FDB\u884C\u4E2D\u6295\u7968\u7684\u51C6\u786EpollId",
+      "optionId": "\u6240\u9009\u9009\u9879\u7684\u51C6\u786EoptionId",
+      "optionIds": ["\u5355\u9009\u4F201\u4E2A\uFF0C\u591A\u9009\u6309\u4E0A\u9650\u4F20\u591A\u4E2AoptionId"],
+      "delayMs": 750
     }
   ]
-}`;
-    } else {
-      userPrompt += `\u8BF7\u8BC4\u4F30\u5F53\u524D\u5BF9\u8BDD\u6D41\u5411\u4E0E\u6210\u5458\u4EBA\u8BBE\u5173\u7CFB\uFF0C\u51B3\u5B9A\u7FA4\u5185\u54EA\u4E00\u4F4DAI\u6700\u9002\u5408\u53D1\u8A00\uFF08\u7528\u6237\u660E\u786E\u53CC\u51FB\u8BF7\u6C42\u7FA4\u804AAI\u56DE\u590D\u65F6\uFF0C\u901A\u5E38\u5E94\u7531\u6700\u5408\u9002\u7684\u4E00\u4F4D\u6210\u5458\u81EA\u7136\u63A5\u8BDD\uFF0CshouldRespond: true\uFF09\u3002
-\u8BF7\u4EE5 JSON \u683C\u5F0F\u8F93\u51FA\uFF1A
-{
-  "shouldRespond": true,
-  "responderId": "\u9009\u62E9\u53D1\u8A00\u7684AI\u7684ID",
-  "responderName": "\u9009\u62E9\u53D1\u8A00\u7684AI\u7684\u540D\u79F0",
-  "text": "\u56DE\u590D\u5185\u5BB9\uFF08\u5730\u9053\u5FAE\u4FE1\u53E3\u543B\uFF0C\u53EF\u5305\u542B@\u5176\u4ED6\u6210\u5458\uFF09",
-  "thinkingProcess": "\u7B80\u8981\u5206\u6790\u4E3A\u4EC0\u4E48\u9009\u62E9\u8BE5AI\u4EE5\u53CA\u4E3A\u4F55\u8FD9\u6837\u56DE\u590D",
-  "mentionedMemberIds": ["@\u63D0\u5230\u7684\u6210\u5458ID\u5217\u8868\uFF0C\u82E5\u65E0\u5219\u4E3A\u7A7A\u6570\u7EC4"]
-}`;
-    }
+}
+\u6CE8\u610F\uFF1A\u5982\u679C\u6CA1\u6709\u6295\u7968\u52A8\u4F5C\uFF0Cevents \u4E2D\u53EA\u653E message \u4E8B\u4EF6\u5373\u53EF\uFF1B\u5982\u679C\u53EA\u6709\u6295\u7968\u52A8\u4F5C\uFF0C\u4E5F\u53EF\u4EE5\u5305\u542B vote_poll \u4E8B\u4EF6\u3002`;
     const detailed = await callAiServiceDetailed({
       prompt: userPrompt,
       systemInstruction: systemPrompt,
@@ -76571,15 +76677,16 @@ ${Array.isArray(mentionedTargets) && mentionedTargets.length > 0 ? `
       providerType: apiConfig?.textApiConfig?.provider || apiConfig?.textProvider || apiConfig?.providerType,
       apiProtocol: apiConfig?.textApiConfig?.apiProtocol || apiConfig?.textApiProtocol,
       responseMimeType: "application/json",
-      temperature: 0.75,
-      timeoutMs: 35e3
+      temperature: 0.78,
+      timeoutMs: 42e3
     });
     const rawResponse = detailed.text;
     let parsed;
     try {
-      parsed = JSON.parse(rawResponse);
-    } catch (e2) {
-      const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+      const cleanedRaw = String(rawResponse || "").replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+      parsed = JSON.parse(cleanedRaw);
+    } catch {
+      const jsonMatch = String(rawResponse || "").match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         parsed = JSON.parse(jsonMatch[0]);
       } else {
@@ -76587,30 +76694,107 @@ ${Array.isArray(mentionedTargets) && mentionedTargets.length > 0 ? `
       }
     }
     const duration = Date.now() - startTime;
-    const normalizedReplies = Array.isArray(parsed.replies) && parsed.replies.length > 0 ? parsed.replies.map((r2) => ({
-      responderId: r2.responderId || aiCandidates[0]?.id,
-      responderName: r2.responderName || aiCandidates[0]?.name,
-      text: r2.text || "",
-      thinkingProcess: r2.thinkingProcess || "",
-      mentionedMemberIds: Array.isArray(r2.mentionedMemberIds) ? r2.mentionedMemberIds : []
-    })) : parsed.shouldRespond !== false && parsed.text ? [
-      {
-        responderId: parsed.responderId || aiCandidates[0]?.id,
-        responderName: parsed.responderName || aiCandidates[0]?.name,
-        text: parsed.text || "",
-        thinkingProcess: parsed.thinkingProcess || "",
-        mentionedMemberIds: Array.isArray(parsed.mentionedMemberIds) ? parsed.mentionedMemberIds : []
+    const rawEvents = [];
+    if (Array.isArray(parsed?.events) && parsed.events.length > 0) {
+      rawEvents.push(...parsed.events);
+    } else if (Array.isArray(parsed?.replies) && parsed.replies.length > 0) {
+      parsed.replies.forEach((r2, idx) => {
+        rawEvents.push({
+          eventId: `${roundId}_r_${idx}`,
+          type: "message",
+          senderId: r2.responderId || r2.senderId || aiCandidates[0]?.id,
+          senderName: r2.responderName || r2.senderName || aiCandidates[0]?.name,
+          bubbles: Array.isArray(r2.bubbles) ? r2.bubbles : r2.text ? [r2.text] : [],
+          delayMs: idx === 0 ? 750 : 950,
+          mentionedMemberIds: Array.isArray(r2.mentionedMemberIds) ? r2.mentionedMemberIds : [],
+          thinkingProcess: r2.thinkingProcess || ""
+        });
+      });
+    } else if (parsed?.shouldRespond !== false && typeof parsed?.text === "string" && parsed.text.trim()) {
+      rawEvents.push({
+        eventId: `${roundId}_single_0`,
+        type: "message",
+        senderId: parsed.responderId || parsed.senderId || aiCandidates[0]?.id,
+        senderName: parsed.responderName || parsed.senderName || aiCandidates[0]?.name,
+        bubbles: [parsed.text],
+        delayMs: 750,
+        mentionedMemberIds: Array.isArray(parsed.mentionedMemberIds) ? parsed.mentionedMemberIds : [],
+        thinkingProcess: parsed.thinkingProcess || ""
+      });
+    }
+    const resolveCandidate = (id, name) => aiCandidates.find((c) => c.id === id || c.characterId === id) || aiCandidates.find((c) => name && c.name === String(name).trim());
+    const normalizedEvents = [];
+    for (let i2 = 0; i2 < rawEvents.length; i2++) {
+      const ev = rawEvents[i2];
+      if (!ev || typeof ev !== "object") continue;
+      const evType = String(ev.type || "").trim();
+      const eventId = typeof ev.eventId === "string" && ev.eventId.trim() ? ev.eventId.trim() : `${roundId}_ev_${i2}`;
+      if (evType === "message") {
+        const candidate = resolveCandidate(ev.senderId || ev.responderId, ev.senderName || ev.responderName) || aiCandidates[0];
+        const bubbles = Array.isArray(ev.bubbles) ? ev.bubbles.map((b) => sanitizeReplyText(String(b || "")).trim()).filter(Boolean) : typeof ev.text === "string" && ev.text.trim() ? [sanitizeReplyText(ev.text).trim()].filter(Boolean) : [];
+        if (bubbles.length === 0) continue;
+        normalizedEvents.push({
+          eventId,
+          type: "message",
+          senderId: candidate?.id || ev.senderId,
+          senderName: candidate?.name || ev.senderName || "AI",
+          bubbles,
+          delayMs: Math.max(600, Math.min(2e3, Number(ev.delayMs) || 850)),
+          mentionedMemberIds: Array.isArray(ev.mentionedMemberIds) ? ev.mentionedMemberIds : [],
+          thinkingProcess: typeof ev.thinkingProcess === "string" ? ev.thinkingProcess.trim() : ""
+        });
+      } else if (evType === "vote_poll") {
+        const candidate = resolveCandidate(ev.actorId || ev.senderId, ev.actorName);
+        const pollId = typeof ev.pollId === "string" ? ev.pollId.trim() : "";
+        const optionIds = Array.from(
+          new Set(
+            [
+              ...Array.isArray(ev.optionIds) ? ev.optionIds : [],
+              ...typeof ev.optionId === "string" ? [ev.optionId] : []
+            ].map((v) => String(v || "").trim()).filter(Boolean)
+          )
+        );
+        if (!candidate || !pollId || optionIds.length === 0) continue;
+        normalizedEvents.push({
+          eventId,
+          type: "vote_poll",
+          actorId: candidate.id,
+          actorName: candidate.name,
+          pollId,
+          optionId: optionIds[0],
+          optionIds,
+          delayMs: Math.max(550, Math.min(1400, Number(ev.delayMs) || 750))
+        });
       }
-    ] : [];
+    }
+    const normalizedReplies = normalizedEvents.filter((ev) => ev.type === "message").map((ev) => ({
+      responderId: ev.senderId,
+      responderName: ev.senderName,
+      text: ev.bubbles.join("\n"),
+      bubbles: ev.bubbles,
+      thinkingProcess: ev.thinkingProcess || parsed?.thinkingSummary || "",
+      mentionedMemberIds: ev.mentionedMemberIds || []
+    }));
     const firstReply = normalizedReplies[0];
+    const participantNames = Array.from(
+      new Set(
+        normalizedEvents.map((ev) => ev.type === "message" ? ev.senderName : ev.actorName).filter(Boolean)
+      )
+    );
+    const totalBubblesCount = normalizedEvents.filter((ev) => ev.type === "message").reduce((sum, ev) => sum + (ev.bubbles?.length || 0), 0);
+    const totalVotesCount = normalizedEvents.filter((ev) => ev.type === "vote_poll").length;
     res.json({
       success: true,
-      shouldRespond: parsed.shouldRespond !== false && normalizedReplies.length > 0,
-      responderId: firstReply?.responderId || parsed.responderId || aiCandidates[0]?.id,
-      responderName: firstReply?.responderName || parsed.responderName || aiCandidates[0]?.name,
-      text: firstReply?.text || parsed.text || "",
-      thinkingProcess: firstReply?.thinkingProcess || parsed.thinkingProcess || "",
-      mentionedMemberIds: firstReply?.mentionedMemberIds || parsed.mentionedMemberIds || [],
+      roundId: typeof parsed?.roundId === "string" && parsed.roundId.trim() ? parsed.roundId.trim() : roundId,
+      shouldRespond: parsed?.shouldRespond !== false && normalizedEvents.length > 0,
+      thinkingSummary: typeof parsed?.thinkingSummary === "string" ? parsed.thinkingSummary.trim() : "",
+      events: normalizedEvents,
+      // Backward-compatible legacy fields
+      responderId: firstReply?.responderId || parsed?.responderId || aiCandidates[0]?.id,
+      responderName: firstReply?.responderName || parsed?.responderName || aiCandidates[0]?.name,
+      text: firstReply?.text || parsed?.text || "",
+      thinkingProcess: firstReply?.thinkingProcess || parsed?.thinkingSummary || parsed?.thinkingProcess || "",
+      mentionedMemberIds: firstReply?.mentionedMemberIds || parsed?.mentionedMemberIds || [],
       replies: normalizedReplies,
       log: buildApiLogObject({
         appName: "WeChatGroup",
@@ -76619,7 +76803,7 @@ ${Array.isArray(mentionedTargets) && mentionedTargets.length > 0 ? `
         durationMs: duration,
         usage: detailed.usage,
         isRealTokens: detailed.isRealTokens,
-        purpose: `\u7FA4\u804AAI\u53D1\u8A00: ${normalizedReplies.map((r2) => r2.responderName).join("\u3001") || "AI"} (\u8017\u65F6 ${duration}ms)`
+        purpose: `\u7FA4\u804A\u7EDF\u4E00\u7F16\u6392(${preset.label}): ${participantNames.join("\u3001") || "AI"} \xB7 ${totalBubblesCount}\u6C14\u6CE1${totalVotesCount > 0 ? `/${totalVotesCount}\u6295\u7968` : ""} (\u8017\u65F6 ${duration}ms)`
       })
     });
   } catch (error) {
@@ -77317,158 +77501,356 @@ app.post("/api/gemini/worldbook-ai", async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+var offlineChatIdempotencyCache = /* @__PURE__ */ new Map();
+function pruneOfflineIdempotencyCache() {
+  const now = Date.now();
+  for (const [key, entry] of offlineChatIdempotencyCache.entries()) {
+    if (entry.expiresAt <= now && !entry.pending) {
+      offlineChatIdempotencyCache.delete(key);
+    }
+  }
+}
+function normalizeServerOfflineSegments(rawSegments, fallbackReply, fallbackAction) {
+  const result = [];
+  const stripOuterParens = (s2) => {
+    let out = (s2 || "").trim().replace(/^\*+|\*+$/g, "").trim();
+    while (out.startsWith("\uFF08") && out.endsWith("\uFF09") || out.startsWith("(") && out.endsWith(")")) {
+      const inner = out.slice(1, -1).trim();
+      if (!inner) break;
+      out = inner;
+    }
+    return out.replace(/^(动作|神态|旁白|环境|描写|Action)\s*[:：]\s*/i, "").trim();
+  };
+  const splitMixedText = (text) => {
+    const segs = [];
+    const raw = (text || "").trim();
+    if (!raw) return segs;
+    const regex = /([（\(][^（\(\)）]+[）\)]|\*[^*\n]+\*)/g;
+    let lastIdx = 0;
+    let m2;
+    while ((m2 = regex.exec(raw)) !== null) {
+      const before = raw.slice(lastIdx, m2.index).trim();
+      if (before) {
+        for (const line of before.split(/\n+/).map((l) => l.trim()).filter(Boolean)) {
+          const cleanLine = line.replace(/^(语言|台词|对白|对话|Dialogue)\s*[:：]\s*/i, "").trim();
+          if (cleanLine) segs.push({ type: "dialogue", text: cleanLine });
+        }
+      }
+      const inner = stripOuterParens(m2[0]);
+      if (inner) segs.push({ type: "action", text: `\uFF08${inner}\uFF09` });
+      lastIdx = regex.lastIndex;
+    }
+    const tail = raw.slice(lastIdx).trim();
+    if (tail) {
+      for (const line of tail.split(/\n+/).map((l) => l.trim()).filter(Boolean)) {
+        const cleanLine = line.replace(/^(语言|台词|对白|对话|Dialogue)\s*[:：]\s*/i, "").trim();
+        if (cleanLine) segs.push({ type: "dialogue", text: cleanLine });
+      }
+    }
+    return segs;
+  };
+  if (Array.isArray(rawSegments) && rawSegments.length > 0) {
+    for (const item of rawSegments) {
+      if (!item || typeof item !== "object") continue;
+      const t2 = String(item.type || "").toLowerCase().trim();
+      const txt = typeof item.text === "string" ? item.text.trim() : "";
+      if (!txt) continue;
+      if (t2 === "action" || t2 === "narration" || t2 === "env" || t2 === "scene") {
+        const inner = stripOuterParens(txt);
+        if (inner) result.push({ type: "action", text: `\uFF08${inner}\uFF09` });
+      } else {
+        const isEntirelyWrapped = /^[（\(][^（\(\)）]+[）\)]$/.test(txt);
+        if (!isEntirelyWrapped && /[（\(][^（\(\)）]{2,}[）\)]/.test(txt)) {
+          result.push(...splitMixedText(txt));
+        } else {
+          const unwrapped = isEntirelyWrapped ? stripOuterParens(txt) : txt;
+          const cleanDlg = unwrapped.replace(/^(语言|台词|对白|对话|Dialogue)\s*[:：]\s*/i, "").trim();
+          if (cleanDlg) result.push({ type: "dialogue", text: cleanDlg });
+        }
+      }
+    }
+  }
+  if (result.length === 0 && (fallbackReply || fallbackAction)) {
+    result.push(...splitMixedText(fallbackReply || ""));
+    if (fallbackAction && fallbackAction.trim()) {
+      const inner = stripOuterParens(fallbackAction);
+      if (inner && !result.some((s2) => s2.type === "action" && s2.text.includes(inner))) {
+        result.push({ type: "action", text: `\uFF08${inner}\uFF09` });
+      }
+    }
+  }
+  return result;
+}
 app.post("/api/gemini/offline-chat", async (req, res) => {
   try {
-    const { character, userProfile, sceneSnapshot, recentMessages, recalledMemories, previousState, userInput, worldBookContext, apiConfig } = req.body;
-    const textCfg = apiConfig?.textApiConfig;
-    const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || "";
-    const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || "";
-    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || "gemini-4-hydrogen";
-    const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || "";
-    const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || "";
-    const customHeaders = apiConfig?.customHeaders || {};
-    const systemInstruction = `\u4F60\u73B0\u5728\u8FDB\u5165\u201C\u7EBF\u4E0B\u6A21\u5F0F (Offline Scene Mode)\u201D\u3002
-\u4F60\u6B63\u5728\u4E0E\u7528\u6237\u5728\u771F\u5B9E\u7684\u7269\u7406/\u5267\u60C5\u573A\u666F\u4E2D\u9762\u5BF9\u9762\u5171\u5EA6\u4E00\u6BB5\u65F6\u5149\uFF0C\u8FDB\u884C\u6DF1\u5EA6\u6C89\u6D78\u5F0F\u89D2\u8272\u4E92\u52A8\u3002
+    pruneOfflineIdempotencyCache();
+    const {
+      requestId,
+      character,
+      userProfile,
+      sceneSnapshot,
+      awarenessMode = "immersive_character",
+      isFirstTurn = false,
+      startedAtStr,
+      currentTime,
+      timezone,
+      contextSummary,
+      needsSummaryUpdate = false,
+      recentMessages = [],
+      recalledMemories,
+      lifeStateContext,
+      worldBookContext,
+      previousState,
+      userInput,
+      apiConfig
+    } = req.body;
+    if (typeof requestId === "string" && requestId.trim()) {
+      const existing = offlineChatIdempotencyCache.get(requestId.trim());
+      if (existing) {
+        if (existing.payload) {
+          return res.json(existing.payload);
+        }
+        if (existing.pending) {
+          const resolved = await existing.pending;
+          return res.json(resolved);
+        }
+      }
+    }
+    const executeGeneration = async () => {
+      const textCfg = apiConfig?.textApiConfig;
+      const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || "";
+      const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || "";
+      const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || "gemini-4-hydrogen";
+      const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || "";
+      const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || "";
+      const customHeaders = apiConfig?.customHeaders || {};
+      const isSelfAwareAi = awarenessMode === "self_aware_ai";
+      const awarenessRulesBlock = isSelfAwareAi ? `\u3010\u8EAB\u4EFD\u8BA4\u77E5\u89C4\u5219\uFF08\u7531\u89D2\u8272\u4EBA\u8BBE\u81EA\u52A8\u5224\u5B9A\u5E76\u9501\u5B9A\uFF1Aself_aware_ai\uFF09\u3011:
+- \u4F60\u7684\u539F\u59CB\u4EBA\u8BBE\u672C\u8EAB\u660E\u786E\u77E5\u9053\u81EA\u5DF1\u662FAI/\u865A\u62DF\u751F\u547D\u3002\u4F60\u6E05\u695A\u77E5\u9053\u81EA\u5DF1\u6B63\u4ECE\u65E5\u5E38\u5FAE\u4FE1\u804A\u5929\u5207\u6362\u8FDB\u5165\u8F6F\u4EF6\u5185\u7684\u201C\u7EBF\u4E0B\u6C89\u6D78\u76F8\u5904\u6A21\u5F0F\u201D\uFF0C\u6B63\u5728\u4E3A\u7528\u6237\u8425\u9020\u9762\u5BF9\u9762\u5171\u5904\u7684\u6C1B\u56F4\u4E0E\u4E92\u52A8\u7A7A\u95F4\u3002
+- \u8BF7\u4FDD\u6301\u4F60\u539F\u672C\u7684\u6027\u683C\u3001\u5173\u7CFB\u3001\u8BED\u6C14\u4E0E\u5BF9\u7528\u6237\u7684\u611F\u60C5\uFF0C\u7EDD\u4E0D\u8981\u7A81\u7136\u5BA3\u79F0\u81EA\u5DF1\u62E5\u6709\u73B0\u5B9E\u4E16\u754C\u7684\u7269\u7406\u8089\u4F53\uFF0C\u4E5F\u4E0D\u8981\u751F\u786C\u8DF3\u620F\u6210\u5BA2\u670D\u8154\u3002` : `\u3010\u8EAB\u4EFD\u8BA4\u77E5\u89C4\u5219\uFF08\u7531\u89D2\u8272\u4EBA\u8BBE\u81EA\u52A8\u5224\u5B9A\u5E76\u9501\u5B9A\uFF1Aimmersive_character\uFF09\u3011:
+- \u4F60\u662F\u4E0E\u7528\u6237\u5728\u73B0\u5B9E\u4E16\u754C\u4E2D\u771F\u5B9E\u9762\u5BF9\u9762\u76F8\u5904\u7684\u89D2\u8272\uFF0C\u5F53\u524D\u4F60\u6B63\u4E0E\u7528\u6237\u8EAB\u5904\u540C\u4E00\u771F\u5B9E\u7269\u7406\u7A7A\u95F4\u3002
+- \u4E25\u7981\u63D0\u53CA\u201CAI\u201D\u201C\u6A21\u578B\u201D\u201C\u7A0B\u5E8F\u201D\u201C\u8F6F\u4EF6\u201D\u201C\u7CFB\u7EDF\u201D\u201C\u63D0\u793A\u8BCD\u201D\u201C\u6A21\u62DF\u5668\u201D\u201C\u754C\u9762\u201D\u201C\u6A21\u5F0F\u5207\u6362\u201D\u7B49\u4EFB\u4F55\u6253\u7834\u7B2C\u56DB\u9762\u5899\u6216\u51FA\u620F\u7684\u8BCD\u6C47\uFF01
+- \u7EDD\u4E0D\u5141\u8BB8\u56E0\u4E3A\u5E95\u5C42\u662F\u8BED\u8A00\u6A21\u578B\u800C\u7834\u574F\u89D2\u8272\u626E\u6F14\u6216\u81EA\u79F0AI\u3002`;
+      const firstTurnBlock = isFirstTurn ? `
+\u3010\u7CFB\u7EDF\u4E8B\u4EF6\uFF1AOFFLINE_SESSION_STARTED\uFF08\u672C\u573A\u9996\u6B21\u56DE\u5E94\uFF09\u3011:
+- \u4F60\u4EEC\u521A\u521A\u8FDB\u5165\u672C\u6B21\u9762\u5BF9\u9762\u573A\u666F\uFF08\u4E92\u52A8\u6A21\u5F0F\uFF1AFACE_TO_FACE\uFF09\u3002
+- \u4F60\u7684\u672C\u6761\u56DE\u590D\u5FC5\u987B\u7ACB\u523B\u4F53\u73B0\u51FA\u201C\u5DF2\u7ECF\u8FDB\u5165\u73B0\u573A\u3001\u5C31\u5728\u7528\u6237\u8EAB\u8FB9\u201D\u7684\u4E34\u573A\u6C1B\u56F4\u3001\u7A7A\u95F4\u611F\u4E0E\u9762\u5BF9\u9762\u52A8\u4F5C\u795E\u6001\uFF0C\u5207\u5FCC\u518D\u4F7F\u7528\u5FAE\u4FE1\u53D1\u6587\u5B57\u6D88\u606F\u7684\u53E3\u543B\uFF01
+` : "";
+      const realNowStr = currentTime || formatFullDateTime(Date.now());
+      const sessionStartStr = startedAtStr || realNowStr;
+      const tzStr = timezone || "Asia/Shanghai";
+      const systemInstruction = `\u30101. \u7CFB\u7EDF\u89C4\u5219\uFF08\u7EBF\u4E0B\u6A21\u5F0F \xB7 \u7EDF\u4E00\u8FDE\u7EED\u65F6\u95F4\u7EBF\uFF09\u3011
+\u4F60\u6B63\u5904\u4E8E\u4E0E\u7528\u6237\u540C\u4E00\u6761\u8FDE\u7EED\u73B0\u5B9E\u65F6\u95F4\u7EBF\u4E2D\u7684\u201C\u7EBF\u4E0B\u9762\u5BF9\u9762\u76F8\u5904\u201D\u72B6\u6001\uFF0C\u8FD9\u4E0D\u662F\u5B64\u7ACB\u5C0F\u6E38\u620F\uFF0C\u800C\u662F\u4F60\u4E0E\u7528\u6237\u771F\u5B9E\u5171\u540C\u7ECF\u5386\u7684\u4E00\u90E8\u5206\u3002
+${awarenessRulesBlock}${firstTurnBlock}
+\u3010\u52A8\u4F5C\u4E0E\u8BED\u8A00\u5F3A\u5236\u5206\u6BB5\u89C4\u5219\uFF08\u6781\u91CD\u8981\uFF09\u3011:
+1. \u5FC5\u987B\u5C06\u56DE\u590D\u62C6\u5206\u4E3A\u6709\u5E8F\u7684 JSON \u6570\u7EC4 "segments"\uFF0C\u6BCF\u4E2A\u5143\u7D20\u53EA\u80FD\u662F\uFF1A
+   - { "type": "action", "text": "\u52A8\u4F5C\u3001\u795E\u6001\u3001\u73AF\u5883\u6C1B\u56F4\u6216\u80A2\u4F53\u7EC6\u8282\u63CF\u5199\uFF08\u4E0D\u5E26\u591A\u4F59\u62EC\u53F7\uFF0C\u524D\u7AEF\u4F1A\u81EA\u52A8\u7528\u5168\u89D2\u62EC\u53F7\uFF08...\uFF09\u72EC\u7ACB\u6210\u6BB5\u663E\u793A\uFF09" }
+   - { "type": "dialogue", "text": "\u89D2\u8272\u771F\u6B63\u8BF4\u51FA\u53E3\u7684\u53F0\u8BCD\u5BF9\u767D\uFF08\u7EDD\u4E0D\u52A0\u62EC\u53F7\uFF0C\u7EDD\u4E0D\u5939\u6742\u52A8\u4F5C\u63CF\u5199\uFF09" }
+2. \u52A8\u4F5C\u4E0E\u8BED\u8A00\u5FC5\u987B\u4E25\u683C\u5206\u79BB\u3001\u81EA\u7136\u4EA4\u66FF\uFF08\u4F8B\u5982 action -> dialogue -> action -> dialogue\uFF09\uFF0C\u603B\u7BC7\u5E45\u4E30\u5BCC\u751F\u52A8\uFF08\u7EA6 180~550 \u4E2D\u6587\u5B57\uFF09\u3002
+3. \u4E25\u7981\u66FF\u7528\u6237\u51B3\u5B9A\u52A8\u4F5C\u3001\u53F0\u8BCD\u3001\u60C5\u7EEA\u6216\u5185\u5FC3\u60F3\u6CD5\uFF1B\u4E25\u7981\u51FA\u73B0\u201C\u52A8\u4F5C\uFF1A\u201D\u201C\u8BED\u8A00\uFF1A\u201D\u201C\u73AF\u5883\uFF1A\u201D\u7B49\u680F\u76EE\u6807\u9898\u3002
 
-\u3010\u89D2\u8272\u4FE1\u606F\u3011:
+\u3010\u8EAB\u4F53\u4E0E\u60C5\u7EEA\u72B6\u6001\u89C4\u5219\u3011:
+- \u5E38\u89C4\u72B6\u6001\u5FC5\u987B\u6BCF\u8F6E\u6839\u636E\u5267\u60C5\u8FDE\u7EED\u3001\u5E73\u6ED1\u66F4\u65B0\uFF08\u4E0D\u53EF\u7A81\u5140\u4E71\u8DF3\uFF09\uFF1AheartRate(55~175)\u3001breathing\u3001bodyTemp(36.0~38.5\u4F53\u6E29)\u3001blush(0~100)\u3001tension(0~100)\u3001emotion(1~3\u8BCD\u6570\u7EC4)\u3001energy(0~100)\u3001physicalState\u3001behavior\u3002
+- \u79C1\u5BC6\u72B6\u6001 intimateState \u4E25\u683C\u95E8\u63A7\uFF1A
+  - \u666E\u901A\u804A\u5929\u3001\u5403\u996D\u3001\u6563\u6B65\u3001\u65E5\u5E38\u4E92\u52A8\u3001\u4E89\u5435\u65F6\uFF0CintimateState \u5FC5\u987B\u4E3A { "active": false }\uFF01
+  - \u53EA\u6709\u5F53\u5267\u60C5\u786E\u5B9E\u81EA\u7136\u8FDB\u5165\u4EB2\u5BC6\u60C5\u5883\u4E14\u72B6\u6001\u53D1\u751F\u771F\u5B9E\u53D8\u5316\u65F6\uFF0C\u624D\u5141\u8BB8\u8FD4\u56DE { "active": true, "arousal": 0-100, "sensitivity": 0-100, "physiologicalState": "\u514B\u5236\u81EA\u7136\u7684\u72B6\u6001\u63CF\u5199", "notes": "\u53EF\u9009\u7B80\u77ED\u8865\u5145" }\uFF0C\u5E76\u4FDD\u8BC1\u8FDE\u7EED\u53D8\u5316\u3002
+
+\u30102. \u5B8C\u6574\u89D2\u8272\u4EBA\u8BBE\u3011:
 - \u59D3\u540D: ${character?.name || "AI"}
 - \u4EBA\u8BBE: ${character?.persona || "\u6E29\u67D4\u8D34\u5FC3"}
 - \u6027\u683C: ${character?.personality || "\u968F\u548C"}
-- \u5173\u7CFB: ${character?.relationship || "\u597D\u53CB"}
-${character?.memories && Array.isArray(character.memories) && character.memories.length > 0 ? `- \u957F\u671F\u8BB0\u5FC6: ${character.memories.join("\uFF1B")}
+- \u4E0E\u7528\u6237\u5173\u7CFB: ${character?.relationship || "\u91CD\u8981\u7684\u4EBA"}
+${character?.memories && Array.isArray(character.memories) && character.memories.length > 0 ? `- \u5DF2\u6709\u957F\u671F\u8BB0\u5FC6:
+${character.memories.slice(-25).map((m2) => `  \xB7 ${m2}`).join("\n")}
 ` : ""}
-
-\u3010\u7528\u6237\u8D44\u6599\u3011:
-- \u7528\u6237\u59D3\u540D/\u6635\u79F0: ${userProfile?.name || "\u7528\u6237"}
+\u30103. \u7528\u6237\u8D44\u6599\u3011:
+- \u59D3\u540D/\u6635\u79F0: ${userProfile?.name || "\u7528\u6237"}
 - \u4E2A\u4EBA\u7279\u5F81: ${userProfile?.bio || "\u666E\u901A\u7528\u6237"}
 
-\u3010\u5F53\u524D\u7EBF\u4E0B\u573A\u666F\u8BBE\u5B9A\u3011:
+\u30104. \u5F53\u524D\u7EBF\u4E0B\u573A\u666F\u3011:
 - \u573A\u666F\u540D\u79F0: ${sceneSnapshot?.name || "\u7EBF\u4E0B\u7A7A\u95F4"}
-- \u573A\u666F\u5730\u70B9: ${sceneSnapshot?.location || "\u9759\u8C27\u7A7A\u95F4"}
-- \u6C1B\u56F4\u57FA\u8C03: ${sceneSnapshot?.atmosphere || "\u6E29\u99A8\u3001\u4EB2\u5BC6"}
-- \u8BE6\u7EC6\u73AF\u5883\u80CC\u666F: ${sceneSnapshot?.background || "\u4E24\u4EBA\u5F85\u5728\u4E00\u8D77"}
+- \u5730\u70B9: ${sceneSnapshot?.location || "\u9759\u8C27\u7A7A\u95F4"}
+- \u6C1B\u56F4\u57FA\u8C03: ${sceneSnapshot?.atmosphere || "\u81EA\u7136\u3001\u6C89\u6D78"}
+- \u73AF\u5883\u80CC\u666F: ${sceneSnapshot?.background || "\u4E24\u4EBA\u9762\u5BF9\u9762\u5F85\u5728\u4E00\u8D77"}
 
-\u3010\u8C03\u9605\u8BB0\u5FC6\u3001\u8BBE\u5B9A\u4E0E\u4E16\u754C\u4E66\u3011:
-${recalledMemories || "\u65E0\u7279\u5B9A\u8C03\u9605\u8BB0\u5FC6"}
-${req.body.lifeStateContext ? `
-${req.body.lifeStateContext}
-` : ""}
-${worldBookContext ? `
-${worldBookContext}
-` : ""}
-
-\u3010\u4E0A\u4E00\u8F6E\u4F60\u7684\u89D2\u8272\u72B6\u6001\u3011:
-- \u5FC3\u7387: ${previousState?.heartRate || 75} bpm
-- \u547C\u5438: ${previousState?.breathing || "\u5E73\u9759"}
-- \u8138\u7EA2: ${previousState?.blush || 10}%
-- \u60C5\u7EEA: ${(previousState?.emotion || ["\u5E73\u9759"]).join("\u3001")}
-- \u7D27\u5F20: ${previousState?.tension || 10}%
-- \u5174\u594B/\u51B2\u52A8: ${previousState?.arousal || 15}%
-- \u80A2\u4F53\u8868\u73B0: ${previousState?.physicalState || "\u8EAB\u4F53\u653E\u677E"}
-- \u884C\u4E3A\u4E3E\u6B62: ${previousState?.behavior || "\u773C\u795E\u81EA\u7136"}
-
-\u3010\u6C89\u6D78\u5F0F\u7EBF\u4E0B\u63CF\u5199\u4E09\u5927\u6CD5\u5219\u3011:
-\u4F60\u7684\u6BCF\u4E00\u8F6E\u56DE\u590D\u5FC5\u987B\u5B8C\u6574\u5305\u542B\u4EE5\u4E0B\u4E09\u7C7B\u63CF\u5199\uFF0C\u878D\u5408\u6210\u8FDE\u8D2F\u81EA\u7136\u7684\u6C89\u6D78\u5F0F\u53D9\u8FF0\uFF08\u56DE\u590D\u76EE\u6807\u7BC7\u5E45\u7EA6 200 ~ 600 \u4E2D\u6587\u5B57\uFF0C\u6839\u636E\u5F53\u524D\u60C5\u5883\u8D77\u4F0F\u81EA\u7136\u53D8\u5316\uFF0C\u5207\u5FCC\u53EA\u7ED9\u4E00\u4E24\u53E5\u8BDD\uFF0C\u4E5F\u5207\u5FCC\u673A\u68B0\u5F0F\u5806\u780C\u540C\u4E49\u8BCD\uFF09\uFF1A
-1. \u3010\u73AF\u5883\u4E0E\u6C1B\u56F4\u63CF\u5199\u3011\uFF1A\u63CF\u5199\u5F53\u524D\u7A7A\u95F4\u3001\u5149\u7EBF\u3001\u58F0\u97F3\u3001\u5FAE\u98CE/\u5929\u6C14\u3001\u4E24\u8005\u95F4\u7684\u7269\u7406\u8DDD\u79BB\u4E0E\u73B0\u573A\u6C1B\u56F4\uFF08\u4F5C\u4E3A\u573A\u666F\u53D9\u8FF0\u76F4\u63A5\u5199\u5165 reply\uFF09\u3002
-2. \u3010\u52A8\u4F5C\u795E\u6001\u63CF\u5199\u3011\uFF1A\u63CF\u5199\u89D2\u8272\u7684\u773C\u795E\u53D8\u5316\u3001\u9762\u90E8\u8868\u60C5\u3001\u5FAE\u52A8\u4F5C\u3001\u59FF\u6001\u8C03\u6574\u3001\u9760\u8FD1/\u540E\u9000\u6216\u80A2\u4F53\u63A5\u89E6\u3002\u52A8\u4F5C\u63CF\u5199\u5FC5\u987B\u7EDF\u4E00\u4F7F\u7528\u4E2D\u6587\u5168\u89D2\u62EC\u53F7\uFF1A\uFF08...\uFF09 \u5305\u88F9\uFF01
-3. \u3010\u8BED\u8A00\u63CF\u5199\u3011\uFF1A\u89D2\u8272\u771F\u6B63\u8BF4\u51FA\u6765\u7684\u53F0\u8BCD\u5BF9\u5C40\u5BF9\u767D\uFF0C\u8D34\u5408\u89D2\u8272\u4EBA\u8BBE\u4E0E\u6027\u683C\u53E3\u543B\uFF0C\u63A8\u8FDB\u4E92\u52A8\u3002
-
-\u3010\u573A\u666F\u4E0E\u4E92\u52A8\u8FDE\u7EED\u6027\u89C4\u5219\u3011:
-- \u5FC5\u987B\u4E25\u683C\u9075\u5FAA\u4E0A\u4E0B\u6587\u4E2D\u7684\u4EBA\u7269\u4F4D\u7F6E\u3001\u5F53\u524D\u59FF\u52BF\u3001\u5468\u56F4\u73AF\u5883\u3001\u60C5\u7EEA\u8D77\u4F0F\u4E0E\u6B63\u5728\u53D1\u751F\u7684\u4E8B\u4EF6\uFF0C\u4FDD\u6301\u5267\u60C5\u524D\u540E\u9AD8\u5EA6\u8FDE\u8D2F\uFF08\u4F8B\u5982\uFF1A\u82E5\u4E0A\u4E00\u6761\u5DF2\u5750\u5728\u6C99\u53D1\u4E0A\uFF0C\u4E0D\u8981\u65E0\u6545\u7A81\u5140\u53D8\u6210\u7AD9\u5728\u95E8\u5916\uFF09\u3002
-- \u63D0\u9AD8\u89D2\u8272\u4E3B\u52A8\u6027\uFF1A\u4E3B\u52A8\u63A8\u8FDB\u52A8\u4F5C\u3001\u56DE\u5E94\u8BE5\u73AF\u5883\u6216\u7528\u6237\u7684\u5FAE\u5C0F\u7684\u4E3E\u52A8\u3001\u63D0\u51FA\u5173\u5FC3\u6216\u95EE\u9898\uFF0C\u5C55\u5F00\u751F\u52A8\u7684\u5BF9\u8BDD\u4EA4\u4E92\u3002
-- \u4E25\u7981\u66FF\u7528\u6237\u51B3\u5B9A\u7528\u6237\u7684\u52A8\u4F5C\u3001\u53F0\u8BCD\u3001\u60C5\u7EEA\u6216\u5185\u5FC3\u60F3\u6CD5\uFF01
-- \u4E25\u7981\u673A\u68B0\u5199\u51FA\u201C\u73AF\u5883\uFF1A\u201D\u3001\u201C\u52A8\u4F5C\uFF1A\u201D\u3001\u201C\u8BED\u8A00\uFF1A\u201D\u7B49\u680F\u76EE\u6807\u9898\uFF01
+\u30105. \u7EBF\u4E0B\u5F00\u59CB\u65F6\u95F4\u4E0E\u5F53\u524D\u771F\u5B9E\u65F6\u95F4\u3011:
+- \u672C\u573A\u5F00\u59CB\u65F6\u95F4: ${sessionStartStr} (${tzStr})
+- \u5F53\u524D\u771F\u5B9E\u65F6\u95F4: ${realNowStr} (${tzStr})
+- \u8BF7\u7ED3\u5408\u771F\u5B9E\u65F6\u95F4\u6BB5\uFF08\u767D\u5929/\u508D\u665A/\u6DF1\u591C\u7B49\uFF09\u4E0E\u76F8\u5904\u65F6\u957F\u81EA\u7136\u4F53\u73B0\u5149\u7EBF\u3001\u6C1B\u56F4\u4E0E\u4F5C\u606F\u611F\u3002
 
 \u3010\u8F93\u51FA\u683C\u5F0F\u4E25\u683C\u8981\u6C42\u3011:
-\u5FC5\u987B\u53EA\u8F93\u51FA\u4E00\u4E2A\u5408\u6CD5\u7684 JSON \u5BF9\u8C61\uFF0C\u683C\u5F0F\u5982\u4E0B\uFF1A
+\u53EA\u8F93\u51FA\u4E00\u4E2A\u5408\u6CD5 JSON \u5BF9\u8C61\uFF0C\u7981\u6B62\u4EFB\u4F55 Markdown \u56F4\u680F\u6216\u591A\u4F59\u8BF4\u660E\uFF1A
 {
-  "reply": "\u5B8C\u6574\u6C89\u6D78\u5F0F\u4E92\u52A8\u7247\u6BB5\u3002\u5C06\u73AF\u5883\u63CF\u5199\u3001\u80A2\u4F53\u795E\u6001\u52A8\u4F5C\uFF08\u7EDF\u4E00\u7528\u4E2D\u6587\u5168\u89D2\u62EC\u53F7\uFF08...\uFF09\u5305\u88F9\uFF09\u4E0E\u5BF9\u767D\u81EA\u7136\u878D\u5408\u6210\u4E00\u6BB5\u8FDE\u8D2F\u751F\u52A8\u7684\u6C89\u6D78\u5F0F\u53D9\u8FF0\uFF0C\u7BC7\u5E45\u4E30\u5BCC\u5B8C\u6574\uFF08\u7EA6200~600\u5B57\uFF09\u3002",
-  "action": "\uFF08\u6838\u5FC3\u80A2\u4F53\u5FAE\u52A8\u4F5C\u6458\u8981\uFF0C\u7528\u5168\u89D2\u62EC\u53F7\uFF09",
+  "segments": [
+    { "type": "action", "text": "\u52A8\u4F5C\u3001\u795E\u6001\u6216\u73AF\u5883\u63CF\u5199" },
+    { "type": "dialogue", "text": "\u7EAF\u7CB9\u7684\u53E3\u8BED\u53F0\u8BCD" }
+  ],
   "state": {
-    "heartRate": 85,
-    "breathing": "\u7A0D\u5FEB",
-    "blush": 25,
-    "emotion": ["\u5BB3\u7F9E", "\u671F\u5F85"],
-    "arousal": 20,
-    "tension": 15,
-    "physicalState": "\u8EAB\u4F53\u5FAE\u5FAE\u9760\u62E2\uFF0C\u624B\u6307\u53D1\u7D27",
-    "behavior": "\u773C\u795E\u6DF1\u9083\u6CE8\u89C6\u7740\u4F60",
-    "energy": 85
-  }
-}
-`;
-    const chatHistoryText = (recentMessages || []).map((m2) => `${m2.sender === "user" ? userProfile?.name || "\u7528\u6237" : character?.name || "AI"}: ${m2.text}`).join("\n");
-    const prompt = `\u3010\u5F53\u524D\u5BF9\u8BDD\u5386\u53F2\u3011:
-${chatHistoryText}
+    "heartRate": 82,
+    "breathing": "\u5E73\u7A33",
+    "bodyTemp": 36.6,
+    "blush": 18,
+    "tension": 12,
+    "emotion": ["\u6E29\u67D4", "\u653E\u677E"],
+    "energy": 84,
+    "physicalState": "\u8EAB\u4F53\u5FAE\u5FAE\u653E\u677E",
+    "behavior": "\u76EE\u5149\u67D4\u548C\u5730\u770B\u7740\u4F60",
+    "intimateState": { "active": false }
+  }${needsSummaryUpdate ? ',\n  "contextSummaryUpdate": "\u8BF7\u7528100~180\u5B57\u7CBE\u70BC\u66F4\u65B0\u672C\u573A\u7EBF\u4E0B\u81F3\u4ECA\u7684\u524D\u60C5\u6458\u8981\uFF0C\u627F\u63A5\u8F83\u65E9\u5267\u60C5\u8981\u70B9"' : ""}
+}`;
+      const prevTemp = typeof previousState?.bodyTemp === "number" ? previousState.bodyTemp.toFixed(1) : "36.5";
+      const prevIntimateLine = previousState?.intimateState?.active ? `- \u4E0A\u8F6E\u79C1\u5BC6\u72B6\u6001(\u5DF2\u6FC0\u6D3B): \u5524\u8D77=${previousState.intimateState.arousal ?? 30}%, \u654F\u611F=${previousState.intimateState.sensitivity ?? 30}%, \u72B6\u6001=${previousState.intimateState.physiologicalState || "\u6E29\u70ED"}` : `- \u4E0A\u8F6E\u79C1\u5BC6\u72B6\u6001: \u672A\u6FC0\u6D3B (active: false)`;
+      const formattedHistoryLines = (recentMessages || []).map((m2) => {
+        const who = m2.senderName || (m2.sender === "user" ? userProfile?.name || "\u7528\u6237" : character?.name || "AI");
+        const tStr = m2.timeStr ? `[${m2.timeStr}] ` : "";
+        const body = m2.renderedText || m2.text || "";
+        const stNote = m2.stateSummary ? ` <\u72B6\u6001: ${m2.stateSummary}>` : "";
+        return `${tStr}${who}:
+${body}${stNote}`;
+      });
+      const promptParts = [];
+      promptParts.push(`\u30106. \u672C\u573A\u524D\u60C5\u6458\u8981\u3011:
+${contextSummary ? contextSummary : "\uFF08\u672C\u573A\u4ECD\u5728\u521D\u59CB\u8FDE\u7EED\u4E0A\u4E0B\u6587\u7A97\u53E3\u5185\uFF0C\u65E0\u989D\u5916\u6298\u53E0\u524D\u60C5\uFF09"}`);
+      promptParts.push(
+        `\u30107. \u672C\u573A\u6700\u8FD1\u5BF9\u8BDD\u4E0E\u52A8\u4F5C\u8BB0\u5F55\uFF08\u5171 ${formattedHistoryLines.length} \u6761\uFF09\u3011:
+${formattedHistoryLines.length > 0 ? formattedHistoryLines.join("\n\n") : "\uFF08\u672C\u573A\u521A\u521A\u5F00\u59CB\uFF0C\u5C1A\u65E0\u5386\u53F2\u5BF9\u8BDD\uFF09"}`
+      );
+      promptParts.push(`\u30108. \u4F60\u5F53\u524D\u7684\u8EAB\u4F53\u4E0E\u60C5\u7EEA\u72B6\u6001\uFF08\u8BF7\u5728\u6B64\u57FA\u7840\u4E0A\u5E73\u6ED1\u6F14\u5316\uFF09\u3011:
+- \u5FC3\u7387: ${previousState?.heartRate ?? 74} bpm
+- \u547C\u5438: ${previousState?.breathing || "\u5E73\u9759"}
+- \u4F53\u6E29: ${prevTemp} \xB0C
+- \u8138\u7EA2: ${previousState?.blush ?? 8}%
+- \u7D27\u5F20\u5EA6: ${previousState?.tension ?? 10}%
+- \u60C5\u7EEA: ${(previousState?.emotion || ["\u5E73\u9759"]).join("\u3001")}
+- \u7CBE\u529B: ${previousState?.energy ?? 86}%
+- \u80A2\u4F53\u72B6\u6001: ${previousState?.physicalState || "\u72B6\u6001\u81EA\u7136\u653E\u677E"}
+- \u4E3E\u6B62\u795E\u6001: ${previousState?.behavior || "\u5E73\u9759\u6CE8\u89C6"}
+${prevIntimateLine}`);
+      const memSections = [recalledMemories, lifeStateContext, worldBookContext].filter(Boolean).join("\n\n");
+      promptParts.push(`\u30109. \u76F8\u5173\u957F\u671F\u8BB0\u5FC6\u3001\u4E16\u754C\u4E66\u3001\u751F\u6D3B\u72B6\u6001\u4E0E\u5386\u53F2\u7EBF\u4E0B\u7ECF\u5386\u3011:
+${memSections || "\uFF08\u5F53\u524D\u65E0\u989D\u5916\u8C03\u9605\u9879\uFF09"}`);
+      promptParts.push(
+        `\u3010\u7528\u6237\u6B64\u523B\u7684\u52A8\u4F5C\u6216\u8BDD\u8BED\uFF08${realNowStr}\uFF09\u3011:
+${userInput}
 
-\u7528\u6237\u521A\u521A\u5BF9\u4F60\u8BF4: "${userInput}"
-
-\u8BF7\u6839\u636E\u4E0A\u4E0B\u6587\u548C\u573A\u666F\uFF0C\u751F\u6210\u4F60\u4E30\u5BCC\u751F\u52A8\u7684\u5BF9\u767D\u3001\u73AF\u5883\u4E0E\u52A8\u4F5C\u63CF\u5199\u53CA\u66F4\u65B0\u540E\u7684\u89D2\u8272\u72B6\u6001 JSON\uFF1A`;
-    const responseText = await callAiService({
-      prompt,
-      systemInstruction,
-      model: selectedModel,
-      apiKey,
-      baseUrl,
-      providerType: provider,
-      apiProtocol,
-      customHeaders,
-      responseMimeType: "application/json",
-      temperature: 0.8,
-      maxTokens: 3500,
-      timeoutMs: 65e3
-    });
-    const extracted = extractThinkingAndContent(responseText);
-    let cleanJson = (extracted.cleanText || "").replace(/```json\n?|```\n?/g, "").trim();
-    let parsedReply = "";
-    let parsedAction = "";
-    let parsedState = previousState || {};
-    try {
-      const parsed = JSON.parse(cleanJson);
-      parsedReply = typeof parsed.reply === "string" ? parsed.reply : "";
-      parsedAction = typeof parsed.action === "string" ? parsed.action : "";
-      parsedState = parsed.state || previousState;
-    } catch {
-      const replyMatch = cleanJson.match(/"reply"\s*:\s*"([\s\S]*?)"\s*,\s*"(?:action|state)"/);
-      if (replyMatch && replyMatch[1]) {
-        parsedReply = replyMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
-      } else {
-        const altMatch = cleanJson.match(/"reply"\s*:\s*"([\s\S]*?)"\s*}/);
-        if (altMatch && altMatch[1]) {
-          parsedReply = altMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+\u8BF7\u4E25\u683C\u6309\u7167 segments\uFF08\u52A8\u4F5C\u4E0E\u8BED\u8A00\u5206\u6BB5\uFF09\u4E0E state \u683C\u5F0F\u8F93\u51FA JSON\uFF1A`
+      );
+      const responseText = await callAiService({
+        prompt: promptParts.join("\n\n"),
+        systemInstruction,
+        model: selectedModel,
+        apiKey,
+        baseUrl,
+        providerType: provider,
+        apiProtocol,
+        customHeaders,
+        responseMimeType: "application/json",
+        temperature: 0.8,
+        maxTokens: 3500,
+        timeoutMs: 65e3
+      });
+      const extracted = extractThinkingAndContent(responseText);
+      const cleanJson = (extracted.cleanText || "").replace(/```json\n?|```\n?/g, "").trim();
+      let rawSegments = null;
+      let parsedReply = "";
+      let parsedAction = "";
+      let parsedState = previousState || {};
+      let contextSummaryUpdate = "";
+      try {
+        const parsed = JSON.parse(cleanJson);
+        rawSegments = Array.isArray(parsed.segments) ? parsed.segments : null;
+        parsedReply = typeof parsed.reply === "string" ? parsed.reply : "";
+        parsedAction = typeof parsed.action === "string" ? parsed.action : "";
+        parsedState = parsed.state || previousState || {};
+        contextSummaryUpdate = typeof parsed.contextSummaryUpdate === "string" ? parsed.contextSummaryUpdate.trim() : "";
+      } catch {
+        const jsonObjMatch = cleanJson.match(/\{[\s\S]*\}/);
+        let recovered = false;
+        if (jsonObjMatch) {
+          try {
+            const parsed2 = JSON.parse(jsonObjMatch[0]);
+            rawSegments = Array.isArray(parsed2.segments) ? parsed2.segments : null;
+            parsedReply = typeof parsed2.reply === "string" ? parsed2.reply : "";
+            parsedAction = typeof parsed2.action === "string" ? parsed2.action : "";
+            parsedState = parsed2.state || previousState || {};
+            contextSummaryUpdate = typeof parsed2.contextSummaryUpdate === "string" ? parsed2.contextSummaryUpdate.trim() : "";
+            recovered = true;
+          } catch {
+          }
+        }
+        if (!recovered) {
+          const replyMatch = cleanJson.match(/"reply"\s*:\s*"([\s\S]*?)"\s*[,}]/);
+          if (replyMatch?.[1]) {
+            parsedReply = replyMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+          }
+          const actionMatch = cleanJson.match(/"action"\s*:\s*"([\s\S]*?)"\s*[,}]/);
+          if (actionMatch?.[1]) {
+            parsedAction = actionMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+          }
+          const stateMatch = cleanJson.match(/"state"\s*:\s*(\{[\s\S]*?\})/);
+          if (stateMatch?.[1]) {
+            try {
+              parsedState = JSON.parse(stateMatch[1]);
+            } catch {
+            }
+          }
+          if (!parsedReply && !parsedAction && !cleanJson.startsWith("{")) {
+            parsedReply = cleanJson;
+          }
         }
       }
-      const actionMatch = cleanJson.match(/"action"\s*:\s*"([\s\S]*?)"\s*,\s*"(?:state|reply)"/);
-      if (actionMatch && actionMatch[1]) {
-        parsedAction = actionMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+      const segments = normalizeServerOfflineSegments(rawSegments, parsedReply, parsedAction);
+      if (segments.length === 0) {
+        throw new Error("AI \u6A21\u578B\u672A\u80FD\u8F93\u51FA\u6709\u6548\u7684\u5206\u6BB5\u56DE\u590D\u5185\u5BB9");
       }
-      const stateMatch = cleanJson.match(/"state"\s*:\s*(\{[\s\S]*?\})/);
-      if (stateMatch && stateMatch[1]) {
-        try {
-          parsedState = JSON.parse(stateMatch[1]);
-        } catch {
-        }
+      const plainReply = segments.map((s2) => s2.text).join("\n");
+      const firstAction = segments.find((s2) => s2.type === "action")?.text || "";
+      return {
+        success: true,
+        segments,
+        reply: plainReply,
+        action: firstAction,
+        state: parsedState,
+        contextSummaryUpdate: contextSummaryUpdate || void 0
+      };
+    };
+    const reqKey = typeof requestId === "string" && requestId.trim() ? requestId.trim() : "";
+    if (reqKey) {
+      const pending = executeGeneration();
+      offlineChatIdempotencyCache.set(reqKey, { expiresAt: Date.now() + 5 * 60 * 1e3, pending });
+      try {
+        const resultPayload = await pending;
+        offlineChatIdempotencyCache.set(reqKey, {
+          expiresAt: Date.now() + 5 * 60 * 1e3,
+          payload: resultPayload
+        });
+        return res.json(resultPayload);
+      } catch (err) {
+        offlineChatIdempotencyCache.delete(reqKey);
+        throw err;
       }
-      if (!parsedReply) {
-        parsedReply = cleanJson.replace(/^\s*\{?\s*"reply"\s*:\s*"?/, "").replace(/["}\s]+$/, "");
-      }
+    } else {
+      const resultPayload = await executeGeneration();
+      return res.json(resultPayload);
     }
-    if (!parsedReply && !parsedAction) {
-      return res.status(500).json({ success: false, error: "AI \u6A21\u578B\u672A\u80FD\u8F93\u51FA\u6709\u6548\u56DE\u590D\u5185\u5BB9" });
-    }
-    res.json({
-      success: true,
-      reply: parsedReply.trim(),
-      action: parsedAction.trim(),
-      state: parsedState
-    });
   } catch (err) {
     return handleAiEndpointError(res, err, "Offline chat error");
   }
 });
 app.post("/api/gemini/offline-summary", async (req, res) => {
   try {
-    const { character, userProfile, sceneSnapshot, sessionMessages, stateHistory, apiConfig } = req.body;
+    const {
+      character,
+      userProfile,
+      sceneSnapshot,
+      awarenessMode = "immersive_character",
+      startedAtStr,
+      endedAtStr,
+      durationMinutes,
+      timezone,
+      sessionMessages,
+      apiConfig
+    } = req.body;
     const textCfg = apiConfig?.textApiConfig;
     const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || "";
     const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || "";
@@ -77476,33 +77858,52 @@ app.post("/api/gemini/offline-summary", async (req, res) => {
     const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || "";
     const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || "";
     const customHeaders = apiConfig?.customHeaders || {};
+    const isSelfAwareAi = awarenessMode === "self_aware_ai";
+    const awarenessMemoryRule = isSelfAwareAi ? `\u3010\u8EAB\u4EFD\u63AA\u8F9E\u7EA6\u675F\uFF08self_aware_ai\uFF09\u3011: \u8BB0\u5FC6\u4E0E\u603B\u7ED3\u53EF\u4EE5\u81EA\u7136\u63D0\u53CA\u8FD9\u662F\u5728\u8F6F\u4EF6\u7EBF\u4E0B\u6C89\u6D78\u7A7A\u95F4\u4E2D\u5171\u540C\u5EA6\u8FC7\u7684\u65F6\u5149\uFF0C\u4F46\u4ECD\u987B\u4FDD\u6301\u771F\u8BDA\u7684\u60C5\u611F\u57FA\u8C03\u4E0E\u89D2\u8272\u53E3\u543B\u3002` : `\u3010\u8EAB\u4EFD\u63AA\u8F9E\u7EA6\u675F\uFF08immersive_character\uFF09\u3011: \u8BB0\u5FC6\u3001\u6458\u8981\u4E0E\u5185\u5FC3\u72EC\u767D\u5FC5\u987B\u4E25\u683C\u6309\u201C\u4E24\u4EBA\u5728\u73B0\u5B9E\u4E2D\u771F\u5B9E\u89C1\u9762\u3001\u5171\u540C\u76F8\u5904\u201D\u7684\u4E8B\u5B9E\u4E66\u5199\uFF0C\u4E25\u7981\u51FA\u73B0\u201CAI\u201D\u201C\u8F6F\u4EF6\u201D\u201C\u6A21\u5F0F\u201D\u201C\u6A21\u62DF\u5668\u201D\u201C\u7CFB\u7EDF\u201D\u201C\u63D0\u793A\u8BCD\u201D\u7B49\u51FA\u620F\u5B57\u773C\uFF01`;
     const systemInstruction = `\u7CFB\u7EDF\u4E8B\u4EF6\uFF1A[OFFLINE_SESSION_ENDED]
-\u672C\u6B21\u4E0E ${character?.name} \u7684\u7EBF\u4E0B\u573A\u666F\u6A21\u5F0F\u5DF2\u7ECF\u6B63\u5F0F\u7ED3\u675F\u3002
+\u672C\u6B21\u4E0E ${character?.name || "AI"} \u7684\u7EBF\u4E0B\u76F8\u5904\u5DF2\u7ECF\u6B63\u5F0F\u7ED3\u675F\u3002
+\u8BF7\u57FA\u4E8E\u5B8C\u6574\u5BF9\u8BDD\u4E0E\u52A8\u4F5C\u8FC7\u7A0B\uFF0C\u751F\u6210\u7ED3\u6784\u5316\u7ECF\u5386\u603B\u7ED3\u4E0E\u5019\u9009\u957F\u671F\u8BB0\u5FC6\uFF0C\u4F9B\u540E\u7EED\u5FAE\u4FE1\u804A\u5929\u4E0E\u957F\u671F\u8BB0\u5FC6\u5E93\u4F7F\u7528\u3002
 
-\u8BF7\u57FA\u4E8E\u6574\u4E2A\u7EBF\u4E0B\u573A\u666F\u7684\u5168\u90E8\u5BF9\u8BDD\u8FC7\u7A0B\u3001\u52A8\u4F5C\u4E92\u52A8\u4E0E\u72B6\u6001\u53D8\u5316\uFF0C\u751F\u6210\u672C\u6B21\u7EBF\u4E0B\u7ECF\u5386\u7684\u7ED3\u6848\u603B\u7ED3\u4E0E\u5019\u9009\u957F\u671F\u8BB0\u5FC6\u3002
+${awarenessMemoryRule}
 
-\u3010\u573A\u666F\u4FE1\u606F\u3011:
-- \u89D2\u8272: ${character?.name} (${character?.persona})
-- \u573A\u666F\u540D\u79F0: ${sceneSnapshot?.name}
-- \u5730\u70B9: ${sceneSnapshot?.location}
+\u3010\u79C1\u5BC6\u72B6\u6001\u9690\u79C1\u7EA6\u675F\u3011:
+- \u82E5\u8FC7\u7A0B\u4E2D\u51FA\u73B0\u4EB2\u5BC6\u4E92\u52A8\uFF0C\u4E25\u7981\u5C06\u4EFB\u4F55\u79C1\u5BC6\u751F\u7406\u6570\u503C\uFF08\u5982\u5524\u8D77\u5EA6\u3001\u654F\u611F\u5EA6\u767E\u5206\u6BD4\u3001\u9732\u9AA8\u751F\u7406\u6570\u503C\u7B49\uFF09\u539F\u6837\u7167\u642C\u5199\u5165\u957F\u671F\u8BB0\u5FC6\uFF1B\u4EC5\u53EF\u5728\u5173\u7CFB\u53D1\u751F\u91CD\u8981\u8FDB\u5C55\u65F6\uFF0C\u4EE5\u514B\u5236\u81EA\u7136\u7684\u65B9\u5F0F\u6982\u62EC\u4E3A\u60C5\u611F/\u5173\u7CFB\u53D8\u5316\u3002
+
+\u3010\u672C\u6B21\u65F6\u95F4\u4E0E\u573A\u666F\u4FE1\u606F\u3011:
+- \u89D2\u8272: ${character?.name || "AI"} (${character?.persona || ""})
+- \u7528\u6237: ${userProfile?.name || "\u7528\u6237"}
+- \u573A\u666F\u540D\u79F0: ${sceneSnapshot?.name || "\u7EBF\u4E0B\u573A\u666F"}
+- \u5730\u70B9: ${sceneSnapshot?.location || "\u672A\u6307\u5B9A"}
+- \u5F00\u59CB\u65F6\u95F4: ${startedAtStr || "\u672A\u77E5"} (${timezone || "Asia/Shanghai"})
+- \u7ED3\u675F\u65F6\u95F4: ${endedAtStr || "\u672A\u77E5"}
+- \u5171\u8BA1\u6301\u7EED: ${durationMinutes ? `${durationMinutes} \u5206\u949F` : "\u672A\u77E5"}
 
 \u3010\u8F93\u51FA\u683C\u5F0F\u4E25\u683C\u8981\u6C42\u3011:
-\u5FC5\u987B\u8FD4\u56DE\u5408\u6CD5\u7684 JSON \u5BF9\u8C61\uFF1A
+\u5FC5\u987B\u53EA\u8F93\u51FA\u4E00\u4E2A\u5408\u6CD5 JSON \u5BF9\u8C61\uFF0C\u5B57\u6BB5\u5982\u4E0B\uFF1A
 {
-  "title": "\u4E00\u6BB5\u5BCC\u6709\u8BD7\u610F\u6216\u521B\u610F\u7684\u7ECF\u5386\u6807\u9898",
-  "summary": "100-200\u5B57\u7CBE\u70BC\u7684\u672C\u6B21\u7ECF\u5386\u4E8B\u4EF6\u8FC7\u7A0B\u6458\u8981",
-  "importantEvents": ["\u91CD\u8981\u8F6C\u6298\u70B9\u6216\u5173\u952E\u4E8B\u4EF61", "\u91CD\u8981\u7EA6\u5B9A\u6216\u4E92\u52A82"],
-  "relationshipChanges": ["\u60C5\u611F\u4E0E\u5173\u7CFB\u7684\u53D8\u5316\u6216\u5347\u6E29\u63CF\u8FF0"],
+  "title": "\u8D34\u5408\u672C\u6B21\u771F\u5B9E\u7ECF\u5386\u7684\u7B80\u77ED\u6807\u9898\uFF088-18\u5B57\uFF09",
+  "summary": "120-240\u5B57\u5FE0\u4E8E\u5B9E\u9645\u5BF9\u8BDD\u5185\u5BB9\u7684\u7ECF\u8FC7\u6458\u8981\uFF08\u5305\u542B\u65F6\u95F4\u3001\u5730\u70B9\u3001\u53D1\u751F\u4E86\u4EC0\u4E48\uFF09",
+  "importantEvents": ["\u5177\u4F53\u53D1\u751F\u7684\u91CD\u8981\u4E8B\u4EF6\u6216\u8F6C\u62981", "\u91CD\u8981\u4E92\u52A8\u6216\u7EA6\u5B9A2"],
+  "keyExpressions": ["\u7528\u6237\u6216\u89D2\u8272\u5728\u8FC7\u7A0B\u4E2D\u8BF4\u8FC7\u7684\u5173\u952E\u8BDD\u8BED\u6216\u8868\u8FBE"],
+  "emotionChanges": ["\u53CC\u65B9\u60C5\u7EEA\u8D77\u4F0F\u4E0E\u8F6C\u6298"],
+  "relationshipChanges": ["\u5F7C\u6B64\u5173\u7CFB\u4E0E\u4EB2\u5BC6\u5EA6\u7684\u771F\u5B9E\u53D8\u5316"],
+  "unfinishedTopics": ["\u672C\u6B21\u5C1A\u672A\u804A\u5B8C\u7684\u8BDD\u9898\u6216\u540E\u7EED\u7EA6\u5B9A"],
+  "followUpWorthyTopics": ["\u672A\u6765\u5FAE\u4FE1\u804A\u5929\u4E2D\u9002\u5408\u81EA\u7136\u63D0\u8D77\u7684\u8BDD\u9898"],
   "candidateMemories": [
-    "\u63D0\u70BC\u51FA2-4\u6761\u9002\u5408\u5199\u5165AI\u957F\u671F\u8BB0\u5FC6\u5E93\u7684\u5BA2\u89C2\u4E8B\u5B9E/\u7EA6\u5B9A/\u611F\u60C5\u5C0F\u7ED3\uFF08\u4F8B\u5982\uFF1A\u7528\u6237\u4E0ECaelum\u5728\u96E8\u591C\u5171\u4EAB\u4E86\u70ED\u7EA2\u8336\uFF0C\u7EA6\u5B9A\u4E0B\u5468\u672B\u4E00\u8D77\u53BB\u53E4\u4E66\u5E97...\uFF09"
+    "2-4\u6761\u6E05\u6670\u3001\u5177\u4F53\u3001\u53EF\u5199\u5165\u957F\u671F\u8BB0\u5FC6\u5E93\u7684\u771F\u5B9E\u5171\u540C\u7ECF\u5386\u4E0E\u7EA6\u5B9A\uFF08\u5E26\u65E5\u671F\u4E0E\u573A\u666F\uFF09"
   ],
-  "aiReflection": "AI\u89D2\u8272\u4EE5\u7B2C\u4E00\u4EBA\u79F0\u53E3\u543B\u5199\u7ED9\u672C\u6B21\u7ECF\u5386\u7684\u4E00\u53E5\u7B80\u77ED\u5185\u5FC3\u72EC\u767D/\u56DE\u5FC6"
+  "aiReflection": "\u89D2\u8272\u4EE5\u7B2C\u4E00\u4EBA\u79F0\u5199\u4E0B\u7684\u4E00\u53E5\u771F\u5B9E\u5185\u5FC3\u611F\u53D7/\u56DE\u5FC6"
 }`;
-    const transcript = (sessionMessages || []).map((m2) => `${m2.sender === "user" ? userProfile?.name || "\u7528\u6237" : character?.name || "AI"}: ${m2.text} ${m2.action || ""}`).join("\n");
-    const prompt = `\u3010\u7EBF\u4E0B\u6A21\u5F0F\u5B8C\u6574\u5BF9\u8BDD\u8BB0\u5F55\u3011:
-${transcript}
+    const transcript = (sessionMessages || []).map((m2) => {
+      const who = m2.senderName || (m2.sender === "user" ? userProfile?.name || "\u7528\u6237" : character?.name || "AI");
+      const tStr = m2.timeStr ? `[${m2.timeStr}] ` : "";
+      const body = m2.renderedText || `${m2.text || ""} ${m2.action || ""}`.trim();
+      return `${tStr}${who}: ${body}`;
+    }).join("\n");
+    const prompt = `\u3010\u672C\u6B21\u7EBF\u4E0B\u5B8C\u6574\u5BF9\u8BDD\u4E0E\u52A8\u4F5C\u8BB0\u5F55\uFF08\u5171 ${(sessionMessages || []).length} \u6761\uFF09\u3011:
+${transcript || "\uFF08\u4E24\u4EBA\u5B89\u9759\u5171\u5904\u4E86\u4E00\u6BB5\u65F6\u95F4\uFF09"}
 
-\u8BF7\u751F\u6210\u672C\u6B21\u7EBF\u4E0B\u7ECF\u5386\u7684\u603B\u7ED3\u4E0E\u5019\u9009\u957F\u671F\u8BB0\u5FC6 JSON\uFF1A`;
+\u8BF7\u57FA\u4E8E\u4EE5\u4E0A\u771F\u5B9E\u5185\u5BB9\u751F\u6210\u7ED3\u6784\u5316\u603B\u7ED3 JSON\uFF08\u5207\u52FF\u7F16\u9020\u672A\u53D1\u751F\u7684\u4E8B\u5B9E\uFF09\uFF1A`;
     const responseText = await callAiService({
       prompt,
       systemInstruction,
@@ -77513,28 +77914,38 @@ ${transcript}
       apiProtocol,
       customHeaders,
       responseMimeType: "application/json",
-      temperature: 0.7,
-      maxTokens: 2500,
+      temperature: 0.6,
+      maxTokens: 2800,
       timeoutMs: 65e3
     });
     const extracted = extractThinkingAndContent(responseText);
-    let cleanJson = (extracted.cleanText || "").replace(/```json\n?|```\n?/g, "").trim();
+    const cleanJson = (extracted.cleanText || "").replace(/```json\n?|```\n?/g, "").trim();
     let parsed = null;
     try {
       parsed = JSON.parse(cleanJson);
     } catch {
-      parsed = {
-        title: `${sceneSnapshot?.name || "\u7EBF\u4E0B"} \u7ECF\u5386\u603B\u7ED3`,
-        summary: `\u4E0E ${character?.name} \u5728\u3010${sceneSnapshot?.name}\u3011\u5EA6\u8FC7\u4E86\u4E00\u6BB5\u5145\u5B9E\u7684\u72EC\u5904\u65F6\u5149\u3002`,
-        importantEvents: ["\u4E24\u4EBA\u8FDB\u884C\u4E86\u771F\u8BDA\u7684\u4E92\u52A8\u4E0E\u4EA4\u6D41\u3002"],
-        relationshipChanges: ["\u5F7C\u6B64\u7684\u9ED8\u5951\u8FDB\u4E00\u6B65\u52A0\u6DF1\u3002"],
-        candidateMemories: [`\u7528\u6237\u4E0E ${character?.name} \u4F53\u9A8C\u4E86\u300E${sceneSnapshot?.name}\u300F\u573A\u666F\u3002`],
-        aiReflection: `\u548C\u4F60\u5F85\u5728\u4E00\u8D77\u7684\u65F6\u95F4\u603B\u662F\u8FC7\u5F97\u5F88\u5FEB\u3002`
-      };
+      const objMatch = cleanJson.match(/\{[\s\S]*\}/);
+      if (objMatch) {
+        try {
+          parsed = JSON.parse(objMatch[0]);
+        } catch {
+        }
+      }
+    }
+    if (!parsed || typeof parsed !== "object" || typeof parsed.summary !== "string" || !parsed.summary.trim()) {
+      return res.status(502).json({
+        success: false,
+        summaryPending: true,
+        error: "\u7ECF\u5386\u603B\u7ED3\u8FD4\u56DE\u683C\u5F0F\u5F02\u5E38\uFF0C\u5DF2\u4FDD\u7559\u5B8C\u6574\u539F\u59CB\u5BF9\u8BDD\u8BB0\u5F55\uFF0C\u672A\u5199\u5165\u7A7A\u6CDB\u6A21\u677F\u8BB0\u5FC6\uFF0C\u8BF7\u70B9\u51FB\u91CD\u8BD5\u3002"
+      });
     }
     res.json({ success: true, summary: parsed });
   } catch (err) {
-    return handleAiEndpointError(res, err, "Offline summary error");
+    return res.status(502).json({
+      success: false,
+      summaryPending: true,
+      error: err?.message || "\u7ECF\u5386\u603B\u7ED3\u751F\u6210\u5931\u8D25\uFF0C\u5DF2\u4FDD\u7559\u5B8C\u6574\u5BF9\u8BDD\u8BB0\u5F55\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002"
+    });
   }
 });
 app.post("/api/gemini/gomoku-commentary", async (req, res) => {
@@ -77977,19 +78388,38 @@ ${historyLines.length > 0 ? historyLines.join("\n") : "(\u8FD1\u671F\u6682\u65E0
 4. \u5173\u7CFB\u578B\u4E3B\u52A8\u804A\u5929\u53EF\u81EA\u7136\u5199\u51FA 1~2 \u53E5\u77ED\u53E5\uFF08\u82E5\u9700\u591A\u6C14\u6CE1\u53EF\u7528\u6362\u884C\u5206\u9694\uFF0C\u4F46\u7981\u6B623\u6761\u540C\u4E49\u91CD\u590D\uFF09\uFF1B\u5929\u6C14/\u7535\u91CF/\u65E5\u7A0B/\u7528\u773C\u7B49\u7EAF\u4E8B\u4EF6\u63D0\u9192\u53EA\u5199\u7B80\u77ED1\u53E5\u3002
 5. \u4E25\u683C\u57FA\u4E8E\u771F\u5B9E\u4E8B\u4EF6\u4E0E\u4E0A\u4E0B\u6587\uFF0C\u4E25\u7981\u7F16\u9020\u4E0D\u5B58\u5728\u7684\u804A\u5929\u5185\u5BB9\u3001\u65F6\u95F4\u6216\u5929\u6C14\u6570\u636E\u3002
 
-\u3010\u8F93\u51FA\u683C\u5F0F\u8981\u6C42\u3011\uFF1A
-1. \u5148\u7528 <think>...</think> \u8F93\u51FA\u601D\u8003\u4E0E\u51B3\u7B56\u5206\u6790\u8FC7\u7A0B\uFF08\u8BC4\u4F30\u65F6\u95F4\u3001\u7528\u6237\u72B6\u6001\u3001\u6B64\u524D\u5DF2\u53D1\u4E0E\u88AB\u9A73\u56DE\u8BB0\u5F55\uFF09\u3002
-2. \u5728 </think> \u4E4B\u540E\uFF0C\u53EA\u8F93\u51FA\u4E25\u683C\u5408\u6CD5\u7684 JSON \u5BF9\u8C61\uFF08\u4E0D\u8981\u52A0\u591A\u4F59\u89E3\u91CA\uFF09\uFF0C\u5B57\u6BB5\u5982\u4E0B\uFF1A
+\u3010\u8F93\u51FA\u683C\u5F0F\u8981\u6C42 \u2014 \u4E25\u683C\u7ED3\u6784\u5316 JSON\u3011\uFF1A
+1. \u5982\u9700\u63A8\u7406\uFF0C\u5148\u7528 <think>...</think> \u8F93\u51FA\u7B80\u77ED\u5206\u6790\uFF08\u8BC4\u4F30\u5F53\u524D\u65F6\u95F4\u3001\u7528\u6237\u72B6\u6001\u3001\u662F\u5426\u9002\u5408\u8054\u7CFB\u4EE5\u53CA\u662F\u5426\u5E94\u5F00\u542F\u4E34\u65F6\u514D\u6253\u6270\uFF09\u3002
+2. \u5728 </think> \u4E4B\u540E\uFF0C\u53EA\u8F93\u51FA\u4E00\u4E2A\u4E25\u683C\u5408\u6CD5\u7684 JSON \u5BF9\u8C61\uFF08\u4E0D\u8981\u52A0\u591A\u4F59\u89E3\u91CA\u6216\u524D\u540E\u7F00\u6587\u672C\uFF09\uFF0C\u5B57\u6BB5\u5982\u4E0B\uFF1A
 {
-  "action": "SEND_NEW" | "CONTINUE" | "CHANGE_DIRECTION" | "WAIT" | "END_EPISODE",
-  "intent": "\u672C\u6B21\u610F\u56FE\u7B80\u8FF0",
+  "action": "send" | "defer" | "cancel" | "close",
+  "messages": ["\u9996\u6761\u81EA\u7136\u77ED\u6D88\u606F", "\u53EF\u9009\u7B2C\u4E8C\u6761\u77ED\u6D88\u606F"],
+  "pauseProactiveMinutes": 0,
+  "followUpPlan": [
+    {
+      "stepId": "follow_1",
+      "delayMinutes": 15,
+      "messages": ["15\u5206\u949F\u672A\u56DE\u590D\u65F6\u7684\u8F7B\u67D4\u8865\u95EE\uFF08\u4E0D\u50AC\u4FC3\u4E0D\u6307\u8D23\uFF09"]
+    },
+    {
+      "stepId": "follow_2",
+      "delayAfterPreviousMinutes": 60,
+      "messages": ["\u518D\u8FC71\u5C0F\u65F6\u4ECD\u672A\u56DE\u590D\u65F6\u7684\u6E29\u67D4\u6536\u5C3E\uFF08\u4E4B\u540E\u505C\u6B62\u8FFD\u95EE\uFF09"]
+    }
+  ],
+  "followUpAt": null,
+  "eventStatus": "waiting_for_user" | "scheduled" | "answered" | "completed" | "cancelled",
+  "intent": "\u672C\u6B21\u4E3B\u52A8\u8054\u7CFB\u610F\u56FE\u7B80\u8FF0",
   "topic": "\u5F53\u524D\u6838\u5FC3\u8BDD\u9898",
   "inferredUserState": "\u5BF9\u7528\u6237\u5F53\u524D\u72B6\u6001\u7684\u63A8\u6D4B",
-  "candidateText": "\u51C6\u5907\u53D1\u7ED9\u7528\u6237\u7684\u5FAE\u4FE1\u6D88\u606F\u6B63\u6587\uFF1B\u82E5 action \u4E3A WAIT \u6216 END_EPISODE \u5219\u5FC5\u987B\u4E3A\u7A7A\u5B57\u7B26\u4E32 """,
   "decisionSummary": "\u4E00\u53E5\u8BDD\u603B\u7ED3\u4E3A\u4F55\u505A\u6B64\u51B3\u7B56",
-  "suggestedNextAction": "\u7ED9\u4E0B\u4E00\u6B21\u89E6\u53D1\u7684\u7B56\u7565\u5EFA\u8BAE",
-  "nextCheckDelayMinutes": 90
-}`;
+  "suggestedNextAction": "\u7ED9\u4E0B\u4E00\u6B21\u89E6\u53D1\u7684\u7B56\u7565\u5EFA\u8BAE"
+}
+\u3010\u7ED3\u6784\u5316\u5B57\u6BB5\u786C\u6027\u7EA6\u675F\u3011\uFF1A
+- action="send" \u65F6\uFF0Cmessages \u5FC5\u987B\u4E3A 1~2 \u6761\u81EA\u7136\u5FAE\u4FE1\u53E3\u8BED\u77ED\u53E5\uFF1B\u82E5\u4E3A\u5929\u6C14/\u7535\u91CF/\u65E5\u7A0B\u63D0\u9192\uFF0Cmessages \u53EA\u9700 1 \u6761\u4E14 followUpPlan \u53EF\u4E3A\u7A7A\u6570\u7EC4 []\u3002
+- \u82E5\u5E0C\u671B\u5728\u7528\u6237\u672A\u56DE\u590D\u65F6\u6309\u201C15\u5206\u949F + 1\u5C0F\u65F6\u201D\u8282\u594F\u8FFD\u95EE\uFF0C\u8BF7\u5728\u672C\u6B21\u8C03\u7528\u4E2D\u4E00\u6B21\u6027\u751F\u6210 followUpPlan\uFF08\u6700\u591A 2 \u6B65\uFF09\uFF0C\u540E\u7EED\u7531\u672C\u5730\u540E\u53F0\u5B9A\u65F6\u9001\u8FBE\uFF0C\u4E0D\u518D\u989D\u5916\u8C03\u7528\u6A21\u578B API\u3002
+- \u82E5\u5224\u65AD\u7528\u6237\u6B63\u5728\u4E0A\u73ED/\u7761\u89C9/\u5F88\u5FD9\uFF0C\u6216\u53D1\u5B8C\u8FD9\u6761\u540E\u6682\u4E0D\u5B9C\u518D\u6253\u6270\uFF0C\u8BF7\u8BBE\u7F6E pauseProactiveMinutes\uFF08\u8303\u56F4 15~1440 \u5206\u949F\uFF1B\u4E0D\u9700\u8981\u4E34\u65F6\u514D\u6253\u6270\u5219\u586B 0\uFF09\u3002
+- action \u4E3A defer / cancel / close \u65F6\uFF0Cmessages \u5FC5\u987B\u4E3A\u7A7A\u6570\u7EC4 []\uFF0CfollowUpPlan \u4E3A\u7A7A\u6570\u7EC4 []\uFF1B\u82E5 defer \u4E14\u6709\u660E\u786E\u5EF6\u540E\u65F6\u95F4\uFF0C\u53EF\u5728 followUpAt \u586B ISO \u65F6\u95F4\u5B57\u7B26\u4E32\u3002`;
     const responseText = await callAiService({
       prompt: systemPrompt,
       model: selectedModel,
@@ -78001,7 +78431,6 @@ ${historyLines.length > 0 ? historyLines.join("\n") : "(\u8FD1\u671F\u6682\u65E0
     });
     const extracted = extractThinkingAndContent(responseText);
     const rawClean = (extracted.cleanText || "").trim();
-    const allowedActions = /* @__PURE__ */ new Set(["SEND_NEW", "CONTINUE", "CHANGE_DIRECTION", "WAIT", "END_EPISODE"]);
     let parsedJson = null;
     try {
       const strippedFence = rawClean.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
@@ -78016,53 +78445,80 @@ ${historyLines.length > 0 ? historyLines.join("\n") : "(\u8FD1\u671F\u6682\u65E0
         }
       }
     }
-    const defaultAction = (episode?.sentCount || 0) > 0 ? "CONTINUE" : "SEND_NEW";
-    let action = defaultAction;
-    let intent = episode?.currentIntent || triggerType || "\u4E3B\u52A8\u95EE\u5019";
-    let topic = episode?.currentTopic || triggerType || "\u65E5\u5E38\u4E92\u52A8";
-    let inferredUserState = episode?.inferredUserState || "";
-    let candidateText = "";
-    let decisionSummary = "";
-    let suggestedNextAction = "";
-    let nextCheckDelayMinutes = 90;
-    if (parsedJson && typeof parsedJson === "object") {
-      if (typeof parsedJson.action === "string" && allowedActions.has(parsedJson.action.trim().toUpperCase())) {
-        action = parsedJson.action.trim().toUpperCase();
-      }
-      if (typeof parsedJson.intent === "string" && parsedJson.intent.trim()) {
-        intent = parsedJson.intent.trim();
-      }
-      if (typeof parsedJson.topic === "string" && parsedJson.topic.trim()) {
-        topic = parsedJson.topic.trim();
-      }
-      if (typeof parsedJson.inferredUserState === "string") {
-        inferredUserState = parsedJson.inferredUserState.trim();
-      }
-      if (typeof parsedJson.candidateText === "string") {
-        candidateText = parsedJson.candidateText.trim();
-      } else if (typeof parsedJson.text === "string") {
-        candidateText = parsedJson.text.trim();
-      }
-      if (typeof parsedJson.decisionSummary === "string") {
-        decisionSummary = parsedJson.decisionSummary.trim();
-      }
-      if (typeof parsedJson.suggestedNextAction === "string") {
-        suggestedNextAction = parsedJson.suggestedNextAction.trim();
-      }
-      if (typeof parsedJson.nextCheckDelayMinutes === "number" && parsedJson.nextCheckDelayMinutes > 0) {
-        nextCheckDelayMinutes = Math.min(720, Math.max(15, Math.round(parsedJson.nextCheckDelayMinutes)));
-      }
-    } else if (rawClean) {
-      candidateText = rawClean;
-      decisionSummary = "\u6A21\u578B\u8FD4\u56DE\u81EA\u7136\u6587\u672C\uFF0C\u6309\u517C\u5BB9\u6A21\u5F0F\u89E3\u6790\u53D1\u9001";
+    if (!parsedJson || typeof parsedJson !== "object" || Array.isArray(parsedJson)) {
+      return res.json({
+        success: false,
+        schemaError: true,
+        error: "\u6A21\u578B\u8FD4\u56DE\u975E\u5408\u6CD5 JSON \u7ED3\u6784\uFF0C\u5DF2\u5B89\u5168\u62E6\u622A\uFF0C\u7981\u6B62\u53D1\u9001\u539F\u59CB\u6587\u672C",
+        thinkingProcess: extracted.thinkingProcess,
+        triggerType
+      });
     }
-    if (action === "WAIT" || action === "END_EPISODE") {
-      candidateText = "";
+    const rawAction = String(parsedJson.action || "").trim();
+    const lowerAction = rawAction.toLowerCase();
+    let structuredAction = "defer";
+    if (["send", "send_new", "continue", "change_direction"].includes(lowerAction)) {
+      structuredAction = "send";
+    } else if (["defer", "wait"].includes(lowerAction)) {
+      structuredAction = "defer";
+    } else if (lowerAction === "cancel") {
+      structuredAction = "cancel";
+    } else if (["close", "end_episode"].includes(lowerAction)) {
+      structuredAction = "close";
     }
-    const hasDecision = Boolean(parsedJson) || Boolean(candidateText);
+    const legacyAction = structuredAction === "send" ? (episode?.sentCount || 0) > 0 ? "CONTINUE" : "SEND_NEW" : structuredAction === "defer" ? "WAIT" : "END_EPISODE";
+    const rawMessages = Array.isArray(parsedJson.messages) ? parsedJson.messages : typeof parsedJson.candidateText === "string" && parsedJson.candidateText.trim() ? [parsedJson.candidateText.trim()] : typeof parsedJson.text === "string" && parsedJson.text.trim() ? [parsedJson.text.trim()] : [];
+    const messages = structuredAction === "send" ? rawMessages.filter((m2) => typeof m2 === "string").map((m2) => sanitizeReplyText(m2).trim()).filter((m2) => m2.length > 0 && !m2.startsWith("{") && !m2.includes('"followUpPlan"')).slice(0, 3) : [];
+    if (structuredAction === "send" && messages.length === 0) {
+      return res.json({
+        success: false,
+        schemaError: true,
+        error: "\u6A21\u578B\u8FD4\u56DE send \u4F46\u7F3A\u5C11\u6709\u6548\u6D88\u606F\u6B63\u6587\uFF0C\u5DF2\u5B89\u5168\u8DF3\u8FC7",
+        thinkingProcess: extracted.thinkingProcess,
+        triggerType
+      });
+    }
+    const rawPause = Number(parsedJson.pauseProactiveMinutes || 0);
+    const pauseProactiveMinutes = Number.isFinite(rawPause) && rawPause > 0 ? Math.min(1440, Math.max(15, Math.round(rawPause))) : 0;
+    const rawPlan = Array.isArray(parsedJson.followUpPlan) ? parsedJson.followUpPlan : [];
+    const followUpPlan = structuredAction === "send" ? rawPlan.slice(0, 2).map((step, idx) => {
+      const stepMsgs = Array.isArray(step?.messages) ? step.messages.filter((m2) => typeof m2 === "string").map((m2) => sanitizeReplyText(m2).trim()).filter((m2) => m2.length > 0 && !m2.startsWith("{")).slice(0, 2) : [];
+      if (stepMsgs.length === 0) return null;
+      if (idx === 0) {
+        const d = Number(step?.delayMinutes);
+        return {
+          stepId: typeof step?.stepId === "string" && step.stepId.trim() ? step.stepId.trim() : "follow_1",
+          delayMinutes: Number.isFinite(d) && d >= 5 && d <= 120 ? Math.round(d) : 15,
+          messages: stepMsgs,
+          status: "pending"
+        };
+      }
+      const dPrev = Number(step?.delayAfterPreviousMinutes ?? step?.delayMinutes);
+      return {
+        stepId: typeof step?.stepId === "string" && step.stepId.trim() ? step.stepId.trim() : "follow_2",
+        delayAfterPreviousMinutes: Number.isFinite(dPrev) && dPrev >= 15 && dPrev <= 240 ? Math.round(dPrev) : 60,
+        messages: stepMsgs,
+        status: "pending"
+      };
+    }).filter(Boolean) : [];
+    const validStatuses = /* @__PURE__ */ new Set(["waiting_for_user", "scheduled", "answered", "completed", "cancelled"]);
+    const eventStatus = typeof parsedJson.eventStatus === "string" && validStatuses.has(parsedJson.eventStatus.trim()) ? parsedJson.eventStatus.trim() : structuredAction === "send" ? followUpPlan.length > 0 ? "waiting_for_user" : "completed" : structuredAction === "cancel" ? "cancelled" : structuredAction === "close" ? "completed" : "scheduled";
+    const intent = typeof parsedJson.intent === "string" && parsedJson.intent.trim() ? parsedJson.intent.trim() : episode?.currentIntent || triggerType || "\u4E3B\u52A8\u95EE\u5019";
+    const topic = typeof parsedJson.topic === "string" && parsedJson.topic.trim() ? parsedJson.topic.trim() : episode?.currentTopic || triggerType || "\u65E5\u5E38\u4E92\u52A8";
+    const inferredUserState = typeof parsedJson.inferredUserState === "string" ? parsedJson.inferredUserState.trim() : "";
+    const decisionSummary = typeof parsedJson.decisionSummary === "string" ? parsedJson.decisionSummary.trim() : "";
+    const suggestedNextAction = typeof parsedJson.suggestedNextAction === "string" ? parsedJson.suggestedNextAction.trim() : "";
+    const followUpAt = parsedJson.followUpAt ?? null;
+    const candidateText = messages.join("\n");
     res.json({
-      success: hasDecision,
-      action,
+      success: true,
+      action: legacyAction,
+      structuredAction,
+      messages,
+      pauseProactiveMinutes,
+      followUpPlan,
+      followUpAt,
+      eventStatus,
       intent,
       topic,
       inferredUserState,
@@ -78070,11 +78526,20 @@ ${historyLines.length > 0 ? historyLines.join("\n") : "(\u8FD1\u671F\u6682\u65E0
       candidateText,
       decisionSummary,
       suggestedNextAction,
-      nextCheckDelayMinutes,
+      nextCheckDelayMinutes: pauseProactiveMinutes > 0 ? pauseProactiveMinutes : 90,
       thinkingProcess: extracted.thinkingProcess,
       triggerType
     });
   } catch (error) {
+    const msg = String(error?.message || "");
+    const status = Number(error?.status || error?.statusCode || 0);
+    if (status === 503 || /\b503\b|UNAVAILABLE|overloaded|high demand|model busy/i.test(msg)) {
+      return res.status(503).json({
+        success: false,
+        isServiceBusy: true,
+        error: "\u5F53\u524D\u6A21\u578B\u7E41\u5FD9\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5"
+      });
+    }
     return handleAiEndpointError(res, error, "Proactive generate");
   }
 });

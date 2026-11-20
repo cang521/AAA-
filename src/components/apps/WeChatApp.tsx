@@ -424,6 +424,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
   // Offline mode overlay state
   const [showOfflineModal, setShowOfflineModal] = useState(false);
+  const [offlineDetailSessionId, setOfflineDetailSessionId] = useState<string | null>(null);
 
   // Character Deletion with Memory Space Option Modal (Requirement 8)
   const [characterToDelete, setCharacterToDelete] = useState<AiCharacter | null>(null);
@@ -1965,6 +1966,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                               quoteText={msg.quoteMessageId ? quotesMap.get(msg.quoteMessageId) : undefined}
                               onOpenCoT={handleOpenCoT}
                               onContextMenu={handleMessageContextMenu}
+                              onOpenOfflineDetail={(sid) => setOfflineDetailSessionId(sid)}
                               isHighlighted={highlightedMsgId === msg.id}
                             />
                           </React.Fragment>
@@ -4629,6 +4631,17 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           />
         </div>
       )}
+
+      {/* Offline History Detail Modal (opened when clicking timeline card in WeChat) */}
+      <OfflineHistoryDetailModal
+        isOpen={!!offlineDetailSessionId}
+        sessionId={offlineDetailSessionId}
+        character={activeCharacter}
+        userProfile={userProfile}
+        apiConfig={apiConfig}
+        onClose={() => setOfflineDetailSessionId(null)}
+        onUpdateCharacters={onUpdateCharacters}
+      />
 
       {/* Read-Only AI Phone Viewer Modal */}
       {aiPhoneViewerChar && (
