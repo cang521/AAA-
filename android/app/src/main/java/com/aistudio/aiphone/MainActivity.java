@@ -16,6 +16,7 @@ import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 import com.aistudio.aiphone.plugins.AndroidPermissionBridge;
 import com.aistudio.aiphone.plugins.LauncherAppearanceManager;
+import com.aistudio.aiphone.plugins.NativeFileExportPlugin;
 import com.aistudio.aiphone.plugins.ProactiveBackgroundPlugin;
 
 public class MainActivity extends BridgeActivity {
@@ -27,6 +28,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(AndroidPermissionBridge.class);
         registerPlugin(ProactiveBackgroundPlugin.class);
+        registerPlugin(NativeFileExportPlugin.class);
         super.onCreate(savedInstanceState);
 
         if (LauncherAppearanceManager.reconcileOnLaunch(this, getIntent())) {

@@ -81,20 +81,37 @@ export class LargeImportManager {
     let manifestText = '';
     let foundManifest = false;
     const characters: AiCharacter[] = [];
+    const groups: GroupChat[] = [];
+    let hasSettingsFile = false;
     const characterMatches: any[] = [];
     let estimatedMessageCount = 0;
     const fileTypes: Record<string, number> = {};
 
     for (const entry of entries) {
       if (entry.isDirectory) continue;
+      const lower = entry.filename.toLowerCase();
       const ext = entry.filename.split('.').pop()?.toLowerCase() || 'other';
       fileTypes[ext] = (fileTypes[ext] || 0) + 1;
 
-      if (entry.filename.toLowerCase() === 'manifest.json' || entry.filename.toLowerCase().endsWith('/manifest.json')) {
+      if (lower === 'manifest.json' || lower.endsWith('/manifest.json')) {
         foundManifest = true;
         manifestText = await zipReader.readEntryText(entry);
-      } else if (entry.filename.toLowerCase().includes('messages') || entry.filename.toLowerCase().includes('chat')) {
-        // Rough estimate of messages based on uncompressed file size
+      } else if ((lower === 'characters.json' || lower === 'ai_characters.json') && entry.uncompressedSize <= 2 * 1024 * 1024) {
+        try {
+          const text = await zipReader.readEntryText(entry);
+          const parsed = JSON.parse(text);
+          if (Array.isArray(parsed)) characters.push(...parsed);
+        } catch {}
+      } else if ((lower === 'groups.json' || lower === 'group_chats.json') && entry.uncompressedSize <= 2 * 1024 * 1024) {
+        try {
+          const text = await zipReader.readEntryText(entry);
+          const parsed = JSON.parse(text);
+          if (Array.isArray(parsed)) groups.push(...parsed);
+        } catch {}
+      } else if (lower === 'settings.json') {
+        hasSettingsFile = true;
+      } else if (lower.includes('messages') || lower.includes('chat')) {
+        // Rough estimate of messages based on uncompressed file size (used if manifest doesn't supply exact count)
         estimatedMessageCount += Math.round(entry.uncompressedSize / 150);
       }
     }
@@ -104,8 +121,11 @@ export class LargeImportManager {
     if (foundManifest && manifestText) {
       try {
         manifestData = JSON.parse(manifestText);
-        if (Array.isArray(manifestData.characters)) {
+        if (characters.length === 0 && Array.isArray(manifestData.characters)) {
           characters.push(...manifestData.characters);
+        }
+        if (groups.length === 0 && Array.isArray(manifestData.groups)) {
+          groups.push(...manifestData.groups);
         }
       } catch (e) {
         console.warn('Failed to parse manifest in ZIP analysis', e);
@@ -113,12 +133,30 @@ export class LargeImportManager {
     }
 
     // Default character if none found in manifest
-    if (characters.length === 0) {
+    if (characters.length === 0 && typeof manifestData?.characterCount !== 'number') {
       const localChars = loadCharacters();
       if (localChars.length > 0) {
         characters.push(localChars[0]);
       }
     }
+
+    const exactCharCount =
+      typeof manifestData?.characterCount === 'number'
+        ? manifestData.characterCount
+        : characters.length;
+    const exactMessageCount =
+      typeof manifestData?.messageCount === 'number'
+        ? manifestData.messageCount
+        : estimatedMessageCount;
+    const exactGroupCount =
+      typeof manifestData?.groupCount === 'number'
+        ? manifestData.groupCount
+        : groups.length;
+    const exactMemoryCount =
+      typeof manifestData?.memoryCount === 'number'
+        ? manifestData.memoryCount
+        : characters.reduce((acc, c) => acc + (Array.isArray(c?.memories) ? c.memories.length : 0), 0);
+    const hasSettings = hasSettingsFile || !!manifestData?.settings;
 
     const report: FileIntelligenceReport = {
       confidence: 95,
@@ -130,7 +168,7 @@ export class LargeImportManager {
       featuresDetected: [
         `Central Directory 目录秒解析`,
         `按需流式解压`,
-        `估算包含约 ${estimatedMessageCount} 条对话`,
+        `包含约 ${exactMessageCount} 条对话`,
       ],
       zipDetails: {
         totalFiles: entries.length,
@@ -151,14 +189,14 @@ export class LargeImportManager {
       report,
       characters,
       messages: [], // Leave empty during analysis phase to avoid memory spike!
-      groups: manifestData?.groups || [],
+      groups,
       memories: [],
       stats: {
-        characterCount: characters.length,
-        messageCount: estimatedMessageCount,
-        groupCount: manifestData?.groups?.length || 0,
-        memoryCount: 0,
-        hasSettings: !!manifestData?.settings,
+        characterCount: exactCharCount,
+        messageCount: exactMessageCount,
+        groupCount: exactGroupCount,
+        memoryCount: exactMemoryCount,
+        hasSettings,
       },
       conflicts: [],
       characterMatches,

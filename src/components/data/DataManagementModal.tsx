@@ -34,6 +34,9 @@ import {
   Wand2,
   ScanText,
   CheckCheck,
+  FolderDown,
+  Share2,
+  Info,
 } from 'lucide-react';
 import {
   ExportCategory,
@@ -45,6 +48,12 @@ import {
   ImportParsedResult,
   ImportExecutionOptions,
   DataSnapshot,
+  ExportProgressInfo,
+  ExportDeliveryResult,
+  NativeExportDeliveryMode,
+  ExportStageError,
+  canUseNativeAndroidExport,
+  saveCachedExportToDownloadsFallback,
   parseImportFile,
   executeImport,
   exportData,
@@ -56,6 +65,7 @@ import {
   LargeImportManager,
   ImportJournal,
 } from '../../lib/dataManagement';
+import { AiCharacter } from '../../types';
 import { loadCharacters } from '../../lib/storage';
 
 interface DataManagementModalProps {
@@ -63,6 +73,7 @@ interface DataManagementModalProps {
   onClose: () => void;
   onDataChanged: () => void; // Triggered when data is imported or rolled back to refresh parent states
   initialTab?: 'import' | 'export' | 'snapshots';
+  characters?: AiCharacter[]; // Optional live in-memory characters from parent app context
 }
 
 export const DataManagementModal: React.FC<DataManagementModalProps> = ({
@@ -70,6 +81,7 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
   onClose,
   onDataChanged,
   initialTab = 'import',
+  characters: inMemoryCharacters,
 }) => {
   const [activeTab, setActiveTab] = useState<'import' | 'export' | 'snapshots'>(initialTab);
 
@@ -130,8 +142,23 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
   const [exportCharScope, setExportCharScope] = useState<'all' | 'custom'>('all');
   const [selectedExportCharIds, setSelectedExportCharIds] = useState<string[]>([]);
   const [includeThinking, setIncludeThinking] = useState(true);
+  const [exportDeliveryMode, setExportDeliveryMode] = useState<NativeExportDeliveryMode>('auto');
   const [isExporting, setIsExporting] = useState(false);
-  const [exportSuccessMsg, setExportSuccessMsg] = useState<string | null>(null);
+  const [exportProgress, setExportProgress] = useState<ExportProgressInfo | null>(null);
+  const [exportResult, setExportResult] = useState<ExportDeliveryResult | null>(null);
+  const [exportCancelledMsg, setExportCancelledMsg] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<{
+    stageLabel: string;
+    message: string;
+    suggestion?: string;
+    canFallbackToDownloads?: boolean;
+    cachedFileName?: string;
+    cachedMimeType?: string;
+  } | null>(null);
+  const [lastCachedExport, setLastCachedExport] = useState<{
+    fileName: string;
+    mimeType: string;
+  } | null>(null);
 
   // -------------------------------------------------------------------------
   // Snapshot / Rollback States
@@ -141,7 +168,24 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
   const [snapshotNote, setSnapshotNote] = useState('');
   const [rollbackSuccessMsg, setRollbackSuccessMsg] = useState<string | null>(null);
 
-  const charactersList = loadCharacters();
+  const charactersList = React.useMemo(() => {
+    const persisted = loadCharacters();
+    if (!inMemoryCharacters || inMemoryCharacters.length === 0) {
+      return persisted;
+    }
+    const map = new Map<string, AiCharacter>();
+    for (const c of persisted) {
+      if (c && c.id) map.set(c.id, c);
+    }
+    for (const c of inMemoryCharacters) {
+      if (c && c.id) {
+        map.set(c.id, { ...(map.get(c.id) || {}), ...c });
+      }
+    }
+    return Array.from(map.values());
+  }, [inMemoryCharacters, isOpen]);
+
+  const isNativeAndroid = canUseNativeAndroidExport();
 
   useEffect(() => {
     if (isOpen) {
@@ -149,7 +193,10 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
       setImportError(null);
       setImportSuccessResult(null);
       setRollbackSuccessMsg(null);
-      setExportSuccessMsg(null);
+      setExportResult(null);
+      setExportCancelledMsg(null);
+      setExportError(null);
+      setExportProgress(null);
     }
   }, [isOpen]);
 
@@ -313,24 +360,121 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
   // Handlers: Export
   // -------------------------------------------------------------------------
   const handleRunExport = async () => {
+    if (isExporting) return;
+
+    setExportResult(null);
+    setExportCancelledMsg(null);
+    setExportError(null);
+    setLastCachedExport(null);
+
+    if (exportCategories.length === 0) {
+      setExportError({
+        stageLabel: '数据读取失败',
+        message: '请至少选择一个需要导出的数据内容模块',
+      });
+      return;
+    }
+
+    if (exportCharScope === 'custom' && selectedExportCharIds.length === 0) {
+      setExportError({
+        stageLabel: '数据读取失败',
+        message: '您选择了“指定角色”范围，请至少勾选 1 位要导出的 AI 角色',
+      });
+      return;
+    }
+
     setIsExporting(true);
-    setExportSuccessMsg(null);
+    setExportProgress({
+      stage: 'reading',
+      stageLabel: '正在准备导出数据...',
+      percentage: 4,
+    });
+
+    let generatedFileName: string | undefined;
+    let generatedMimeType: string | undefined;
 
     try {
       const charIds = exportCharScope === 'custom' ? selectedExportCharIds : undefined;
-      const { blob, fileName } = await exportData({
+      const generated = await exportData({
         categories: exportCategories,
         format: exportFormat,
         characterIds: charIds,
         includeThinkingProcess: includeThinking,
+        inMemoryCharacters,
+        onProgress: (info) => setExportProgress(info),
       });
 
-      triggerDownload(blob, fileName);
-      setExportSuccessMsg(`文件 ${fileName} 导出成功并已开始下载！`);
+      generatedFileName = generated.fileName;
+      generatedMimeType = generated.mimeType;
+
+      const delivery = await triggerDownload(generated.blob, generated.fileName, {
+        mimeType: generated.mimeType,
+        deliveryMode: exportDeliveryMode,
+        onProgress: (info) => setExportProgress(info),
+      });
+
+      if (delivery.status === 'cancelled') {
+        setLastCachedExport({
+          fileName: generated.fileName,
+          mimeType: generated.mimeType,
+        });
+        setExportCancelledMsg('已取消导出（文件尚未保存到外部位置，本地应用数据无任何改动）');
+      } else {
+        setExportResult({
+          ...delivery,
+          warnings: generated.warnings.length > 0 ? generated.warnings : undefined,
+        });
+      }
     } catch (err: any) {
-      alert(`导出数据失败: ${err?.message || '未知错误'}`);
+      if (err instanceof ExportStageError) {
+        const canFallback =
+          isNativeAndroid &&
+          err.stage === 'system_share' &&
+          !!generatedFileName &&
+          !!generatedMimeType;
+        setExportError({
+          stageLabel: err.stageLabel,
+          message: err.message,
+          suggestion: err.suggestion,
+          canFallbackToDownloads: canFallback,
+          cachedFileName: generatedFileName,
+          cachedMimeType: generatedMimeType,
+        });
+      } else {
+        setExportError({
+          stageLabel: '文件生成失败',
+          message: err?.message || '导出流程意外中断，请重试或缩小导出范围',
+        });
+      }
     } finally {
       setIsExporting(false);
+      setExportProgress(null);
+    }
+  };
+
+  const handleFallbackSaveToDownloads = async (fileName: string, mimeType: string) => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setExportError(null);
+    setExportCancelledMsg(null);
+    setExportProgress({
+      stage: 'awaiting_user_save',
+      stageLabel: '正在写入系统下载目录...',
+      detail: fileName,
+      percentage: 92,
+    });
+    try {
+      const res = await saveCachedExportToDownloadsFallback(fileName, mimeType);
+      setLastCachedExport(null);
+      setExportResult(res);
+    } catch (err: any) {
+      setExportError({
+        stageLabel: err instanceof ExportStageError ? err.stageLabel : '原生写入失败',
+        message: err?.message || '保存到下载目录失败，请重新尝试导出',
+      });
+    } finally {
+      setIsExporting(false);
+      setExportProgress(null);
     }
   };
 
@@ -1469,11 +1613,122 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
           {/* ========================================================================= */}
           {activeTab === 'export' && (
             <div className="space-y-4">
-              {/* Success Notification */}
-              {exportSuccessMsg && (
-                <div className="wx-alert-success p-3.5 rounded-2xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2">
-                  <CheckCircle2 className="wx-green-text w-4 h-4 shrink-0 text-emerald-400" />
-                  <span className="wx-primary-text">{exportSuccessMsg}</span>
+              {/* Verified Success Notification */}
+              {exportResult && exportResult.status === 'success' && (
+                <div className="wx-alert-success p-3.5 rounded-2xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-200 text-xs space-y-2">
+                  <div className="flex items-center gap-2 font-bold text-emerald-300">
+                    <CheckCircle2 className="wx-green-text w-4 h-4 shrink-0 text-emerald-400" />
+                    <span className="wx-primary-text">
+                      {exportResult.deliveryMethod === 'system_share'
+                        ? '已调起系统分享并完成发送'
+                        : exportResult.deliveryMethod === 'web_download'
+                        ? '导出文件已生成并触发下载'
+                        : '导出文件已验证保存成功'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] space-y-1 text-zinc-200 bg-black/25 rounded-xl p-2.5 border border-emerald-500/20">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-zinc-400 shrink-0">文件名:</span>
+                      <span className="font-mono font-semibold truncate text-right">{exportResult.fileName}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-zinc-400 shrink-0">文件大小:</span>
+                      <span className="font-mono text-emerald-300">{exportResult.formattedSize}</span>
+                    </div>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-zinc-400 shrink-0">保存位置:</span>
+                      <span className="text-right break-all text-zinc-300">{exportResult.locationLabel}</span>
+                    </div>
+                  </div>
+                  {exportResult.warnings && exportResult.warnings.length > 0 && (
+                    <div className="p-2 rounded-xl bg-amber-950/40 border border-amber-500/30 text-[11px] text-amber-200 leading-relaxed">
+                      ⚠️ 部分异常记录已自动跳过：{exportResult.warnings.slice(0, 3).join('；')}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Cancelled Notification (Never falsely reported as success or crash) */}
+              {exportCancelledMsg && (
+                <div className="wx-alert-info p-3.5 rounded-2xl bg-zinc-800/80 border border-zinc-600/60 text-zinc-200 text-xs space-y-2">
+                  <div className="flex items-center gap-2 font-semibold">
+                    <Info className="w-4 h-4 text-zinc-300 shrink-0" />
+                    <span>{exportCancelledMsg}</span>
+                  </div>
+                  {isNativeAndroid && lastCachedExport && (
+                    <div className="flex items-center justify-between gap-2 pt-1">
+                      <span className="text-[11px] text-zinc-400">缓存文件仍保留，可直接保存到下载目录：</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleFallbackSaveToDownloads(
+                            lastCachedExport.fileName,
+                            lastCachedExport.mimeType
+                          )
+                        }
+                        className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-[11px] shrink-0 cursor-pointer transition"
+                      >
+                        保存到下载目录
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Stage-tagged Error Notification */}
+              {exportError && (
+                <div className="wx-alert-error p-3.5 rounded-2xl bg-rose-950/50 border border-rose-500/40 text-rose-200 text-xs space-y-2">
+                  <div className="flex items-center gap-2 font-bold text-rose-300">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                    <span>{exportError.stageLabel}</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-rose-100">{exportError.message}</p>
+                  {exportError.suggestion && (
+                    <p className="text-[11px] leading-relaxed text-amber-200 bg-amber-950/30 p-2 rounded-xl border border-amber-500/30">
+                      💡 建议：{exportError.suggestion}
+                    </p>
+                  )}
+                  {exportError.canFallbackToDownloads && exportError.cachedFileName && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleFallbackSaveToDownloads(
+                          exportError.cachedFileName!,
+                          exportError.cachedMimeType || 'application/octet-stream'
+                        )
+                      }
+                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-[11px] flex items-center gap-1.5 cursor-pointer transition"
+                    >
+                      <FolderDown className="w-3.5 h-3.5" />
+                      <span>使用兜底方案：保存到下载目录</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Live Progress Indicator */}
+              {isExporting && exportProgress && (
+                <div className="wx-alert-info p-3.5 rounded-2xl bg-blue-950/40 border border-blue-500/40 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-blue-200 font-semibold gap-2">
+                    <span className="flex items-center gap-2 min-w-0 truncate">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400 shrink-0" />
+                      <span className="truncate">{exportProgress.stageLabel}</span>
+                    </span>
+                    {typeof exportProgress.percentage === 'number' && (
+                      <span className="font-mono text-xs shrink-0">{exportProgress.percentage}%</span>
+                    )}
+                  </div>
+                  {typeof exportProgress.percentage === 'number' && (
+                    <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden border border-zinc-700">
+                      <div
+                        className="h-full bg-gradient-to-r from-blue-500 to-emerald-400 transition-all duration-200"
+                        style={{ width: `${Math.min(100, Math.max(4, exportProgress.percentage))}%` }}
+                      />
+                    </div>
+                  )}
+                  {exportProgress.detail && (
+                    <div className="text-[10px] text-zinc-400 font-mono truncate">{exportProgress.detail}</div>
+                  )}
                 </div>
               )}
 
@@ -1482,8 +1737,10 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="wx-primary-text text-xs font-bold text-zinc-200">1. 选择导出内容模块</span>
                   <button
+                    type="button"
+                    disabled={isExporting}
                     onClick={() => toggleExportCategory('all')}
-                    className="wx-link-text text-xs text-blue-400 hover:underline cursor-pointer"
+                    className="wx-link-text text-xs text-blue-400 hover:underline cursor-pointer disabled:opacity-40"
                   >
                     {exportCategories.length >= 5 ? '取消全选' : '全选所有数据'}
                   </button>
@@ -1493,6 +1750,7 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                   <label className="wx-sub-card flex items-center gap-2 p-2 rounded-xl bg-zinc-900 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition">
                     <input
                       type="checkbox"
+                      disabled={isExporting}
                       checked={exportCategories.includes('characters')}
                       onChange={() => toggleExportCategory('characters')}
                       className="w-4 h-4 accent-blue-500"
@@ -1504,6 +1762,7 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                   <label className="wx-sub-card flex items-center gap-2 p-2 rounded-xl bg-zinc-900 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition">
                     <input
                       type="checkbox"
+                      disabled={isExporting}
                       checked={exportCategories.includes('messages')}
                       onChange={() => toggleExportCategory('messages')}
                       className="w-4 h-4 accent-blue-500"
@@ -1515,6 +1774,7 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                   <label className="wx-sub-card flex items-center gap-2 p-2 rounded-xl bg-zinc-900 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition">
                     <input
                       type="checkbox"
+                      disabled={isExporting}
                       checked={exportCategories.includes('memories')}
                       onChange={() => toggleExportCategory('memories')}
                       className="w-4 h-4 accent-blue-500"
@@ -1526,6 +1786,7 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                   <label className="wx-sub-card flex items-center gap-2 p-2 rounded-xl bg-zinc-900 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition">
                     <input
                       type="checkbox"
+                      disabled={isExporting}
                       checked={exportCategories.includes('groups')}
                       onChange={() => toggleExportCategory('groups')}
                       className="w-4 h-4 accent-blue-500"
@@ -1537,6 +1798,7 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                   <label className="wx-sub-card flex items-center gap-2 p-2 rounded-xl bg-zinc-900 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition col-span-2">
                     <input
                       type="checkbox"
+                      disabled={isExporting}
                       checked={exportCategories.includes('settings')}
                       onChange={() => toggleExportCategory('settings')}
                       className="w-4 h-4 accent-blue-500"
@@ -1553,8 +1815,9 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
+                    disabled={isExporting}
                     onClick={() => setExportFormat('zip')}
-                    className={`p-3 rounded-2xl border text-left flex flex-col justify-between transition cursor-pointer ${
+                    className={`p-3 rounded-2xl border text-left flex flex-col justify-between transition cursor-pointer disabled:opacity-50 ${
                       exportFormat === 'zip'
                         ? 'wx-option-active bg-blue-600/20 border-blue-500 text-blue-300 shadow-sm'
                         : 'wx-sub-card wx-secondary-text bg-zinc-900 border-zinc-800 text-zinc-400 hover:bg-zinc-850'
@@ -1565,14 +1828,15 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                       <Archive className="w-4 h-4 text-blue-400" />
                     </div>
                     <span className="wx-secondary-text text-[10px] opacity-80">
-                      推荐格式！分类存储 JSON、聊天记录与记忆
+                      推荐格式！按角色分卷存储且无重复副本
                     </span>
                   </button>
 
                   <button
                     type="button"
+                    disabled={isExporting}
                     onClick={() => setExportFormat('json')}
-                    className={`p-3 rounded-2xl border text-left flex flex-col justify-between transition cursor-pointer ${
+                    className={`p-3 rounded-2xl border text-left flex flex-col justify-between transition cursor-pointer disabled:opacity-50 ${
                       exportFormat === 'json'
                         ? 'wx-option-active bg-blue-600/20 border-blue-500 text-blue-300 shadow-sm'
                         : 'wx-sub-card wx-secondary-text bg-zinc-900 border-zinc-800 text-zinc-400 hover:bg-zinc-850'
@@ -1589,8 +1853,9 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
 
                   <button
                     type="button"
+                    disabled={isExporting}
                     onClick={() => setExportFormat('jsonl')}
-                    className={`p-3 rounded-2xl border text-left flex flex-col justify-between transition cursor-pointer ${
+                    className={`p-3 rounded-2xl border text-left flex flex-col justify-between transition cursor-pointer disabled:opacity-50 ${
                       exportFormat === 'jsonl'
                         ? 'wx-option-active bg-blue-600/20 border-blue-500 text-blue-300 shadow-sm'
                         : 'wx-sub-card wx-secondary-text bg-zinc-900 border-zinc-800 text-zinc-400 hover:bg-zinc-850'
@@ -1601,14 +1866,15 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                       <Layers className="w-4 h-4 text-purple-400" />
                     </div>
                     <span className="wx-secondary-text text-[10px] opacity-80">
-                      逐行 JSON 序列，适合大规模迁移与训练
+                      逐行流式生成，适合超大聊天记录与迁移
                     </span>
                   </button>
 
                   <button
                     type="button"
+                    disabled={isExporting}
                     onClick={() => setExportFormat('txt')}
-                    className={`p-3 rounded-2xl border text-left flex flex-col justify-between transition cursor-pointer ${
+                    className={`p-3 rounded-2xl border text-left flex flex-col justify-between transition cursor-pointer disabled:opacity-50 ${
                       exportFormat === 'txt'
                         ? 'wx-option-active bg-blue-600/20 border-blue-500 text-blue-300 shadow-sm'
                         : 'wx-sub-card wx-secondary-text bg-zinc-900 border-zinc-800 text-zinc-400 hover:bg-zinc-850'
@@ -1634,6 +1900,7 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                       <input
                         type="radio"
                         name="exportScope"
+                        disabled={isExporting}
                         checked={exportCharScope === 'all'}
                         onChange={() => setExportCharScope('all')}
                         className="accent-blue-500"
@@ -1644,6 +1911,7 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                       <input
                         type="radio"
                         name="exportScope"
+                        disabled={isExporting}
                         checked={exportCharScope === 'custom'}
                         onChange={() => setExportCharScope('custom')}
                         className="accent-blue-500"
@@ -1662,6 +1930,7 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                       >
                         <input
                           type="checkbox"
+                          disabled={isExporting}
                           checked={selectedExportCharIds.includes(c.id)}
                           onChange={() => {
                             setSelectedExportCharIds((prev) =>
@@ -1677,8 +1946,59 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                 )}
               </div>
 
+              {/* Step 4: Native Android Export Delivery Option */}
+              {isNativeAndroid && (
+                <div className="wx-card p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2.5">
+                  <span className="wx-primary-text text-xs font-bold text-zinc-200 block">
+                    4. Android 导出保存方式
+                  </span>
+                  <div className="grid grid-cols-3 gap-1.5 text-[11px]">
+                    <button
+                      type="button"
+                      disabled={isExporting}
+                      onClick={() => setExportDeliveryMode('auto')}
+                      className={`p-2 rounded-xl border text-center transition cursor-pointer disabled:opacity-50 ${
+                        exportDeliveryMode === 'auto'
+                          ? 'wx-option-active bg-blue-600/20 border-blue-500 text-blue-300 font-bold'
+                          : 'wx-sub-card bg-zinc-900 border-zinc-800 text-zinc-400'
+                      }`}
+                    >
+                      <FolderDown className="w-3.5 h-3.5 mx-auto mb-1 text-blue-400" />
+                      <span>系统另存为</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isExporting}
+                      onClick={() => setExportDeliveryMode('downloads')}
+                      className={`p-2 rounded-xl border text-center transition cursor-pointer disabled:opacity-50 ${
+                        exportDeliveryMode === 'downloads'
+                          ? 'wx-option-active bg-blue-600/20 border-blue-500 text-blue-300 font-bold'
+                          : 'wx-sub-card bg-zinc-900 border-zinc-800 text-zinc-400'
+                      }`}
+                    >
+                      <Download className="w-3.5 h-3.5 mx-auto mb-1 text-emerald-400" />
+                      <span>存至下载目录</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isExporting}
+                      onClick={() => setExportDeliveryMode('share')}
+                      className={`p-2 rounded-xl border text-center transition cursor-pointer disabled:opacity-50 ${
+                        exportDeliveryMode === 'share'
+                          ? 'wx-option-active bg-blue-600/20 border-blue-500 text-blue-300 font-bold'
+                          : 'wx-sub-card bg-zinc-900 border-zinc-800 text-zinc-400'
+                      }`}
+                    >
+                      <Share2 className="w-3.5 h-3.5 mx-auto mb-1 text-purple-400" />
+                      <span>系统分享发送</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Action Button */}
               <button
+                type="button"
                 onClick={handleRunExport}
                 disabled={isExporting || exportCategories.length === 0}
                 className="wx-btn-primary w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 font-bold text-sm text-white shadow-lg shadow-emerald-500/25 active:scale-98 transition flex items-center justify-center gap-2 cursor-pointer"
@@ -1686,12 +2006,12 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                 {isExporting ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>正在打包生成导出文件...</span>
+                    <span>{exportProgress?.stageLabel || '正在处理导出文件...'}</span>
                   </>
                 ) : (
                   <>
                     <Download className="w-4 h-4" />
-                    <span>立即开始导出与下载</span>
+                    <span>{isNativeAndroid ? '开始生成并保存到手机' : '立即开始导出与下载'}</span>
                   </>
                 )}
               </button>

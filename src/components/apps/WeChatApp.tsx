@@ -4442,6 +4442,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         isOpen={showDataModal}
         onClose={() => setShowDataModal(false)}
         initialTab={dataModalTab}
+        characters={characters}
         onDataChanged={() => {
           setGroupChats(loadGroupChats());
           void loadGroupChatsAsync().then((fresh) => {

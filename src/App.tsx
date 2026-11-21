@@ -630,6 +630,7 @@ export function App() {
                 onImportData={handleImportData}
                 onAddApiLog={addApiLog}
                 onDataChanged={refreshAllData}
+                characters={characters}
               />
             )}
 

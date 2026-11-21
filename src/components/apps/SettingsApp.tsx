@@ -111,6 +111,7 @@ interface SettingsAppProps {
   onImportData: (jsonStr: string) => void;
   onAddApiLog: (log: ApiLog) => void;
   onDataChanged?: () => void;
+  characters?: import('../../types').AiCharacter[];
 }
 
 export const SettingsApp: React.FC<SettingsAppProps> = ({
@@ -122,6 +123,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   onImportData,
   onAddApiLog,
   onDataChanged,
+  characters,
 }) => {
   // 唯一 API 配置 State：从 apiConfigStore 初始化
   const [settings, setSettings] = useState<ApiSettings>(() => loadApiSettings());
@@ -1176,6 +1178,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           onClose={() => setShowDataModal(false)}
           onDataChanged={onDataChanged || (() => {})}
           initialTab={dataModalTab}
+          characters={characters}
         />
       )}
 

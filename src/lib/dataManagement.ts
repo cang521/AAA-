@@ -55,6 +55,34 @@ import {
   loadAiSocialSettings,
   saveAiSocialSettings,
 } from './social/socialSettings';
+import {
+  NativeExportDeliveryMode,
+  ExportProgressStage,
+  ExportFailureStage,
+  ExportProgressInfo,
+  ExportDeliveryResult,
+  ExportStageError,
+  formatBytesHuman,
+  isMemoryOrSizeError,
+  canUseNativeAndroidExport,
+  deliverExportBlob,
+  saveCachedExportToDownloadsFallback,
+} from './nativeFileExport';
+
+export {
+  ExportStageError,
+  formatBytesHuman,
+  canUseNativeAndroidExport,
+  deliverExportBlob,
+  saveCachedExportToDownloadsFallback,
+};
+export type {
+  NativeExportDeliveryMode,
+  ExportProgressStage,
+  ExportFailureStage,
+  ExportProgressInfo,
+  ExportDeliveryResult,
+};
 
 export type ExportCategory = 'characters' | 'messages' | 'memories' | 'groups' | 'settings' | 'all';
 export type ExportFormat = 'json' | 'jsonl' | 'txt' | 'zip';
@@ -110,11 +138,44 @@ export interface FileIntelligenceReport {
   actionSuggestion: string; // 推荐的落地操作建议
 }
 
+export interface ExportDataLoaders {
+  loadCharacters?: () => AiCharacter[];
+  getAllChatMessages?: () => Promise<ChatMessage[]>;
+  loadGroupChatsAsync?: () => Promise<GroupChat[]>;
+  loadSettings?: () => any;
+  loadUserProfile?: () => UserProfile;
+  loadMenstrualData?: () => MenstrualData;
+  loadApiConfig?: () => ApiConfig;
+  loadAiControls?: () => AiControls;
+  loadPermissions?: () => AiPermissions;
+  loadMemos?: () => Memo[];
+  loadWorldBooks?: () => WorldBook[];
+  exportSocialBundle?: () => Promise<SocialExportBundle>;
+  loadAiSocialSettings?: () => any;
+}
+
 export interface ExportOptions {
   categories: ExportCategory[];
   format: ExportFormat;
   characterIds?: string[]; // empty means all
   includeThinkingProcess?: boolean;
+  inMemoryCharacters?: AiCharacter[];
+  onProgress?: (info: ExportProgressInfo) => void;
+  loaders?: ExportDataLoaders;
+}
+
+export interface ExportGeneratedResult {
+  blob: Blob;
+  fileName: string;
+  mimeType: string;
+  warnings: string[];
+  stats: {
+    characterCount: number;
+    messageCount: number;
+    memoryCount: number;
+    groupCount: number;
+    hasSettings: boolean;
+  };
 }
 
 export interface CharacterConflictInfo {
@@ -586,13 +647,30 @@ async function parseZipFile(file: File, options?: ImportParseOptions) {
   const fileTypesCount: Record<string, number> = {};
   let hasManifest = false;
   let hasBackupJson = false;
+  let hasCharactersJson = false;
+  let isDedupedV2 = false;
   let batchCardCount = 0;
 
   for (const f of rootFiles) {
     const ext = f.split('.').pop()?.toLowerCase() || 'unknown';
     fileTypesCount[ext] = (fileTypesCount[ext] || 0) + 1;
-    if (f.toLowerCase() === 'manifest.json') hasManifest = true;
-    if (f.toLowerCase() === 'backup.json' || f.toLowerCase() === 'full_backup.json') hasBackupJson = true;
+    const lowerF = f.toLowerCase();
+    if (lowerF === 'manifest.json') hasManifest = true;
+    if (lowerF === 'backup.json' || lowerF === 'full_backup.json') hasBackupJson = true;
+    if (lowerF === 'characters.json' || lowerF === 'ai_characters.json') hasCharactersJson = true;
+  }
+
+  if (hasManifest) {
+    const manifestObj = loaded.file('manifest.json') || loaded.file('MANIFEST.JSON');
+    if (manifestObj && !manifestObj.dir) {
+      try {
+        const mText = await manifestObj.async('text');
+        const mJson = JSON.parse(mText);
+        if (mJson?.layout === 'deduped_v2') {
+          isDedupedV2 = true;
+        }
+      } catch {}
+    }
   }
 
   // 1. App full backup in zip
@@ -659,6 +737,24 @@ async function parseZipFile(file: File, options?: ImportParseOptions) {
       } catch (e) {
         warnings.push(`解析 ${name} 失败`);
       }
+    } else if (lower === 'memories/memories.json' || lower === 'memories.json') {
+      const str = await fileObj.async('text');
+      try {
+        const parsed = JSON.parse(str);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (item && typeof item.text === 'string' && item.text.trim()) {
+              memories.push({
+                characterId: item.characterId,
+                characterName: item.characterName,
+                text: item.text.trim(),
+              });
+            }
+          }
+        }
+      } catch (e) {
+        warnings.push(`解析 ${name} 失败`);
+      }
     } else if (lower.startsWith('messages/') && lower.endsWith('.json')) {
       const str = await fileObj.async('text');
       try {
@@ -672,11 +768,15 @@ async function parseZipFile(file: File, options?: ImportParseOptions) {
       const res = parseTxtContent(str, name, options);
       messages.push(...res.messages);
     } else if (lower.startsWith('memories/') && lower.endsWith('.txt')) {
-      const str = await fileObj.async('text');
-      const lines = str.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('-') || l.startsWith('*') || l.length > 2);
-      for (const line of lines) {
-        const clean = line.replace(/^[-*•\d.]\s*/, '').trim();
-        if (clean) memories.push({ text: clean });
+      // Avoid double-counting human-readable txt copies when deduped_v2 already stores memories on characters.json or memories.json
+      if (!(isDedupedV2 && (hasCharactersJson || loaded.file('memories/memories.json')))) {
+        const str = await fileObj.async('text');
+        const lines = str.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('-') || l.startsWith('*') || /^\d+\./.test(l) || l.length > 2);
+        for (const line of lines) {
+          if (line.startsWith('【') && line.endsWith('】')) continue;
+          const clean = line.replace(/^[-*•\d.]\s*/, '').trim();
+          if (clean) memories.push({ text: clean });
+        }
       }
     } else if (lower.endsWith('.json') && !lower.includes('manifest.json')) {
       // Could be standalone Tavern / AI character card inside ZIP
@@ -917,6 +1017,20 @@ function parseJsonContent(text: string, fileName: string, options?: ImportParseO
       if (Array.isArray(data.messages)) {
         messages.push(...data.messages.map(normalizeChatMessageSchema));
         featuresDetected.push(`包含 ${data.messages.length} 条完整对话`);
+      }
+      if (Array.isArray(data.memories)) {
+        for (const item of data.memories) {
+          if (item && typeof item.text === 'string' && item.text.trim()) {
+            memories.push({
+              characterId: item.characterId,
+              characterName: item.characterName,
+              text: item.text.trim(),
+            });
+          }
+        }
+        if (memories.length > 0) {
+          featuresDetected.push(`包含 ${memories.length} 条独立长期记忆`);
+        }
       }
       if (Array.isArray(data.groupChats) || Array.isArray(data.groups)) {
         const grps = data.groupChats || data.groups;
@@ -1838,311 +1952,789 @@ export async function executeImport(
 }
 
 // =========================================================================
-// 5. Export Engine (JSON, JSONL, TXT, ZIP)
+// 5. Export Engine (JSON, JSONL, TXT, ZIP) - Lazy Loading, Fault-Tolerant & Chunked
 // =========================================================================
 
-export async function exportData(options: ExportOptions): Promise<{ blob: Blob; fileName: string; mimeType: string }> {
+const LARGE_EXPORT_BATCH_ADVICE =
+  '数据量较大导致内存或打包受限，建议取消全选后按“指定单个角色”或“分批勾选分类”导出（大规模记录推荐使用 JSONL 格式）。';
+
+function yieldToMainThread(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function sanitizeZipPathPart(raw: string, fallback: string): string {
+  const cleaned = String(raw || '')
+    .replace(/[\\/:*?"<>|\r\n\t]+/g, '_')
+    .replace(/\.\.+/g, '_')
+    .trim();
+  return cleaned || fallback;
+}
+
+function mergeAndSanitizeCharacters(
+  persisted: AiCharacter[],
+  inMemory: AiCharacter[] | undefined,
+  characterIds: string[] | undefined,
+  warnings: string[]
+): AiCharacter[] {
+  const mergedMap = new Map<string, AiCharacter>();
+  const filterSet = characterIds && characterIds.length > 0 ? new Set(characterIds) : null;
+
+  const absorbRecord = (raw: any, sourceLabel: string) => {
+    try {
+      if (!raw || typeof raw !== 'object') {
+        warnings.push(`${sourceLabel}中发现空或非对象角色记录，已跳过`);
+        return;
+      }
+      const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : '';
+      if (!id) {
+        warnings.push(`${sourceLabel}中角色「${raw.name || '未命名'}」缺少 ID，已跳过`);
+        return;
+      }
+      if (filterSet && !filterSet.has(id)) {
+        return;
+      }
+
+      const safeMemories = Array.isArray(raw.memories)
+        ? raw.memories.filter((m: unknown): m is string => typeof m === 'string' && m.trim().length > 0)
+        : [];
+      const prev = mergedMap.get(id);
+      const candidate: AiCharacter = {
+        ...(prev || {}),
+        ...raw,
+        id,
+        name: typeof raw.name === 'string' && raw.name.trim() ? raw.name : prev?.name || '未命名AI',
+        memories: safeMemories.length > 0 || !prev ? safeMemories : prev.memories || [],
+      };
+
+      // Validate serializability of this single character record so one broken entry cannot crash full export
+      JSON.stringify(candidate);
+      mergedMap.set(id, candidate);
+    } catch (err: any) {
+      warnings.push(
+        `角色「${raw?.name || raw?.id || '未知'}」资料异常已跳过 (${err?.message || '序列化失败'})`
+      );
+    }
+  };
+
+  for (const c of Array.isArray(persisted) ? persisted : []) {
+    absorbRecord(c, '本地存储');
+  }
+  for (const c of Array.isArray(inMemory) ? inMemory : []) {
+    absorbRecord(c, '内存状态');
+  }
+
+  return Array.from(mergedMap.values());
+}
+
+function safeJsonStringify(value: unknown, stage: 'file_generate' = 'file_generate'): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (err: any) {
+    const isOom = isMemoryOrSizeError(err);
+    throw new ExportStageError(
+      stage,
+      isOom ? '导出数据序列化超出单次内存限制' : `JSON 序列化失败: ${err?.message || '数据结构异常'}`,
+      {
+        isMemoryOrSizeLimit: isOom,
+        suggestion: isOom ? LARGE_EXPORT_BATCH_ADVICE : undefined,
+        cause: err,
+      }
+    );
+  }
+}
+
+export async function exportData(options: ExportOptions): Promise<ExportGeneratedResult> {
   const isAll = options.categories.includes('all');
   const includeChars = isAll || options.categories.includes('characters');
   const includeMsgs = isAll || options.categories.includes('messages');
   const includeMemories = isAll || options.categories.includes('memories');
   const includeGroups = isAll || options.categories.includes('groups');
   const includeSettings = isAll || options.categories.includes('settings');
+  const includeSocial = isAll || includeChars || includeGroups || includeSettings;
 
-  // Load Source Data
-  let allChars = loadCharacters();
-  if (options.characterIds && options.characterIds.length > 0) {
-    allChars = allChars.filter((c) => options.characterIds!.includes(c.id));
+  if (!includeChars && !includeMsgs && !includeMemories && !includeGroups && !includeSettings) {
+    throw new ExportStageError('data_read', '请至少选择一个需要导出的数据分类');
   }
 
-  const allMsgs = await getAllChatMessages();
-  const filteredMsgs =
-    options.characterIds && options.characterIds.length > 0
-      ? allMsgs.filter((m) => options.characterIds!.includes(m.characterId))
-      : allMsgs;
+  const L = {
+    loadCharacters: options.loaders?.loadCharacters || loadCharacters,
+    getAllChatMessages: options.loaders?.getAllChatMessages || getAllChatMessages,
+    loadGroupChatsAsync: options.loaders?.loadGroupChatsAsync || loadGroupChatsAsync,
+    loadSettings: options.loaders?.loadSettings || loadSettings,
+    loadUserProfile: options.loaders?.loadUserProfile || loadUserProfile,
+    loadMenstrualData: options.loaders?.loadMenstrualData || loadMenstrualData,
+    loadApiConfig: options.loaders?.loadApiConfig || loadApiConfig,
+    loadAiControls: options.loaders?.loadAiControls || loadAiControls,
+    loadPermissions: options.loaders?.loadPermissions || loadPermissions,
+    loadMemos: options.loaders?.loadMemos || loadMemos,
+    loadWorldBooks: options.loaders?.loadWorldBooks || loadWorldBooks,
+    exportSocialBundle: options.loaders?.exportSocialBundle || exportSocialBundle,
+    loadAiSocialSettings: options.loaders?.loadAiSocialSettings || loadAiSocialSettings,
+  };
 
-  const allGroups = await loadGroupChatsAsync();
-  const settings = loadSettings();
-  const userProfile = loadUserProfile();
-  const menstrualData = loadMenstrualData();
-  const apiConfig = loadApiConfig();
-  const aiControls = loadAiControls();
-  const permissions = loadPermissions();
-  const memos = loadMemos();
-  const worldBooks = loadWorldBooks();
-  const socialData = await exportSocialBundle();
-  const socialSettings = loadAiSocialSettings();
+  const warnings: string[] = [];
+  const onProgress = options.onProgress;
+
+  // =======================================================================
+  // Phase 1: Strict Lazy Data Reading (Only read checked categories)
+  // =======================================================================
+  onProgress?.({
+    stage: 'reading',
+    stageLabel: '正在按所选模块读取本地数据...',
+    percentage: 8,
+  });
+
+  let validChars: AiCharacter[] = [];
+  let charNameById = new Map<string, string>();
+  let filteredMsgs: ChatMessage[] = [];
+  let allGroups: GroupChat[] = [];
+  let settingsDump: any = undefined;
+  let socialData: SocialExportBundle | undefined = undefined;
+  let socialSettings: any = undefined;
+
+  try {
+    // Only load characters when characters or memories are selected, or TXT chat transcript needs character display names
+    const needsCharacters =
+      includeChars || includeMemories || (includeMsgs && options.format === 'txt');
+    if (needsCharacters) {
+      let persistedChars: AiCharacter[] = [];
+      try {
+        persistedChars = L.loadCharacters();
+      } catch (err: any) {
+        if (options.inMemoryCharacters && options.inMemoryCharacters.length > 0) {
+          warnings.push(`读取本地存储角色失败，已回退使用内存态角色: ${err?.message || '读取错误'}`);
+        } else {
+          throw err;
+        }
+      }
+      validChars = mergeAndSanitizeCharacters(
+        persistedChars,
+        options.inMemoryCharacters,
+        options.characterIds,
+        warnings
+      );
+      for (const c of validChars) {
+        charNameById.set(c.id, c.name);
+      }
+      onProgress?.({
+        stage: 'reading',
+        stageLabel: '正在读取角色与记忆数据...',
+        detail: `已就绪 ${validChars.length} 位角色`,
+        percentage: 16,
+      });
+    }
+
+    if (includeMsgs) {
+      onProgress?.({
+        stage: 'reading',
+        stageLabel: '正在读取聊天记录数据库...',
+        percentage: 22,
+      });
+      const rawMsgs = await L.getAllChatMessages();
+      const filterSet =
+        options.characterIds && options.characterIds.length > 0
+          ? new Set(options.characterIds)
+          : null;
+
+      for (let i = 0; i < rawMsgs.length; i++) {
+        const m = rawMsgs[i];
+        try {
+          if (!m || typeof m !== 'object' || typeof m.characterId !== 'string') {
+            warnings.push(`发现一条格式异常的聊天消息已跳过`);
+            continue;
+          }
+          if (filterSet && !filterSet.has(m.characterId)) {
+            continue;
+          }
+          filteredMsgs.push(m);
+        } catch {
+          warnings.push(`发现损坏聊天消息记录已跳过`);
+        }
+        if (i > 0 && i % 2000 === 0) {
+          await yieldToMainThread();
+        }
+      }
+      onProgress?.({
+        stage: 'reading',
+        stageLabel: '已读取聊天记录',
+        detail: `共 ${filteredMsgs.length} 条消息`,
+        percentage: 30,
+      });
+    }
+
+    if (includeGroups) {
+      onProgress?.({
+        stage: 'reading',
+        stageLabel: '正在读取群聊数据...',
+        percentage: 33,
+      });
+      const rawGroups = await L.loadGroupChatsAsync();
+      for (const g of Array.isArray(rawGroups) ? rawGroups : []) {
+        try {
+          if (!g || typeof g !== 'object' || !g.id) continue;
+          JSON.stringify(g);
+          allGroups.push(g);
+        } catch (err: any) {
+          warnings.push(`群聊「${g?.name || g?.id || '未知'}」数据异常已跳过`);
+        }
+      }
+    }
+
+    if (includeSettings) {
+      onProgress?.({
+        stage: 'reading',
+        stageLabel: '正在读取系统设置与配置...',
+        percentage: 36,
+      });
+      settingsDump = {
+        settings: L.loadSettings(),
+        userProfile: L.loadUserProfile(),
+        menstrualData: L.loadMenstrualData(),
+        apiConfig: L.loadApiConfig(),
+        aiControls: L.loadAiControls(),
+        permissions: L.loadPermissions(),
+        memos: L.loadMemos(),
+        worldBooks: L.loadWorldBooks(),
+      };
+    }
+
+    if (includeSocial) {
+      socialData = await L.exportSocialBundle();
+    }
+    if (includeSettings || isAll) {
+      socialSettings = L.loadAiSocialSettings();
+    }
+  } catch (err: any) {
+    if (err instanceof ExportStageError) throw err;
+    const isOom = isMemoryOrSizeError(err);
+    throw new ExportStageError(
+      'data_read',
+      err?.message || '读取本地存储或 IndexedDB 数据失败',
+      {
+        isMemoryOrSizeLimit: isOom,
+        suggestion: isOom ? LARGE_EXPORT_BATCH_ADVICE : undefined,
+        cause: err,
+      }
+    );
+  }
+
+  // Derive category-isolated characters and memory records
+  const exportedCharacters: AiCharacter[] = includeChars
+    ? validChars.map((c) => (includeMemories ? c : { ...c, memories: [] }))
+    : [];
+
+  const standaloneMemories: { characterId: string; characterName: string; text: string }[] = [];
+  if (includeMemories) {
+    for (const c of validChars) {
+      if (Array.isArray(c.memories) && c.memories.length > 0) {
+        for (const mem of c.memories) {
+          if (typeof mem === 'string' && mem.trim()) {
+            standaloneMemories.push({
+              characterId: c.id,
+              characterName: c.name,
+              text: mem,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  const memoryTotalCount = includeMemories
+    ? standaloneMemories.length
+    : 0;
 
   const timestamp = Date.now();
   const dateStr = new Date(timestamp).toISOString().slice(0, 10);
 
-  // 1. ZIP Export
-  if (options.format === 'zip') {
-    const zip = new JSZip();
+  const exportStats = {
+    characterCount: includeChars ? exportedCharacters.length : 0,
+    messageCount: includeMsgs ? filteredMsgs.length : 0,
+    memoryCount: memoryTotalCount,
+    groupCount: includeGroups ? allGroups.length : 0,
+    hasSettings: includeSettings,
+  };
 
-    const manifest = {
-      app: 'VirtualPhoneSim',
-      exportVersion: '2.0.0',
-      exportedAt: new Date(timestamp).toISOString(),
-      scope: options.categories,
-      characterCount: includeChars ? allChars.length : 0,
-      messageCount: includeMsgs ? filteredMsgs.length : 0,
-      groupCount: includeGroups ? allGroups.length : 0,
-    };
-    zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+  onProgress?.({
+    stage: 'generating',
+    stageLabel: `正在生成 ${options.format.toUpperCase()} 导出文件...`,
+    percentage: 42,
+  });
 
-    if (includeChars) {
-      zip.file('characters.json', JSON.stringify(allChars, null, 2));
-    }
+  // =======================================================================
+  // Phase 2: Chunked & Memory-Safe File Generation
+  // =======================================================================
+  try {
+    // 1. ZIP Export (Single-copy deduped_v2 layout: NO duplicate full message arrays!)
+    if (options.format === 'zip') {
+      const zip = new JSZip();
+      let approxBytes = 0;
 
-    if (includeGroups) {
-      zip.file('groups.json', JSON.stringify(allGroups, null, 2));
-    }
-
-    if (includeSettings) {
-      const settingsDump = {
-        settings,
-        userProfile,
-        menstrualData,
-        apiConfig,
-        aiControls,
-        permissions,
-        memos,
-        worldBooks,
-      };
-      zip.file('settings.json', JSON.stringify(settingsDump, null, 2));
-    }
-
-    if (includeMsgs) {
-      const msgFolder = zip.folder('messages');
-      if (msgFolder) {
-        msgFolder.file('all_messages.json', JSON.stringify(filteredMsgs, null, 2));
-
-        // Also split by character for ease of manual reading
-        for (const char of allChars) {
-          const charMsgs = filteredMsgs.filter((m) => m.characterId === char.id);
-          if (charMsgs.length > 0) {
-            msgFolder.file(`${char.name}_${char.id}_messages.json`, JSON.stringify(charMsgs, null, 2));
-          }
-        }
-      }
-    }
-
-    if (includeMemories) {
-      const memFolder = zip.folder('memories');
-      if (memFolder) {
-        for (const char of allChars) {
-          if (char.memories && char.memories.length > 0) {
-            const memText = `【${char.name} 的长期记忆库】\n\n` + char.memories.map((m, i) => `${i + 1}. ${m}`).join('\n');
-            memFolder.file(`${char.name}_memories.txt`, memText);
-          }
-        }
-      }
-    }
-
-    if (includeChars || includeGroups || includeSettings || isAll) {
-      zip.file(
-        'social_data.json',
-        JSON.stringify({ socialData, socialSettings }, null, 2)
-      );
-    }
-
-    // Full backup bundle for instant restore
-    const fullBackup = {
-      manifest,
-      characters: includeChars ? allChars : undefined,
-      messages: includeMsgs ? filteredMsgs : undefined,
-      groups: includeGroups ? allGroups : undefined,
-      userProfile: includeSettings ? userProfile : undefined,
-      settings: includeSettings ? settings : undefined,
-      apiConfig: includeSettings ? apiConfig : undefined,
-      aiControls: includeSettings ? aiControls : undefined,
-      permissions: includeSettings ? permissions : undefined,
-      memos: includeSettings ? memos : undefined,
-      worldBooks: includeSettings ? worldBooks : undefined,
-      menstrualData: includeSettings ? menstrualData : undefined,
-      socialData: includeChars || includeGroups || includeSettings || isAll ? socialData : undefined,
-      socialSettings: includeSettings || isAll ? socialSettings : undefined,
-    };
-    zip.file('backup.json', JSON.stringify(fullBackup, null, 2));
-
-    // README file
-    const readme = `=== 数据备份包说明 ===\n导出时间: ${new Date(timestamp).toLocaleString()}\n包含模块: ${options.categories.join(', ')}\n\n此 ZIP 压缩包可直接在本 App 的「数据管理 -> 导入数据」中选择导入，完整恢复所有角色、聊天与设定。`;
-    zip.file('README.txt', readme);
-
-    const blob = await zip.generateAsync({ type: 'blob' });
-    return {
-      blob,
-      fileName: `phone_data_backup_${dateStr}.zip`,
-      mimeType: 'application/zip',
-    };
-  }
-
-  // 2. JSONL Export
-  if (options.format === 'jsonl') {
-    const lines: string[] = [];
-
-    lines.push(
-      JSON.stringify({
-        type: 'manifest',
+      const manifest = {
         app: 'VirtualPhoneSim',
+        exportVersion: '2.1.0',
+        layout: 'deduped_v2',
         exportedAt: new Date(timestamp).toISOString(),
-        categories: options.categories,
-      })
-    );
+        scope: options.categories,
+        characterCount: exportStats.characterCount,
+        messageCount: exportStats.messageCount,
+        memoryCount: exportStats.memoryCount,
+        groupCount: exportStats.groupCount,
+        warningsCount: warnings.length,
+      };
+      const manifestStr = safeJsonStringify(manifest);
+      approxBytes += manifestStr.length;
+      zip.file('manifest.json', manifestStr);
 
-    if (includeChars) {
-      for (const c of allChars) {
-        lines.push(JSON.stringify({ type: 'character', data: c }));
+      if (includeChars) {
+        const charsStr = safeJsonStringify(exportedCharacters);
+        approxBytes += charsStr.length;
+        zip.file('characters.json', charsStr);
+        await yieldToMainThread();
       }
-    }
 
-    if (includeMsgs) {
-      for (const m of filteredMsgs) {
-        lines.push(JSON.stringify({ type: 'message', data: m }));
+      if (includeGroups) {
+        const groupsStr = safeJsonStringify(allGroups);
+        approxBytes += groupsStr.length;
+        zip.file('groups.json', groupsStr);
+        await yieldToMainThread();
       }
-    }
 
-    if (includeGroups) {
-      for (const g of allGroups) {
-        lines.push(JSON.stringify({ type: 'group', data: g }));
+      if (includeSettings && settingsDump) {
+        const settingsStr = safeJsonStringify(settingsDump);
+        approxBytes += settingsStr.length;
+        zip.file('settings.json', settingsStr);
+        await yieldToMainThread();
       }
-    }
 
-    if (includeSettings) {
-      lines.push(
-        JSON.stringify({
-          type: 'settings',
-          data: {
-            settings,
-            userProfile,
-            menstrualData,
-            apiConfig,
-            aiControls,
-            permissions,
-            memos,
-            worldBooks,
-          },
-        })
-      );
-    }
+      if (includeMsgs) {
+        const msgFolder = zip.folder('messages');
+        if (msgFolder) {
+          // Single-pass O(N) grouping by characterId; each message written ONCE total
+          const groupedByChar = new Map<string, ChatMessage[]>();
+          for (let i = 0; i < filteredMsgs.length; i++) {
+            const msg = filteredMsgs[i];
+            const bucket = groupedByChar.get(msg.characterId);
+            if (bucket) {
+              bucket.push(msg);
+            } else {
+              groupedByChar.set(msg.characterId, [msg]);
+            }
+            if (i > 0 && i % 2000 === 0) {
+              await yieldToMainThread();
+            }
+          }
 
-    if (includeChars || includeGroups || includeSettings || isAll) {
-      lines.push(JSON.stringify({ type: 'social_bundle', data: socialData }));
-      lines.push(JSON.stringify({ type: 'social_settings', data: socialSettings }));
-    }
-
-    const blob = new Blob([lines.join('\n')], { type: 'application/x-jsonlines;charset=utf-8' });
-    return {
-      blob,
-      fileName: `phone_data_${dateStr}.jsonl`,
-      mimeType: 'application/x-jsonlines',
-    };
-  }
-
-  // 3. TXT Export
-  if (options.format === 'txt') {
-    const sections: string[] = [];
-
-    sections.push(`========================================`);
-    sections.push(`📱 手机模拟器 数据导出报告`);
-    sections.push(`导出时间: ${new Date(timestamp).toLocaleString()}`);
-    sections.push(`导出模块: ${options.categories.join(', ')}`);
-    sections.push(`========================================\n`);
-
-    if (includeChars) {
-      sections.push(`【AI 角色列表】(共 ${allChars.length} 个角色)`);
-      for (const c of allChars) {
-        sections.push(`----------------------------------------`);
-        sections.push(`名称: ${c.name}`);
-        sections.push(`微信号: ${c.wxid || '无'}`);
-        sections.push(`关系/身份: ${c.relationship || '好友'}`);
-        sections.push(`人设背景: ${c.persona}`);
-        if (c.personality) sections.push(`性格特征: ${c.personality}`);
-        if (c.greeting) sections.push(`初始问候: ${c.greeting}`);
-        if (includeMemories && c.memories && c.memories.length > 0) {
-          sections.push(`长期记忆库:`);
-          c.memories.forEach((m, idx) => sections.push(`  ${idx + 1}. ${m}`));
-        }
-      }
-      sections.push('\n');
-    }
-
-    if (includeGroups) {
-      sections.push(`【群聊列表】(共 ${allGroups.length} 个群聊)`);
-      for (const g of allGroups) {
-        sections.push(`----------------------------------------`);
-        sections.push(`群名称: ${g.name}`);
-        sections.push(`群成员数: ${g.members?.length || 0}`);
-        sections.push(`群公告: ${g.notice || '暂无'}`);
-      }
-      sections.push('\n');
-    }
-
-    if (includeMsgs) {
-      sections.push(`【聊天记录全文】(共 ${filteredMsgs.length} 条)`);
-      for (const char of allChars) {
-        const charMsgs = filteredMsgs.filter((m) => m.characterId === char.id);
-        if (charMsgs.length > 0) {
-          sections.push(`\n>>> 与「${char.name}」的对话记录 (${charMsgs.length} 条) <<<`);
-          for (const m of charMsgs) {
-            const timeStr = new Date(m.timestamp).toLocaleString();
-            const sender = m.sender === 'user' ? (userProfile.name || '我') : char.name;
-            sections.push(`[${timeStr}] ${sender}: ${m.text}`);
-            if (options.includeThinkingProcess && m.thinkingProcess) {
-              sections.push(`  (🧠 推理过程: ${m.thinkingProcess.replace(/\n/g, ' ')})`);
+          let bucketIdx = 0;
+          const totalBuckets = Math.max(1, groupedByChar.size);
+          for (const [charId, charMsgs] of groupedByChar.entries()) {
+            const rawName = charNameById.get(charId) || charId;
+            const safeFile = `${sanitizeZipPathPart(rawName, 'character')}_${sanitizeZipPathPart(charId, 'id')}_messages.json`;
+            const serialized = safeJsonStringify(charMsgs);
+            approxBytes += serialized.length;
+            msgFolder.file(safeFile, serialized);
+            bucketIdx++;
+            if (bucketIdx % 3 === 0) {
+              onProgress?.({
+                stage: 'generating',
+                stageLabel: '正在整理聊天分卷...',
+                detail: `${bucketIdx} / ${totalBuckets} 个会话`,
+                percentage: 42 + Math.round((bucketIdx / totalBuckets) * 10),
+              });
+              await yieldToMainThread();
             }
           }
         }
       }
-      sections.push('\n');
+
+      if (includeMemories) {
+        const memFolder = zip.folder('memories');
+        if (memFolder) {
+          if (!includeChars) {
+            const memJson = safeJsonStringify(standaloneMemories);
+            approxBytes += memJson.length;
+            memFolder.file('memories.json', memJson);
+          }
+          for (const char of validChars) {
+            if (char.memories && char.memories.length > 0) {
+              const memText =
+                `【${char.name} 的长期记忆库】\n\n` +
+                char.memories.map((m, i) => `${i + 1}. ${m}`).join('\n');
+              approxBytes += memText.length;
+              memFolder.file(`${sanitizeZipPathPart(char.name, char.id)}_memories.txt`, memText);
+            }
+          }
+        }
+      }
+
+      if (includeSocial) {
+        const socialPayload: Record<string, unknown> = { socialData };
+        if (includeSettings || isAll) {
+          socialPayload.socialSettings = socialSettings;
+        }
+        const socialStr = safeJsonStringify(socialPayload);
+        approxBytes += socialStr.length;
+        zip.file('social_data.json', socialStr);
+      }
+
+      const readme =
+        `=== 数据备份包说明 ===\n导出时间: ${new Date(timestamp).toLocaleString()}\n包含模块: ${options.categories.join(', ')}\n` +
+        `统计: 角色 ${exportStats.characterCount} | 消息 ${exportStats.messageCount} | 记忆 ${exportStats.memoryCount} | 群聊 ${exportStats.groupCount}\n\n` +
+        `此 ZIP 压缩包可直接在本 App 的「数据管理 -> 导入数据」中选择导入，按所选模块恢复数据。`;
+      zip.file('README.txt', readme);
+
+      // For very large payloads (>12MB raw text), use STORE to avoid mobile WebView zlib OOM
+      const useStore = approxBytes > 12 * 1024 * 1024;
+      const blob = await zip.generateAsync(
+        useStore
+          ? { type: 'blob', compression: 'STORE', streamFiles: true }
+          : { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 3 }, streamFiles: true },
+        (metadata) => {
+          onProgress?.({
+            stage: 'generating',
+            stageLabel: '正在压缩打包 ZIP 文件...',
+            detail: metadata.currentFile || undefined,
+            percentage: 52 + Math.round((metadata.percent || 0) * 0.18), // 52% -> 70%
+          });
+        }
+      );
+
+      if (!blob || blob.size <= 0) {
+        throw new ExportStageError('file_generate', 'ZIP 压缩包生成结果为空');
+      }
+
+      return {
+        blob,
+        fileName: `phone_data_backup_${dateStr}.zip`,
+        mimeType: 'application/zip',
+        warnings,
+        stats: exportStats,
+      };
     }
 
-    const blob = new Blob([sections.join('\n')], { type: 'text/plain;charset=utf-8' });
+    // 2. JSONL Export (Chunked Blob parts, no monolithic intermediate string copy)
+    if (options.format === 'jsonl') {
+      const blobParts: string[] = [];
+      let lineBatch: string[] = [];
+      const FLUSH_THRESHOLD = 400;
+
+      const pushLine = (obj: unknown, label: string) => {
+        try {
+          lineBatch.push(JSON.stringify(obj));
+        } catch (err: any) {
+          warnings.push(`${label}序列化失败已跳过: ${err?.message || '格式异常'}`);
+        }
+      };
+
+      const flushBatch = async (yieldNow: boolean) => {
+        if (lineBatch.length > 0) {
+          blobParts.push(lineBatch.join('\n') + '\n');
+          lineBatch = [];
+        }
+        if (yieldNow) {
+          await yieldToMainThread();
+        }
+      };
+
+      pushLine(
+        {
+          type: 'manifest',
+          app: 'VirtualPhoneSim',
+          exportedAt: new Date(timestamp).toISOString(),
+          categories: options.categories,
+        },
+        'manifest'
+      );
+
+      if (includeChars) {
+        for (const c of exportedCharacters) {
+          pushLine({ type: 'character', data: c }, `角色「${c.name}」`);
+          if (lineBatch.length >= FLUSH_THRESHOLD) {
+            await flushBatch(true);
+          }
+        }
+      }
+
+      if (includeMemories && !includeChars) {
+        for (const mem of standaloneMemories) {
+          pushLine(
+            {
+              type: 'memory',
+              characterId: mem.characterId,
+              characterName: mem.characterName,
+              text: mem.text,
+            },
+            `记忆「${mem.characterName}」`
+          );
+          if (lineBatch.length >= FLUSH_THRESHOLD) {
+            await flushBatch(true);
+          }
+        }
+      }
+
+      if (includeMsgs) {
+        const total = Math.max(1, filteredMsgs.length);
+        for (let i = 0; i < filteredMsgs.length; i++) {
+          pushLine({ type: 'message', data: filteredMsgs[i] }, '聊天消息');
+          if (lineBatch.length >= FLUSH_THRESHOLD) {
+            onProgress?.({
+              stage: 'generating',
+              stageLabel: '正在生成 JSONL 流式记录...',
+              detail: `${i + 1} / ${filteredMsgs.length} 条消息`,
+              percentage: 42 + Math.round(((i + 1) / total) * 26),
+            });
+            await flushBatch(true);
+          }
+        }
+      }
+
+      if (includeGroups) {
+        for (const g of allGroups) {
+          pushLine({ type: 'group', data: g }, `群聊「${g.name}」`);
+          if (lineBatch.length >= FLUSH_THRESHOLD) {
+            await flushBatch(true);
+          }
+        }
+      }
+
+      if (includeSettings && settingsDump) {
+        pushLine({ type: 'settings', data: settingsDump }, '系统设置');
+      }
+
+      if (includeSocial && socialData) {
+        pushLine({ type: 'social_bundle', data: socialData }, '社交关系数据');
+      }
+      if ((includeSettings || isAll) && socialSettings !== undefined) {
+        pushLine({ type: 'social_settings', data: socialSettings }, '社交设置');
+      }
+
+      await flushBatch(false);
+      const blob = new Blob(blobParts, { type: 'application/x-jsonlines;charset=utf-8' });
+      if (blob.size <= 0) {
+        throw new ExportStageError('file_generate', '生成的 JSONL 文件为空');
+      }
+
+      return {
+        blob,
+        fileName: `phone_data_${dateStr}.jsonl`,
+        mimeType: 'application/x-jsonlines',
+        warnings,
+        stats: exportStats,
+      };
+    }
+
+    // 3. TXT Export (Chunked Blob parts)
+    if (options.format === 'txt') {
+      const blobParts: string[] = [];
+      let batchLines: string[] = [];
+
+      const flushTxt = async (yieldNow: boolean) => {
+        if (batchLines.length > 0) {
+          blobParts.push(batchLines.join('\n') + '\n');
+          batchLines = [];
+        }
+        if (yieldNow) await yieldToMainThread();
+      };
+
+      batchLines.push(`========================================`);
+      batchLines.push(`📱 手机模拟器 数据导出报告`);
+      batchLines.push(`导出时间: ${new Date(timestamp).toLocaleString()}`);
+      batchLines.push(`导出模块: ${options.categories.join(', ')}`);
+      batchLines.push(`========================================\n`);
+
+      if (includeChars) {
+        batchLines.push(`【AI 角色列表】(共 ${exportedCharacters.length} 个角色)`);
+        for (const c of exportedCharacters) {
+          batchLines.push(`----------------------------------------`);
+          batchLines.push(`名称: ${c.name}`);
+          batchLines.push(`微信号: ${c.wxid || '无'}`);
+          batchLines.push(`关系/身份: ${c.relationship || '好友'}`);
+          batchLines.push(`人设背景: ${c.persona}`);
+          if (c.personality) batchLines.push(`性格特征: ${c.personality}`);
+          if (c.greeting) batchLines.push(`初始问候: ${c.greeting}`);
+          if (includeMemories && c.memories && c.memories.length > 0) {
+            batchLines.push(`长期记忆库:`);
+            c.memories.forEach((m, idx) => batchLines.push(`  ${idx + 1}. ${m}`));
+          }
+        }
+        batchLines.push('');
+        await flushTxt(true);
+      } else if (includeMemories) {
+        batchLines.push(`【AI 长期记忆库】(共 ${standaloneMemories.length} 条)`);
+        for (const c of validChars) {
+          if (c.memories && c.memories.length > 0) {
+            batchLines.push(`----------------------------------------`);
+            batchLines.push(`角色: ${c.name}`);
+            c.memories.forEach((m, idx) => batchLines.push(`  ${idx + 1}. ${m}`));
+          }
+        }
+        batchLines.push('');
+        await flushTxt(true);
+      }
+
+      if (includeGroups) {
+        batchLines.push(`【群聊列表】(共 ${allGroups.length} 个群聊)`);
+        for (const g of allGroups) {
+          batchLines.push(`----------------------------------------`);
+          batchLines.push(`群名称: ${g.name}`);
+          batchLines.push(`群成员数: ${g.members?.length || 0}`);
+          batchLines.push(`群公告: ${g.notice || '暂无'}`);
+        }
+        batchLines.push('');
+        await flushTxt(true);
+      }
+
+      if (includeMsgs) {
+        const userLabel = settingsDump?.userProfile?.name || '我';
+        batchLines.push(`【聊天记录全文】(共 ${filteredMsgs.length} 条)`);
+
+        // Single-pass grouping by characterId so orphan messages also export cleanly
+        const groupedMsgs = new Map<string, ChatMessage[]>();
+        for (const m of filteredMsgs) {
+          const list = groupedMsgs.get(m.characterId);
+          if (list) list.push(m);
+          else groupedMsgs.set(m.characterId, [m]);
+        }
+
+        let processed = 0;
+        const total = Math.max(1, filteredMsgs.length);
+        for (const [charId, charMsgs] of groupedMsgs.entries()) {
+          const charName = charNameById.get(charId) || charId;
+          batchLines.push(`\n>>> 与「${charName}」的对话记录 (${charMsgs.length} 条) <<<`);
+          for (const m of charMsgs) {
+            const timeStr = new Date(m.timestamp).toLocaleString();
+            const sender = m.sender === 'user' ? userLabel : charName;
+            batchLines.push(`[${timeStr}] ${sender}: ${m.text}`);
+            if (options.includeThinkingProcess && m.thinkingProcess) {
+              batchLines.push(`  (🧠 推理过程: ${m.thinkingProcess.replace(/\n/g, ' ')})`);
+            }
+            processed++;
+            if (batchLines.length >= 500) {
+              onProgress?.({
+                stage: 'generating',
+                stageLabel: '正在排版 TXT 对话文本...',
+                detail: `${processed} / ${filteredMsgs.length} 条消息`,
+                percentage: 42 + Math.round((processed / total) * 26),
+              });
+              await flushTxt(true);
+            }
+          }
+        }
+        batchLines.push('');
+      }
+
+      if (includeSettings && settingsDump) {
+        batchLines.push(`【系统设置与用户档案摘要】`);
+        batchLines.push(`用户名: ${settingsDump.userProfile?.name || '我的手机'}`);
+        batchLines.push(`备忘录数量: ${Array.isArray(settingsDump.memos) ? settingsDump.memos.length : 0}`);
+        batchLines.push(`世界书条目数量: ${Array.isArray(settingsDump.worldBooks) ? settingsDump.worldBooks.length : 0}`);
+        batchLines.push('');
+      }
+
+      await flushTxt(false);
+      const blob = new Blob(blobParts, { type: 'text/plain;charset=utf-8' });
+      if (blob.size <= 0) {
+        throw new ExportStageError('file_generate', '生成的 TXT 文件为空');
+      }
+
+      return {
+        blob,
+        fileName: `phone_data_transcript_${dateStr}.txt`,
+        mimeType: 'text/plain',
+        warnings,
+        stats: exportStats,
+      };
+    }
+
+    // 4. Default JSON Export (Builds chunked string parts per section to reduce peak memory)
+    const fullBackupData: Record<string, unknown> = {
+      app: 'VirtualPhoneSim',
+      schemaVersion: 2,
+      exportedAt: new Date(timestamp).toISOString(),
+      categories: options.categories,
+    };
+
+    if (includeChars) {
+      fullBackupData.characters = exportedCharacters;
+    }
+    if (includeMemories && !includeChars) {
+      fullBackupData.memories = standaloneMemories;
+    }
+    if (includeMsgs) {
+      fullBackupData.messages = filteredMsgs;
+    }
+    if (includeGroups) {
+      fullBackupData.groups = allGroups;
+    }
+    if (includeSettings && settingsDump) {
+      fullBackupData.userProfile = settingsDump.userProfile;
+      fullBackupData.settings = settingsDump.settings;
+      fullBackupData.apiConfig = settingsDump.apiConfig;
+      fullBackupData.aiControls = settingsDump.aiControls;
+      fullBackupData.permissions = settingsDump.permissions;
+      fullBackupData.memos = settingsDump.memos;
+      fullBackupData.worldBooks = settingsDump.worldBooks;
+      fullBackupData.menstrualData = settingsDump.menstrualData;
+    }
+    if (includeSocial && socialData !== undefined) {
+      fullBackupData.socialData = socialData;
+    }
+    if ((includeSettings || isAll) && socialSettings !== undefined) {
+      fullBackupData.socialSettings = socialSettings;
+    }
+
+    onProgress?.({
+      stage: 'generating',
+      stageLabel: '正在生成 JSON 备份文件...',
+      percentage: 62,
+    });
+    await yieldToMainThread();
+
+    const jsonStr = safeJsonStringify(fullBackupData);
+    const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+    if (blob.size <= 0) {
+      throw new ExportStageError('file_generate', '生成的 JSON 文件为空');
+    }
+
     return {
       blob,
-      fileName: `phone_data_transcript_${dateStr}.txt`,
-      mimeType: 'text/plain',
+      fileName: `phone_backup_${dateStr}.json`,
+      mimeType: 'application/json',
+      warnings,
+      stats: exportStats,
     };
+  } catch (err: any) {
+    if (err instanceof ExportStageError) throw err;
+    const isOom = isMemoryOrSizeError(err);
+    throw new ExportStageError(
+      'file_generate',
+      isOom ? '生成导出文件时内存不足' : err?.message || '生成导出文件失败',
+      {
+        isMemoryOrSizeLimit: isOom,
+        suggestion: isOom ? LARGE_EXPORT_BATCH_ADVICE : undefined,
+        cause: err,
+      }
+    );
   }
+}
 
-  // 4. Default JSON Export
-  const fullBackupData = {
-    app: 'VirtualPhoneSim',
-    schemaVersion: 2,
-    exportedAt: new Date(timestamp).toISOString(),
-    categories: options.categories,
-    characters: includeChars ? allChars : undefined,
-    messages: includeMsgs ? filteredMsgs : undefined,
-    groups: includeGroups ? allGroups : undefined,
-    userProfile: includeSettings ? userProfile : undefined,
-    settings: includeSettings ? settings : undefined,
-    apiConfig: includeSettings ? apiConfig : undefined,
-    aiControls: includeSettings ? aiControls : undefined,
-    permissions: includeSettings ? permissions : undefined,
-    memos: includeSettings ? memos : undefined,
-    worldBooks: includeSettings ? worldBooks : undefined,
-    menstrualData: includeSettings ? menstrualData : undefined,
-    socialData: includeChars || includeGroups || includeSettings || isAll ? socialData : undefined,
-    socialSettings: includeSettings || isAll ? socialSettings : undefined,
-  };
-
-  const jsonStr = JSON.stringify(fullBackupData, null, 2);
-  const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
-  return {
+export async function triggerDownload(
+  blob: Blob,
+  fileName: string,
+  options?: {
+    mimeType?: string;
+    deliveryMode?: NativeExportDeliveryMode;
+    onProgress?: (info: ExportProgressInfo) => void;
+  }
+): Promise<ExportDeliveryResult> {
+  return await deliverExportBlob(
     blob,
-    fileName: `phone_backup_${dateStr}.json`,
-    mimeType: 'application/json',
-  };
+    fileName,
+    options?.mimeType || blob.type || 'application/octet-stream',
+    {
+      deliveryMode: options?.deliveryMode,
+      onProgress: options?.onProgress,
+    }
+  );
 }
 
-export function triggerDownload(blob: Blob, fileName: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
