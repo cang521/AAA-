@@ -63,7 +63,15 @@ import {
   RotateCcw,
   Smartphone,
   Globe2,
+  Loader2,
+  ScanSearch,
 } from 'lucide-react';
+import {
+  recognizeMessageImage,
+  generateImageForMessage,
+  recoverPendingImageTasks,
+  downloadOrSaveImage,
+} from '../../lib/image/imageCapabilitiesService';
 import { AiPhoneViewerModal } from './social/AiPhoneViewerModal';
 import { AiRomanticSettingsSection } from './social/AiRomanticSettingsSection';
 import { AiSocialSettingsPanel } from './social/AiSocialSettingsPanel';
@@ -557,6 +565,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     handleUpdateGroup(updatedGroup);
   };
 
+  const [lightboxImageMsg, setLightboxImageMsg] = useState<ChatMessage | null>(null);
+  const [lightboxShowDetails, setLightboxShowDetails] = useState(false);
+
   const activeChatIdRef = useRef<string | null>(activeChatId);
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
@@ -565,26 +576,45 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         ...prev,
         [activeChatId]: 0,
       }));
+      void recoverPendingImageTasks(activeChatId);
     }
   }, [activeChatId]);
 
-  // Subscribe to DB updates for real-time contact list previews & incremental message additions
+  // Subscribe to DB updates for real-time contact list previews & incremental message additions / in-place updates
   useEffect(() => {
     const unsubscribe = subscribeChatDb((event) => {
       setDbVersionKey((k) => k + 1);
 
-      if (event && event.type === 'message_saved') {
+      if (event && event.type === 'message_updated') {
         const { characterId, message } = event;
         if (activeChatIdRef.current === characterId) {
           setDisplayedMessages((prev) => {
-            if (prev.some((m) => m.id === message.id)) {
-              return prev;
+            const idx = prev.findIndex((m) => m.id === message.id);
+            if (idx === -1) return prev;
+            const updated = [...prev];
+            updated[idx] = message;
+            latestMessagesRef.current = updated;
+            return updated;
+          });
+          setLightboxImageMsg((curr) => (curr && curr.id === message.id ? message : curr));
+        }
+      } else if (event && event.type === 'message_saved') {
+        const { characterId, message } = event;
+        if (activeChatIdRef.current === characterId) {
+          setDisplayedMessages((prev) => {
+            const existingIdx = prev.findIndex((m) => m.id === message.id);
+            if (existingIdx !== -1) {
+              const updated = [...prev];
+              updated[existingIdx] = message;
+              latestMessagesRef.current = updated;
+              return updated;
             }
             const updated = [...prev, message];
             latestMessagesRef.current = updated;
             setTotalHistoryCount((count) => count + 1);
             return updated;
           });
+          setLightboxImageMsg((curr) => (curr && curr.id === message.id ? message : curr));
 
           const container = messageListRef.current;
           const isNearBottom = container
@@ -838,7 +868,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       characterId: activeCharacter.id,
       sender: 'user',
       text: cleanText,
+      messageType: imageToSend ? 'image' : 'text',
+      type: imageToSend ? 'image' : 'text',
       imageUrl: imageToSend || undefined,
+      recognitionStatus: imageToSend ? 'pending' : undefined,
+      imageAnalysisStatus: imageToSend ? 'pending' : undefined,
       timestamp: Date.now(),
       quoteMessageId: quoteId || undefined,
     };
@@ -859,29 +893,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         // Clear any prior failure state for this character
         aiReplyTaskManager.clearFailedTask(activeCharacter.id);
 
-        // Asynchronous vision analysis if an image was attached
+        // Tracked vision recognition strictly bound to userMsg.id (awaited automatically before AI reply)
         if (imageToSend) {
-          apiFetch('/api/gemini/analyze-image', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              imageUrl: imageToSend,
-              prompt: '请用中文详细识别并总结描述这张图片中的事物、文字、场景以及主要细节。',
-              apiConfig,
-            }),
-          })
-            .then((res) => res.json())
-            .then(async (visionData) => {
-              if (visionData.success && visionData.description) {
-                userMsg.imageAnalysis = visionData.description;
-                userMsg.imageAnalysisStatus = 'success';
-                await saveChatMessage(userMsg);
-                setDisplayedMessages((prev) =>
-                  prev.map((m) => (m.id === userMsg.id ? { ...userMsg } : m))
-                );
-              }
-            })
-            .catch((err) => console.warn('Vision API call error:', err));
+          void recognizeMessageImage(userMsg, { source: '微信用户发图识别' });
         }
 
         return userMsg;
@@ -1967,6 +1981,27 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                               onOpenCoT={handleOpenCoT}
                               onContextMenu={handleMessageContextMenu}
                               onOpenOfflineDetail={(sid) => setOfflineDetailSessionId(sid)}
+                              onPreviewImage={(targetMsg) => {
+                                setLightboxShowDetails(false);
+                                setLightboxImageMsg(targetMsg);
+                              }}
+                              onRetryImageRecognition={(targetMsg) => {
+                                void recognizeMessageImage(targetMsg, { force: true, source: '微信图片重试识别' });
+                              }}
+                              onRecognizeImage={(targetMsg) => {
+                                setLightboxShowDetails(true);
+                                setLightboxImageMsg(targetMsg);
+                                void recognizeMessageImage(targetMsg, { force: true, source: '微信按需识别此图' });
+                              }}
+                              onRegenerateImage={(targetMsg) => {
+                                void generateImageForMessage(targetMsg, { isRetry: true });
+                              }}
+                              onSaveImage={async (targetMsg) => {
+                                if (!targetMsg.imageUrl) return;
+                                const ok = await downloadOrSaveImage(targetMsg.imageUrl, 'wechat_image');
+                                setMultiBubbleToast(ok ? '已触发图片保存' : '图片保存失败，请尝试长按图片');
+                                setTimeout(() => setMultiBubbleToast(null), 2200);
+                              }}
                               isHighlighted={highlightedMsgId === msg.id}
                             />
                           </React.Fragment>
@@ -4653,6 +4688,160 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           userProfile={userProfile}
           userMoments={moments}
         />
+      )}
+
+      {/* In-App Image Lightbox Modal (View Full, Save, On-Demand Image Recognition) */}
+      {lightboxImageMsg && lightboxImageMsg.imageUrl && (
+        <div
+          className="fixed inset-0 z-50 bg-black/92 backdrop-blur-sm flex flex-col items-center justify-between p-4"
+          onClick={() => setLightboxImageMsg(null)}
+        >
+          <div
+            className="w-full max-w-2xl flex items-center justify-between gap-2 text-xs text-zinc-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span className="font-medium truncate">
+              {lightboxImageMsg.messageType === 'generated_image' || lightboxImageMsg.type === 'generated_image'
+                ? 'AI 生成图片'
+                : '聊天图片预览'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setLightboxImageMsg(null)}
+              className="p-2 rounded-full bg-zinc-800/90 hover:bg-zinc-700 text-zinc-200 transition cursor-pointer"
+              title="关闭大图"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div
+            className="flex-1 w-full max-w-3xl flex items-center justify-center overflow-hidden my-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={lightboxImageMsg.imageUrl}
+              alt={lightboxImageMsg.imageDescription || '图片大图'}
+              className="max-w-full max-h-[68vh] object-contain rounded-xl border border-zinc-800 shadow-2xl"
+            />
+          </div>
+
+          <div
+            className="w-full max-w-2xl space-y-2.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!lightboxImageMsg.imageUrl) return;
+                  const ok = await downloadOrSaveImage(lightboxImageMsg.imageUrl, 'wechat_image');
+                  setMultiBubbleToast(ok ? '已触发图片保存' : '图片保存失败');
+                  setTimeout(() => setMultiBubbleToast(null), 2200);
+                }}
+                className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>保存图片</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setLightboxShowDetails(true);
+                  void recognizeMessageImage(lightboxImageMsg, { force: true, source: '大图按需识别' });
+                }}
+                disabled={(lightboxImageMsg.recognitionStatus || lightboxImageMsg.imageAnalysisStatus) === 'pending'}
+                className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+              >
+                {(lightboxImageMsg.recognitionStatus || lightboxImageMsg.imageAnalysisStatus) === 'pending' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <ScanSearch className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  {(lightboxImageMsg.recognitionStatus || lightboxImageMsg.imageAnalysisStatus) === 'pending'
+                    ? '识别中...'
+                    : '识别此图'}
+                </span>
+              </button>
+
+              {(lightboxImageMsg.messageType === 'generated_image' || lightboxImageMsg.type === 'generated_image') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void generateImageForMessage(lightboxImageMsg, { isRetry: true });
+                    setLightboxImageMsg(null);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>重新生成</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setLightboxShowDetails((v) => !v)}
+                className="px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-zinc-300 text-xs font-medium transition cursor-pointer"
+              >
+                {lightboxShowDetails ? '收起信息' : '查看语义/提示词'}
+              </button>
+            </div>
+
+            {lightboxShowDetails && (
+              <div className="p-3 rounded-xl bg-zinc-900/95 border border-zinc-800 text-[11px] text-zinc-300 space-y-1.5 max-h-40 overflow-y-auto">
+                {(lightboxImageMsg.recognitionStatus || lightboxImageMsg.imageAnalysisStatus) === 'pending' && (
+                  <p className="text-indigo-300 flex items-center gap-1.5">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    正在调用图像识别模型分析此图...
+                  </p>
+                )}
+                {(lightboxImageMsg.recognitionStatus || lightboxImageMsg.imageAnalysisStatus) === 'failed' && (
+                  <p className="text-rose-300">
+                    识别失败：{lightboxImageMsg.recognitionError || '未返回有效识别结果'}
+                  </p>
+                )}
+                {(lightboxImageMsg.imageDescription || lightboxImageMsg.imageAnalysis) && (
+                  <p>
+                    <span className="text-zinc-500">图片语义：</span>
+                    {lightboxImageMsg.imageDescription || lightboxImageMsg.imageAnalysis}
+                  </p>
+                )}
+                {lightboxImageMsg.detectedText && (
+                  <p>
+                    <span className="text-zinc-500">图中文字：</span>
+                    {lightboxImageMsg.detectedText}
+                  </p>
+                )}
+                {lightboxImageMsg.imageScene && (
+                  <p>
+                    <span className="text-zinc-500">场景：</span>
+                    {lightboxImageMsg.imageScene}
+                  </p>
+                )}
+                {lightboxImageMsg.generationPrompt && (
+                  <p>
+                    <span className="text-zinc-500">生图提示词：</span>
+                    {lightboxImageMsg.generationPrompt}
+                  </p>
+                )}
+                {lightboxImageMsg.revisedPrompt && (
+                  <p>
+                    <span className="text-zinc-500">修订提示词：</span>
+                    {lightboxImageMsg.revisedPrompt}
+                  </p>
+                )}
+                {(lightboxImageMsg.model || lightboxImageMsg.recognitionModel) && (
+                  <p className="text-[10px] text-zinc-500 font-mono">
+                    {lightboxImageMsg.model ? `生图模型: ${lightboxImageMsg.model} ` : ''}
+                    {lightboxImageMsg.recognitionModel ? `识别模型: ${lightboxImageMsg.recognitionModel}` : ''}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

@@ -15,6 +15,11 @@ import { splitMessageIntoSentenceBubbles, calculateTypingDelay, getMultiBubbleCo
 import { loadFromStorage, saveToStorage, loadApiConfig } from '../storage';
 import { evaluateWeatherContext, evaluateMenstrualContext, evaluateWorldBookContext } from './contextEvaluator';
 import { AiReplyTask, AiReplyTaskStatus } from './AiReplyTaskStore';
+import {
+  awaitPendingRecognitionsForMessages,
+  buildCurrentTurnImageContext,
+  generateImageForMessage,
+} from '../image/imageCapabilitiesService';
 
 const nativeNotificationService = NativeNotificationService.getInstance();
 
@@ -199,6 +204,34 @@ export async function executeAiReplyTask(
       ? deviceService.getSanitizedDevicesSummary(permissions)
       : undefined;
 
+  // Wait for any in-flight image recognition on the current turn's user messages
+  // to eliminate race conditions between image upload and AI reply generation.
+  if (task.currentTurnMessageIds && task.currentTurnMessageIds.length > 0) {
+    await awaitPendingRecognitionsForMessages(task.currentTurnMessageIds);
+  }
+  const freshCurrentTurnUserMsgs =
+    task.currentTurnMessageIds && task.currentTurnMessageIds.length > 0
+      ? await getMessagesByIds(activeCharacter.id, task.currentTurnMessageIds).catch(() => task.userMessages || [])
+      : task.userMessages || [];
+
+  const resolvedCurrentImageAnalysis =
+    buildCurrentTurnImageContext(freshCurrentTurnUserMsgs) || task.currentImageAnalysis;
+
+  const effectiveUserMessage =
+    task.combinedUserText && task.combinedUserText.trim()
+      ? task.combinedUserText
+      : resolvedCurrentImageAnalysis
+      ? '[用户发送了图片]'
+      : '';
+
+  // Strip heavy data:image/* Base64 payloads from historical conversation messages
+  // while preserving all semantic image metadata (imageDescription, detectedText, revisedPrompt, etc.)
+  const lightConversationHistory = conversationHistory.map((m) =>
+    m.imageUrl && m.imageUrl.startsWith('data:image/')
+      ? { ...m, imageUrl: undefined }
+      : m
+  );
+
   // Send request to Gemini API
   if (onStatusChange) await onStatusChange('generating');
   const res = await apiFetch('/api/gemini/chat', {
@@ -206,10 +239,10 @@ export async function executeAiReplyTask(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       character: activeCharacter,
-      userMessage: task.combinedUserText,
+      userMessage: effectiveUserMessage,
       currentTurnMessageIds: task.currentTurnMessageIds,
-      currentImageAnalysis: task.currentImageAnalysis,
-      conversationHistory,
+      currentImageAnalysis: resolvedCurrentImageAnalysis,
+      conversationHistory: lightConversationHistory,
       recalledMemoriesSummary: combinedRecalledMemories || undefined,
       userProfile,
       systemTime: systemNativeService.getRealSystemTime().summaryString,
@@ -260,53 +293,106 @@ export async function executeAiReplyTask(
         : '无关联世界书，按日常设定回复'
     }\n3. ${memoryRecallNote}\n4. 形成专属口吻回复。`;
 
-  // Multi-bubble delivery & save to IndexedDB
+  // Multi-bubble delivery & save to IndexedDB (including optional generate_image actions in same turn)
   const multiBubbleConfig = getMultiBubbleConfig();
 
+  const generateImageActions: Array<{
+    type: 'generate_image';
+    prompt: string;
+    imageDescription?: string;
+    aspectRatio?: string;
+    negativePrompt?: string;
+  }> = Array.isArray(data.actions)
+    ? data.actions.filter(
+        (act: any) => act && act.type === 'generate_image' && typeof act.prompt === 'string' && act.prompt.trim().length > 0
+      )
+    : [];
+
   const cleanRawText = sanitizeReplyText(data.text || '');
-  if (!cleanRawText.trim()) {
+  if (!cleanRawText.trim() && generateImageActions.length === 0) {
     throw new Error('模型返回空内容，无法生成有效回复');
   }
 
   const shouldSplit = multiBubbleConfig.enabled;
-  const rawBubbles = shouldSplit
-    ? splitMessageIntoSentenceBubbles(cleanRawText, { maxBubbles: multiBubbleConfig.maxBubbles })
-    : [cleanRawText];
+  const rawBubbles = cleanRawText.trim()
+    ? shouldSplit
+      ? splitMessageIntoSentenceBubbles(cleanRawText, { maxBubbles: multiBubbleConfig.maxBubbles })
+      : [cleanRawText]
+    : [];
 
   const bubbles = rawBubbles.map((b) => sanitizeReplyText(b)).filter((s) => s.trim().length > 0);
-  if (bubbles.length === 0) {
+  if (bubbles.length === 0 && generateImageActions.length === 0) {
     throw new Error('模型未生成有效文本气泡');
   }
 
   const assignedTurnId =
     task.turnId ||
     'turn_ai_' + activeCharacter.id + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+  const totalTurnBubbles = bubbles.length + generateImageActions.length;
+
+  const buildGeneratedImageMessage = (
+    act: { prompt: string; imageDescription?: string; aspectRatio?: string; negativePrompt?: string },
+    idx: number,
+    isRefreshed?: boolean
+  ): ChatMessage => {
+    const bubbleIndex = bubbles.length + idx;
+    const msgId = `msg_img_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`;
+    return {
+      id: msgId,
+      characterId: activeCharacter.id,
+      sender: 'ai',
+      text: '',
+      messageType: 'generated_image',
+      type: 'generated_image',
+      generationPrompt: act.prompt.trim(),
+      imageDescription: (act.imageDescription || act.prompt).trim(),
+      aspectRatio: act.aspectRatio || '1:1',
+      negativePrompt: act.negativePrompt || '',
+      generationStatus: 'pending',
+      generationRequestId: `imggen_${assignedTurnId}_${idx}`,
+      timestamp: Date.now() + bubbleIndex * 20,
+      turnId: assignedTurnId,
+      turnBubbleIndex: bubbleIndex,
+      turnTotalBubbles: totalTurnBubbles,
+      isRefreshed,
+      thinkingProcess: `${thinkingProcess}\n\n[AI 触发画图动作: ${act.prompt.trim()}]`,
+    };
+  };
 
   if (onStatusChange) await onStatusChange('delivering');
 
   if (task.isReroll && task.replaceMessageIds && task.replaceMessageIds.length > 0) {
-    // Reroll turn replacement: All bubbles have passed validation and non-empty check.
-    // Atomically replace old turn in IndexedDB so old messages are never prematurely lost if generation failed,
-    // and neither old nor new duplicate on screen.
-    const newBubbleMessages: ChatMessage[] = bubbles.map((bubbleText, i) => ({
+    // Reroll turn replacement: All bubbles + generated image cards share the same assignedTurnId.
+    const newTextMessages: ChatMessage[] = bubbles.map((bubbleText, i) => ({
       id: 'msg_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2, 6),
       characterId: activeCharacter.id,
       sender: 'ai',
       text: bubbleText,
+      messageType: 'text',
       timestamp: Date.now() + i * 15,
       turnId: assignedTurnId,
       turnBubbleIndex: i,
-      turnTotalBubbles: bubbles.length,
+      turnTotalBubbles: totalTurnBubbles,
       isRefreshed: true,
       thinkingProcess:
         i === 0
           ? thinkingProcess
-          : `${thinkingProcess}\n\n[连发第 ${i + 1}/${bubbles.length} 条消息]`,
+          : `${thinkingProcess}\n\n[连发第 ${i + 1}/${totalTurnBubbles} 条消息]`,
     }));
 
-    await replaceChatMessagesTurn(activeCharacter.id, task.replaceMessageIds, newBubbleMessages);
-    for (let i = 0; i < newBubbleMessages.length; i++) {
-      const msg = newBubbleMessages[i];
+    const newImageMessages: ChatMessage[] = generateImageActions.map((act, idx) =>
+      buildGeneratedImageMessage(act, idx, true)
+    );
+    const allNewMessages = [...newTextMessages, ...newImageMessages];
+
+    await replaceChatMessagesTurn(activeCharacter.id, task.replaceMessageIds, allNewMessages);
+
+    for (const imgMsg of newImageMessages) {
+      void generateImageForMessage(imgMsg);
+    }
+
+    for (let i = 0; i < newTextMessages.length; i++) {
+      const msg = newTextMessages[i];
       void nativeNotificationService
         .notifyAiMessage(activeCharacter, msg.text, {
           messageId: msg.id,
@@ -338,14 +424,15 @@ export async function executeAiReplyTask(
         characterId: activeCharacter.id,
         sender: 'ai',
         text: bubbleText,
+        messageType: 'text',
         timestamp: Date.now() + i * 15,
         turnId: assignedTurnId,
         turnBubbleIndex: i,
-        turnTotalBubbles: bubbles.length,
+        turnTotalBubbles: totalTurnBubbles,
         thinkingProcess:
           i === 0
             ? thinkingProcess
-            : `${thinkingProcess}\n\n[连发第 ${i + 1}/${bubbles.length} 条消息]`,
+            : `${thinkingProcess}\n\n[连发第 ${i + 1}/${totalTurnBubbles} 条消息]`,
       };
 
       await saveChatMessage(bubbleMsg);
@@ -368,6 +455,13 @@ export async function executeAiReplyTask(
         .catch((err) => {
           console.warn(`[AiReplyExecutor] Notification unexpected error for ${bubbleMsg.id}:`, err);
         });
+    }
+
+    // Create & execute generated_image bubbles in the SAME turnId
+    for (let idx = 0; idx < generateImageActions.length; idx++) {
+      const imgMsg = buildGeneratedImageMessage(generateImageActions[idx], idx);
+      await saveChatMessage(imgMsg);
+      void generateImageForMessage(imgMsg);
     }
   }
 

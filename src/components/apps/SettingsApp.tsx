@@ -73,13 +73,21 @@ import {
   CURRENT_APP_VERSION_NAME,
   UpgradeProtectionLog,
 } from '../../lib/dataMigration';
-import { ApiSettingsPanel, ProviderPreset } from './ApiSettingsPanel';
+import {
+  ApiSettingsPanel,
+  TopLevelApiGroup,
+  RecognitionSubTab,
+  resolveActiveSlot,
+  readSlotConfig,
+  updateSlotConfig,
+} from './ApiSettingsPanel';
 import {
   ApiSettings,
   loadApiSettings,
   saveApiSettings,
   getApiConfigForEngine,
 } from '../../lib/apiConfigStore';
+import { ApiCapabilityCategory, sanitizeSensitiveText } from '../../lib/apiCapabilities';
 import {
   addDiagnosticLog,
   getNextSettingsAppRenderIndex,
@@ -147,8 +155,10 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   );
   const [fontFeedbackMsg, setFontFeedbackMsg] = useState<string | null>(null);
 
-  // Active Provider Category Tab
-  const [activeCategory, setActiveCategory] = useState<'text' | 'image' | 'voice'>('text');
+  // Active Provider Category Tab (4 top-level groups + 2 recognition sub-tabs)
+  const [activeCategory, setActiveCategory] = useState<TopLevelApiGroup>('text');
+  const [recognitionSubTab, setRecognitionSubTab] = useState<RecognitionSubTab>('image');
+  const activeSlot = resolveActiveSlot(activeCategory, recognitionSubTab);
 
   // Chat Archiving Settings States
   const [allCharacters] = useState(() => loadCharacters());
@@ -262,43 +272,47 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     }
   };
 
-  // Key Visibility toggles
-  const [showTextKey, setShowTextKey] = useState(false);
-  const [showImageKey, setShowImageKey] = useState(false);
-  const [showVoiceKey, setShowVoiceKey] = useState(false);
-
   // Connection Test States
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [connectionResult, setConnectionResult] = useState<ConnectionTestResult | null>(null);
 
-  // Fetch Models States
+  // Fetch Models States across all 5 independent capability slots
   const [isFetchingModels, setIsFetchingModels] = useState(false);
-  const [fetchedModels, setFetchedModels] = useState<RemoteModelItem[]>([]);
-  const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<'text' | 'image' | 'voice', RemoteModelItem[]>>({
-    text: [
-      { id: 'gemini-4-hydrogen', name: 'Gemini 4 Hydrogen (默认推荐/高速文本)', type: 'text', owned_by: 'Google' },
-      { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite (轻量高配额)', type: 'text', owned_by: 'Google' },
-      { id: 'gemini-4-neon', name: 'Gemini 4 Neon (深度推理/需付费Key)', type: 'text', owned_by: 'Google' },
-      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (经典低延迟)', type: 'text', owned_by: 'Google' },
-      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (逻辑与计算增强)', type: 'text', owned_by: 'Google' },
-      { id: 'deepseek-chat', name: 'DeepSeek V3 (Chat 官方兼容)', type: 'text', owned_by: 'DeepSeek' },
-      { id: 'deepseek-reasoner', name: 'DeepSeek R1 (深度推理模型)', type: 'text', owned_by: 'DeepSeek' },
-      { id: 'gpt-4o', name: 'GPT-4o (OpenAI 官方/反代)', type: 'text', owned_by: 'OpenAI' },
-      { id: 'gpt-4o-mini', name: 'GPT-4o Mini (轻量级高并发)', type: 'text', owned_by: 'OpenAI' },
-      { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (Anthropic)', type: 'text', owned_by: 'Anthropic' },
+  const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<ApiCapabilityCategory, RemoteModelItem[]>>({
+    text_generation: [
+      { id: 'gemini-4-hydrogen', name: 'Gemini 4 Hydrogen (默认推荐/高速文本)', type: 'text', owned_by: 'Google', capabilityCategory: 'text_generation', supportedCapabilities: ['text_generation', 'image_recognition'], confidence: 'known', capabilityHint: '可能支持：语言生成 / 图像识别' },
+      { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite (轻量高配额)', type: 'text', owned_by: 'Google', capabilityCategory: 'text_generation', supportedCapabilities: ['text_generation', 'image_recognition'], confidence: 'known', capabilityHint: '可能支持：语言生成 / 图像识别' },
+      { id: 'gemini-4-neon', name: 'Gemini 4 Neon (深度推理)', type: 'text', owned_by: 'Google', capabilityCategory: 'text_generation', supportedCapabilities: ['text_generation', 'image_recognition'], confidence: 'known', capabilityHint: '可能支持：语言生成 / 图像识别' },
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (经典低延迟)', type: 'text', owned_by: 'Google', capabilityCategory: 'text_generation', supportedCapabilities: ['text_generation', 'image_recognition'], confidence: 'known', capabilityHint: '可能支持：语言生成 / 图像识别' },
+      { id: 'deepseek-chat', name: 'DeepSeek V3 (Chat 官方兼容)', type: 'text', owned_by: 'DeepSeek', capabilityCategory: 'text_generation', supportedCapabilities: ['text_generation'], confidence: 'inferred', capabilityHint: '可能支持：语言生成' },
+      { id: 'deepseek-reasoner', name: 'DeepSeek R1 (深度推理)', type: 'text', owned_by: 'DeepSeek', capabilityCategory: 'text_generation', supportedCapabilities: ['text_generation'], confidence: 'inferred', capabilityHint: '可能支持：语言生成' },
+      { id: 'gpt-4o', name: 'GPT-4o (OpenAI 官方/反代)', type: 'text', owned_by: 'OpenAI', capabilityCategory: 'text_generation', supportedCapabilities: ['text_generation', 'image_recognition'], confidence: 'known', capabilityHint: '可能支持：语言生成 / 图像识别' },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini (轻量级高并发)', type: 'text', owned_by: 'OpenAI', capabilityCategory: 'text_generation', supportedCapabilities: ['text_generation', 'image_recognition'], confidence: 'known', capabilityHint: '可能支持：语言生成 / 图像识别' },
+      { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (Anthropic)', type: 'text', owned_by: 'Anthropic', capabilityCategory: 'text_generation', supportedCapabilities: ['text_generation', 'image_recognition'], confidence: 'known', capabilityHint: '可能支持：语言生成 / 图像识别' },
     ],
-    image: [
-      { id: 'imagen-3.0-generate-002', name: 'Imagen 3.0 (Google 官方/推荐)', type: 'image', owned_by: 'Google' },
-      { id: 'dall-e-3', name: 'DALL-E 3 (OpenAI 官方/反代)', type: 'image', owned_by: 'OpenAI' },
-      { id: 'dall-e-2', name: 'DALL-E 2 (OpenAI 经典图像模型)', type: 'image', owned_by: 'OpenAI' },
-      { id: 'flux-schnell', name: 'FLUX.1 Schnell (极速生图)', type: 'image', owned_by: 'Black Forest Labs' },
-      { id: 'flux-dev', name: 'FLUX.1 Dev (高质量细节增强)', type: 'image', owned_by: 'Black Forest Labs' },
+    image_generation: [
+      { id: 'gemini-3.1-flash-lite-image', name: 'Gemini 3.1 Flash Lite Image (Google 原生生图)', type: 'image', owned_by: 'Google', capabilityCategory: 'image_generation', supportedCapabilities: ['image_generation'], confidence: 'known', capabilityHint: '可能支持：图像生成' },
+      { id: 'gemini-nano-banana-2.1', name: 'Gemini Nano Banana 2.1 (高清生图)', type: 'image', owned_by: 'Google', capabilityCategory: 'image_generation', supportedCapabilities: ['image_generation'], confidence: 'known', capabilityHint: '可能支持：图像生成' },
+      { id: 'imagen-3.0-generate-002', name: 'Imagen 3.0 (Google Imagen)', type: 'image', owned_by: 'Google', capabilityCategory: 'image_generation', supportedCapabilities: ['image_generation'], confidence: 'known', capabilityHint: '可能支持：图像生成' },
+      { id: 'dall-e-3', name: 'DALL-E 3 (OpenAI 兼容)', type: 'image', owned_by: 'OpenAI', capabilityCategory: 'image_generation', supportedCapabilities: ['image_generation'], confidence: 'known', capabilityHint: '可能支持：图像生成' },
+      { id: 'gpt-image-1', name: 'GPT Image 1 (OpenAI 兼容)', type: 'image', owned_by: 'OpenAI', capabilityCategory: 'image_generation', supportedCapabilities: ['image_generation'], confidence: 'known', capabilityHint: '可能支持：图像生成' },
+      { id: 'flux-schnell', name: 'FLUX.1 Schnell (极速生图)', type: 'image', owned_by: 'Black Forest Labs', capabilityCategory: 'image_generation', supportedCapabilities: ['image_generation'], confidence: 'known', capabilityHint: '可能支持：图像生成' },
     ],
-    voice: [
-      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (语音/多模态支持)', type: 'voice', owned_by: 'Google' },
-      { id: 'tts-1', name: 'TTS-1 (OpenAI 标准语音合成)', type: 'voice', owned_by: 'OpenAI' },
-      { id: 'tts-1-hd', name: 'TTS-1 HD (OpenAI 高清音质合成)', type: 'voice', owned_by: 'OpenAI' },
-      { id: 'whisper-1', name: 'Whisper 1 (OpenAI 语音识别/转写)', type: 'voice', owned_by: 'OpenAI' },
+    speech_generation: [
+      { id: 'gemini-3.8-flash-lite-tts', name: 'Gemini 3.8 Flash Lite TTS (预留)', type: 'voice', owned_by: 'Google', capabilityCategory: 'speech_generation', supportedCapabilities: ['speech_generation'], confidence: 'known', capabilityHint: '可能支持：语音生成' },
+      { id: 'tts-1', name: 'OpenAI TTS-1 (预留)', type: 'voice', owned_by: 'OpenAI', capabilityCategory: 'speech_generation', supportedCapabilities: ['speech_generation'], confidence: 'known', capabilityHint: '可能支持：语音生成' },
+      { id: 'tts-1-hd', name: 'OpenAI TTS-1 HD (预留)', type: 'voice', owned_by: 'OpenAI', capabilityCategory: 'speech_generation', supportedCapabilities: ['speech_generation'], confidence: 'known', capabilityHint: '可能支持：语音生成' },
+    ],
+    image_recognition: [
+      { id: 'gemini-4-hydrogen', name: 'Gemini 4 Hydrogen (Google 原生多模态视觉)', type: 'text', owned_by: 'Google', capabilityCategory: 'image_recognition', supportedCapabilities: ['image_recognition', 'text_generation'], confidence: 'known', capabilityHint: '可能支持：图像识别 / 语言生成' },
+      { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite (轻量视觉识别)', type: 'text', owned_by: 'Google', capabilityCategory: 'image_recognition', supportedCapabilities: ['image_recognition', 'text_generation'], confidence: 'known', capabilityHint: '可能支持：图像识别 / 语言生成' },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini (OpenAI 兼容视觉)', type: 'text', owned_by: 'OpenAI', capabilityCategory: 'image_recognition', supportedCapabilities: ['image_recognition', 'text_generation'], confidence: 'known', capabilityHint: '可能支持：图像识别 / 语言生成' },
+      { id: 'gpt-4o', name: 'GPT-4o (OpenAI 兼容高精度视觉)', type: 'text', owned_by: 'OpenAI', capabilityCategory: 'image_recognition', supportedCapabilities: ['image_recognition', 'text_generation'], confidence: 'known', capabilityHint: '可能支持：图像识别 / 语言生成' },
+      { id: 'qwen2.5-vl-72b-instruct', name: 'Qwen2.5-VL (视觉理解)', type: 'text', owned_by: 'Alibaba', capabilityCategory: 'image_recognition', supportedCapabilities: ['image_recognition', 'text_generation'], confidence: 'known', capabilityHint: '可能支持：图像识别' },
+    ],
+    speech_recognition: [
+      { id: 'whisper-1', name: 'OpenAI Whisper-1 (预留)', type: 'voice', owned_by: 'OpenAI', capabilityCategory: 'speech_recognition', supportedCapabilities: ['speech_recognition'], confidence: 'known', capabilityHint: '可能支持：语音识别' },
+      { id: 'gemini-3.5-transcribe', name: 'Gemini 3.5 Transcribe (预留)', type: 'voice', owned_by: 'Google', capabilityCategory: 'speech_recognition', supportedCapabilities: ['speech_recognition'], confidence: 'known', capabilityHint: '可能支持：语音识别' },
     ],
   });
   const [modelFetchResult, setModelFetchResult] = useState<ModelFetchResult | null>(null);
@@ -368,83 +382,11 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     }
   };
 
-  // Auto load default baseline models
+  // Clear connection/fetch notices when switching between groups or sub-tabs
   useEffect(() => {
-    if (fetchedModels.length === 0) {
-      setFetchedModels([
-        { id: 'gemini-4-hydrogen', name: 'Gemini 4 Hydrogen (默认推荐/高速文本)', type: 'text', owned_by: 'Google' },
-        { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite (轻量高配额)', type: 'text', owned_by: 'Google' },
-        { id: 'gemini-4-neon', name: 'Gemini 4 Neon (深度推理/需付费Key)', type: 'text', owned_by: 'Google' },
-        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (经典低延迟)', type: 'text', owned_by: 'Google' },
-        { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (逻辑与计算增强)', type: 'text', owned_by: 'Google' },
-        { id: 'deepseek-chat', name: 'DeepSeek V3 (Chat 官方兼容)', type: 'text', owned_by: 'DeepSeek' },
-        { id: 'deepseek-reasoner', name: 'DeepSeek R1 (深度推理模型)', type: 'text', owned_by: 'DeepSeek' },
-        { id: 'gpt-4o', name: 'GPT-4o (OpenAI 官方/反代)', type: 'text', owned_by: 'OpenAI' },
-        { id: 'gpt-4o-mini', name: 'GPT-4o Mini (轻量级高并发)', type: 'text', owned_by: 'OpenAI' },
-        { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (Anthropic)', type: 'text', owned_by: 'Anthropic' },
-      ]);
-    }
-  }, []);
-
-  const handleClearTextKey = () => {
-    const prevBaseLen = settings.text?.baseUrl?.length || 0;
-    const prevKeyLen = settings.text?.apiKey?.length || 0;
-    if (prevKeyLen > 0) {
-      addDiagnosticLog({
-        tag: '[CLEAR_DETECTED]',
-        baseUrlLen: prevBaseLen,
-        baseUrlVal: settings.text?.baseUrl || '',
-        keyLen: 0,
-        keyLast4: '',
-        details: `source: handleClearTextKey, previousKeyLength: ${prevKeyLen}, nextKeyLength: 0`,
-      });
-    }
-    addDiagnosticLog({
-      tag: '[SETTINGS_WRITE:SETTINGSAPP_CLEAR_TEXT_KEY]',
-      baseUrlLen: prevBaseLen,
-      baseUrlVal: settings.text?.baseUrl || '',
-      keyLen: 0,
-      keyLast4: '',
-      details: `CLEARED! apiKey len: ${prevKeyLen} -> 0`,
-    });
-
-    setSettings((prev) => ({
-      ...prev,
-      text: { ...prev.text, apiKey: '' },
-    }));
-  };
-
-  const handleClearImageKey = () => {
-    addDiagnosticLog({
-      tag: '[SETTINGS_WRITE:SETTINGSAPP_CLEAR_IMAGE_KEY]',
-      baseUrlLen: settings.text?.baseUrl?.length || 0,
-      baseUrlVal: settings.text?.baseUrl || '',
-      keyLen: settings.text?.apiKey?.length || 0,
-      keyLast4: (settings.text?.apiKey || '').slice(-4),
-      details: 'image.apiKey cleared',
-    });
-
-    setSettings((prev) => ({
-      ...prev,
-      image: { ...prev.image, apiKey: '' },
-    }));
-  };
-
-  const handleClearVoiceKey = () => {
-    addDiagnosticLog({
-      tag: '[SETTINGS_WRITE:SETTINGSAPP_CLEAR_VOICE_KEY]',
-      baseUrlLen: settings.text?.baseUrl?.length || 0,
-      baseUrlVal: settings.text?.baseUrl || '',
-      keyLen: settings.text?.apiKey?.length || 0,
-      keyLast4: (settings.text?.apiKey || '').slice(-4),
-      details: 'voice.apiKey cleared',
-    });
-
-    setSettings((prev) => ({
-      ...prev,
-      voice: { ...prev.voice, apiKey: '' },
-    }));
-  };
+    setConnectionResult(null);
+    setModelFetchResult(null);
+  }, [activeCategory, recognitionSubTab]);
 
   const handleSaveGlobalFontScale = () => {
     const savedPrefs = saveGlobalDisplayPreferences({ fontScale: draftFontScale });
@@ -474,51 +416,32 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       setTimeout(() => setFontFeedbackMsg(null), 2800);
     }
 
-    const currentText = settings.text;
-    const hasBaseUrl = Boolean(currentText && currentText.baseUrl && currentText.baseUrl.trim().length > 0);
-    const hasApiKey = Boolean(currentText && currentText.apiKey && currentText.apiKey.trim().length > 0);
-
-    if (!hasApiKey && !hasBaseUrl) {
-      if (fontChanged) {
-        setSaveSuccessMsg(`🎉 全局字体大小 (${scaleToPercent(clampGlobalFontScale(draftFontScale))}%) 与系统控制设置已保存生效！`);
-        setTimeout(() => setSaveSuccessMsg(''), 3500);
-        return;
-      }
-      addDiagnosticLog({
-        tag: '[SAVE_REJECTED]',
-        baseUrlLen: 0,
-        baseUrlVal: '',
-        keyLen: 0,
-        keyLast4: '',
-        details: 'Save rejected: text.baseUrl and text.apiKey are both empty',
-      });
-      setSaveSuccessMsg('⚠️ 未检测到已配置的 Base URL 或 API Key，请先输入后再点击保存。');
-      setTimeout(() => setSaveSuccessMsg(''), 4000);
-      return;
-    }
-
     saveApiSettings(settings);
     const verify = loadApiSettings();
     setSavedVerification(verify);
 
-    const isBaseMatch = (verify.text?.baseUrl || '') === (settings.text?.baseUrl || '');
-    const isKeyMatch = (verify.text?.apiKey || '') === (settings.text?.apiKey || '');
+    const activeSaved = readSlotConfig(verify, activeSlot);
+    const activeCurr = readSlotConfig(settings, activeSlot);
+    const isMatch =
+      (activeSaved.baseUrl || '') === (activeCurr.baseUrl || '') &&
+      (activeSaved.apiKey || '') === (activeCurr.apiKey || '') &&
+      (activeSaved.model || '') === (activeCurr.model || '');
 
-    if (isBaseMatch && isKeyMatch) {
-      setSaveSuccessMsg('🎉 全局 API Provider 配置与系统设置已保存生效！');
+    if (isMatch) {
+      setSaveSuccessMsg('🎉 全局 5 组独立 API 配置与系统设置已保存生效！');
     } else {
-      setSaveSuccessMsg('⚠️ 保存校验异常：写入存储与内存 State 不完全匹配。');
+      setSaveSuccessMsg('⚠️ 保存校验异常：写入存储与内存状态不完全匹配。');
     }
     setTimeout(() => setSaveSuccessMsg(''), 3500);
   };
 
-  // 1. Connection Test
+  // 1. Connection Test (for text_generation)
   const handleTestConnection = async () => {
     setIsTestingConnection(true);
     setConnectionResult(null);
     setModelTestResult(null);
 
-    const activeConfig = settings[activeCategory];
+    const activeConfig = readSlotConfig(settings, activeSlot);
     const providerType = activeConfig.provider || 'google_gemini';
     const baseUrl = activeConfig.baseUrl || '';
     const apiKey = activeConfig.apiKey || '';
@@ -578,13 +501,12 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     }
   };
 
-  // 2. Real Models Fetching from Server (读取当前内存 state，完全绕过持久化/localStorage)
+  // 2. Real Models Fetching from Server (strictly reads activeSlot config from state)
   const handleFetchModels = async () => {
     setIsFetchingModels(true);
     setModelFetchResult(null);
 
-    // 直接使用点击这一刻的当前内存 state，禁止重新读取 localStorage
-    const activeConfig = settings[activeCategory];
+    const activeConfig = readSlotConfig(settings, activeSlot);
     const providerType = activeConfig.provider || 'google_gemini';
     const baseUrl = activeConfig.baseUrl || '';
     const apiKey = activeConfig.apiKey || '';
@@ -596,7 +518,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
 
     let initialFailureStage = '';
     if (isNative && !isBackendAlive) {
-      initialFailureStage = '阶段A: Android 内置 127.0.0.1:3000 健康检查未就绪 (Node Backend 尚未正常响应)';
+      initialFailureStage = '阶段A: Android 内置 127.0.0.1:3000 健康检查未就绪';
     } else {
       initialFailureStage = '阶段B: 准备发起 apiFetch 网络请求';
     }
@@ -621,14 +543,16 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     setFetchDebugInfo(debugSnapshot);
 
     try {
+      await ensureBackendReady('settings_fetch_models');
       const res = await apiFetch('/api/provider/fetch-models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           providerType: providerType || 'custom',
+          apiProtocol: activeConfig.apiProtocol || '',
           baseUrl,
           apiKey,
-          serviceType: activeCategory,
+          serviceType: activeSlot,
         }),
       });
 
@@ -674,34 +598,22 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
       setModelFetchResult(data);
 
       if (data.success && data.models && data.models.length > 0) {
-        setFetchedModels(data.models);
         setFetchedModelsMap((prev) => ({
           ...prev,
-          [activeCategory]: data.models,
+          [activeSlot]: data.models,
         }));
 
-        // 自动将后端自动探测得出的 apiProtocol 回写
+        // Persist detected protocol strictly onto the activeSlot
         const detectedProtocol = (data as any).apiProtocol;
         if (detectedProtocol) {
-          addDiagnosticLog({
-            tag: '[SETTINGS_WRITE:AUTO_PROTOCOL_PERSISTED]',
-            baseUrlLen: settings.text.baseUrl?.length || 0,
-            baseUrlVal: settings.text.baseUrl || '',
-            keyLen: settings.text.apiKey?.length || 0,
-            keyLast4: (settings.text.apiKey || '').slice(-4),
-            details: `Auto-detected protocol [${detectedProtocol}] persisted for ${activeCategory}`,
-          });
-
-          setSettings((prev) => ({
-            ...prev,
-            [activeCategory]: {
-              ...prev[activeCategory],
+          setSettings((prev) =>
+            updateSlotConfig(prev, activeSlot, {
               apiProtocol: detectedProtocol,
-            },
-          }));
+            })
+          );
         }
 
-        setSaveSuccessMsg(`🎉 探测成功！匹配 [${detectedProtocol || '通用协议'}]，获取到 ${data.models.length} 个真实模型！`);
+        setSaveSuccessMsg(`🎉 探测成功！匹配 [${detectedProtocol || '通用协议'}]，获取到 ${data.models.length} 个模型！`);
         setTimeout(() => setSaveSuccessMsg(''), 4000);
       }
     } catch (e: any) {
@@ -731,7 +643,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     setIsTestingModel(true);
     setModelTestResult(null);
 
-    const activeConfig = settings[activeCategory];
+    const activeConfig = readSlotConfig(settings, activeSlot);
     const providerType = activeConfig.provider || 'google_gemini';
     const baseUrl = activeConfig.baseUrl || '';
     const apiKey = activeConfig.apiKey || '';
@@ -748,7 +660,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           apiKey,
           model,
           apiProtocol,
-          serviceType: activeCategory,
+          serviceType: activeSlot,
         }),
       });
 
@@ -773,41 +685,11 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         latencyMs: 0,
         model,
         reply: '',
-        error: e.message || '网络请求失败',
+        error: sanitizeSensitiveText(e.message || '网络请求失败'),
       });
     } finally {
       setIsTestingModel(false);
     }
-  };
-
-  // Preset Selection
-  const applyTextPreset = (preset: ProviderPreset) => {
-    const prevBaseLen = settings.text?.baseUrl?.length || 0;
-    const prevKeyLen = settings.text?.apiKey?.length || 0;
-    const nextBaseUrl = preset.defaultBaseUrl || settings.text.baseUrl || '';
-
-    addDiagnosticLog({
-      tag: '[SETTINGS_WRITE:SETTINGSAPP_APPLY_PRESET]',
-      baseUrlLen: nextBaseUrl.length,
-      baseUrlVal: nextBaseUrl,
-      keyLen: prevKeyLen,
-      keyLast4: (settings.text?.apiKey || '').slice(-4),
-      details: `applyPreset ${preset.id}`,
-    });
-
-    setSettings((prev) => ({
-      ...prev,
-      text: {
-        ...prev.text,
-        provider: preset.id,
-        baseUrl: preset.defaultBaseUrl || prev.text.baseUrl || '',
-        model: preset.defaultModel || prev.text.model || '',
-        apiKey: prev.text.apiKey || '',
-      },
-    }));
-
-    setConnectionResult(null);
-    setModelFetchResult(null);
   };
 
   // JSON Format Adapter
@@ -889,16 +771,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
             setSettings={setSettings}
             activeCategory={activeCategory}
             setActiveCategory={setActiveCategory}
-            showTextKey={showTextKey}
-            setShowTextKey={setShowTextKey}
-            showImageKey={showImageKey}
-            setShowImageKey={setShowImageKey}
-            showVoiceKey={showVoiceKey}
-            setShowVoiceKey={setShowVoiceKey}
-            handleClearTextKey={handleClearTextKey}
-            handleClearImageKey={handleClearImageKey}
-            handleClearVoiceKey={handleClearVoiceKey}
-            fetchedModels={fetchedModelsMap[activeCategory] || fetchedModels}
+            recognitionSubTab={recognitionSubTab}
+            setRecognitionSubTab={setRecognitionSubTab}
             fetchedModelsMap={fetchedModelsMap}
             isTestingConnection={isTestingConnection}
             connectionResult={connectionResult}
@@ -910,9 +784,6 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
             modelTestResult={modelTestResult}
             handleTestSelectedModel={handleTestSelectedModel}
             handleGlobalSave={handleGlobalSave}
-            applyTextPreset={applyTextPreset}
-            fetchDebugInfo={fetchDebugInfo}
-            savedVerification={savedVerification}
           />
         </section>
 

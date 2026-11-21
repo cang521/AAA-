@@ -803,12 +803,14 @@ export function createBackendUnavailableResponse(
 
 function deriveAppName(path: string): string {
   if (path.includes('group-chat')) return '微信群聊-AI';
+  if (path.includes('offline-chat') || path.includes('offline-summary')) return '线下模式-AI';
   if (path.includes('chat')) return '微信-AI聊天';
   if (path.includes('weather') || path.includes('proactive')) return '主动关怀提醒';
   if (path.includes('moments')) return '朋友圈AI互动';
-  if (path.includes('analyze-image')) return '图像识别与多模态分析';
-  if (path.includes('generate-image')) return 'AI生图绘制';
-  if (path.includes('generate-speech')) return 'AI语音TTS生成';
+  if (path.includes('analyze-image')) return '图像识别';
+  if (path.includes('generate-image')) return '图像生成';
+  if (path.includes('generate-speech')) return '语音生成';
+  if (path.includes('transcribe') || path.includes('recognize-speech')) return '语音识别';
   if (path.includes('fix-css')) return '美化-CSS优化';
   if (path.includes('url-parse')) return '外端接入-链接解析';
   if (path.includes('adapter-json')) return '设置-JSON格式适配';
@@ -819,26 +821,50 @@ function deriveAppName(path: string): string {
 }
 
 function deriveInterfaceType(path: string): string {
+  if (path.includes('analyze-image')) return 'ImageRecognition';
+  if (path.includes('generate-image')) return 'ImageGeneration';
+  if (path.includes('generate-speech')) return 'SpeechGeneration';
+  if (path.includes('transcribe') || path.includes('recognize-speech')) return 'SpeechRecognition';
   const parts = path.split('/').filter(Boolean);
   return parts[parts.length - 1] || 'ModelCall';
 }
 
-function deriveCategory(path: string): 'text' | 'image' | 'voice' {
-  if (path.includes('image')) return 'image';
-  if (path.includes('speech') || path.includes('audio') || path.includes('voice')) return 'voice';
-  return 'text';
+function deriveCategory(
+  path: string
+): 'text_generation' | 'image_generation' | 'speech_generation' | 'image_recognition' | 'speech_recognition' {
+  if (path.includes('analyze-image')) return 'image_recognition';
+  if (path.includes('generate-image')) return 'image_generation';
+  if (path.includes('transcribe') || path.includes('recognize-speech')) return 'speech_recognition';
+  if (path.includes('generate-speech') || path.includes('speech') || path.includes('audio') || path.includes('voice')) {
+    return 'speech_generation';
+  }
+  return 'text_generation';
 }
 
-function derivePurpose(path: string, init?: RequestInit): string {
+function deriveRequestMeta(init?: RequestInit): { requestId?: string; provider?: string; model?: string; purposeHint?: string } {
   if (init?.body && typeof init.body === 'string') {
     try {
       const parsed = JSON.parse(init.body);
-      if (parsed.group?.name) return `群聊 [${parsed.group.name}] AI 互动`;
-      if (parsed.character?.name) return `与 ${parsed.character.name} 对话交互`;
-      if (parsed.prompt) return `执行 AI 指令: ${String(parsed.prompt).slice(0, 30)}`;
-      if (parsed.text) return `处理 AI 文本: ${String(parsed.text).slice(0, 30)}`;
+      let purposeHint = '';
+      if (parsed.group?.name) purposeHint = `群聊 [${parsed.group.name}] AI 互动`;
+      else if (parsed.character?.name) purposeHint = `与 ${parsed.character.name} 对话交互`;
+      else if (parsed.source) purposeHint = `来源: ${String(parsed.source).slice(0, 40)}`;
+      else if (parsed.prompt) purposeHint = `执行指令: ${String(parsed.prompt).slice(0, 40)}`;
+      else if (parsed.text) purposeHint = `处理文本: ${String(parsed.text).slice(0, 40)}`;
+      return {
+        requestId: typeof parsed.requestId === 'string' ? parsed.requestId : undefined,
+        provider: parsed.provider || parsed.providerType || parsed.recognitionConfig?.provider || parsed.apiConfig?.textProvider,
+        model: parsed.model || parsed.recognitionConfig?.model || parsed.apiConfig?.textModel,
+        purposeHint,
+      };
     } catch {}
   }
+  return {};
+}
+
+function derivePurpose(path: string, init?: RequestInit): string {
+  const meta = deriveRequestMeta(init);
+  if (meta.purposeHint) return meta.purposeHint;
   return '系统模型接口交互';
 }
 
@@ -852,31 +878,49 @@ async function logModelApiResponse(
     const durationMs = Date.now() - startTime;
     const isModelEndpoint = apiPath.startsWith('/api/gemini/') || apiPath.startsWith('/api/provider/');
     if (!isModelEndpoint) return;
+    const meta = deriveRequestMeta(init);
 
     if (resp.ok) {
       const clone = resp.clone();
       const data = await clone.json().catch(() => null);
       if (data) {
         if (data.apiLog) {
-          recordApiLog(data.apiLog);
+          recordApiLog({
+            ...data.apiLog,
+            httpStatus: data.apiLog.httpStatus ?? resp.status,
+            requestId: data.apiLog.requestId || data.requestId || meta.requestId,
+          });
         } else if (data.log) {
-          recordApiLog(data.log);
+          recordApiLog({
+            ...data.log,
+            httpStatus: data.log.httpStatus ?? resp.status,
+            requestId: data.log.requestId || data.requestId || meta.requestId,
+          });
         } else if (data.success === false) {
           recordApiLog({
             appName: deriveAppName(apiPath),
+            provider: data.provider || meta.provider,
+            modelName: data.model || meta.model,
             interfaceType: deriveInterfaceType(apiPath),
             category: deriveCategory(apiPath),
             status: 'failed',
+            httpStatus: data.statusCode || resp.status,
+            requestId: data.requestId || meta.requestId,
             durationMs,
+            errorType: data.errorType || 'ModelError',
             errorMessage: data.error || data.message || '模型响应失败',
             purpose: derivePurpose(apiPath, init),
           });
         } else {
           recordApiLog({
             appName: deriveAppName(apiPath),
+            provider: data.provider || meta.provider,
+            modelName: data.model || meta.model,
             interfaceType: deriveInterfaceType(apiPath),
             category: deriveCategory(apiPath),
             status: 'success',
+            httpStatus: resp.status,
+            requestId: data.requestId || meta.requestId,
             durationMs,
             purpose: derivePurpose(apiPath, init),
           });
@@ -886,21 +930,42 @@ async function logModelApiResponse(
       const clone = resp.clone();
       const text = await clone.text().catch(() => '');
       let errorMsg = `HTTP ${resp.status} ${resp.statusText}`;
+      let parsedProvider = meta.provider;
+      let parsedModel = meta.model;
+      let parsedRequestId = meta.requestId;
+      let parsedApiLog: any = null;
       try {
         const j = JSON.parse(text);
         errorMsg = j.error || j.message || errorMsg;
+        parsedProvider = j.provider || parsedProvider;
+        parsedModel = j.model || parsedModel;
+        parsedRequestId = j.requestId || parsedRequestId;
+        parsedApiLog = j.apiLog || null;
       } catch {}
 
-      recordApiLog({
-        appName: deriveAppName(apiPath),
-        interfaceType: deriveInterfaceType(apiPath),
-        category: deriveCategory(apiPath),
-        status: 'failed',
-        durationMs,
-        errorType: `HTTP ${resp.status}`,
-        errorMessage: errorMsg,
-        purpose: `${derivePurpose(apiPath, init)} (请求异常 ${resp.status})`,
-      });
+      if (parsedApiLog) {
+        recordApiLog({
+          ...parsedApiLog,
+          status: 'failed',
+          httpStatus: parsedApiLog.httpStatus ?? resp.status,
+          requestId: parsedApiLog.requestId || parsedRequestId,
+        });
+      } else {
+        recordApiLog({
+          appName: deriveAppName(apiPath),
+          provider: parsedProvider,
+          modelName: parsedModel,
+          interfaceType: deriveInterfaceType(apiPath),
+          category: deriveCategory(apiPath),
+          status: 'failed',
+          httpStatus: resp.status,
+          requestId: parsedRequestId,
+          durationMs,
+          errorType: `HTTP ${resp.status}`,
+          errorMessage: errorMsg,
+          purpose: `${derivePurpose(apiPath, init)} (请求异常 ${resp.status})`,
+        });
+      }
     }
   } catch {
     // Interceptor catch: Never disrupt primary app flow

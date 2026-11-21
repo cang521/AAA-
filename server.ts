@@ -2,11 +2,16 @@ import express from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
 import { extractThinkingAndContent, sanitizeReplyText } from './src/lib/thinkCleaner';
+import {
+  classifyModelCapabilities,
+  resolveEffectiveProtocol,
+  sanitizeSensitiveText,
+} from './src/lib/apiCapabilities';
 
 dotenv.config();
 
 const app = express();
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '25mb' }));
 
 // 允许 Capacitor WebView (https://localhost) 访问手机本地后端。
 app.use((req, res, next) => {
@@ -80,44 +85,137 @@ export interface AiCallDetailedResult {
 
 function buildApiLogObject(params: {
   appName: string;
+  provider?: string;
   modelName: string;
   interfaceType: string;
-  category?: 'text' | 'image' | 'voice';
+  category?:
+    | 'text'
+    | 'image'
+    | 'voice'
+    | 'text_generation'
+    | 'image_generation'
+    | 'speech_generation'
+    | 'image_recognition'
+    | 'speech_recognition';
   status?: 'success' | 'failed';
+  httpStatus?: number;
+  requestId?: string;
   durationMs: number;
   usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
   isRealTokens?: boolean;
   purpose: string;
   error?: string;
+  errorType?: string;
   isOfficial?: boolean;
 }) {
   const isFailed = params.status === 'failed' || Boolean(params.error);
-  const isOfficial = params.isOfficial !== false && (params.modelName.includes('gemini') || !params.modelName.includes('gpt'));
+  const isOfficial =
+    params.isOfficial !== false &&
+    (params.modelName.includes('gemini') ||
+      params.modelName.includes('imagen') ||
+      params.provider === 'google_gemini');
   const defaultCostDisplay = isOfficial ? '免费/内置' : '未提供';
+
+  const normalizedCategory =
+    params.category === 'image'
+      ? 'image_generation'
+      : params.category === 'voice'
+      ? 'speech_generation'
+      : params.category === 'text' || !params.category
+      ? 'text_generation'
+      : params.category;
 
   return {
     id: 'log_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-    appName: params.appName,
+    appName: sanitizeSensitiveText(params.appName, 80),
     timestamp: Date.now(),
-    modelName: params.modelName,
+    provider: params.provider ? sanitizeSensitiveText(params.provider, 60) : undefined,
+    modelName: sanitizeSensitiveText(params.modelName || 'unknown', 80),
     interfaceType: params.interfaceType,
-    category: params.category || 'text',
+    category: normalizedCategory,
     status: isFailed ? 'failed' : 'success',
+    httpStatus: params.httpStatus,
+    requestId: params.requestId ? sanitizeSensitiveText(params.requestId, 80) : undefined,
     durationMs: params.durationMs,
     promptTokens: typeof params.usage?.promptTokens === 'number' ? params.usage.promptTokens : null,
     completionTokens: typeof params.usage?.completionTokens === 'number' ? params.usage.completionTokens : null,
-    totalTokens: typeof params.usage?.totalTokens === 'number'
-      ? params.usage.totalTokens
-      : (typeof params.usage?.promptTokens === 'number' && typeof params.usage?.completionTokens === 'number')
-      ? params.usage.promptTokens + params.usage.completionTokens
-      : null,
+    totalTokens:
+      typeof params.usage?.totalTokens === 'number'
+        ? params.usage.totalTokens
+        : typeof params.usage?.promptTokens === 'number' && typeof params.usage?.completionTokens === 'number'
+        ? params.usage.promptTokens + params.usage.completionTokens
+        : null,
     isRealTokens: Boolean(params.isRealTokens),
-    estimatedCost: null, // NO fake 0.0001 calculations!
+    estimatedCost: null,
     costDisplay: defaultCostDisplay,
-    errorType: isFailed ? 'ModelError' : undefined,
-    errorMessage: params.error,
-    purpose: params.purpose,
+    errorType: isFailed ? params.errorType || 'ModelError' : undefined,
+    errorMessage: params.error ? sanitizeSensitiveText(params.error, 260) : undefined,
+    purpose: sanitizeSensitiveText(params.purpose, 160),
   };
+}
+
+// =========================================================================
+// Shared Protocol, SSRF Safety, and Idempotency Helpers for Image Routes
+// =========================================================================
+function buildGoogleRestBase(baseUrl?: string): string {
+  const clean = (baseUrl || '').trim().replace(/\/+$/, '');
+  if (!clean) return 'https://generativelanguage.googleapis.com/v1beta';
+  if (/\/v1(beta|alpha)?$/i.test(clean)) return clean;
+  return `${clean}/v1beta`;
+}
+
+function buildOpenAiEndpoint(baseUrl: string | undefined, suffixPath: string): string {
+  const clean = (baseUrl || '').trim().replace(/\/+$/, '');
+  const normalizedSuffix = suffixPath.startsWith('/') ? suffixPath : `/${suffixPath}`;
+  if (!clean) return `https://api.openai.com/v1${normalizedSuffix}`;
+  if (clean.endsWith(normalizedSuffix)) return clean;
+  if (clean.endsWith('/v1')) return `${clean}${normalizedSuffix}`;
+  return `${clean}/v1${normalizedSuffix}`;
+}
+
+function assertSafeRemoteImageUrl(rawUrl: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error('图片 URL 格式无效');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('仅支持 http/https 或 Base64 Data URL 格式的图片');
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (
+    host === 'localhost' ||
+    host === '::1' ||
+    host === '[::1]' ||
+    host === '0.0.0.0' ||
+    host.endsWith('.local') ||
+    host === '169.254.169.254' ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(host) ||
+    /^169\.254\./.test(host)
+  ) {
+    throw new Error('出于安全限制，不允许读取内网或本机地址的远程图片');
+  }
+  return parsed;
+}
+
+const IMAGE_IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
+const imageGenCompletedCache = new Map<string, { expiresAt: number; payload: any }>();
+const imageGenInFlightCache = new Map<string, Promise<any>>();
+const imageRecCompletedCache = new Map<string, { expiresAt: number; payload: any }>();
+const imageRecInFlightCache = new Map<string, Promise<any>>();
+
+function pruneImageCaches() {
+  const now = Date.now();
+  for (const [k, v] of imageGenCompletedCache.entries()) {
+    if (v.expiresAt <= now) imageGenCompletedCache.delete(k);
+  }
+  for (const [k, v] of imageRecCompletedCache.entries()) {
+    if (v.expiresAt <= now) imageRecCompletedCache.delete(k);
+  }
 }
 
 const GEMINI_DEFAULT_TEXT_MODEL = 'gemini-4-hydrogen';
@@ -944,18 +1042,22 @@ app.post('/api/provider/fetch-models', async (req, res) => {
 
         if (rawList && rawList.length > 0) {
           const formatted = rawList.map((m: any) => {
-            const id = typeof m === 'string' ? m : m.id || m.name;
-            const lower = String(id).toLowerCase();
-            let type: 'text' | 'image' | 'voice' = 'text';
-            if (lower.includes('dall-e') || lower.includes('image') || lower.includes('flux') || lower.includes('midjourney') || lower.includes('imagen')) {
-              type = 'image';
-            } else if (lower.includes('tts') || lower.includes('whisper') || lower.includes('speech') || lower.includes('audio')) {
-              type = 'voice';
-            }
+            const id = String(typeof m === 'string' ? m : m.id || m.name || '');
+            const cap = classifyModelCapabilities(id, typeof m === 'object' ? m : undefined);
+            const legacyType: 'text' | 'image' | 'voice' =
+              cap.primaryCategory === 'image_generation'
+                ? 'image'
+                : cap.primaryCategory === 'speech_generation' || cap.primaryCategory === 'speech_recognition'
+                ? 'voice'
+                : 'text';
             return {
-              id: String(id),
-              name: typeof m === 'object' && m.name ? m.name : String(id),
-              type,
+              id,
+              name: typeof m === 'object' && m.name ? m.name : id,
+              type: legacyType,
+              capabilityCategory: cap.primaryCategory,
+              supportedCapabilities: cap.supportedCategories,
+              capabilityHint: cap.capabilityHint,
+              confidence: cap.confidence,
               owned_by: typeof m === 'object' ? m.owned_by || m.permission?.[0]?.organization || 'OpenAI-Proxy' : 'OpenAI-Proxy',
             };
           });
@@ -1070,13 +1172,22 @@ app.post('/api/provider/fetch-models', async (req, res) => {
         if (rawList && rawList.length > 0) {
           const formatted = rawList.map((m: any) => {
             const id = (typeof m === 'string' ? m : m.id || m.name || '').replace(/^models\//, '');
-            const isImage = id.includes('imagen') || id.includes('image');
-            const isVoice = id.includes('audio') || id.includes('tts') || id.includes('speech');
+            const cap = classifyModelCapabilities(id, typeof m === 'object' ? m : undefined);
+            const legacyType: 'text' | 'image' | 'voice' =
+              cap.primaryCategory === 'image_generation'
+                ? 'image'
+                : cap.primaryCategory === 'speech_generation' || cap.primaryCategory === 'speech_recognition'
+                ? 'voice'
+                : 'text';
             return {
               id,
               name: typeof m === 'object' && (m.displayName || m.name) ? (m.displayName || m.name) : id,
               description: typeof m === 'object' ? (m.description || '') : '',
-              type: isImage ? 'image' : isVoice ? 'voice' : 'text',
+              type: legacyType,
+              capabilityCategory: cap.primaryCategory,
+              supportedCapabilities: cap.supportedCategories,
+              capabilityHint: cap.capabilityHint,
+              confidence: cap.confidence,
               contextWindow: typeof m === 'object' ? m.inputTokenLimit : undefined,
               owned_by: typeof m === 'object' && m.owned_by ? m.owned_by : (cleanBaseUrl ? 'Gemini-Proxy' : 'Google'),
             };
@@ -1085,7 +1196,7 @@ app.post('/api/provider/fetch-models', async (req, res) => {
           attemptsTrace.push({
             attemptIndex: 2,
             adapterName: 'Gemini Native REST Adapter (/v1beta/models)',
-            protocolKey: 'gemini_native',
+            protocolKey: 'google_native',
             finalUrl: maskedUrl,
             method: 'GET',
             authMethod: 'QueryParam (?key=) & Headers',
@@ -1101,10 +1212,10 @@ app.post('/api/provider/fetch-models', async (req, res) => {
           return res.json({
             success: true,
             supported: true,
-            apiProtocol: 'gemini_native',
+            apiProtocol: 'google_native',
             models: formatted,
             sourceEndpoint: maskedUrl,
-            message: `自动探测成功！匹配 Gemini Native 原生协议，成功获取 ${formatted.length} 个真实模型`,
+            message: `自动探测成功！匹配 Google 原生协议，成功获取 ${formatted.length} 个真实模型`,
             attemptsTrace,
             totalTimeMs: Date.now() - overallStartTime,
           });
@@ -2581,214 +2692,591 @@ ${memosSummary}
   }
 });
 
-// Multimodal Vision / Image Analysis Endpoint
+// =========================================================================
+// Dedicated Multimodal Vision / Image Recognition Endpoint
+// Strictly reads `recognition.image` configuration — NEVER uses imageGeneration config!
+// Uses pure fetch REST for both Google Native & OpenAI Compatible protocols
+// (100% compatible with Android embedded Node runtime).
+// =========================================================================
 app.post('/api/gemini/analyze-image', async (req, res) => {
-  const { imageUrl, prompt, apiConfig } = req.body;
+  pruneImageCaches();
+  const {
+    imageUrl,
+    prompt,
+    apiConfig,
+    recognitionConfig,
+    provider: directProvider,
+    baseUrl: directBaseUrl,
+    apiKey: directApiKey,
+    model: directModel,
+    apiProtocol: directApiProtocol,
+    requestId,
+    messageId,
+    characterId,
+    source = '微信图片识别',
+    timeoutMs = 45000,
+  } = req.body || {};
+
+  const safeRequestId =
+    typeof requestId === 'string' && requestId.trim()
+      ? requestId.trim()
+      : `imgrec_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
   if (!imageUrl || typeof imageUrl !== 'string') {
-    return res.status(400).json({ success: false, error: '未提供有效的图片数据 (imageUrl)' });
+    return res.status(400).json({
+      success: false,
+      statusCode: 400,
+      errorType: 'invalid_image',
+      error: '未提供有效的图片数据 (imageUrl)',
+      requestId: safeRequestId,
+    });
   }
 
+  // Strictly extract recognition.image config — NEVER fall back to imageGeneration (imageApiKey/imageModel)
+  const nestedRec =
+    recognitionConfig ||
+    apiConfig?.apiSettings?.recognition?.image ||
+    apiConfig?.imageRecognitionApiConfig ||
+    null;
+
+  const recKey = (
+    (typeof directApiKey === 'string' && directApiKey.trim()) ||
+    (typeof nestedRec?.apiKey === 'string' && nestedRec.apiKey.trim()) ||
+    (typeof apiConfig?.imageRecognitionApiKey === 'string' && apiConfig.imageRecognitionApiKey.trim()) ||
+    ''
+  ).trim();
+
+  const recBaseUrl = (
+    (typeof directBaseUrl === 'string' && directBaseUrl.trim()) ||
+    (typeof nestedRec?.baseUrl === 'string' && nestedRec.baseUrl.trim()) ||
+    (typeof apiConfig?.imageRecognitionBaseUrl === 'string' && apiConfig.imageRecognitionBaseUrl.trim()) ||
+    ''
+  ).trim();
+
+  const recProvider = (
+    (typeof directProvider === 'string' && directProvider.trim()) ||
+    (typeof nestedRec?.provider === 'string' && nestedRec.provider.trim()) ||
+    (typeof apiConfig?.imageRecognitionProvider === 'string' && apiConfig.imageRecognitionProvider.trim()) ||
+    'google_gemini'
+  ).trim();
+
+  const recProtocolRaw = (
+    (typeof directApiProtocol === 'string' && directApiProtocol.trim()) ||
+    (typeof nestedRec?.apiProtocol === 'string' && nestedRec.apiProtocol.trim()) ||
+    (typeof apiConfig?.imageRecognitionApiProtocol === 'string' && apiConfig.imageRecognitionApiProtocol.trim()) ||
+    ''
+  ).trim();
+
+  const effectiveProtocol = resolveEffectiveProtocol({
+    provider: recProvider,
+    apiProtocol: recProtocolRaw,
+    baseUrl: recBaseUrl,
+  });
+
+  const selectedModel = (
+    (typeof directModel === 'string' && directModel.trim()) ||
+    (typeof nestedRec?.model === 'string' && nestedRec.model.trim()) ||
+    (typeof apiConfig?.imageRecognitionModel === 'string' && apiConfig.imageRecognitionModel.trim()) ||
+    (effectiveProtocol === 'google_native' ? 'gemini-4-hydrogen' : 'gpt-4o-mini')
+  ).trim();
+
   const startTime = Date.now();
-  // Support independent image API config if provided, falling back to text API config
-  const imageKey = (apiConfig?.imageApiKey && apiConfig.imageApiKey.trim()) || apiConfig?.textApiKey || '';
-  const imageBaseUrl = apiConfig?.imageBaseUrl || apiConfig?.textBaseUrl || '';
-  const imageProvider = apiConfig?.imageProvider || apiConfig?.textProvider || 'google_gemini';
-  const imageProtocol = apiConfig?.imageApiProtocol || apiConfig?.textApiProtocol;
-  const selectedModel = apiConfig?.imageModel || apiConfig?.textModel || 'gemini-4-hydrogen';
-  const customPrompt = prompt || '请用中文详细总结识别这张图片中的核心事物、文字、场景以及主要细节。';
 
-  try {
-    let description = '';
+  if (!recKey) {
+    const errMsg = '未配置【识别API → 图像识别】密钥，请前往 设置 → API设置 → 识别API → 图像识别 填写独立密钥。';
+    return res.status(400).json({
+      success: false,
+      statusCode: 400,
+      errorType: 'missing_api_key',
+      error: errMsg,
+      provider: recProvider,
+      model: selectedModel,
+      apiProtocol: effectiveProtocol,
+      latencyMs: Date.now() - startTime,
+      requestId: safeRequestId,
+      apiLog: buildApiLogObject({
+        appName: source,
+        provider: recProvider,
+        modelName: selectedModel,
+        interfaceType: 'ImageRecognition',
+        category: 'image_recognition',
+        status: 'failed',
+        httpStatus: 400,
+        requestId: safeRequestId,
+        durationMs: Date.now() - startTime,
+        errorType: 'missing_api_key',
+        error: errMsg,
+        purpose: `图像识别失败 (${source})`,
+      }),
+    });
+  }
 
-    // Check if imageUrl is a base64 data URL
+  // Idempotency check
+  const cached = imageRecCompletedCache.get(safeRequestId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return res.status(cached.payload.success ? 200 : cached.payload.statusCode || 500).json(cached.payload);
+  }
+  const existingFlight = imageRecInFlightCache.get(safeRequestId);
+  if (existingFlight) {
+    try {
+      const reused = await existingFlight;
+      return res.status(reused.success ? 200 : reused.statusCode || 500).json(reused);
+    } catch (e: any) {
+      return res.status(500).json({
+        success: false,
+        error: sanitizeSensitiveText(e?.message || '图像识别请求异常'),
+        requestId: safeRequestId,
+      });
+    }
+  }
+
+  const runRecognition = async () => {
+    // Parse / validate image input (Data URL or safe remote HTTP(S) URL)
+    const ALLOWED_MIMES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']);
     let mimeType = 'image/jpeg';
     let base64Data = '';
-    const isDataUrl = imageUrl.startsWith('data:');
+    let remoteUrl = '';
 
-    if (isDataUrl) {
-      const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
-      if (matches) {
-        mimeType = matches[1];
-        base64Data = matches[2];
+    if (imageUrl.startsWith('data:')) {
+      const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/s);
+      if (!matches) {
+        return {
+          success: false,
+          statusCode: 400,
+          errorType: 'invalid_image_format',
+          error: '图片 Base64 数据格式不合法，请重新选择 JPEG、PNG 或 WebP 格式图片。',
+          provider: recProvider,
+          model: selectedModel,
+          apiProtocol: effectiveProtocol,
+          latencyMs: Date.now() - startTime,
+          requestId: safeRequestId,
+        };
+      }
+      mimeType = matches[1].toLowerCase().trim();
+      if (mimeType === 'image/jpg') mimeType = 'image/jpeg';
+      if (!ALLOWED_MIMES.has(mimeType)) {
+        return {
+          success: false,
+          statusCode: 400,
+          errorType: 'unsupported_image_format',
+          error: `不支持的图片格式 (${mimeType})，请使用 JPEG、PNG 或 WebP 格式。`,
+          provider: recProvider,
+          model: selectedModel,
+          apiProtocol: effectiveProtocol,
+          latencyMs: Date.now() - startTime,
+          requestId: safeRequestId,
+        };
+      }
+      base64Data = matches[2].replace(/\s+/g, '');
+      const estimatedBytes = Math.floor((base64Data.length * 3) / 4);
+      if (estimatedBytes > 10 * 1024 * 1024) {
+        return {
+          success: false,
+          statusCode: 413,
+          errorType: 'image_too_large',
+          error: `图片体积过大 (${(estimatedBytes / (1024 * 1024)).toFixed(1)}MB)，超过 10MB 限制，请压缩后重试。`,
+          provider: recProvider,
+          model: selectedModel,
+          apiProtocol: effectiveProtocol,
+          latencyMs: Date.now() - startTime,
+          requestId: safeRequestId,
+        };
+      }
+    } else {
+      try {
+        const safeUrl = assertSafeRemoteImageUrl(imageUrl);
+        remoteUrl = safeUrl.toString();
+      } catch (urlErr: any) {
+        return {
+          success: false,
+          statusCode: 400,
+          errorType: 'invalid_image_url',
+          error: urlErr?.message || '远程图片地址不合法',
+          provider: recProvider,
+          model: selectedModel,
+          apiProtocol: effectiveProtocol,
+          latencyMs: Date.now() - startTime,
+          requestId: safeRequestId,
+        };
       }
     }
 
-    const isOpenAi =
-      imageProtocol === 'openai_compatible' ||
-      imageProvider === 'openai_compatible' ||
-      imageProvider === 'deepseek' ||
-      imageProvider === 'openrouter' ||
-      (imageBaseUrl &&
-        (imageBaseUrl.includes('/v1') || imageBaseUrl.includes('openai')));
+    // Reject obviously non-vision / image-gen-only models early with helpful error
+    const lowerModel = selectedModel.toLowerCase();
+    if (
+      lowerModel.includes('imagen-') ||
+      lowerModel.includes('dall-e') ||
+      lowerModel.includes('flux') ||
+      lowerModel.includes('whisper') ||
+      lowerModel.includes('tts-')
+    ) {
+      return {
+        success: false,
+        statusCode: 400,
+        errorType: 'unsupported_vision_model',
+        error: `当前选择的模型 (${selectedModel}) 不是图像识别/视觉模型，请更换为支持多模态视觉的模型（如 gemini-4-hydrogen、gemini-2.5-flash 或 gpt-4o-mini）。`,
+        provider: recProvider,
+        model: selectedModel,
+        apiProtocol: effectiveProtocol,
+        latencyMs: Date.now() - startTime,
+        requestId: safeRequestId,
+      };
+    }
 
-    if (isOpenAi) {
-      const endpoint = imageBaseUrl
-        ? imageBaseUrl.endsWith('/chat/completions')
-          ? imageBaseUrl
-          : `${imageBaseUrl.replace(/\/+$/, '')}/chat/completions`
-        : 'https://api.openai.com/v1/chat/completions';
+    const structuredVisionPrompt = `${
+      prompt && typeof prompt === 'string' && prompt.trim()
+        ? prompt.trim()
+        : '请仔细观察这张图片，识别画面中的人物、物体、场景、主要细节以及清晰可见的文字。'
+    }
 
+请严格返回如下 JSON 格式（不要输出 markdown 代码块包裹，直接输出 JSON）：
+{
+  "description": "用流畅中文客观详细描述图片整体画面、人物动作、表情、色彩与主要细节（至少15字）",
+  "detectedText": "图片中出现的所有可见文字内容，若无文字请返回空字符串",
+  "objects": ["核心物体或人物1", "核心物体2"],
+  "scene": "简短场景类别，例如：室内、户外街道、咖啡馆、聊天截图、手绘插画、文档等"
+}`;
+
+    let rawModelText = '';
+    let upstreamHttpStatus = 200;
+
+    if (effectiveProtocol === 'google_native') {
+      // If remoteUrl was provided for Google Native, safely download into inlineData
+      if (!base64Data && remoteUrl) {
+        const imgResp = await fetch(remoteUrl, {
+          method: 'GET',
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!imgResp.ok) {
+          return {
+            success: false,
+            statusCode: imgResp.status,
+            errorType: 'remote_image_fetch_failed',
+            error: `读取远程图片失败 (HTTP ${imgResp.status})`,
+            provider: recProvider,
+            model: selectedModel,
+            apiProtocol: effectiveProtocol,
+            latencyMs: Date.now() - startTime,
+            requestId: safeRequestId,
+          };
+        }
+        const ct = (imgResp.headers.get('content-type') || 'image/jpeg').split(';')[0].trim().toLowerCase();
+        mimeType = ALLOWED_MIMES.has(ct) ? ct : 'image/jpeg';
+        const arrBuf = await imgResp.arrayBuffer();
+        if (arrBuf.byteLength > 10 * 1024 * 1024) {
+          return {
+            success: false,
+            statusCode: 413,
+            errorType: 'image_too_large',
+            error: '远程图片超过 10MB 体积限制',
+            provider: recProvider,
+            model: selectedModel,
+            apiProtocol: effectiveProtocol,
+            latencyMs: Date.now() - startTime,
+            requestId: safeRequestId,
+          };
+        }
+        base64Data = Buffer.from(arrBuf).toString('base64');
+      }
+
+      const googleBase = buildGoogleRestBase(recBaseUrl);
+      const cleanModelId = selectedModel.replace(/^models\//, '');
+      const endpoint = `${googleBase}/models/${encodeURIComponent(cleanModelId)}:generateContent`;
+
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': recKey,
+          'User-Agent': 'aistudio-build',
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { inlineData: { mimeType, data: base64Data } },
+                { text: structuredVisionPrompt },
+              ],
+            },
+          ],
+          generationConfig: {
+            responseMimeType: 'application/json',
+          },
+        }),
+        signal: AbortSignal.timeout(Math.min(Math.max(Number(timeoutMs) || 45000, 10000), 90000)),
+      });
+
+      upstreamHttpStatus = resp.status;
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        let detail = errText;
+        try {
+          const j = JSON.parse(errText);
+          detail = j.error?.message || j.message || errText;
+        } catch {}
+        const safeDetail = sanitizeSensitiveText(detail, 220);
+        const errorType =
+          resp.status === 401 || resp.status === 403
+            ? 'auth_error'
+            : resp.status === 429
+            ? 'rate_limit'
+            : resp.status === 404
+            ? 'model_not_found'
+            : resp.status === 413
+            ? 'image_too_large'
+            : /protocol|not supported|invalid argument|multimodal|image/i.test(safeDetail)
+            ? 'protocol_or_model_mismatch'
+            : 'upstream_error';
+        return {
+          success: false,
+          statusCode: resp.status,
+          errorType,
+          error: `Google 原生图像识别失败 (HTTP ${resp.status}): ${safeDetail}`,
+          provider: recProvider,
+          model: selectedModel,
+          apiProtocol: effectiveProtocol,
+          latencyMs: Date.now() - startTime,
+          requestId: safeRequestId,
+        };
+      }
+
+      const resJson: any = await resp.json();
+      const parts = resJson?.candidates?.[0]?.content?.parts || [];
+      rawModelText = parts
+        .filter((p: any) => typeof p?.text === 'string')
+        .map((p: any) => p.text)
+        .join('\n')
+        .trim();
+    } else {
+      // OpenAI Compatible Vision Protocol (/v1/chat/completions)
+      const endpoint = buildOpenAiEndpoint(recBaseUrl, '/chat/completions');
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
+        Authorization: `Bearer ${recKey}`,
       };
-      if (imageKey) {
-        headers['Authorization'] = `Bearer ${imageKey}`;
-      }
 
-      // Detect known text-only models
-      const lowerModel = selectedModel.toLowerCase();
-      const isKnownTextOnly = lowerModel.includes('reasoner') || lowerModel.includes('o1-mini') || lowerModel.includes('text-only');
-      if (isKnownTextOnly) {
-        return res.json({
-          success: false,
-          error: `当前配置的模型 (${selectedModel}) 为纯文本模型，不支持图像识别。请在系统设置中切换为视觉模型 (如 gpt-4o, gemini-4-hydrogen)。`,
-          description: '当前模型不支持图片识别',
-        });
-      }
-
-      const visionModel = selectedModel.includes('gemini') ? 'gpt-4o-mini' : selectedModel;
-
-      const response = await fetch(endpoint, {
+      const imageContentUrl = base64Data ? `data:${mimeType};base64,${base64Data}` : remoteUrl;
+      const resp = await fetch(endpoint, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          model: visionModel,
+          model: selectedModel,
           messages: [
             {
               role: 'user',
               content: [
-                { type: 'text', text: customPrompt },
-                { type: 'image_url', image_url: { url: imageUrl } },
+                { type: 'text', text: structuredVisionPrompt },
+                { type: 'image_url', image_url: { url: imageContentUrl } },
               ],
             },
           ],
-          max_tokens: 800,
+          max_tokens: 900,
         }),
+        signal: AbortSignal.timeout(Math.min(Math.max(Number(timeoutMs) || 45000, 10000), 90000)),
       });
 
-      if (!response.ok) {
-        const errText = await response.text();
-        let parsedMsg = errText.slice(0, 200);
+      upstreamHttpStatus = resp.status;
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        let detail = errText;
         try {
           const j = JSON.parse(errText);
-          parsedMsg = j.error?.message || j.message || parsedMsg;
+          detail = j.error?.message || j.message || errText;
         } catch {}
-        return res.json({
+        const safeDetail = sanitizeSensitiveText(detail, 220);
+        const errorType =
+          resp.status === 401 || resp.status === 403
+            ? 'auth_error'
+            : resp.status === 429
+            ? 'rate_limit'
+            : resp.status === 404
+            ? 'model_not_found'
+            : resp.status === 413
+            ? 'image_too_large'
+            : /image_url|vision|multimodal|not support|content must be a string/i.test(safeDetail)
+            ? 'unsupported_vision_model'
+            : 'upstream_error';
+        return {
           success: false,
-          error: `图像 API 请求失败 (${response.status}): ${parsedMsg}`,
-          description: '图像识别调用失败',
-        });
+          statusCode: resp.status,
+          errorType,
+          error: `OpenAI 兼容图像识别失败 (HTTP ${resp.status}): ${safeDetail}`,
+          provider: recProvider,
+          model: selectedModel,
+          apiProtocol: effectiveProtocol,
+          latencyMs: Date.now() - startTime,
+          requestId: safeRequestId,
+        };
       }
 
-      const resJson = await response.json();
-      description = resJson.choices?.[0]?.message?.content || '';
-    } else {
-      // Default: Google Gemini Vision Call via @google/genai SDK
-      const activeKey =
-        imageKey ||
-        (!imageBaseUrl && process.env.NODE_ENV !== 'production' ? process.env.GEMINI_API_KEY || '' : '');
-
-      if (!activeKey) {
-        return res.json({
-          success: false,
-          error: '未配置图像 API 密钥，请在系统设置中配置图像 API Key。',
-          description: '未配置图像 API Key',
-        });
+      const resJson: any = await resp.json();
+      const rawChoice = resJson?.choices?.[0]?.message?.content;
+      if (typeof rawChoice === 'string') {
+        rawModelText = rawChoice.trim();
+      } else if (Array.isArray(rawChoice)) {
+        rawModelText = rawChoice
+          .map((c: any) => (typeof c === 'string' ? c : c?.text || ''))
+          .join('\n')
+          .trim();
       }
-
-      const clientOptions: any = {
-        apiKey: activeKey,
-        httpOptions: {
-          headers: { 'User-Agent': 'aistudio-build' },
-        },
-      };
-      if (imageBaseUrl) {
-        clientOptions.httpOptions.baseUrl = imageBaseUrl;
-      }
-
-      const { GoogleGenAI } = await loadGoogleGenAi();
-      const aiClient = new GoogleGenAI(clientOptions);
-
-      let parts: any[] = [];
-      if (base64Data) {
-        parts = [
-          { inlineData: { mimeType, data: base64Data } },
-          { text: customPrompt },
-        ];
-      } else {
-        parts = [{ text: `${customPrompt}\n图片URL: ${imageUrl}` }];
-      }
-
-      const visionModel = selectedModel.includes('gemini') ? normalizeOfficialGeminiModel(selectedModel) : GEMINI_DEFAULT_TEXT_MODEL;
-      const isOfficialVision = !imageBaseUrl || imageBaseUrl.includes('googleapis.com');
-      const now = Date.now();
-      const visionCandidates = isOfficialVision
-        ? Array.from(new Set([visionModel, ...GEMINI_TEXT_FALLBACK_ORDER])).filter((m) => (geminiModelCooldownUntil.get(m) || 0) <= now)
-        : [visionModel];
-
-      let aiResponse: any = null;
-      let lastVisionErr: any = null;
-      for (const candidateModel of visionCandidates) {
-        try {
-          aiResponse = await aiClient.models.generateContent({
-            model: candidateModel,
-            contents: [{ role: 'user', parts }],
-          });
-          break;
-        } catch (geminiErr: any) {
-          lastVisionErr = geminiErr;
-          const msg = String(geminiErr?.message || '');
-          if (isOfficialVision && isQuotaOrRateLimitError(msg)) {
-            geminiModelCooldownUntil.set(candidateModel, Date.now() + parseRetryCooldownMs(msg));
-            continue;
-          }
-          if (isOfficialVision && isModelUnavailableError(msg)) {
-            geminiModelCooldownUntil.set(candidateModel, Date.now() + 60 * 60_000);
-            continue;
-          }
-          break;
-        }
-      }
-
-      if (!aiResponse) {
-        return res.json({
-          success: false,
-          error: `Gemini 视觉接口调用异常: ${lastVisionErr?.message || '当前模型配额受限或网络异常'}`,
-          description: '图片识别调用失败',
-        });
-      }
-
-      description = aiResponse?.text || '';
     }
 
-    const duration = Date.now() - startTime;
-    if (!description.trim()) {
-      return res.json({
+    const latencyMs = Date.now() - startTime;
+    if (!rawModelText) {
+      return {
         success: false,
-        error: '图像 API 未能分析出有效画面描述',
-        description: '图片识别未能生成有效描述',
-      });
+        statusCode: 502,
+        errorType: 'empty_recognition_result',
+        error: '图像识别接口返回空内容，请检查模型是否支持视觉输入或切换视觉模型。',
+        provider: recProvider,
+        model: selectedModel,
+        apiProtocol: effectiveProtocol,
+        latencyMs,
+        requestId: safeRequestId,
+      };
     }
 
-    return res.json({
+    // Parse structured JSON response gracefully (with clean plain-text fallback if provider didn't obey JSON)
+    let description = '';
+    let detectedText = '';
+    let objects: string[] = [];
+    let scene = '';
+
+    try {
+      const cleanedJson = rawModelText
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+      const jsonStart = cleanedJson.indexOf('{');
+      const jsonEnd = cleanedJson.lastIndexOf('}');
+      if (jsonStart !== -1 && jsonEnd > jsonStart) {
+        const parsed = JSON.parse(cleanedJson.slice(jsonStart, jsonEnd + 1));
+        description = typeof parsed.description === 'string' ? parsed.description.trim() : '';
+        detectedText = typeof parsed.detectedText === 'string' ? parsed.detectedText.trim() : '';
+        objects = Array.isArray(parsed.objects)
+          ? parsed.objects.map((o: any) => String(o || '').trim()).filter(Boolean).slice(0, 12)
+          : [];
+        scene = typeof parsed.scene === 'string' ? parsed.scene.trim() : '';
+      }
+    } catch {
+      // Fallback to raw text description
+    }
+
+    if (!description) {
+      description = sanitizeReplyText(rawModelText).trim();
+    }
+
+    if (!description) {
+      return {
+        success: false,
+        statusCode: 502,
+        errorType: 'empty_recognition_result',
+        error: '未能从模型返回中提取到有效画面描述。',
+        provider: recProvider,
+        model: selectedModel,
+        apiProtocol: effectiveProtocol,
+        latencyMs,
+        requestId: safeRequestId,
+      };
+    }
+
+    return {
       success: true,
-      description: description.trim(),
-      duration,
+      statusCode: upstreamHttpStatus,
+      description,
+      detectedText,
+      objects,
+      scene,
+      provider: recProvider,
+      model: selectedModel,
+      apiProtocol: effectiveProtocol,
+      latencyMs,
+      duration: latencyMs,
+      requestId: safeRequestId,
+      messageId,
+      characterId,
       apiLog: buildApiLogObject({
-        appName: '图像识别与多模态分析',
+        appName: source,
+        provider: recProvider,
         modelName: selectedModel,
-        interfaceType: 'VisionAnalysis',
-        category: 'image',
-        durationMs: duration,
-        purpose: 'AI 识别并分析微信聊天发送的图片',
+        interfaceType: 'ImageRecognition',
+        category: 'image_recognition',
+        status: 'success',
+        httpStatus: upstreamHttpStatus,
+        requestId: safeRequestId,
+        durationMs: latencyMs,
+        purpose: `${source} (${scene || '视觉内容解析'})`,
       }),
+    };
+  };
+
+  const flightPromise = runRecognition()
+    .then((result: any) => {
+      if (!result.apiLog && !result.success) {
+        result.apiLog = buildApiLogObject({
+          appName: source,
+          provider: result.provider || recProvider,
+          modelName: result.model || selectedModel,
+          interfaceType: 'ImageRecognition',
+          category: 'image_recognition',
+          status: 'failed',
+          httpStatus: result.statusCode || 500,
+          requestId: safeRequestId,
+          durationMs: result.latencyMs || Date.now() - startTime,
+          errorType: result.errorType || 'ImageRecognitionError',
+          error: result.error || '图像识别失败',
+          purpose: `${source} 失败`,
+        });
+      }
+      if (result.success) {
+        imageRecCompletedCache.set(safeRequestId, {
+          expiresAt: Date.now() + IMAGE_IDEMPOTENCY_TTL_MS,
+          payload: result,
+        });
+      }
+      return result;
+    })
+    .finally(() => {
+      imageRecInFlightCache.delete(safeRequestId);
     });
+
+  imageRecInFlightCache.set(safeRequestId, flightPromise);
+
+  try {
+    const result = await flightPromise;
+    return res.status(result.success ? 200 : result.statusCode || 500).json(result);
   } catch (err: any) {
-    console.error('Analyze image error:', err);
-    return res.json({
+    const latencyMs = Date.now() - startTime;
+    const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+    const safeErr = sanitizeSensitiveText(
+      isTimeout ? '图像识别请求超时，请检查网络连接或反代响应速度。' : err?.message || '图片视觉识别异常',
+      240
+    );
+    return res.status(isTimeout ? 504 : 500).json({
       success: false,
-      error: err.message || '图片视觉识别失败',
-      description: '图片识别调用失败',
+      statusCode: isTimeout ? 504 : 500,
+      errorType: isTimeout ? 'timeout' : 'network_error',
+      error: safeErr,
+      provider: recProvider,
+      model: selectedModel,
+      apiProtocol: effectiveProtocol,
+      latencyMs,
+      requestId: safeRequestId,
+      apiLog: buildApiLogObject({
+        appName: source,
+        provider: recProvider,
+        modelName: selectedModel,
+        interfaceType: 'ImageRecognition',
+        category: 'image_recognition',
+        status: 'failed',
+        httpStatus: isTimeout ? 504 : 500,
+        requestId: safeRequestId,
+        durationMs: latencyMs,
+        errorType: isTimeout ? 'timeout' : 'network_error',
+        error: safeErr,
+        purpose: `${source} 异常`,
+      }),
     });
   }
 });
@@ -2981,13 +3469,23 @@ ${devicesSummary}
       contextPrompt += `\n${req.body.lifeStateContext}\n`;
     }
 
-    contextPrompt += `\n【📱 微信真人打字与分句连发习惯】：
+    contextPrompt += `\n【🎨 真实图像生成工具调用能力 (generate_image)】:
+你连接了独立的图像生成系统。请严格遵守以下语义触发规范：
+1. 仅当用户**明确要求你画图、生成图片、制作图片、做头像、画场景、拍一张发过来、画一只/画一幅……**时，才触发画图工具。
+2. 如果用户只是在讨论图片、夸奖“这画得真好看”、或者闲聊询问图片功能，**绝对不要**触发画图工具。
+3. 当确认需要画图时：
+   - 先用符合你人设的口吻自然输出配套文字（例如“画好以后我就发给你，想给你画一只趴在窗边等你的小猫。”），**绝不能只回文字假装画好了，也绝不能编造“画图开关没打开”之类借口**。
+   - 在回复末尾附带唯一一个标准工具标签（此标签会被系统解析执行并隐藏，绝不会展示给用户）：
+     <image_action>{"type":"generate_image","prompt":"完整、可供图像模型直接绘制的详细视觉提示词（包含主体、光影、构图、风格、细节）","imageDescription":"简明中文画面描述，供你后续记忆自己画了什么","aspectRatio":"1:1","negativePrompt":""}</image_action>
+   - aspectRatio 可按场景选用 "1:1" / "3:4" / "4:3" / "16:9" / "9:16"。
+
+【📱 微信真人打字与分句连发习惯】：
 在真实微信聊天中，真人通常不会一次性堆砌长篇大论，而是习惯把一整段话切分成 2~4 条自然简短的话语连发（一句话发一条消息，随性口语化、亲近真实）。
 请在输出回复时，自然地使用换行（每行一两句话）分隔，让每条消息都简短精炼、生动日常，避免书面化大段独白。
 
 【核心输出格式要求】：
 请在回答的最前面用 <think>...</think> 标签输出你本次回答的思考链 (Thinking Process / Chain of Thought)，说明你是如何结合角色人设、记忆、世界书背景（若有关联）以及用户上下文做出回应的。
-在 </think> 标签之后，直接输出你给用户的微信回复文本（保持微信口语化、亲切自如，适合微信聊天，多句话之间换行隔开）。
+在 </think> 标签之后，直接输出你给用户的微信回复文本（保持微信口语化、亲切自如，适合微信聊天，多句话之间换行隔开）；若需要触发画图，请在回复末尾紧跟 <image_action>{...}</image_action>。
 `;
 
     // Defensive ID-based filtering: Ensure conversationHistory contains ONLY prior history messages and excludes current turn pending messages strictly by ID
@@ -3079,6 +3577,23 @@ ${devicesSummary}
           );
           return;
         }
+
+        // AI-generated image semantic memory (priority: imageDescription -> revisedPrompt -> generationPrompt)
+        if (msg.sender === 'ai' && (msg.messageType === 'generated_image' || msg.type === 'generated_image')) {
+          const semanticDesc =
+            (msg.imageDescription && msg.imageDescription.trim()) ||
+            (msg.revisedPrompt && msg.revisedPrompt.trim()) ||
+            (msg.generationPrompt && msg.generationPrompt.trim()) ||
+            '一张生成的图片';
+          const statusNote =
+            msg.generationStatus === 'failed'
+              ? '[AI此前尝试生成图片但未能成功]'
+              : `[AI此前生成了一张图片：${semanticDesc}]`;
+          const captionPart = msg.text ? `${msg.text} ` : '';
+          contents.push(`[${msgTime}] ${character.name}: ${captionPart}${statusNote}`);
+          return;
+        }
+
         const isProactiveMsg = Boolean(msg.isProactive);
         const senderLabel =
           msg.sender === 'user'
@@ -3086,9 +3601,30 @@ ${devicesSummary}
             : isProactiveMsg
             ? `${character.name} [此前主动消息${msg.proactiveMeta?.repliedByUser ? '·用户已回应' : '·此前发起'}]`
             : character.name;
+
+        if (msg.sender === 'user' && (msg.imageUrl || msg.messageType === 'image')) {
+          const recDesc = (msg.imageDescription || msg.imageAnalysis || '').trim();
+          const recText = (msg.detectedText || '').trim();
+          const isFailed = msg.recognitionStatus === 'failed' || msg.imageAnalysisStatus === 'failed';
+          if (recDesc && !isFailed) {
+            let imgBlock = `[${msgTime}] ${senderLabel}发送了一张图片。\n图片内容：${recDesc}`;
+            if (recText) imgBlock += `\n图片文字：${recText}`;
+            if (msg.text) imgBlock += `\n用户附言：${msg.text}`;
+            contents.push(imgBlock);
+          } else if (isFailed) {
+            contents.push(
+              `[${msgTime}] ${senderLabel}发送了一张图片（图片识别失败，无法看到画面内容）。${msg.text ? ` 用户附言：${msg.text}` : ''}`
+            );
+          } else {
+            contents.push(`[${msgTime}] ${senderLabel}: ${msg.text || ''} [图片附件]`);
+          }
+          return;
+        }
+
         let msgStr = `[${msgTime}] ${senderLabel}: ${msg.text || ''}`;
         if (msg.imageUrl) {
-          msgStr += ` [图片附件${msg.imageAnalysis ? `: ${msg.imageAnalysis}` : ''}]`;
+          const desc = (msg.imageDescription || msg.imageAnalysis || '').trim();
+          msgStr += ` [图片附件${desc ? `: ${desc}` : ''}]`;
         }
         contents.push(msgStr);
       });
@@ -3096,7 +3632,7 @@ ${devicesSummary}
     const currentUserTime = formatFullDateTime(req.body.userMessageTimestamp || Date.now());
     let currentMsgStr = `[${currentUserTime}] ${userProfile?.name || '用户'}: ${userMessage || ''}`;
     if (req.body.currentImageAnalysis) {
-      currentMsgStr += `\n【用户本次发出的图片识别感知描述】:\n${req.body.currentImageAnalysis}`;
+      currentMsgStr += `\n${req.body.currentImageAnalysis}`;
     }
     contents.push(currentMsgStr);
 
@@ -3149,8 +3685,87 @@ ${devicesSummary}
         console.warn('Failed to parse device_action JSON from AI reply:', match[1]);
       }
     }
-    // Clean device action tags & sanitize any lingering thinking headers
-    replyContent = sanitizeReplyText(replyContent.replace(/<device_action>[\s\S]*?<\/device_action>/gi, '').trim());
+
+    // Extract structured <image_action> tags (or JSON { text, actions: [...] }) without exposing raw JSON to user
+    const extractedActions: Array<{
+      type: 'generate_image';
+      prompt: string;
+      imageDescription: string;
+      aspectRatio?: string;
+      negativePrompt?: string;
+    }> = [];
+
+    const imageActionRegex = /<image_action>([\s\S]*?)<\/image_action>/gi;
+    let imgMatch: RegExpExecArray | null;
+    while ((imgMatch = imageActionRegex.exec(replyContent)) !== null) {
+      try {
+        const parsedAction = JSON.parse(imgMatch[1].trim());
+        const isGenImg =
+          parsedAction &&
+          (parsedAction.type === 'generate_image' || parsedAction.action === 'generate_image') &&
+          typeof parsedAction.prompt === 'string' &&
+          parsedAction.prompt.trim();
+        if (isGenImg) {
+          extractedActions.push({
+            type: 'generate_image',
+            prompt: parsedAction.prompt.trim(),
+            imageDescription:
+              typeof parsedAction.imageDescription === 'string' && parsedAction.imageDescription.trim()
+                ? parsedAction.imageDescription.trim()
+                : parsedAction.prompt.trim().slice(0, 100),
+            aspectRatio: typeof parsedAction.aspectRatio === 'string' ? parsedAction.aspectRatio.trim() : '1:1',
+            negativePrompt: typeof parsedAction.negativePrompt === 'string' ? parsedAction.negativePrompt.trim() : '',
+          });
+        }
+      } catch {
+        console.warn('[Chat] Failed to parse <image_action> JSON');
+      }
+    }
+
+    // Also handle case where model outputs raw JSON {"text":"...", "actions":[{type:"generate_image",...}]}
+    const strippedTags = replyContent
+      .replace(/<device_action>[\s\S]*?<\/device_action>/gi, '')
+      .replace(/<image_action>[\s\S]*?<\/image_action>/gi, '')
+      .trim();
+
+    let finalReplyText = strippedTags;
+    if (strippedTags.startsWith('{') && strippedTags.endsWith('}') && strippedTags.includes('"actions"')) {
+      try {
+        const parsedObj = JSON.parse(strippedTags);
+        if (parsedObj && typeof parsedObj === 'object' && Array.isArray(parsedObj.actions)) {
+          for (const act of parsedObj.actions) {
+            if (
+              (act?.type === 'generate_image' || act?.action === 'generate_image') &&
+              typeof act.prompt === 'string' &&
+              act.prompt.trim()
+            ) {
+              extractedActions.push({
+                type: 'generate_image',
+                prompt: act.prompt.trim(),
+                imageDescription:
+                  typeof act.imageDescription === 'string' && act.imageDescription.trim()
+                    ? act.imageDescription.trim()
+                    : act.prompt.trim().slice(0, 100),
+                aspectRatio: typeof act.aspectRatio === 'string' ? act.aspectRatio.trim() : '1:1',
+                negativePrompt: typeof act.negativePrompt === 'string' ? act.negativePrompt.trim() : '',
+              });
+            }
+          }
+          if (typeof parsedObj.text === 'string') {
+            finalReplyText = parsedObj.text;
+          }
+        }
+      } catch {
+        // Keep strippedTags as plain text
+      }
+    }
+
+    // Clean any lingering tool tags & sanitize thinking headers
+    replyContent = sanitizeReplyText(
+      finalReplyText
+        .replace(/<\/?(?:image_action|device_action)[^>]*>/gi, '')
+        .trim()
+    );
 
     const duration = Date.now() - startTime;
 
@@ -3159,12 +3774,15 @@ ${devicesSummary}
       text: replyContent,
       thinkingProcess,
       deviceActions: extractedDeviceActions,
+      actions: extractedActions,
       apiLog: buildApiLogObject({
         appName: '微信-AI聊天',
+        provider: apiConfig?.textProvider || 'google_gemini',
         modelName: aiDetailedResult?.modelUsed || selectedModel,
         interfaceType: 'ChatGeneration',
-        category: 'text',
+        category: 'text_generation',
         status: aiErrorMessage ? 'failed' : 'success',
+        httpStatus: aiErrorMessage ? 500 : 200,
         durationMs: duration,
         usage: aiDetailedResult?.usage,
         isRealTokens: aiDetailedResult?.isRealTokens,
@@ -6231,92 +6849,578 @@ app.get('/api/gemini/models', async (req, res) => {
   }
 });
 
-// 16. Real Image Generation Provider Endpoint
+// 16. Dual-Protocol Real Image Generation Provider Endpoint
+// Supports:
+// - Google Native (Gemini native generateContent with IMAGE modality + Imagen :predict)
+// - OpenAI Compatible (/v1/images/generations with b64_json / url / revised_prompt)
+// - Official endpoints & custom reverse-proxy baseUrl
+// - RequestId idempotency, real error reporting, zero fake text fallback
 app.post('/api/provider/generate-image', async (req, res) => {
-  const { providerType, baseUrl, apiKey, model = 'dall-e-3', prompt, size = '1024x1024', quality = 'standard' } = req.body;
-  const cleanKey = (apiKey && apiKey.trim()) || process.env.GEMINI_API_KEY || '';
-  const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, '') : '';
+  pruneImageCaches();
+  const {
+    provider,
+    providerType,
+    apiProtocol,
+    baseUrl,
+    apiKey,
+    model,
+    prompt,
+    negativePrompt = '',
+    aspectRatio = '1:1',
+    size,
+    quality = 'standard',
+    requestId,
+    messageId,
+    turnId,
+    characterId,
+    source = 'AI生图绘制',
+    timeoutMs = 75000,
+  } = req.body || {};
+
+  const safeRequestId =
+    typeof requestId === 'string' && requestId.trim()
+      ? requestId.trim()
+      : `imggen_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+  const resolvedProvider = String(provider || providerType || 'google_gemini').trim();
+  const cleanKey = typeof apiKey === 'string' ? apiKey.trim() : '';
+  const cleanBaseUrl = typeof baseUrl === 'string' ? baseUrl.trim().replace(/\/+$/, '') : '';
+  const effectiveProtocol = resolveEffectiveProtocol({
+    provider: resolvedProvider,
+    apiProtocol: typeof apiProtocol === 'string' ? apiProtocol : '',
+    baseUrl: cleanBaseUrl,
+  });
+  const resolvedModel = String(
+    model || (effectiveProtocol === 'google_native' ? 'gemini-3.1-flash-lite-image' : 'dall-e-3')
+  ).trim();
+  const cleanPrompt = typeof prompt === 'string' ? prompt.trim() : '';
   const startTime = Date.now();
 
-  if (!cleanKey) {
-    return res.status(400).json({ success: false, error: '未配置图像 API 密钥 (API Key)' });
+  if (!cleanPrompt) {
+    return res.status(400).json({
+      success: false,
+      statusCode: 400,
+      errorType: 'invalid_prompt',
+      error: '缺少有效的图像生成提示词 (prompt)',
+      provider: resolvedProvider,
+      model: resolvedModel,
+      apiProtocol: effectiveProtocol,
+      latencyMs: 0,
+      requestId: safeRequestId,
+    });
   }
 
-  try {
-    // 1. OpenAI or OpenAI-Compatible DALL-E / Flux / SD endpoint (/v1/images/generations)
-    let endpoint = cleanBaseUrl;
-    if (!endpoint) endpoint = 'https://api.openai.com/v1';
-    if (!endpoint.endsWith('/images/generations')) {
-      endpoint = endpoint.endsWith('/v1') ? `${endpoint}/images/generations` : `${endpoint}/v1/images/generations`;
-    }
-
-    const resp = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${cleanKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        prompt,
-        n: 1,
-        size,
-        response_format: 'b64_json',
+  if (!cleanKey) {
+    const errMsg = '未配置【图像API连接】密钥，请前往 设置 → API设置 → 图像API连接 配置独立密钥。';
+    return res.status(400).json({
+      success: false,
+      statusCode: 400,
+      errorType: 'missing_api_key',
+      error: errMsg,
+      provider: resolvedProvider,
+      model: resolvedModel,
+      apiProtocol: effectiveProtocol,
+      latencyMs: Date.now() - startTime,
+      requestId: safeRequestId,
+      apiLog: buildApiLogObject({
+        appName: source,
+        provider: resolvedProvider,
+        modelName: resolvedModel,
+        interfaceType: 'ImageGeneration',
+        category: 'image_generation',
+        status: 'failed',
+        httpStatus: 400,
+        requestId: safeRequestId,
+        durationMs: Date.now() - startTime,
+        errorType: 'missing_api_key',
+        error: errMsg,
+        purpose: `${source} 失败 (未配置密钥)`,
       }),
-      signal: AbortSignal.timeout(60000),
+    });
+  }
+
+  // Idempotency check
+  const cached = imageGenCompletedCache.get(safeRequestId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return res.status(cached.payload.success ? 200 : cached.payload.statusCode || 500).json(cached.payload);
+  }
+  const existingFlight = imageGenInFlightCache.get(safeRequestId);
+  if (existingFlight) {
+    try {
+      const reused = await existingFlight;
+      return res.status(reused.success ? 200 : reused.statusCode || 500).json(reused);
+    } catch (e: any) {
+      return res.status(500).json({
+        success: false,
+        error: sanitizeSensitiveText(e?.message || '图像生成请求异常'),
+        requestId: safeRequestId,
+      });
+    }
+  }
+
+  const effectiveSize = (() => {
+    if (typeof size === 'string' && size.trim()) return size.trim();
+    switch (aspectRatio) {
+      case '16:9':
+        return '1792x1024';
+      case '9:16':
+        return '1024x1792';
+      default:
+        return '1024x1024';
+    }
+  })();
+
+  const finalPrompt = negativePrompt
+    ? `${cleanPrompt}\n(Avoid: ${String(negativePrompt).trim()})`
+    : cleanPrompt;
+
+  const reqTimeout = Math.min(Math.max(Number(timeoutMs) || 75000, 15000), 120000);
+
+  const runGeneration = async () => {
+    if (effectiveProtocol === 'google_native') {
+      const googleBase = buildGoogleRestBase(cleanBaseUrl);
+      const cleanModelId = resolvedModel.replace(/^models\//, '');
+      const isImagenModel = /^imagen/i.test(cleanModelId);
+
+      if (isImagenModel) {
+        // Google Native Imagen :predict protocol
+        const endpoint = `${googleBase}/models/${encodeURIComponent(cleanModelId)}:predict`;
+        const resp = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': cleanKey,
+            'User-Agent': 'aistudio-build',
+          },
+          body: JSON.stringify({
+            instances: [{ prompt: finalPrompt }],
+            parameters: {
+              sampleCount: 1,
+              aspectRatio: ['1:1', '3:4', '4:3', '9:16', '16:9'].includes(aspectRatio) ? aspectRatio : '1:1',
+            },
+          }),
+          signal: AbortSignal.timeout(reqTimeout),
+        });
+
+        const latencyMs = Date.now() - startTime;
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          let msg = errText;
+          try {
+            const j = JSON.parse(errText);
+            msg = j.error?.message || j.message || errText;
+          } catch {}
+          const safeMsg = sanitizeSensitiveText(msg, 220);
+          return {
+            success: false,
+            statusCode: resp.status,
+            errorType:
+              resp.status === 401 || resp.status === 403
+                ? 'auth_error'
+                : resp.status === 429
+                ? 'rate_limit'
+                : resp.status === 404
+                ? 'model_unavailable'
+                : 'upstream_error',
+            error: `Google Imagen 生图失败 (HTTP ${resp.status}): ${safeMsg}`,
+            provider: resolvedProvider,
+            model: resolvedModel,
+            apiProtocol: effectiveProtocol,
+            latencyMs,
+            requestId: safeRequestId,
+          };
+        }
+
+        const data: any = await resp.json();
+        const pred = data?.predictions?.[0];
+        const b64 = pred?.bytesBase64Encoded;
+        const mime = pred?.mimeType || 'image/png';
+        if (!b64 || typeof b64 !== 'string') {
+          return {
+            success: false,
+            statusCode: 502,
+            errorType: 'no_image_returned',
+            error: 'Google Imagen 接口返回成功，但未包含有效图片数据 (bytesBase64Encoded 为空)。',
+            provider: resolvedProvider,
+            model: resolvedModel,
+            apiProtocol: effectiveProtocol,
+            latencyMs,
+            requestId: safeRequestId,
+          };
+        }
+
+        return {
+          success: true,
+          statusCode: resp.status,
+          latencyMs,
+          provider: resolvedProvider,
+          model: resolvedModel,
+          apiProtocol: effectiveProtocol,
+          mimeType: mime,
+          imageUrl: `data:${mime};base64,${b64}`,
+          revisedPrompt: pred?.prompt || cleanPrompt,
+          descriptionText: '',
+          requestId: safeRequestId,
+          messageId,
+          turnId,
+          characterId,
+          apiLog: buildApiLogObject({
+            appName: source,
+            provider: resolvedProvider,
+            modelName: resolvedModel,
+            interfaceType: 'ImageGeneration',
+            category: 'image_generation',
+            status: 'success',
+            httpStatus: resp.status,
+            requestId: safeRequestId,
+            durationMs: latencyMs,
+            purpose: `${source}: ${cleanPrompt.slice(0, 36)}`,
+          }),
+        };
+      } else {
+        // Google Native Gemini Image Generation (:generateContent with responseModalities IMAGE)
+        const endpoint = `${googleBase}/models/${encodeURIComponent(cleanModelId)}:generateContent`;
+        const genConfig: Record<string, any> = {
+          responseModalities: ['TEXT', 'IMAGE'],
+        };
+        if (['1:1', '3:4', '4:3', '9:16', '16:9'].includes(aspectRatio)) {
+          genConfig.imageConfig = { aspectRatio };
+        }
+
+        const resp = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': cleanKey,
+            'User-Agent': 'aistudio-build',
+          },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
+            generationConfig: genConfig,
+          }),
+          signal: AbortSignal.timeout(reqTimeout),
+        });
+
+        const latencyMs = Date.now() - startTime;
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          let msg = errText;
+          try {
+            const j = JSON.parse(errText);
+            msg = j.error?.message || j.message || errText;
+          } catch {}
+          const safeMsg = sanitizeSensitiveText(msg, 220);
+          return {
+            success: false,
+            statusCode: resp.status,
+            errorType:
+              resp.status === 401 || resp.status === 403
+                ? 'auth_error'
+                : resp.status === 429
+                ? 'rate_limit'
+                : resp.status === 404
+                ? 'model_unavailable'
+                : /modality|responseModalities|not support/i.test(safeMsg)
+                ? 'protocol_mismatch'
+                : 'upstream_error',
+            error: `Google 原生生图失败 (HTTP ${resp.status}): ${safeMsg}`,
+            provider: resolvedProvider,
+            model: resolvedModel,
+            apiProtocol: effectiveProtocol,
+            latencyMs,
+            requestId: safeRequestId,
+          };
+        }
+
+        const data: any = await resp.json();
+        const parts: any[] = data?.candidates?.[0]?.content?.parts || [];
+        let foundBase64 = '';
+        let foundMime = 'image/png';
+        const textSnippets: string[] = [];
+
+        for (const part of parts) {
+          const inline = part?.inlineData || part?.inline_data;
+          if (inline && typeof inline.data === 'string' && inline.data.length > 32) {
+            foundBase64 = inline.data;
+            foundMime = inline.mimeType || inline.mime_type || 'image/png';
+          } else if (typeof part?.text === 'string' && part.text.trim()) {
+            textSnippets.push(part.text.trim());
+          }
+        }
+
+        if (!foundBase64) {
+          const returnedText = sanitizeSensitiveText(textSnippets.join(' '), 140);
+          return {
+            success: false,
+            statusCode: 502,
+            errorType: 'no_image_returned',
+            error: returnedText
+              ? `模型未返回图片，而是返回了一段文字（${returnedText}）。请确认模型 ${resolvedModel} 支持图像生成。`
+              : `Google 接口返回 HTTP 200，但未包含有效图片数据 (inlineData 为空)，请确认模型 ${resolvedModel} 支持生图。`,
+            provider: resolvedProvider,
+            model: resolvedModel,
+            apiProtocol: effectiveProtocol,
+            latencyMs,
+            requestId: safeRequestId,
+          };
+        }
+
+        const descText = textSnippets.join('\n').trim();
+        return {
+          success: true,
+          statusCode: resp.status,
+          latencyMs,
+          provider: resolvedProvider,
+          model: resolvedModel,
+          apiProtocol: effectiveProtocol,
+          mimeType: foundMime,
+          imageUrl: `data:${foundMime};base64,${foundBase64}`,
+          revisedPrompt: descText || cleanPrompt,
+          descriptionText: descText,
+          requestId: safeRequestId,
+          messageId,
+          turnId,
+          characterId,
+          apiLog: buildApiLogObject({
+            appName: source,
+            provider: resolvedProvider,
+            modelName: resolvedModel,
+            interfaceType: 'ImageGeneration',
+            category: 'image_generation',
+            status: 'success',
+            httpStatus: resp.status,
+            requestId: safeRequestId,
+            durationMs: latencyMs,
+            purpose: `${source}: ${cleanPrompt.slice(0, 36)}`,
+          }),
+        };
+      }
+    } else {
+      // OpenAI Compatible Image Generation Protocol (/v1/images/generations)
+      const endpoint = buildOpenAiEndpoint(cleanBaseUrl, '/images/generations');
+
+      const sendOpenAiImgReq = async (includeResponseFormat: boolean) => {
+        const bodyObj: Record<string, any> = {
+          model: resolvedModel,
+          prompt: finalPrompt,
+          n: 1,
+          size: effectiveSize,
+        };
+        if (quality && resolvedModel.toLowerCase().includes('dall-e-3')) {
+          bodyObj.quality = quality;
+        }
+        if (includeResponseFormat) {
+          bodyObj.response_format = 'b64_json';
+        }
+        return fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${cleanKey}`,
+          },
+          body: JSON.stringify(bodyObj),
+          signal: AbortSignal.timeout(reqTimeout),
+        });
+      };
+
+      let resp = await sendOpenAiImgReq(true);
+      if (!resp.ok && resp.status === 400) {
+        const peekErr = await resp.text().catch(() => '');
+        if (/response_format|unknown parameter|extra_forbidden|not supported/i.test(peekErr)) {
+          // Some OpenAI-compatible gateways (e.g. gpt-image-1 / Flux proxies) reject response_format
+          resp = await sendOpenAiImgReq(false);
+        } else {
+          const safeMsg = sanitizeSensitiveText(peekErr, 220);
+          return {
+            success: false,
+            statusCode: 400,
+            errorType: 'upstream_error',
+            error: `OpenAI 兼容生图失败 (HTTP 400): ${safeMsg}`,
+            provider: resolvedProvider,
+            model: resolvedModel,
+            apiProtocol: effectiveProtocol,
+            latencyMs: Date.now() - startTime,
+            requestId: safeRequestId,
+          };
+        }
+      }
+
+      const latencyMs = Date.now() - startTime;
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        let msg = errText;
+        try {
+          const j = JSON.parse(errText);
+          msg = j.error?.message || j.message || errText;
+        } catch {}
+        const safeMsg = sanitizeSensitiveText(msg, 220);
+        return {
+          success: false,
+          statusCode: resp.status,
+          errorType:
+            resp.status === 401 || resp.status === 403
+              ? 'auth_error'
+              : resp.status === 429
+              ? 'rate_limit'
+              : resp.status === 404
+              ? 'model_unavailable'
+              : 'upstream_error',
+          error: `OpenAI 兼容生图失败 (HTTP ${resp.status}): ${safeMsg}`,
+          provider: resolvedProvider,
+          model: resolvedModel,
+          apiProtocol: effectiveProtocol,
+          latencyMs,
+          requestId: safeRequestId,
+        };
+      }
+
+      const data: any = await resp.json();
+      const item = data?.data?.[0];
+
+      if (item?.b64_json && typeof item.b64_json === 'string' && item.b64_json.length > 32) {
+        const mime = item.mime_type || 'image/png';
+        return {
+          success: true,
+          statusCode: resp.status,
+          latencyMs,
+          provider: resolvedProvider,
+          model: resolvedModel,
+          apiProtocol: effectiveProtocol,
+          mimeType: mime,
+          imageUrl: `data:${mime};base64,${item.b64_json}`,
+          revisedPrompt: item.revised_prompt || cleanPrompt,
+          descriptionText: item.revised_prompt || '',
+          requestId: safeRequestId,
+          messageId,
+          turnId,
+          characterId,
+          apiLog: buildApiLogObject({
+            appName: source,
+            provider: resolvedProvider,
+            modelName: resolvedModel,
+            interfaceType: 'ImageGeneration',
+            category: 'image_generation',
+            status: 'success',
+            httpStatus: resp.status,
+            requestId: safeRequestId,
+            durationMs: latencyMs,
+            purpose: `${source}: ${cleanPrompt.slice(0, 36)}`,
+          }),
+        };
+      }
+
+      if (item?.url && typeof item.url === 'string' && /^https?:\/\//i.test(item.url)) {
+        return {
+          success: true,
+          statusCode: resp.status,
+          latencyMs,
+          provider: resolvedProvider,
+          model: resolvedModel,
+          apiProtocol: effectiveProtocol,
+          mimeType: 'image/png',
+          imageUrl: item.url,
+          revisedPrompt: item.revised_prompt || cleanPrompt,
+          descriptionText: item.revised_prompt || '',
+          requestId: safeRequestId,
+          messageId,
+          turnId,
+          characterId,
+          apiLog: buildApiLogObject({
+            appName: source,
+            provider: resolvedProvider,
+            modelName: resolvedModel,
+            interfaceType: 'ImageGeneration',
+            category: 'image_generation',
+            status: 'success',
+            httpStatus: resp.status,
+            requestId: safeRequestId,
+            durationMs: latencyMs,
+            purpose: `${source}: ${cleanPrompt.slice(0, 36)}`,
+          }),
+        };
+      }
+
+      return {
+        success: false,
+        statusCode: 502,
+        errorType: 'no_image_returned',
+        error: '图像接口返回 HTTP 200，但未返回有效的 b64_json 或远程图片 URL。',
+        provider: resolvedProvider,
+        model: resolvedModel,
+        apiProtocol: effectiveProtocol,
+        latencyMs,
+        requestId: safeRequestId,
+      };
+    }
+  };
+
+  const flightPromise = runGeneration()
+    .then((result: any) => {
+      if (!result.apiLog && !result.success) {
+        result.apiLog = buildApiLogObject({
+          appName: source,
+          provider: result.provider || resolvedProvider,
+          modelName: result.model || resolvedModel,
+          interfaceType: 'ImageGeneration',
+          category: 'image_generation',
+          status: 'failed',
+          httpStatus: result.statusCode || 500,
+          requestId: safeRequestId,
+          durationMs: result.latencyMs || Date.now() - startTime,
+          errorType: result.errorType || 'ImageGenerationError',
+          error: result.error || '图像生成失败',
+          purpose: `${source} 失败`,
+        });
+      }
+      if (result.success) {
+        imageGenCompletedCache.set(safeRequestId, {
+          expiresAt: Date.now() + IMAGE_IDEMPOTENCY_TTL_MS,
+          payload: result,
+        });
+      }
+      return result;
+    })
+    .finally(() => {
+      imageGenInFlightCache.delete(safeRequestId);
     });
 
-    if (!resp.ok) {
-      const errText = await resp.text();
-      let msg = errText;
-      try {
-        const j = JSON.parse(errText);
-        msg = j.error?.message || errText;
-      } catch {}
-      return res.status(resp.status).json({ success: false, error: `图像生成失败 (${resp.status}): ${msg}` });
-    }
+  imageGenInFlightCache.set(safeRequestId, flightPromise);
 
-    const data = await resp.json();
-    const item = data.data?.[0];
-    const latencyMs = Date.now() - startTime;
-
-    if (item?.b64_json) {
-      return res.json({
-        success: true,
-        latencyMs,
-        model,
-        imageUrl: `data:image/png;base64,${item.b64_json}`,
-        revisedPrompt: item.revised_prompt || prompt,
-        apiLog: buildApiLogObject({
-          appName: 'AI生图绘制',
-          modelName: model,
-          interfaceType: 'ImageGeneration',
-          category: 'image',
-          durationMs: latencyMs,
-          purpose: `生成图像: ${(prompt || '自定义图像').slice(0, 30)}...`,
-        }),
-      });
-    } else if (item?.url) {
-      return res.json({
-        success: true,
-        latencyMs,
-        model,
-        imageUrl: item.url,
-        revisedPrompt: item.revised_prompt || prompt,
-        apiLog: buildApiLogObject({
-          appName: 'AI生图绘制',
-          modelName: model,
-          interfaceType: 'ImageGeneration',
-          category: 'image',
-          durationMs: latencyMs,
-          purpose: `生成图像: ${(prompt || '自定义图像').slice(0, 30)}...`,
-        }),
-      });
-    }
-
-    return res.status(500).json({ success: false, error: '未从接口获取到有效图像数据' });
+  try {
+    const result = await flightPromise;
+    return res.status(result.success ? 200 : result.statusCode || 500).json(result);
   } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message || '图像生成网络异常' });
+    const latencyMs = Date.now() - startTime;
+    const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+    const safeErr = sanitizeSensitiveText(
+      isTimeout ? '图像生成请求超时，请稍后重试或检查反代响应速度。' : err?.message || '图像生成网络异常',
+      240
+    );
+    return res.status(isTimeout ? 504 : 500).json({
+      success: false,
+      statusCode: isTimeout ? 504 : 500,
+      errorType: isTimeout ? 'timeout' : 'network_error',
+      error: safeErr,
+      provider: resolvedProvider,
+      model: resolvedModel,
+      apiProtocol: effectiveProtocol,
+      latencyMs,
+      requestId: safeRequestId,
+      apiLog: buildApiLogObject({
+        appName: source,
+        provider: resolvedProvider,
+        modelName: resolvedModel,
+        interfaceType: 'ImageGeneration',
+        category: 'image_generation',
+        status: 'failed',
+        httpStatus: isTimeout ? 504 : 500,
+        requestId: safeRequestId,
+        durationMs: latencyMs,
+        errorType: isTimeout ? 'timeout' : 'network_error',
+        error: safeErr,
+        purpose: `${source} 异常`,
+      }),
+    });
   }
 });
 

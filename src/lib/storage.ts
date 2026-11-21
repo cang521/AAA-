@@ -509,27 +509,51 @@ export function saveApiConfig(c: ApiConfig): void {
     return currentVal || '';
   };
 
+  const recImgSrc = c.apiSettings?.recognition?.image || c.imageRecognitionApiConfig;
+  const recSpeechSrc = c.apiSettings?.recognition?.speech || c.speechRecognitionApiConfig;
+
   saveApiSettings({
-    text: {
-      provider: c.textApiConfig?.provider || c.textProvider || current.text.provider,
-      baseUrl: pickVal(c.textApiConfig?.baseUrl, c.textBaseUrl, current.text.baseUrl),
-      apiKey: pickVal(c.textApiConfig?.apiKey, c.textApiKey, current.text.apiKey),
-      model: c.textApiConfig?.model || c.textModel || current.text.model,
-      apiProtocol: c.textApiConfig?.apiProtocol || c.textApiProtocol || current.text.apiProtocol,
+    textGeneration: {
+      provider: c.apiSettings?.textGeneration?.provider || c.textApiConfig?.provider || c.textProvider || current.textGeneration.provider,
+      baseUrl: pickVal(c.apiSettings?.textGeneration?.baseUrl ?? c.textApiConfig?.baseUrl, c.textBaseUrl, current.textGeneration.baseUrl),
+      apiKey: pickVal(c.apiSettings?.textGeneration?.apiKey ?? c.textApiConfig?.apiKey, c.textApiKey, current.textGeneration.apiKey),
+      model: c.apiSettings?.textGeneration?.model || c.textApiConfig?.model || c.textModel || current.textGeneration.model,
+      apiProtocol: c.apiSettings?.textGeneration?.apiProtocol || c.textApiConfig?.apiProtocol || c.textApiProtocol || current.textGeneration.apiProtocol,
+      presetId: c.apiSettings?.textGeneration?.presetId || c.textApiConfig?.presetId || current.textGeneration.presetId,
     },
-    image: {
-      provider: c.imageApiConfig?.provider || c.imageProvider || current.image.provider,
-      baseUrl: pickVal(c.imageApiConfig?.baseUrl, c.imageBaseUrl, current.image.baseUrl),
-      apiKey: pickVal(c.imageApiConfig?.apiKey, c.imageApiKey, current.image.apiKey),
-      model: c.imageApiConfig?.model || c.imageModel || current.image.model,
-      apiProtocol: c.imageApiConfig?.apiProtocol || c.imageApiProtocol || current.image.apiProtocol,
+    imageGeneration: {
+      provider: c.apiSettings?.imageGeneration?.provider || c.imageApiConfig?.provider || c.imageProvider || current.imageGeneration.provider,
+      baseUrl: pickVal(c.apiSettings?.imageGeneration?.baseUrl ?? c.imageApiConfig?.baseUrl, c.imageBaseUrl, current.imageGeneration.baseUrl),
+      apiKey: pickVal(c.apiSettings?.imageGeneration?.apiKey ?? c.imageApiConfig?.apiKey, c.imageApiKey, current.imageGeneration.apiKey),
+      model: c.apiSettings?.imageGeneration?.model || c.imageApiConfig?.model || c.imageModel || current.imageGeneration.model,
+      apiProtocol: c.apiSettings?.imageGeneration?.apiProtocol || c.imageApiConfig?.apiProtocol || c.imageApiProtocol || current.imageGeneration.apiProtocol,
+      presetId: c.apiSettings?.imageGeneration?.presetId || c.imageApiConfig?.presetId || current.imageGeneration.presetId,
     },
-    voice: {
-      provider: c.voiceApiConfig?.provider || c.voiceProvider || current.voice.provider,
-      baseUrl: pickVal(c.voiceApiConfig?.baseUrl, c.voiceBaseUrl, current.voice.baseUrl),
-      apiKey: pickVal(c.voiceApiConfig?.apiKey, c.voiceApiKey, current.voice.apiKey),
-      model: c.voiceApiConfig?.model || c.voiceModel || current.voice.model,
-      apiProtocol: c.voiceApiConfig?.apiProtocol || c.voiceApiProtocol || current.voice.apiProtocol,
+    speechGeneration: {
+      provider: c.apiSettings?.speechGeneration?.provider || c.voiceApiConfig?.provider || c.voiceProvider || current.speechGeneration.provider,
+      baseUrl: pickVal(c.apiSettings?.speechGeneration?.baseUrl ?? c.voiceApiConfig?.baseUrl, c.voiceBaseUrl, current.speechGeneration.baseUrl),
+      apiKey: pickVal(c.apiSettings?.speechGeneration?.apiKey ?? c.voiceApiConfig?.apiKey, c.voiceApiKey, current.speechGeneration.apiKey),
+      model: c.apiSettings?.speechGeneration?.model || c.voiceApiConfig?.model || c.voiceModel || current.speechGeneration.model,
+      apiProtocol: c.apiSettings?.speechGeneration?.apiProtocol || c.voiceApiConfig?.apiProtocol || c.voiceApiProtocol || current.speechGeneration.apiProtocol,
+      presetId: c.apiSettings?.speechGeneration?.presetId || c.voiceApiConfig?.presetId || current.speechGeneration.presetId,
+    },
+    recognition: {
+      image: {
+        provider: recImgSrc?.provider || c.imageRecognitionProvider || current.recognition.image.provider,
+        baseUrl: pickVal(recImgSrc?.baseUrl, c.imageRecognitionBaseUrl, current.recognition.image.baseUrl),
+        apiKey: pickVal(recImgSrc?.apiKey, c.imageRecognitionApiKey, current.recognition.image.apiKey),
+        model: recImgSrc?.model || c.imageRecognitionModel || current.recognition.image.model,
+        apiProtocol: recImgSrc?.apiProtocol || c.imageRecognitionApiProtocol || current.recognition.image.apiProtocol,
+        presetId: recImgSrc?.presetId || current.recognition.image.presetId,
+      },
+      speech: {
+        provider: recSpeechSrc?.provider || c.speechRecognitionProvider || current.recognition.speech.provider,
+        baseUrl: pickVal(recSpeechSrc?.baseUrl, c.speechRecognitionBaseUrl, current.recognition.speech.baseUrl),
+        apiKey: pickVal(recSpeechSrc?.apiKey, c.speechRecognitionApiKey, current.recognition.speech.apiKey),
+        model: recSpeechSrc?.model || c.speechRecognitionModel || current.recognition.speech.model,
+        apiProtocol: recSpeechSrc?.apiProtocol || c.speechRecognitionApiProtocol || current.recognition.speech.apiProtocol,
+        presetId: recSpeechSrc?.presetId || current.recognition.speech.presetId,
+      },
     },
   });
 }

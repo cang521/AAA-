@@ -252,9 +252,29 @@ export interface ChatMessage {
   characterId: string;
   sender: 'user' | 'ai';
   text: string;
+  messageType?: 'text' | 'image' | 'generated_image';
   imageUrl?: string;
   imageAnalysis?: string;
-  imageAnalysisStatus?: 'success' | 'failed' | 'none';
+  imageAnalysisStatus?: 'pending' | 'success' | 'failed' | 'none';
+  // Structured user image recognition fields
+  imageDescription?: string;
+  detectedText?: string;
+  imageObjects?: string[];
+  imageScene?: string;
+  recognitionStatus?: 'pending' | 'success' | 'failed';
+  recognitionError?: string;
+  recognitionProvider?: string;
+  recognitionModel?: string;
+  // Structured AI image generation fields
+  generationPrompt?: string;
+  revisedPrompt?: string;
+  aspectRatio?: string;
+  negativePrompt?: string;
+  generationStatus?: 'pending' | 'success' | 'failed';
+  generationError?: string;
+  generationRequestId?: string;
+  provider?: string;
+  model?: string;
   timestamp: number;
   thinkingProcess?: string;
   quoteMessageId?: string;
@@ -265,7 +285,7 @@ export interface ChatMessage {
   isProactive?: boolean;
   proactiveMeta?: ProactiveMessageMeta;
   isSystemEvent?: boolean;
-  type?: 'text' | 'offline_share_card' | 'offline_session_event';
+  type?: 'text' | 'image' | 'generated_image' | 'offline_share_card' | 'offline_session_event';
   offlineCardData?: {
     sessionId: string;
     sceneName: string;
@@ -479,14 +499,27 @@ export interface Memo {
   tags?: string[];
 }
 
+export type ApiLogCategory =
+  | 'text'
+  | 'image'
+  | 'voice'
+  | 'text_generation'
+  | 'image_generation'
+  | 'speech_generation'
+  | 'image_recognition'
+  | 'speech_recognition';
+
 export interface ApiLog {
   id: string;
   appName: string;
   timestamp: number;
+  provider?: string;
   modelName: string;
   interfaceType: string;
-  category?: 'text' | 'image' | 'voice';
+  category?: ApiLogCategory;
   status?: 'success' | 'failed';
+  httpStatus?: number;
+  requestId?: string;
   durationMs?: number;
   promptTokens?: number | null;
   completionTokens?: number | null;
@@ -579,6 +612,10 @@ export interface RemoteModelItem {
   owned_by?: string;
   created?: number;
   type?: 'text' | 'image' | 'voice' | 'multimodal' | 'embedding';
+  capabilityCategory?: 'text_generation' | 'image_generation' | 'speech_generation' | 'image_recognition' | 'speech_recognition';
+  supportedCapabilities?: Array<'text_generation' | 'image_generation' | 'speech_generation' | 'image_recognition' | 'speech_recognition'>;
+  capabilityHint?: string;
+  confidence?: 'known' | 'inferred' | 'unknown';
   description?: string;
   contextWindow?: number;
 }
@@ -624,12 +661,25 @@ export interface SingleApiConfig {
   apiKey: string;
   model: string;
   apiProtocol?: string;
+  presetId?: string;
 }
 
 export interface ApiConfig {
+  apiSettings?: {
+    schemaVersion?: number;
+    textGeneration: SingleApiConfig;
+    imageGeneration: SingleApiConfig;
+    speechGeneration: SingleApiConfig;
+    recognition: {
+      image: SingleApiConfig;
+      speech: SingleApiConfig;
+    };
+  };
   textApiConfig: SingleApiConfig;
   imageApiConfig: SingleApiConfig;
   voiceApiConfig: SingleApiConfig;
+  imageRecognitionApiConfig?: SingleApiConfig;
+  speechRecognitionApiConfig?: SingleApiConfig;
   customHeaders?: Record<string, string>;
   textProvider?: string;
   textBaseUrl?: string;
@@ -646,6 +696,16 @@ export interface ApiConfig {
   voiceApiKey?: string;
   voiceModel?: string;
   voiceApiProtocol?: string;
+  imageRecognitionProvider?: string;
+  imageRecognitionBaseUrl?: string;
+  imageRecognitionApiKey?: string;
+  imageRecognitionModel?: string;
+  imageRecognitionApiProtocol?: string;
+  speechRecognitionProvider?: string;
+  speechRecognitionBaseUrl?: string;
+  speechRecognitionApiKey?: string;
+  speechRecognitionModel?: string;
+  speechRecognitionApiProtocol?: string;
 }
 
 export interface AiControls {

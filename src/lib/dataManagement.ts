@@ -37,6 +37,7 @@ import {
   saveWorldBooks,
   DEFAULT_AI_AVATAR,
 } from './storage';
+import { mergeImportedApiSettings } from './apiConfigStore';
 import {
   getAllChatMessages,
   saveChatMessagesBulk,
@@ -1800,7 +1801,7 @@ export async function executeImport(
       if (s.settings) saveSettings({ ...loadSettings(), ...s.settings });
       if (s.userProfile) saveUserProfile({ ...loadUserProfile(), ...s.userProfile });
       if (s.menstrualData) saveMenstrualData({ ...loadMenstrualData(), ...s.menstrualData });
-      if (s.apiConfig) saveApiConfig({ ...loadApiConfig(), ...s.apiConfig });
+      if (s.apiConfig) mergeImportedApiSettings(s.apiConfig);
       if (s.aiControls) saveAiControls({ ...loadAiControls(), ...s.aiControls });
       if (s.permissions) savePermissions({ ...loadPermissions(), ...s.permissions });
       if (Array.isArray(s.memos)) saveMemos([...loadMemos(), ...s.memos]);

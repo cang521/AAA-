@@ -1,6 +1,18 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ChatMessage } from '../../types';
-import { Brain, Sparkles, ChevronRight, Clock } from 'lucide-react';
+import {
+  Brain,
+  Sparkles,
+  ChevronRight,
+  Clock,
+  Loader2,
+  RefreshCw,
+  AlertCircle,
+  Maximize2,
+  Download,
+  ScanSearch,
+  Image as ImageIcon,
+} from 'lucide-react';
 import { OfflineShareCard } from '../offline/OfflineShareCard';
 import { formatOfflineTimeRange, formatOfflineDuration } from '../../lib/offline/offlineTimeFormat';
 
@@ -14,10 +26,32 @@ interface ChatMessageBubbleProps {
   onOpenCoT?: (msgId: string) => void;
   onContextMenu: (msg: ChatMessage) => void;
   onOpenOfflineDetail?: (sessionId: string) => void;
+  onPreviewImage?: (msg: ChatMessage) => void;
+  onRetryImageRecognition?: (msg: ChatMessage) => void;
+  onRegenerateImage?: (msg: ChatMessage) => void;
+  onRecognizeImage?: (msg: ChatMessage) => void;
+  onSaveImage?: (msg: ChatMessage) => void;
 }
 
 export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
-  ({ msg, isUser, avatar, name, quoteText, isHighlighted, onOpenCoT, onContextMenu, onOpenOfflineDetail }) => {
+  ({
+    msg,
+    isUser,
+    avatar,
+    name,
+    quoteText,
+    isHighlighted,
+    onOpenCoT,
+    onContextMenu,
+    onOpenOfflineDetail,
+    onPreviewImage,
+    onRetryImageRecognition,
+    onRegenerateImage,
+    onRecognizeImage,
+    onSaveImage,
+  }) => {
+    const [imgDecodeError, setImgDecodeError] = useState(false);
+
     // Unified Timeline System Event Card for completed Offline Sessions
     if (msg.type === 'offline_session_event' && msg.offlineEventData) {
       const ev = msg.offlineEventData;
@@ -88,6 +122,10 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
         </div>
       );
     }
+
+    const isGeneratedImage = msg.messageType === 'generated_image' || msg.type === 'generated_image';
+    const recognitionStatus = msg.recognitionStatus || msg.imageAnalysisStatus;
+
     return (
       <div
         id={`msg-bubble-${msg.id}`}
@@ -97,6 +135,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
       >
         {/* Avatar */}
         <button
+          type="button"
           onClick={() => {
             if (!isUser && onOpenCoT) {
               onOpenCoT(msg.id);
@@ -114,7 +153,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
         </button>
 
         {/* Bubble Content */}
-        <div className="max-w-[76%] min-w-0 flex flex-col">
+        <div className="max-w-[78%] min-w-0 flex flex-col">
           <div
             onContextMenu={(e) => {
               e.preventDefault();
@@ -133,29 +172,177 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
               </div>
             )}
 
-            {/* Attached Image Preview */}
-            {msg.imageUrl && (
-              <div className="mb-1.5 overflow-hidden rounded-xl border border-white/20">
+            {/* === AI Generated Image Card === */}
+            {isGeneratedImage && (
+              <div className="space-y-2">
+                {msg.generationStatus === 'pending' && (
+                  <div className="w-56 sm:w-64 rounded-xl bg-zinc-900/90 border border-zinc-700/80 p-3.5 space-y-2.5">
+                    <div className="flex items-center gap-2 text-xs text-emerald-400 font-medium">
+                      <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                      <span>正在为你绘制图片...</span>
+                    </div>
+                    <div className="h-28 rounded-lg bg-zinc-800/80 animate-pulse flex items-center justify-center">
+                      <ImageIcon className="w-7 h-7 text-zinc-600" />
+                    </div>
+                    {msg.generationPrompt && (
+                      <p className="text-[10px] text-zinc-400 line-clamp-2 leading-relaxed">
+                        {msg.generationPrompt}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {msg.generationStatus === 'failed' && (
+                  <div className="w-56 sm:w-64 rounded-xl bg-rose-950/35 border border-rose-500/35 p-3 space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-rose-300">
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                      <span>图片生成失败</span>
+                    </div>
+                    <p className="text-[11px] text-rose-200/85 break-words leading-relaxed">
+                      {msg.generationError || '上游图像接口未返回有效图片'}
+                    </p>
+                    {onRegenerateImage && (
+                      <button
+                        type="button"
+                        onClick={() => onRegenerateImage(msg)}
+                        className="w-full py-1.5 px-2.5 rounded-lg bg-rose-600 hover:bg-rose-500 active:scale-[0.98] text-white text-[11px] font-medium flex items-center justify-center gap-1.5 transition cursor-pointer"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        <span>重新生成</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {msg.generationStatus !== 'pending' && msg.generationStatus !== 'failed' && msg.imageUrl && (
+                  <div className="space-y-1.5">
+                    {!imgDecodeError ? (
+                      <div className="overflow-hidden rounded-xl border border-white/15 bg-zinc-900">
+                        <img
+                          src={msg.imageUrl}
+                          alt={msg.imageDescription || 'AI 生成图片'}
+                          className="max-w-full max-h-64 object-cover cursor-pointer hover:opacity-95 transition block"
+                          onClick={() => onPreviewImage?.(msg)}
+                          onError={() => setImgDecodeError(true)}
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-56 rounded-xl bg-rose-950/35 border border-rose-500/35 p-3 space-y-2 text-[11px] text-rose-200">
+                        <p>图片资源加载失败，无法解码显示。</p>
+                        {onRegenerateImage && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setImgDecodeError(false);
+                              onRegenerateImage(msg);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] flex items-center gap-1"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            <span>重新生成</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Compact Action Bar for AI-generated image */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                      {onPreviewImage && (
+                        <button
+                          type="button"
+                          onClick={() => onPreviewImage(msg)}
+                          className="px-2 py-0.5 rounded-md bg-black/25 hover:bg-black/40 text-[10px] text-zinc-300 flex items-center gap-1 transition cursor-pointer"
+                        >
+                          <Maximize2 className="w-2.5 h-2.5" />
+                          <span>大图</span>
+                        </button>
+                      )}
+                      {onSaveImage && (
+                        <button
+                          type="button"
+                          onClick={() => onSaveImage(msg)}
+                          className="px-2 py-0.5 rounded-md bg-black/25 hover:bg-black/40 text-[10px] text-zinc-300 flex items-center gap-1 transition cursor-pointer"
+                        >
+                          <Download className="w-2.5 h-2.5" />
+                          <span>保存</span>
+                        </button>
+                      )}
+                      {onRecognizeImage && (
+                        <button
+                          type="button"
+                          onClick={() => onRecognizeImage(msg)}
+                          disabled={recognitionStatus === 'pending'}
+                          className="px-2 py-0.5 rounded-md bg-black/25 hover:bg-black/40 disabled:opacity-50 text-[10px] text-zinc-300 flex items-center gap-1 transition cursor-pointer"
+                        >
+                          <ScanSearch className="w-2.5 h-2.5" />
+                          <span>{recognitionStatus === 'pending' ? '识别中...' : '识别此图'}</span>
+                        </button>
+                      )}
+                      {onRegenerateImage && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setImgDecodeError(false);
+                            onRegenerateImage(msg);
+                          }}
+                          className="px-2 py-0.5 rounded-md bg-black/25 hover:bg-black/40 text-[10px] text-zinc-300 flex items-center gap-1 transition cursor-pointer"
+                        >
+                          <RefreshCw className="w-2.5 h-2.5" />
+                          <span>重绘</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* === Regular Attached / User Image === */}
+            {!isGeneratedImage && msg.imageUrl && (
+              <div className="mb-1.5 overflow-hidden rounded-xl border border-white/20 bg-black/20">
                 <img
                   src={msg.imageUrl}
                   alt="图片附件"
-                  className="max-w-full max-h-56 object-cover cursor-pointer hover:opacity-95 transition"
-                  onClick={() => window.open(msg.imageUrl, '_blank')}
+                  className="max-w-full max-h-56 object-cover cursor-pointer hover:opacity-95 transition block"
+                  onClick={() => onPreviewImage?.(msg)}
                 />
               </div>
             )}
 
+            {/* Message Text */}
             {msg.text && (
               <div className="wx-chat-text whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                 {msg.text}
               </div>
             )}
 
-            {/* Vision API status footnote if failed */}
-            {msg.imageAnalysisStatus === 'failed' && (
-              <span className="block text-[9px] text-rose-300 font-mono mt-1 opacity-90">
-                ⚠️ 图片识别调用未能完成 (消息与图片已保存)
-              </span>
+            {/* Image Recognition Pending / Failed Status (for user images or on-demand recognition) */}
+            {msg.imageUrl && recognitionStatus === 'pending' && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-[10px] opacity-85">
+                <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                <span>正在识别图片内容...</span>
+              </div>
+            )}
+
+            {msg.imageUrl && recognitionStatus === 'failed' && (
+              <div className="mt-1.5 p-2 rounded-lg bg-black/25 border border-rose-400/35 space-y-1.5">
+                <div className="flex items-start gap-1 text-[10px] text-rose-200 leading-snug">
+                  <AlertCircle className="w-3 h-3 text-rose-300 shrink-0 mt-0.5" />
+                  <span className="break-words">
+                    图片识别失败：{msg.recognitionError || '识别接口调用未成功（图片已保存）'}
+                  </span>
+                </div>
+                {onRetryImageRecognition && (
+                  <button
+                    type="button"
+                    onClick={() => onRetryImageRecognition(msg)}
+                    className="px-2 py-0.5 rounded-md bg-rose-500/80 hover:bg-rose-500 text-white text-[10px] font-medium inline-flex items-center gap-1 transition cursor-pointer"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" />
+                    <span>重试识别</span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -167,9 +354,16 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
       prev.msg.id === next.msg.id &&
       prev.msg.text === next.msg.text &&
       prev.msg.type === next.msg.type &&
+      prev.msg.messageType === next.msg.messageType &&
       prev.msg.offlineEventData === next.msg.offlineEventData &&
       prev.msg.imageUrl === next.msg.imageUrl &&
       prev.msg.imageAnalysisStatus === next.msg.imageAnalysisStatus &&
+      prev.msg.recognitionStatus === next.msg.recognitionStatus &&
+      prev.msg.recognitionError === next.msg.recognitionError &&
+      prev.msg.imageDescription === next.msg.imageDescription &&
+      prev.msg.generationStatus === next.msg.generationStatus &&
+      prev.msg.generationError === next.msg.generationError &&
+      prev.msg.revisedPrompt === next.msg.revisedPrompt &&
       prev.msg.thinkingProcess === next.msg.thinkingProcess &&
       prev.msg.isRefreshed === next.msg.isRefreshed &&
       prev.msg.turnId === next.msg.turnId &&

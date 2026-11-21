@@ -74,10 +74,113 @@ function sanitizeReplyText(text) {
   return clean;
 }
 
+// src/lib/apiCapabilities.ts
+var CAPABILITY_LABELS = {
+  text_generation: "\u8BED\u8A00\u751F\u6210",
+  image_generation: "\u56FE\u50CF\u751F\u6210",
+  speech_generation: "\u8BED\u97F3\u751F\u6210",
+  image_recognition: "\u56FE\u50CF\u8BC6\u522B",
+  speech_recognition: "\u8BED\u97F3\u8BC6\u522B"
+};
+function classifyModelCapabilities(modelId, metadata) {
+  const id = String(modelId || "").toLowerCase();
+  const methods = (metadata?.supportedGenerationMethods || []).map((m) => String(m).toLowerCase());
+  const supported = /* @__PURE__ */ new Set();
+  const isImageGen = id.includes("imagen") || id.includes("dall-e") || id.includes("dalle") || id.includes("gpt-image") || id.includes("flux") || id.includes("midjourney") || id.includes("stable-diffusion") || id.includes("sdxl") || id.includes("kolors") || id.includes("ideogram") || id.includes("recraft") || id.includes("nano-banana") || id.includes("-image") || id.endsWith("image") || methods.includes("predict");
+  const isSpeechGen = id.includes("tts") || id.includes("speech") || id.includes("cosyvoice") || id.includes("fish-speech") || id.includes("eleven") || id.includes("bark");
+  const isSpeechRec = id.includes("whisper") || id.includes("transcribe") || id.includes("asr") || id.includes("sensevoice") || id.includes("paraformer");
+  const isVisionCapable = !isImageGen && !isSpeechGen && !isSpeechRec && (id.includes("gpt-4o") || id.includes("gpt-4.1") || id.includes("gpt-4-vision") || id.includes("gpt-4-turbo") || id.includes("gpt-5") || id.includes("gemini-4") || id.includes("gemini-3") || id.includes("gemini-2.5") || id.includes("claude-3") || id.includes("claude-4") || id.includes("claude-sonnet-4") || id.includes("claude-opus-4") || id.includes("qwen-vl") || id.includes("qwen2-vl") || id.includes("qwen2.5-vl") || id.includes("vl") || id.includes("vision") || id.includes("pixtral") || id.includes("llava") || id.includes("glm-4v") || id.includes("internvl") || id.includes("minicpm-v"));
+  const isPureEmbedding = id.includes("embedding") || id.includes("embed-") || id.includes("rerank");
+  const isPureImageGen = id.includes("imagen") || id.includes("dall-e") || id.includes("dalle") || id.includes("gpt-image") || id.includes("flux") || id.includes("stable-diffusion") || id.includes("sdxl") || id.includes("midjourney");
+  if (isImageGen) supported.add("image_generation");
+  if (isSpeechGen) supported.add("speech_generation");
+  if (isSpeechRec) supported.add("speech_recognition");
+  if (isVisionCapable) {
+    supported.add("image_recognition");
+    supported.add("text_generation");
+  }
+  if (!isPureEmbedding && !isPureImageGen && !isSpeechGen && !isSpeechRec) {
+    if (id.includes("gpt") || id.includes("gemini") || id.includes("claude") || id.includes("deepseek") || id.includes("qwen") || id.includes("llama") || id.includes("mistral") || id.includes("glm") || id.includes("moonshot") || id.includes("kimi") || id.includes("yi-") || id.includes("doubao") || id.includes("o1") || id.includes("o3") || id.includes("o4") || methods.includes("generatecontent")) {
+      supported.add("text_generation");
+    }
+  }
+  if (supported.size === 0) {
+    return {
+      primaryCategory: "text_generation",
+      supportedCategories: ["text_generation", "image_generation", "image_recognition", "speech_generation", "speech_recognition"],
+      confidence: "unknown",
+      capabilityHint: "\u80FD\u529B\u672A\u660E\u786E\u6807\u6CE8\uFF0C\u53EF\u80FD\u652F\u6301\uFF0C\u4EE5\u5B9E\u9645\u6D4B\u8BD5\u4E3A\u51C6"
+    };
+  }
+  let primaryCategory = "text_generation";
+  if (isImageGen && !isVisionCapable) {
+    primaryCategory = "image_generation";
+  } else if (isSpeechRec) {
+    primaryCategory = "speech_recognition";
+  } else if (isSpeechGen) {
+    primaryCategory = "speech_generation";
+  } else if (isVisionCapable && (id.includes("-vl") || id.includes("vision") || id.includes("4v"))) {
+    primaryCategory = "image_recognition";
+  } else if (supported.has("text_generation")) {
+    primaryCategory = "text_generation";
+  }
+  const list = Array.from(supported);
+  const labelText = list.map((c) => CAPABILITY_LABELS[c]).join(" / ");
+  return {
+    primaryCategory,
+    supportedCategories: list,
+    confidence: isImageGen || isSpeechGen || isSpeechRec || isVisionCapable ? "known" : "inferred",
+    capabilityHint: `\u53EF\u80FD\u652F\u6301\uFF1A${labelText}`
+  };
+}
+function sanitizeSensitiveText(input, maxLength = 320) {
+  if (input === null || input === void 0) return "";
+  let text = typeof input === "string" ? input : String(input);
+  text = text.replace(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]{24,}/g, "[\u5DF2\u8131\u654F\u56FE\u7247\u6570\u636E]");
+  text = text.replace(/data:audio\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]{24,}/g, "[\u5DF2\u8131\u654F\u97F3\u9891\u6570\u636E]");
+  text = text.replace(/([?&](?:key|api_key|apikey|token)=)([^&\s"']+)/gi, "$1***");
+  text = text.replace(/(Bearer\s+)[A-Za-z0-9._\-+=/]{8,}/gi, "$1***");
+  text = text.replace(/\bAIza[0-9A-Za-z\-_]{16,}\b/g, "AIza***");
+  text = text.replace(/\bsk-(?:proj-|ant-|live-|test-)?[A-Za-z0-9\-_]{12,}\b/g, "sk-***");
+  text = text.replace(/[A-Za-z0-9+/]{220,}={0,2}/g, "[\u5DF2\u7701\u7565\u957F\u7F16\u7801\u5185\u5BB9]");
+  if (text.length > maxLength) {
+    return text.slice(0, maxLength) + "...";
+  }
+  return text;
+}
+function resolveEffectiveProtocol(config) {
+  const proto = (config.apiProtocol || "").toLowerCase().trim();
+  if (proto === "google_native" || proto === "gemini_native" || proto === "google") {
+    return "google_native";
+  }
+  if (proto === "openai_compatible" || proto === "openai") {
+    return "openai_compatible";
+  }
+  if (proto === "anthropic") {
+    return "anthropic";
+  }
+  const prov = (config.provider || "").toLowerCase().trim();
+  const base = (config.baseUrl || "").toLowerCase().trim();
+  if (prov === "anthropic") return "anthropic";
+  if (prov === "openai" || prov === "openai_compatible" || prov === "deepseek" || prov === "openrouter" || prov === "groq" || prov === "siliconflow" || prov === "ollama") {
+    return "openai_compatible";
+  }
+  if (base.includes("generativelanguage.googleapis.com") || base.includes("/v1beta")) {
+    return "google_native";
+  }
+  if (base && (base.includes("/v1") || base.includes("openai") || base.includes("deepseek") || base.includes("openrouter"))) {
+    return "openai_compatible";
+  }
+  if (prov === "google_gemini") {
+    return "google_native";
+  }
+  return "openai_compatible";
+}
+
 // server.ts
 import_dotenv.default.config();
 var app = (0, import_express.default)();
-app.use(import_express.default.json({ limit: "10mb" }));
+app.use(import_express.default.json({ limit: "25mb" }));
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
@@ -108,28 +211,75 @@ app.get("/api/health", (_req, res) => {
 });
 function buildApiLogObject(params) {
   const isFailed = params.status === "failed" || Boolean(params.error);
-  const isOfficial = params.isOfficial !== false && (params.modelName.includes("gemini") || !params.modelName.includes("gpt"));
+  const isOfficial = params.isOfficial !== false && (params.modelName.includes("gemini") || params.modelName.includes("imagen") || params.provider === "google_gemini");
   const defaultCostDisplay = isOfficial ? "\u514D\u8D39/\u5185\u7F6E" : "\u672A\u63D0\u4F9B";
+  const normalizedCategory = params.category === "image" ? "image_generation" : params.category === "voice" ? "speech_generation" : params.category === "text" || !params.category ? "text_generation" : params.category;
   return {
     id: "log_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
-    appName: params.appName,
+    appName: sanitizeSensitiveText(params.appName, 80),
     timestamp: Date.now(),
-    modelName: params.modelName,
+    provider: params.provider ? sanitizeSensitiveText(params.provider, 60) : void 0,
+    modelName: sanitizeSensitiveText(params.modelName || "unknown", 80),
     interfaceType: params.interfaceType,
-    category: params.category || "text",
+    category: normalizedCategory,
     status: isFailed ? "failed" : "success",
+    httpStatus: params.httpStatus,
+    requestId: params.requestId ? sanitizeSensitiveText(params.requestId, 80) : void 0,
     durationMs: params.durationMs,
     promptTokens: typeof params.usage?.promptTokens === "number" ? params.usage.promptTokens : null,
     completionTokens: typeof params.usage?.completionTokens === "number" ? params.usage.completionTokens : null,
     totalTokens: typeof params.usage?.totalTokens === "number" ? params.usage.totalTokens : typeof params.usage?.promptTokens === "number" && typeof params.usage?.completionTokens === "number" ? params.usage.promptTokens + params.usage.completionTokens : null,
     isRealTokens: Boolean(params.isRealTokens),
     estimatedCost: null,
-    // NO fake 0.0001 calculations!
     costDisplay: defaultCostDisplay,
-    errorType: isFailed ? "ModelError" : void 0,
-    errorMessage: params.error,
-    purpose: params.purpose
+    errorType: isFailed ? params.errorType || "ModelError" : void 0,
+    errorMessage: params.error ? sanitizeSensitiveText(params.error, 260) : void 0,
+    purpose: sanitizeSensitiveText(params.purpose, 160)
   };
+}
+function buildGoogleRestBase(baseUrl) {
+  const clean = (baseUrl || "").trim().replace(/\/+$/, "");
+  if (!clean) return "https://generativelanguage.googleapis.com/v1beta";
+  if (/\/v1(beta|alpha)?$/i.test(clean)) return clean;
+  return `${clean}/v1beta`;
+}
+function buildOpenAiEndpoint(baseUrl, suffixPath) {
+  const clean = (baseUrl || "").trim().replace(/\/+$/, "");
+  const normalizedSuffix = suffixPath.startsWith("/") ? suffixPath : `/${suffixPath}`;
+  if (!clean) return `https://api.openai.com/v1${normalizedSuffix}`;
+  if (clean.endsWith(normalizedSuffix)) return clean;
+  if (clean.endsWith("/v1")) return `${clean}${normalizedSuffix}`;
+  return `${clean}/v1${normalizedSuffix}`;
+}
+function assertSafeRemoteImageUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("\u56FE\u7247 URL \u683C\u5F0F\u65E0\u6548");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("\u4EC5\u652F\u6301 http/https \u6216 Base64 Data URL \u683C\u5F0F\u7684\u56FE\u7247");
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host === "localhost" || host === "::1" || host === "[::1]" || host === "0.0.0.0" || host.endsWith(".local") || host === "169.254.169.254" || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[0-1])\./.test(host) || /^169\.254\./.test(host)) {
+    throw new Error("\u51FA\u4E8E\u5B89\u5168\u9650\u5236\uFF0C\u4E0D\u5141\u8BB8\u8BFB\u53D6\u5185\u7F51\u6216\u672C\u673A\u5730\u5740\u7684\u8FDC\u7A0B\u56FE\u7247");
+  }
+  return parsed;
+}
+var IMAGE_IDEMPOTENCY_TTL_MS = 5 * 60 * 1e3;
+var imageGenCompletedCache = /* @__PURE__ */ new Map();
+var imageGenInFlightCache = /* @__PURE__ */ new Map();
+var imageRecCompletedCache = /* @__PURE__ */ new Map();
+var imageRecInFlightCache = /* @__PURE__ */ new Map();
+function pruneImageCaches() {
+  const now = Date.now();
+  for (const [k, v] of imageGenCompletedCache.entries()) {
+    if (v.expiresAt <= now) imageGenCompletedCache.delete(k);
+  }
+  for (const [k, v] of imageRecCompletedCache.entries()) {
+    if (v.expiresAt <= now) imageRecCompletedCache.delete(k);
+  }
 }
 var GEMINI_DEFAULT_TEXT_MODEL = "gemini-4-hydrogen";
 var GEMINI_TEXT_FALLBACK_ORDER = ["gemini-4-hydrogen", "gemini-3.1-flash-lite", "gemini-2.5-flash"];
@@ -801,18 +951,17 @@ app.post("/api/provider/fetch-models", async (req, res) => {
         const rawList = Array.isArray(data.data) ? data.data : Array.isArray(data.models) ? data.models : Array.isArray(data) ? data : [];
         if (rawList && rawList.length > 0) {
           const formatted = rawList.map((m) => {
-            const id = typeof m === "string" ? m : m.id || m.name;
-            const lower = String(id).toLowerCase();
-            let type = "text";
-            if (lower.includes("dall-e") || lower.includes("image") || lower.includes("flux") || lower.includes("midjourney") || lower.includes("imagen")) {
-              type = "image";
-            } else if (lower.includes("tts") || lower.includes("whisper") || lower.includes("speech") || lower.includes("audio")) {
-              type = "voice";
-            }
+            const id = String(typeof m === "string" ? m : m.id || m.name || "");
+            const cap = classifyModelCapabilities(id, typeof m === "object" ? m : void 0);
+            const legacyType = cap.primaryCategory === "image_generation" ? "image" : cap.primaryCategory === "speech_generation" || cap.primaryCategory === "speech_recognition" ? "voice" : "text";
             return {
-              id: String(id),
-              name: typeof m === "object" && m.name ? m.name : String(id),
-              type,
+              id,
+              name: typeof m === "object" && m.name ? m.name : id,
+              type: legacyType,
+              capabilityCategory: cap.primaryCategory,
+              supportedCapabilities: cap.supportedCategories,
+              capabilityHint: cap.capabilityHint,
+              confidence: cap.confidence,
               owned_by: typeof m === "object" ? m.owned_by || m.permission?.[0]?.organization || "OpenAI-Proxy" : "OpenAI-Proxy"
             };
           });
@@ -914,13 +1063,17 @@ app.post("/api/provider/fetch-models", async (req, res) => {
         if (rawList && rawList.length > 0) {
           const formatted = rawList.map((m) => {
             const id = (typeof m === "string" ? m : m.id || m.name || "").replace(/^models\//, "");
-            const isImage = id.includes("imagen") || id.includes("image");
-            const isVoice = id.includes("audio") || id.includes("tts") || id.includes("speech");
+            const cap = classifyModelCapabilities(id, typeof m === "object" ? m : void 0);
+            const legacyType = cap.primaryCategory === "image_generation" ? "image" : cap.primaryCategory === "speech_generation" || cap.primaryCategory === "speech_recognition" ? "voice" : "text";
             return {
               id,
               name: typeof m === "object" && (m.displayName || m.name) ? m.displayName || m.name : id,
               description: typeof m === "object" ? m.description || "" : "",
-              type: isImage ? "image" : isVoice ? "voice" : "text",
+              type: legacyType,
+              capabilityCategory: cap.primaryCategory,
+              supportedCapabilities: cap.supportedCategories,
+              capabilityHint: cap.capabilityHint,
+              confidence: cap.confidence,
               contextWindow: typeof m === "object" ? m.inputTokenLimit : void 0,
               owned_by: typeof m === "object" && m.owned_by ? m.owned_by : cleanBaseUrl ? "Gemini-Proxy" : "Google"
             };
@@ -928,7 +1081,7 @@ app.post("/api/provider/fetch-models", async (req, res) => {
           attemptsTrace.push({
             attemptIndex: 2,
             adapterName: "Gemini Native REST Adapter (/v1beta/models)",
-            protocolKey: "gemini_native",
+            protocolKey: "google_native",
             finalUrl: maskedUrl,
             method: "GET",
             authMethod: "QueryParam (?key=) & Headers",
@@ -943,10 +1096,10 @@ app.post("/api/provider/fetch-models", async (req, res) => {
           return res.json({
             success: true,
             supported: true,
-            apiProtocol: "gemini_native",
+            apiProtocol: "google_native",
             models: formatted,
             sourceEndpoint: maskedUrl,
-            message: `\u81EA\u52A8\u63A2\u6D4B\u6210\u529F\uFF01\u5339\u914D Gemini Native \u539F\u751F\u534F\u8BAE\uFF0C\u6210\u529F\u83B7\u53D6 ${formatted.length} \u4E2A\u771F\u5B9E\u6A21\u578B`,
+            message: `\u81EA\u52A8\u63A2\u6D4B\u6210\u529F\uFF01\u5339\u914D Google \u539F\u751F\u534F\u8BAE\uFF0C\u6210\u529F\u83B7\u53D6 ${formatted.length} \u4E2A\u771F\u5B9E\u6A21\u578B`,
             attemptsTrace,
             totalTimeMs: Date.now() - overallStartTime
           });
@@ -2244,174 +2397,466 @@ ${memosSummary}
   }
 });
 app.post("/api/gemini/analyze-image", async (req, res) => {
-  const { imageUrl, prompt, apiConfig } = req.body;
+  pruneImageCaches();
+  const {
+    imageUrl,
+    prompt,
+    apiConfig,
+    recognitionConfig,
+    provider: directProvider,
+    baseUrl: directBaseUrl,
+    apiKey: directApiKey,
+    model: directModel,
+    apiProtocol: directApiProtocol,
+    requestId,
+    messageId,
+    characterId,
+    source = "\u5FAE\u4FE1\u56FE\u7247\u8BC6\u522B",
+    timeoutMs = 45e3
+  } = req.body || {};
+  const safeRequestId = typeof requestId === "string" && requestId.trim() ? requestId.trim() : `imgrec_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   if (!imageUrl || typeof imageUrl !== "string") {
-    return res.status(400).json({ success: false, error: "\u672A\u63D0\u4F9B\u6709\u6548\u7684\u56FE\u7247\u6570\u636E (imageUrl)" });
+    return res.status(400).json({
+      success: false,
+      statusCode: 400,
+      errorType: "invalid_image",
+      error: "\u672A\u63D0\u4F9B\u6709\u6548\u7684\u56FE\u7247\u6570\u636E (imageUrl)",
+      requestId: safeRequestId
+    });
   }
+  const nestedRec = recognitionConfig || apiConfig?.apiSettings?.recognition?.image || apiConfig?.imageRecognitionApiConfig || null;
+  const recKey = (typeof directApiKey === "string" && directApiKey.trim() || typeof nestedRec?.apiKey === "string" && nestedRec.apiKey.trim() || typeof apiConfig?.imageRecognitionApiKey === "string" && apiConfig.imageRecognitionApiKey.trim() || "").trim();
+  const recBaseUrl = (typeof directBaseUrl === "string" && directBaseUrl.trim() || typeof nestedRec?.baseUrl === "string" && nestedRec.baseUrl.trim() || typeof apiConfig?.imageRecognitionBaseUrl === "string" && apiConfig.imageRecognitionBaseUrl.trim() || "").trim();
+  const recProvider = (typeof directProvider === "string" && directProvider.trim() || typeof nestedRec?.provider === "string" && nestedRec.provider.trim() || typeof apiConfig?.imageRecognitionProvider === "string" && apiConfig.imageRecognitionProvider.trim() || "google_gemini").trim();
+  const recProtocolRaw = (typeof directApiProtocol === "string" && directApiProtocol.trim() || typeof nestedRec?.apiProtocol === "string" && nestedRec.apiProtocol.trim() || typeof apiConfig?.imageRecognitionApiProtocol === "string" && apiConfig.imageRecognitionApiProtocol.trim() || "").trim();
+  const effectiveProtocol = resolveEffectiveProtocol({
+    provider: recProvider,
+    apiProtocol: recProtocolRaw,
+    baseUrl: recBaseUrl
+  });
+  const selectedModel = (typeof directModel === "string" && directModel.trim() || typeof nestedRec?.model === "string" && nestedRec.model.trim() || typeof apiConfig?.imageRecognitionModel === "string" && apiConfig.imageRecognitionModel.trim() || (effectiveProtocol === "google_native" ? "gemini-4-hydrogen" : "gpt-4o-mini")).trim();
   const startTime = Date.now();
-  const imageKey = apiConfig?.imageApiKey && apiConfig.imageApiKey.trim() || apiConfig?.textApiKey || "";
-  const imageBaseUrl = apiConfig?.imageBaseUrl || apiConfig?.textBaseUrl || "";
-  const imageProvider = apiConfig?.imageProvider || apiConfig?.textProvider || "google_gemini";
-  const imageProtocol = apiConfig?.imageApiProtocol || apiConfig?.textApiProtocol;
-  const selectedModel = apiConfig?.imageModel || apiConfig?.textModel || "gemini-4-hydrogen";
-  const customPrompt = prompt || "\u8BF7\u7528\u4E2D\u6587\u8BE6\u7EC6\u603B\u7ED3\u8BC6\u522B\u8FD9\u5F20\u56FE\u7247\u4E2D\u7684\u6838\u5FC3\u4E8B\u7269\u3001\u6587\u5B57\u3001\u573A\u666F\u4EE5\u53CA\u4E3B\u8981\u7EC6\u8282\u3002";
-  try {
-    let description = "";
+  if (!recKey) {
+    const errMsg = "\u672A\u914D\u7F6E\u3010\u8BC6\u522BAPI \u2192 \u56FE\u50CF\u8BC6\u522B\u3011\u5BC6\u94A5\uFF0C\u8BF7\u524D\u5F80 \u8BBE\u7F6E \u2192 API\u8BBE\u7F6E \u2192 \u8BC6\u522BAPI \u2192 \u56FE\u50CF\u8BC6\u522B \u586B\u5199\u72EC\u7ACB\u5BC6\u94A5\u3002";
+    return res.status(400).json({
+      success: false,
+      statusCode: 400,
+      errorType: "missing_api_key",
+      error: errMsg,
+      provider: recProvider,
+      model: selectedModel,
+      apiProtocol: effectiveProtocol,
+      latencyMs: Date.now() - startTime,
+      requestId: safeRequestId,
+      apiLog: buildApiLogObject({
+        appName: source,
+        provider: recProvider,
+        modelName: selectedModel,
+        interfaceType: "ImageRecognition",
+        category: "image_recognition",
+        status: "failed",
+        httpStatus: 400,
+        requestId: safeRequestId,
+        durationMs: Date.now() - startTime,
+        errorType: "missing_api_key",
+        error: errMsg,
+        purpose: `\u56FE\u50CF\u8BC6\u522B\u5931\u8D25 (${source})`
+      })
+    });
+  }
+  const cached = imageRecCompletedCache.get(safeRequestId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return res.status(cached.payload.success ? 200 : cached.payload.statusCode || 500).json(cached.payload);
+  }
+  const existingFlight = imageRecInFlightCache.get(safeRequestId);
+  if (existingFlight) {
+    try {
+      const reused = await existingFlight;
+      return res.status(reused.success ? 200 : reused.statusCode || 500).json(reused);
+    } catch (e) {
+      return res.status(500).json({
+        success: false,
+        error: sanitizeSensitiveText(e?.message || "\u56FE\u50CF\u8BC6\u522B\u8BF7\u6C42\u5F02\u5E38"),
+        requestId: safeRequestId
+      });
+    }
+  }
+  const runRecognition = async () => {
+    const ALLOWED_MIMES = /* @__PURE__ */ new Set(["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"]);
     let mimeType = "image/jpeg";
     let base64Data = "";
-    const isDataUrl = imageUrl.startsWith("data:");
-    if (isDataUrl) {
-      const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
-      if (matches) {
-        mimeType = matches[1];
-        base64Data = matches[2];
+    let remoteUrl = "";
+    if (imageUrl.startsWith("data:")) {
+      const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/s);
+      if (!matches) {
+        return {
+          success: false,
+          statusCode: 400,
+          errorType: "invalid_image_format",
+          error: "\u56FE\u7247 Base64 \u6570\u636E\u683C\u5F0F\u4E0D\u5408\u6CD5\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9 JPEG\u3001PNG \u6216 WebP \u683C\u5F0F\u56FE\u7247\u3002",
+          provider: recProvider,
+          model: selectedModel,
+          apiProtocol: effectiveProtocol,
+          latencyMs: Date.now() - startTime,
+          requestId: safeRequestId
+        };
+      }
+      mimeType = matches[1].toLowerCase().trim();
+      if (mimeType === "image/jpg") mimeType = "image/jpeg";
+      if (!ALLOWED_MIMES.has(mimeType)) {
+        return {
+          success: false,
+          statusCode: 400,
+          errorType: "unsupported_image_format",
+          error: `\u4E0D\u652F\u6301\u7684\u56FE\u7247\u683C\u5F0F (${mimeType})\uFF0C\u8BF7\u4F7F\u7528 JPEG\u3001PNG \u6216 WebP \u683C\u5F0F\u3002`,
+          provider: recProvider,
+          model: selectedModel,
+          apiProtocol: effectiveProtocol,
+          latencyMs: Date.now() - startTime,
+          requestId: safeRequestId
+        };
+      }
+      base64Data = matches[2].replace(/\s+/g, "");
+      const estimatedBytes = Math.floor(base64Data.length * 3 / 4);
+      if (estimatedBytes > 10 * 1024 * 1024) {
+        return {
+          success: false,
+          statusCode: 413,
+          errorType: "image_too_large",
+          error: `\u56FE\u7247\u4F53\u79EF\u8FC7\u5927 (${(estimatedBytes / (1024 * 1024)).toFixed(1)}MB)\uFF0C\u8D85\u8FC7 10MB \u9650\u5236\uFF0C\u8BF7\u538B\u7F29\u540E\u91CD\u8BD5\u3002`,
+          provider: recProvider,
+          model: selectedModel,
+          apiProtocol: effectiveProtocol,
+          latencyMs: Date.now() - startTime,
+          requestId: safeRequestId
+        };
+      }
+    } else {
+      try {
+        const safeUrl = assertSafeRemoteImageUrl(imageUrl);
+        remoteUrl = safeUrl.toString();
+      } catch (urlErr) {
+        return {
+          success: false,
+          statusCode: 400,
+          errorType: "invalid_image_url",
+          error: urlErr?.message || "\u8FDC\u7A0B\u56FE\u7247\u5730\u5740\u4E0D\u5408\u6CD5",
+          provider: recProvider,
+          model: selectedModel,
+          apiProtocol: effectiveProtocol,
+          latencyMs: Date.now() - startTime,
+          requestId: safeRequestId
+        };
       }
     }
-    const isOpenAi = imageProtocol === "openai_compatible" || imageProvider === "openai_compatible" || imageProvider === "deepseek" || imageProvider === "openrouter" || imageBaseUrl && (imageBaseUrl.includes("/v1") || imageBaseUrl.includes("openai"));
-    if (isOpenAi) {
-      const endpoint = imageBaseUrl ? imageBaseUrl.endsWith("/chat/completions") ? imageBaseUrl : `${imageBaseUrl.replace(/\/+$/, "")}/chat/completions` : "https://api.openai.com/v1/chat/completions";
-      const headers = {
-        "Content-Type": "application/json"
+    const lowerModel = selectedModel.toLowerCase();
+    if (lowerModel.includes("imagen-") || lowerModel.includes("dall-e") || lowerModel.includes("flux") || lowerModel.includes("whisper") || lowerModel.includes("tts-")) {
+      return {
+        success: false,
+        statusCode: 400,
+        errorType: "unsupported_vision_model",
+        error: `\u5F53\u524D\u9009\u62E9\u7684\u6A21\u578B (${selectedModel}) \u4E0D\u662F\u56FE\u50CF\u8BC6\u522B/\u89C6\u89C9\u6A21\u578B\uFF0C\u8BF7\u66F4\u6362\u4E3A\u652F\u6301\u591A\u6A21\u6001\u89C6\u89C9\u7684\u6A21\u578B\uFF08\u5982 gemini-4-hydrogen\u3001gemini-2.5-flash \u6216 gpt-4o-mini\uFF09\u3002`,
+        provider: recProvider,
+        model: selectedModel,
+        apiProtocol: effectiveProtocol,
+        latencyMs: Date.now() - startTime,
+        requestId: safeRequestId
       };
-      if (imageKey) {
-        headers["Authorization"] = `Bearer ${imageKey}`;
-      }
-      const lowerModel = selectedModel.toLowerCase();
-      const isKnownTextOnly = lowerModel.includes("reasoner") || lowerModel.includes("o1-mini") || lowerModel.includes("text-only");
-      if (isKnownTextOnly) {
-        return res.json({
-          success: false,
-          error: `\u5F53\u524D\u914D\u7F6E\u7684\u6A21\u578B (${selectedModel}) \u4E3A\u7EAF\u6587\u672C\u6A21\u578B\uFF0C\u4E0D\u652F\u6301\u56FE\u50CF\u8BC6\u522B\u3002\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u5207\u6362\u4E3A\u89C6\u89C9\u6A21\u578B (\u5982 gpt-4o, gemini-4-hydrogen)\u3002`,
-          description: "\u5F53\u524D\u6A21\u578B\u4E0D\u652F\u6301\u56FE\u7247\u8BC6\u522B"
+    }
+    const structuredVisionPrompt = `${prompt && typeof prompt === "string" && prompt.trim() ? prompt.trim() : "\u8BF7\u4ED4\u7EC6\u89C2\u5BDF\u8FD9\u5F20\u56FE\u7247\uFF0C\u8BC6\u522B\u753B\u9762\u4E2D\u7684\u4EBA\u7269\u3001\u7269\u4F53\u3001\u573A\u666F\u3001\u4E3B\u8981\u7EC6\u8282\u4EE5\u53CA\u6E05\u6670\u53EF\u89C1\u7684\u6587\u5B57\u3002"}
+
+\u8BF7\u4E25\u683C\u8FD4\u56DE\u5982\u4E0B JSON \u683C\u5F0F\uFF08\u4E0D\u8981\u8F93\u51FA markdown \u4EE3\u7801\u5757\u5305\u88F9\uFF0C\u76F4\u63A5\u8F93\u51FA JSON\uFF09\uFF1A
+{
+  "description": "\u7528\u6D41\u7545\u4E2D\u6587\u5BA2\u89C2\u8BE6\u7EC6\u63CF\u8FF0\u56FE\u7247\u6574\u4F53\u753B\u9762\u3001\u4EBA\u7269\u52A8\u4F5C\u3001\u8868\u60C5\u3001\u8272\u5F69\u4E0E\u4E3B\u8981\u7EC6\u8282\uFF08\u81F3\u5C1115\u5B57\uFF09",
+  "detectedText": "\u56FE\u7247\u4E2D\u51FA\u73B0\u7684\u6240\u6709\u53EF\u89C1\u6587\u5B57\u5185\u5BB9\uFF0C\u82E5\u65E0\u6587\u5B57\u8BF7\u8FD4\u56DE\u7A7A\u5B57\u7B26\u4E32",
+  "objects": ["\u6838\u5FC3\u7269\u4F53\u6216\u4EBA\u72691", "\u6838\u5FC3\u7269\u4F532"],
+  "scene": "\u7B80\u77ED\u573A\u666F\u7C7B\u522B\uFF0C\u4F8B\u5982\uFF1A\u5BA4\u5185\u3001\u6237\u5916\u8857\u9053\u3001\u5496\u5561\u9986\u3001\u804A\u5929\u622A\u56FE\u3001\u624B\u7ED8\u63D2\u753B\u3001\u6587\u6863\u7B49"
+}`;
+    let rawModelText = "";
+    let upstreamHttpStatus = 200;
+    if (effectiveProtocol === "google_native") {
+      if (!base64Data && remoteUrl) {
+        const imgResp = await fetch(remoteUrl, {
+          method: "GET",
+          signal: AbortSignal.timeout(15e3)
         });
+        if (!imgResp.ok) {
+          return {
+            success: false,
+            statusCode: imgResp.status,
+            errorType: "remote_image_fetch_failed",
+            error: `\u8BFB\u53D6\u8FDC\u7A0B\u56FE\u7247\u5931\u8D25 (HTTP ${imgResp.status})`,
+            provider: recProvider,
+            model: selectedModel,
+            apiProtocol: effectiveProtocol,
+            latencyMs: Date.now() - startTime,
+            requestId: safeRequestId
+          };
+        }
+        const ct = (imgResp.headers.get("content-type") || "image/jpeg").split(";")[0].trim().toLowerCase();
+        mimeType = ALLOWED_MIMES.has(ct) ? ct : "image/jpeg";
+        const arrBuf = await imgResp.arrayBuffer();
+        if (arrBuf.byteLength > 10 * 1024 * 1024) {
+          return {
+            success: false,
+            statusCode: 413,
+            errorType: "image_too_large",
+            error: "\u8FDC\u7A0B\u56FE\u7247\u8D85\u8FC7 10MB \u4F53\u79EF\u9650\u5236",
+            provider: recProvider,
+            model: selectedModel,
+            apiProtocol: effectiveProtocol,
+            latencyMs: Date.now() - startTime,
+            requestId: safeRequestId
+          };
+        }
+        base64Data = Buffer.from(arrBuf).toString("base64");
       }
-      const visionModel = selectedModel.includes("gemini") ? "gpt-4o-mini" : selectedModel;
-      const response = await fetch(endpoint, {
+      const googleBase = buildGoogleRestBase(recBaseUrl);
+      const cleanModelId = selectedModel.replace(/^models\//, "");
+      const endpoint = `${googleBase}/models/${encodeURIComponent(cleanModelId)}:generateContent`;
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": recKey,
+          "User-Agent": "aistudio-build"
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { inlineData: { mimeType, data: base64Data } },
+                { text: structuredVisionPrompt }
+              ]
+            }
+          ],
+          generationConfig: {
+            responseMimeType: "application/json"
+          }
+        }),
+        signal: AbortSignal.timeout(Math.min(Math.max(Number(timeoutMs) || 45e3, 1e4), 9e4))
+      });
+      upstreamHttpStatus = resp.status;
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        let detail = errText;
+        try {
+          const j = JSON.parse(errText);
+          detail = j.error?.message || j.message || errText;
+        } catch {
+        }
+        const safeDetail = sanitizeSensitiveText(detail, 220);
+        const errorType = resp.status === 401 || resp.status === 403 ? "auth_error" : resp.status === 429 ? "rate_limit" : resp.status === 404 ? "model_not_found" : resp.status === 413 ? "image_too_large" : /protocol|not supported|invalid argument|multimodal|image/i.test(safeDetail) ? "protocol_or_model_mismatch" : "upstream_error";
+        return {
+          success: false,
+          statusCode: resp.status,
+          errorType,
+          error: `Google \u539F\u751F\u56FE\u50CF\u8BC6\u522B\u5931\u8D25 (HTTP ${resp.status}): ${safeDetail}`,
+          provider: recProvider,
+          model: selectedModel,
+          apiProtocol: effectiveProtocol,
+          latencyMs: Date.now() - startTime,
+          requestId: safeRequestId
+        };
+      }
+      const resJson = await resp.json();
+      const parts = resJson?.candidates?.[0]?.content?.parts || [];
+      rawModelText = parts.filter((p) => typeof p?.text === "string").map((p) => p.text).join("\n").trim();
+    } else {
+      const endpoint = buildOpenAiEndpoint(recBaseUrl, "/chat/completions");
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${recKey}`
+      };
+      const imageContentUrl = base64Data ? `data:${mimeType};base64,${base64Data}` : remoteUrl;
+      const resp = await fetch(endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify({
-          model: visionModel,
+          model: selectedModel,
           messages: [
             {
               role: "user",
               content: [
-                { type: "text", text: customPrompt },
-                { type: "image_url", image_url: { url: imageUrl } }
+                { type: "text", text: structuredVisionPrompt },
+                { type: "image_url", image_url: { url: imageContentUrl } }
               ]
             }
           ],
-          max_tokens: 800
-        })
+          max_tokens: 900
+        }),
+        signal: AbortSignal.timeout(Math.min(Math.max(Number(timeoutMs) || 45e3, 1e4), 9e4))
       });
-      if (!response.ok) {
-        const errText = await response.text();
-        let parsedMsg = errText.slice(0, 200);
+      upstreamHttpStatus = resp.status;
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        let detail = errText;
         try {
           const j = JSON.parse(errText);
-          parsedMsg = j.error?.message || j.message || parsedMsg;
+          detail = j.error?.message || j.message || errText;
         } catch {
         }
-        return res.json({
+        const safeDetail = sanitizeSensitiveText(detail, 220);
+        const errorType = resp.status === 401 || resp.status === 403 ? "auth_error" : resp.status === 429 ? "rate_limit" : resp.status === 404 ? "model_not_found" : resp.status === 413 ? "image_too_large" : /image_url|vision|multimodal|not support|content must be a string/i.test(safeDetail) ? "unsupported_vision_model" : "upstream_error";
+        return {
           success: false,
-          error: `\u56FE\u50CF API \u8BF7\u6C42\u5931\u8D25 (${response.status}): ${parsedMsg}`,
-          description: "\u56FE\u50CF\u8BC6\u522B\u8C03\u7528\u5931\u8D25"
-        });
+          statusCode: resp.status,
+          errorType,
+          error: `OpenAI \u517C\u5BB9\u56FE\u50CF\u8BC6\u522B\u5931\u8D25 (HTTP ${resp.status}): ${safeDetail}`,
+          provider: recProvider,
+          model: selectedModel,
+          apiProtocol: effectiveProtocol,
+          latencyMs: Date.now() - startTime,
+          requestId: safeRequestId
+        };
       }
-      const resJson = await response.json();
-      description = resJson.choices?.[0]?.message?.content || "";
-    } else {
-      const activeKey = imageKey || (!imageBaseUrl && process.env.NODE_ENV !== "production" ? process.env.GEMINI_API_KEY || "" : "");
-      if (!activeKey) {
-        return res.json({
-          success: false,
-          error: "\u672A\u914D\u7F6E\u56FE\u50CF API \u5BC6\u94A5\uFF0C\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u914D\u7F6E\u56FE\u50CF API Key\u3002",
-          description: "\u672A\u914D\u7F6E\u56FE\u50CF API Key"
-        });
+      const resJson = await resp.json();
+      const rawChoice = resJson?.choices?.[0]?.message?.content;
+      if (typeof rawChoice === "string") {
+        rawModelText = rawChoice.trim();
+      } else if (Array.isArray(rawChoice)) {
+        rawModelText = rawChoice.map((c) => typeof c === "string" ? c : c?.text || "").join("\n").trim();
       }
-      const clientOptions = {
-        apiKey: activeKey,
-        httpOptions: {
-          headers: { "User-Agent": "aistudio-build" }
-        }
-      };
-      if (imageBaseUrl) {
-        clientOptions.httpOptions.baseUrl = imageBaseUrl;
-      }
-      const { GoogleGenAI } = await loadGoogleGenAi();
-      const aiClient = new GoogleGenAI(clientOptions);
-      let parts = [];
-      if (base64Data) {
-        parts = [
-          { inlineData: { mimeType, data: base64Data } },
-          { text: customPrompt }
-        ];
-      } else {
-        parts = [{ text: `${customPrompt}
-\u56FE\u7247URL: ${imageUrl}` }];
-      }
-      const visionModel = selectedModel.includes("gemini") ? normalizeOfficialGeminiModel(selectedModel) : GEMINI_DEFAULT_TEXT_MODEL;
-      const isOfficialVision = !imageBaseUrl || imageBaseUrl.includes("googleapis.com");
-      const now = Date.now();
-      const visionCandidates = isOfficialVision ? Array.from(/* @__PURE__ */ new Set([visionModel, ...GEMINI_TEXT_FALLBACK_ORDER])).filter((m) => (geminiModelCooldownUntil.get(m) || 0) <= now) : [visionModel];
-      let aiResponse = null;
-      let lastVisionErr = null;
-      for (const candidateModel of visionCandidates) {
-        try {
-          aiResponse = await aiClient.models.generateContent({
-            model: candidateModel,
-            contents: [{ role: "user", parts }]
-          });
-          break;
-        } catch (geminiErr) {
-          lastVisionErr = geminiErr;
-          const msg = String(geminiErr?.message || "");
-          if (isOfficialVision && isQuotaOrRateLimitError(msg)) {
-            geminiModelCooldownUntil.set(candidateModel, Date.now() + parseRetryCooldownMs(msg));
-            continue;
-          }
-          if (isOfficialVision && isModelUnavailableError(msg)) {
-            geminiModelCooldownUntil.set(candidateModel, Date.now() + 60 * 6e4);
-            continue;
-          }
-          break;
-        }
-      }
-      if (!aiResponse) {
-        return res.json({
-          success: false,
-          error: `Gemini \u89C6\u89C9\u63A5\u53E3\u8C03\u7528\u5F02\u5E38: ${lastVisionErr?.message || "\u5F53\u524D\u6A21\u578B\u914D\u989D\u53D7\u9650\u6216\u7F51\u7EDC\u5F02\u5E38"}`,
-          description: "\u56FE\u7247\u8BC6\u522B\u8C03\u7528\u5931\u8D25"
-        });
-      }
-      description = aiResponse?.text || "";
     }
-    const duration = Date.now() - startTime;
-    if (!description.trim()) {
-      return res.json({
+    const latencyMs = Date.now() - startTime;
+    if (!rawModelText) {
+      return {
         success: false,
-        error: "\u56FE\u50CF API \u672A\u80FD\u5206\u6790\u51FA\u6709\u6548\u753B\u9762\u63CF\u8FF0",
-        description: "\u56FE\u7247\u8BC6\u522B\u672A\u80FD\u751F\u6210\u6709\u6548\u63CF\u8FF0"
+        statusCode: 502,
+        errorType: "empty_recognition_result",
+        error: "\u56FE\u50CF\u8BC6\u522B\u63A5\u53E3\u8FD4\u56DE\u7A7A\u5185\u5BB9\uFF0C\u8BF7\u68C0\u67E5\u6A21\u578B\u662F\u5426\u652F\u6301\u89C6\u89C9\u8F93\u5165\u6216\u5207\u6362\u89C6\u89C9\u6A21\u578B\u3002",
+        provider: recProvider,
+        model: selectedModel,
+        apiProtocol: effectiveProtocol,
+        latencyMs,
+        requestId: safeRequestId
+      };
+    }
+    let description = "";
+    let detectedText = "";
+    let objects = [];
+    let scene = "";
+    try {
+      const cleanedJson = rawModelText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+      const jsonStart = cleanedJson.indexOf("{");
+      const jsonEnd = cleanedJson.lastIndexOf("}");
+      if (jsonStart !== -1 && jsonEnd > jsonStart) {
+        const parsed = JSON.parse(cleanedJson.slice(jsonStart, jsonEnd + 1));
+        description = typeof parsed.description === "string" ? parsed.description.trim() : "";
+        detectedText = typeof parsed.detectedText === "string" ? parsed.detectedText.trim() : "";
+        objects = Array.isArray(parsed.objects) ? parsed.objects.map((o) => String(o || "").trim()).filter(Boolean).slice(0, 12) : [];
+        scene = typeof parsed.scene === "string" ? parsed.scene.trim() : "";
+      }
+    } catch {
+    }
+    if (!description) {
+      description = sanitizeReplyText(rawModelText).trim();
+    }
+    if (!description) {
+      return {
+        success: false,
+        statusCode: 502,
+        errorType: "empty_recognition_result",
+        error: "\u672A\u80FD\u4ECE\u6A21\u578B\u8FD4\u56DE\u4E2D\u63D0\u53D6\u5230\u6709\u6548\u753B\u9762\u63CF\u8FF0\u3002",
+        provider: recProvider,
+        model: selectedModel,
+        apiProtocol: effectiveProtocol,
+        latencyMs,
+        requestId: safeRequestId
+      };
+    }
+    return {
+      success: true,
+      statusCode: upstreamHttpStatus,
+      description,
+      detectedText,
+      objects,
+      scene,
+      provider: recProvider,
+      model: selectedModel,
+      apiProtocol: effectiveProtocol,
+      latencyMs,
+      duration: latencyMs,
+      requestId: safeRequestId,
+      messageId,
+      characterId,
+      apiLog: buildApiLogObject({
+        appName: source,
+        provider: recProvider,
+        modelName: selectedModel,
+        interfaceType: "ImageRecognition",
+        category: "image_recognition",
+        status: "success",
+        httpStatus: upstreamHttpStatus,
+        requestId: safeRequestId,
+        durationMs: latencyMs,
+        purpose: `${source} (${scene || "\u89C6\u89C9\u5185\u5BB9\u89E3\u6790"})`
+      })
+    };
+  };
+  const flightPromise = runRecognition().then((result) => {
+    if (!result.apiLog && !result.success) {
+      result.apiLog = buildApiLogObject({
+        appName: source,
+        provider: result.provider || recProvider,
+        modelName: result.model || selectedModel,
+        interfaceType: "ImageRecognition",
+        category: "image_recognition",
+        status: "failed",
+        httpStatus: result.statusCode || 500,
+        requestId: safeRequestId,
+        durationMs: result.latencyMs || Date.now() - startTime,
+        errorType: result.errorType || "ImageRecognitionError",
+        error: result.error || "\u56FE\u50CF\u8BC6\u522B\u5931\u8D25",
+        purpose: `${source} \u5931\u8D25`
       });
     }
-    return res.json({
-      success: true,
-      description: description.trim(),
-      duration,
-      apiLog: buildApiLogObject({
-        appName: "\u56FE\u50CF\u8BC6\u522B\u4E0E\u591A\u6A21\u6001\u5206\u6790",
-        modelName: selectedModel,
-        interfaceType: "VisionAnalysis",
-        category: "image",
-        durationMs: duration,
-        purpose: "AI \u8BC6\u522B\u5E76\u5206\u6790\u5FAE\u4FE1\u804A\u5929\u53D1\u9001\u7684\u56FE\u7247"
-      })
-    });
+    if (result.success) {
+      imageRecCompletedCache.set(safeRequestId, {
+        expiresAt: Date.now() + IMAGE_IDEMPOTENCY_TTL_MS,
+        payload: result
+      });
+    }
+    return result;
+  }).finally(() => {
+    imageRecInFlightCache.delete(safeRequestId);
+  });
+  imageRecInFlightCache.set(safeRequestId, flightPromise);
+  try {
+    const result = await flightPromise;
+    return res.status(result.success ? 200 : result.statusCode || 500).json(result);
   } catch (err) {
-    console.error("Analyze image error:", err);
-    return res.json({
+    const latencyMs = Date.now() - startTime;
+    const isTimeout = err?.name === "TimeoutError" || err?.name === "AbortError";
+    const safeErr = sanitizeSensitiveText(
+      isTimeout ? "\u56FE\u50CF\u8BC6\u522B\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u8FDE\u63A5\u6216\u53CD\u4EE3\u54CD\u5E94\u901F\u5EA6\u3002" : err?.message || "\u56FE\u7247\u89C6\u89C9\u8BC6\u522B\u5F02\u5E38",
+      240
+    );
+    return res.status(isTimeout ? 504 : 500).json({
       success: false,
-      error: err.message || "\u56FE\u7247\u89C6\u89C9\u8BC6\u522B\u5931\u8D25",
-      description: "\u56FE\u7247\u8BC6\u522B\u8C03\u7528\u5931\u8D25"
+      statusCode: isTimeout ? 504 : 500,
+      errorType: isTimeout ? "timeout" : "network_error",
+      error: safeErr,
+      provider: recProvider,
+      model: selectedModel,
+      apiProtocol: effectiveProtocol,
+      latencyMs,
+      requestId: safeRequestId,
+      apiLog: buildApiLogObject({
+        appName: source,
+        provider: recProvider,
+        modelName: selectedModel,
+        interfaceType: "ImageRecognition",
+        category: "image_recognition",
+        status: "failed",
+        httpStatus: isTimeout ? 504 : 500,
+        requestId: safeRequestId,
+        durationMs: latencyMs,
+        errorType: isTimeout ? "timeout" : "network_error",
+        error: safeErr,
+        purpose: `${source} \u5F02\u5E38`
+      })
     });
   }
 });
@@ -2603,13 +3048,23 @@ ${req.body.lifeStateContext}
 `;
     }
     contextPrompt += `
+\u3010\u{1F3A8} \u771F\u5B9E\u56FE\u50CF\u751F\u6210\u5DE5\u5177\u8C03\u7528\u80FD\u529B (generate_image)\u3011:
+\u4F60\u8FDE\u63A5\u4E86\u72EC\u7ACB\u7684\u56FE\u50CF\u751F\u6210\u7CFB\u7EDF\u3002\u8BF7\u4E25\u683C\u9075\u5B88\u4EE5\u4E0B\u8BED\u4E49\u89E6\u53D1\u89C4\u8303\uFF1A
+1. \u4EC5\u5F53\u7528\u6237**\u660E\u786E\u8981\u6C42\u4F60\u753B\u56FE\u3001\u751F\u6210\u56FE\u7247\u3001\u5236\u4F5C\u56FE\u7247\u3001\u505A\u5934\u50CF\u3001\u753B\u573A\u666F\u3001\u62CD\u4E00\u5F20\u53D1\u8FC7\u6765\u3001\u753B\u4E00\u53EA/\u753B\u4E00\u5E45\u2026\u2026**\u65F6\uFF0C\u624D\u89E6\u53D1\u753B\u56FE\u5DE5\u5177\u3002
+2. \u5982\u679C\u7528\u6237\u53EA\u662F\u5728\u8BA8\u8BBA\u56FE\u7247\u3001\u5938\u5956\u201C\u8FD9\u753B\u5F97\u771F\u597D\u770B\u201D\u3001\u6216\u8005\u95F2\u804A\u8BE2\u95EE\u56FE\u7247\u529F\u80FD\uFF0C**\u7EDD\u5BF9\u4E0D\u8981**\u89E6\u53D1\u753B\u56FE\u5DE5\u5177\u3002
+3. \u5F53\u786E\u8BA4\u9700\u8981\u753B\u56FE\u65F6\uFF1A
+   - \u5148\u7528\u7B26\u5408\u4F60\u4EBA\u8BBE\u7684\u53E3\u543B\u81EA\u7136\u8F93\u51FA\u914D\u5957\u6587\u5B57\uFF08\u4F8B\u5982\u201C\u753B\u597D\u4EE5\u540E\u6211\u5C31\u53D1\u7ED9\u4F60\uFF0C\u60F3\u7ED9\u4F60\u753B\u4E00\u53EA\u8DB4\u5728\u7A97\u8FB9\u7B49\u4F60\u7684\u5C0F\u732B\u3002\u201D\uFF09\uFF0C**\u7EDD\u4E0D\u80FD\u53EA\u56DE\u6587\u5B57\u5047\u88C5\u753B\u597D\u4E86\uFF0C\u4E5F\u7EDD\u4E0D\u80FD\u7F16\u9020\u201C\u753B\u56FE\u5F00\u5173\u6CA1\u6253\u5F00\u201D\u4E4B\u7C7B\u501F\u53E3**\u3002
+   - \u5728\u56DE\u590D\u672B\u5C3E\u9644\u5E26\u552F\u4E00\u4E00\u4E2A\u6807\u51C6\u5DE5\u5177\u6807\u7B7E\uFF08\u6B64\u6807\u7B7E\u4F1A\u88AB\u7CFB\u7EDF\u89E3\u6790\u6267\u884C\u5E76\u9690\u85CF\uFF0C\u7EDD\u4E0D\u4F1A\u5C55\u793A\u7ED9\u7528\u6237\uFF09\uFF1A
+     <image_action>{"type":"generate_image","prompt":"\u5B8C\u6574\u3001\u53EF\u4F9B\u56FE\u50CF\u6A21\u578B\u76F4\u63A5\u7ED8\u5236\u7684\u8BE6\u7EC6\u89C6\u89C9\u63D0\u793A\u8BCD\uFF08\u5305\u542B\u4E3B\u4F53\u3001\u5149\u5F71\u3001\u6784\u56FE\u3001\u98CE\u683C\u3001\u7EC6\u8282\uFF09","imageDescription":"\u7B80\u660E\u4E2D\u6587\u753B\u9762\u63CF\u8FF0\uFF0C\u4F9B\u4F60\u540E\u7EED\u8BB0\u5FC6\u81EA\u5DF1\u753B\u4E86\u4EC0\u4E48","aspectRatio":"1:1","negativePrompt":""}</image_action>
+   - aspectRatio \u53EF\u6309\u573A\u666F\u9009\u7528 "1:1" / "3:4" / "4:3" / "16:9" / "9:16"\u3002
+
 \u3010\u{1F4F1} \u5FAE\u4FE1\u771F\u4EBA\u6253\u5B57\u4E0E\u5206\u53E5\u8FDE\u53D1\u4E60\u60EF\u3011\uFF1A
 \u5728\u771F\u5B9E\u5FAE\u4FE1\u804A\u5929\u4E2D\uFF0C\u771F\u4EBA\u901A\u5E38\u4E0D\u4F1A\u4E00\u6B21\u6027\u5806\u780C\u957F\u7BC7\u5927\u8BBA\uFF0C\u800C\u662F\u4E60\u60EF\u628A\u4E00\u6574\u6BB5\u8BDD\u5207\u5206\u6210 2~4 \u6761\u81EA\u7136\u7B80\u77ED\u7684\u8BDD\u8BED\u8FDE\u53D1\uFF08\u4E00\u53E5\u8BDD\u53D1\u4E00\u6761\u6D88\u606F\uFF0C\u968F\u6027\u53E3\u8BED\u5316\u3001\u4EB2\u8FD1\u771F\u5B9E\uFF09\u3002
 \u8BF7\u5728\u8F93\u51FA\u56DE\u590D\u65F6\uFF0C\u81EA\u7136\u5730\u4F7F\u7528\u6362\u884C\uFF08\u6BCF\u884C\u4E00\u4E24\u53E5\u8BDD\uFF09\u5206\u9694\uFF0C\u8BA9\u6BCF\u6761\u6D88\u606F\u90FD\u7B80\u77ED\u7CBE\u70BC\u3001\u751F\u52A8\u65E5\u5E38\uFF0C\u907F\u514D\u4E66\u9762\u5316\u5927\u6BB5\u72EC\u767D\u3002
 
 \u3010\u6838\u5FC3\u8F93\u51FA\u683C\u5F0F\u8981\u6C42\u3011\uFF1A
 \u8BF7\u5728\u56DE\u7B54\u7684\u6700\u524D\u9762\u7528 <think>...</think> \u6807\u7B7E\u8F93\u51FA\u4F60\u672C\u6B21\u56DE\u7B54\u7684\u601D\u8003\u94FE (Thinking Process / Chain of Thought)\uFF0C\u8BF4\u660E\u4F60\u662F\u5982\u4F55\u7ED3\u5408\u89D2\u8272\u4EBA\u8BBE\u3001\u8BB0\u5FC6\u3001\u4E16\u754C\u4E66\u80CC\u666F\uFF08\u82E5\u6709\u5173\u8054\uFF09\u4EE5\u53CA\u7528\u6237\u4E0A\u4E0B\u6587\u505A\u51FA\u56DE\u5E94\u7684\u3002
-\u5728 </think> \u6807\u7B7E\u4E4B\u540E\uFF0C\u76F4\u63A5\u8F93\u51FA\u4F60\u7ED9\u7528\u6237\u7684\u5FAE\u4FE1\u56DE\u590D\u6587\u672C\uFF08\u4FDD\u6301\u5FAE\u4FE1\u53E3\u8BED\u5316\u3001\u4EB2\u5207\u81EA\u5982\uFF0C\u9002\u5408\u5FAE\u4FE1\u804A\u5929\uFF0C\u591A\u53E5\u8BDD\u4E4B\u95F4\u6362\u884C\u9694\u5F00\uFF09\u3002
+\u5728 </think> \u6807\u7B7E\u4E4B\u540E\uFF0C\u76F4\u63A5\u8F93\u51FA\u4F60\u7ED9\u7528\u6237\u7684\u5FAE\u4FE1\u56DE\u590D\u6587\u672C\uFF08\u4FDD\u6301\u5FAE\u4FE1\u53E3\u8BED\u5316\u3001\u4EB2\u5207\u81EA\u5982\uFF0C\u9002\u5408\u5FAE\u4FE1\u804A\u5929\uFF0C\u591A\u53E5\u8BDD\u4E4B\u95F4\u6362\u884C\u9694\u5F00\uFF09\uFF1B\u82E5\u9700\u8981\u89E6\u53D1\u753B\u56FE\uFF0C\u8BF7\u5728\u56DE\u590D\u672B\u5C3E\u7D27\u8DDF <image_action>{...}</image_action>\u3002
 `;
     const turnMsgIdSet = new Set(Array.isArray(currentTurnMessageIds) ? currentTurnMessageIds : []);
     const cleanedHistory = (conversationHistory || []).filter((msg) => {
@@ -2693,11 +3148,40 @@ ${req.body.lifeStateContext}
           );
           return;
         }
+        if (msg.sender === "ai" && (msg.messageType === "generated_image" || msg.type === "generated_image")) {
+          const semanticDesc = msg.imageDescription && msg.imageDescription.trim() || msg.revisedPrompt && msg.revisedPrompt.trim() || msg.generationPrompt && msg.generationPrompt.trim() || "\u4E00\u5F20\u751F\u6210\u7684\u56FE\u7247";
+          const statusNote = msg.generationStatus === "failed" ? "[AI\u6B64\u524D\u5C1D\u8BD5\u751F\u6210\u56FE\u7247\u4F46\u672A\u80FD\u6210\u529F]" : `[AI\u6B64\u524D\u751F\u6210\u4E86\u4E00\u5F20\u56FE\u7247\uFF1A${semanticDesc}]`;
+          const captionPart = msg.text ? `${msg.text} ` : "";
+          contents.push(`[${msgTime}] ${character.name}: ${captionPart}${statusNote}`);
+          return;
+        }
         const isProactiveMsg = Boolean(msg.isProactive);
         const senderLabel = msg.sender === "user" ? userProfile?.name || "\u7528\u6237" : isProactiveMsg ? `${character.name} [\u6B64\u524D\u4E3B\u52A8\u6D88\u606F${msg.proactiveMeta?.repliedByUser ? "\xB7\u7528\u6237\u5DF2\u56DE\u5E94" : "\xB7\u6B64\u524D\u53D1\u8D77"}]` : character.name;
+        if (msg.sender === "user" && (msg.imageUrl || msg.messageType === "image")) {
+          const recDesc = (msg.imageDescription || msg.imageAnalysis || "").trim();
+          const recText = (msg.detectedText || "").trim();
+          const isFailed = msg.recognitionStatus === "failed" || msg.imageAnalysisStatus === "failed";
+          if (recDesc && !isFailed) {
+            let imgBlock = `[${msgTime}] ${senderLabel}\u53D1\u9001\u4E86\u4E00\u5F20\u56FE\u7247\u3002
+\u56FE\u7247\u5185\u5BB9\uFF1A${recDesc}`;
+            if (recText) imgBlock += `
+\u56FE\u7247\u6587\u5B57\uFF1A${recText}`;
+            if (msg.text) imgBlock += `
+\u7528\u6237\u9644\u8A00\uFF1A${msg.text}`;
+            contents.push(imgBlock);
+          } else if (isFailed) {
+            contents.push(
+              `[${msgTime}] ${senderLabel}\u53D1\u9001\u4E86\u4E00\u5F20\u56FE\u7247\uFF08\u56FE\u7247\u8BC6\u522B\u5931\u8D25\uFF0C\u65E0\u6CD5\u770B\u5230\u753B\u9762\u5185\u5BB9\uFF09\u3002${msg.text ? ` \u7528\u6237\u9644\u8A00\uFF1A${msg.text}` : ""}`
+            );
+          } else {
+            contents.push(`[${msgTime}] ${senderLabel}: ${msg.text || ""} [\u56FE\u7247\u9644\u4EF6]`);
+          }
+          return;
+        }
         let msgStr = `[${msgTime}] ${senderLabel}: ${msg.text || ""}`;
         if (msg.imageUrl) {
-          msgStr += ` [\u56FE\u7247\u9644\u4EF6${msg.imageAnalysis ? `: ${msg.imageAnalysis}` : ""}]`;
+          const desc = (msg.imageDescription || msg.imageAnalysis || "").trim();
+          msgStr += ` [\u56FE\u7247\u9644\u4EF6${desc ? `: ${desc}` : ""}]`;
         }
         contents.push(msgStr);
       });
@@ -2706,7 +3190,6 @@ ${req.body.lifeStateContext}
     let currentMsgStr = `[${currentUserTime}] ${userProfile?.name || "\u7528\u6237"}: ${userMessage || ""}`;
     if (req.body.currentImageAnalysis) {
       currentMsgStr += `
-\u3010\u7528\u6237\u672C\u6B21\u53D1\u51FA\u7684\u56FE\u7247\u8BC6\u522B\u611F\u77E5\u63CF\u8FF0\u3011:
 ${req.body.currentImageAnalysis}`;
     }
     contents.push(currentMsgStr);
@@ -2752,19 +3235,68 @@ ${req.body.currentImageAnalysis}`;
         console.warn("Failed to parse device_action JSON from AI reply:", match[1]);
       }
     }
-    replyContent = sanitizeReplyText(replyContent.replace(/<device_action>[\s\S]*?<\/device_action>/gi, "").trim());
+    const extractedActions = [];
+    const imageActionRegex = /<image_action>([\s\S]*?)<\/image_action>/gi;
+    let imgMatch;
+    while ((imgMatch = imageActionRegex.exec(replyContent)) !== null) {
+      try {
+        const parsedAction = JSON.parse(imgMatch[1].trim());
+        const isGenImg = parsedAction && (parsedAction.type === "generate_image" || parsedAction.action === "generate_image") && typeof parsedAction.prompt === "string" && parsedAction.prompt.trim();
+        if (isGenImg) {
+          extractedActions.push({
+            type: "generate_image",
+            prompt: parsedAction.prompt.trim(),
+            imageDescription: typeof parsedAction.imageDescription === "string" && parsedAction.imageDescription.trim() ? parsedAction.imageDescription.trim() : parsedAction.prompt.trim().slice(0, 100),
+            aspectRatio: typeof parsedAction.aspectRatio === "string" ? parsedAction.aspectRatio.trim() : "1:1",
+            negativePrompt: typeof parsedAction.negativePrompt === "string" ? parsedAction.negativePrompt.trim() : ""
+          });
+        }
+      } catch {
+        console.warn("[Chat] Failed to parse <image_action> JSON");
+      }
+    }
+    const strippedTags = replyContent.replace(/<device_action>[\s\S]*?<\/device_action>/gi, "").replace(/<image_action>[\s\S]*?<\/image_action>/gi, "").trim();
+    let finalReplyText = strippedTags;
+    if (strippedTags.startsWith("{") && strippedTags.endsWith("}") && strippedTags.includes('"actions"')) {
+      try {
+        const parsedObj = JSON.parse(strippedTags);
+        if (parsedObj && typeof parsedObj === "object" && Array.isArray(parsedObj.actions)) {
+          for (const act of parsedObj.actions) {
+            if ((act?.type === "generate_image" || act?.action === "generate_image") && typeof act.prompt === "string" && act.prompt.trim()) {
+              extractedActions.push({
+                type: "generate_image",
+                prompt: act.prompt.trim(),
+                imageDescription: typeof act.imageDescription === "string" && act.imageDescription.trim() ? act.imageDescription.trim() : act.prompt.trim().slice(0, 100),
+                aspectRatio: typeof act.aspectRatio === "string" ? act.aspectRatio.trim() : "1:1",
+                negativePrompt: typeof act.negativePrompt === "string" ? act.negativePrompt.trim() : ""
+              });
+            }
+          }
+          if (typeof parsedObj.text === "string") {
+            finalReplyText = parsedObj.text;
+          }
+        }
+      } catch {
+      }
+    }
+    replyContent = sanitizeReplyText(
+      finalReplyText.replace(/<\/?(?:image_action|device_action)[^>]*>/gi, "").trim()
+    );
     const duration = Date.now() - startTime;
     res.json({
       success: true,
       text: replyContent,
       thinkingProcess,
       deviceActions: extractedDeviceActions,
+      actions: extractedActions,
       apiLog: buildApiLogObject({
         appName: "\u5FAE\u4FE1-AI\u804A\u5929",
+        provider: apiConfig?.textProvider || "google_gemini",
         modelName: aiDetailedResult?.modelUsed || selectedModel,
         interfaceType: "ChatGeneration",
-        category: "text",
+        category: "text_generation",
         status: aiErrorMessage ? "failed" : "success",
+        httpStatus: aiErrorMessage ? 500 : 200,
         durationMs: duration,
         usage: aiDetailedResult?.usage,
         isRealTokens: aiDetailedResult?.isRealTokens,
@@ -5385,83 +5917,509 @@ app.get("/api/gemini/models", async (req, res) => {
   }
 });
 app.post("/api/provider/generate-image", async (req, res) => {
-  const { providerType, baseUrl, apiKey, model = "dall-e-3", prompt, size = "1024x1024", quality = "standard" } = req.body;
-  const cleanKey = apiKey && apiKey.trim() || process.env.GEMINI_API_KEY || "";
-  const cleanBaseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, "") : "";
+  pruneImageCaches();
+  const {
+    provider,
+    providerType,
+    apiProtocol,
+    baseUrl,
+    apiKey,
+    model,
+    prompt,
+    negativePrompt = "",
+    aspectRatio = "1:1",
+    size,
+    quality = "standard",
+    requestId,
+    messageId,
+    turnId,
+    characterId,
+    source = "AI\u751F\u56FE\u7ED8\u5236",
+    timeoutMs = 75e3
+  } = req.body || {};
+  const safeRequestId = typeof requestId === "string" && requestId.trim() ? requestId.trim() : `imggen_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const resolvedProvider = String(provider || providerType || "google_gemini").trim();
+  const cleanKey = typeof apiKey === "string" ? apiKey.trim() : "";
+  const cleanBaseUrl = typeof baseUrl === "string" ? baseUrl.trim().replace(/\/+$/, "") : "";
+  const effectiveProtocol = resolveEffectiveProtocol({
+    provider: resolvedProvider,
+    apiProtocol: typeof apiProtocol === "string" ? apiProtocol : "",
+    baseUrl: cleanBaseUrl
+  });
+  const resolvedModel = String(
+    model || (effectiveProtocol === "google_native" ? "gemini-3.1-flash-lite-image" : "dall-e-3")
+  ).trim();
+  const cleanPrompt = typeof prompt === "string" ? prompt.trim() : "";
   const startTime = Date.now();
-  if (!cleanKey) {
-    return res.status(400).json({ success: false, error: "\u672A\u914D\u7F6E\u56FE\u50CF API \u5BC6\u94A5 (API Key)" });
-  }
-  try {
-    let endpoint = cleanBaseUrl;
-    if (!endpoint) endpoint = "https://api.openai.com/v1";
-    if (!endpoint.endsWith("/images/generations")) {
-      endpoint = endpoint.endsWith("/v1") ? `${endpoint}/images/generations` : `${endpoint}/v1/images/generations`;
-    }
-    const resp = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${cleanKey}`
-      },
-      body: JSON.stringify({
-        model,
-        prompt,
-        n: 1,
-        size,
-        response_format: "b64_json"
-      }),
-      signal: AbortSignal.timeout(6e4)
+  if (!cleanPrompt) {
+    return res.status(400).json({
+      success: false,
+      statusCode: 400,
+      errorType: "invalid_prompt",
+      error: "\u7F3A\u5C11\u6709\u6548\u7684\u56FE\u50CF\u751F\u6210\u63D0\u793A\u8BCD (prompt)",
+      provider: resolvedProvider,
+      model: resolvedModel,
+      apiProtocol: effectiveProtocol,
+      latencyMs: 0,
+      requestId: safeRequestId
     });
-    if (!resp.ok) {
-      const errText = await resp.text();
-      let msg = errText;
-      try {
-        const j = JSON.parse(errText);
-        msg = j.error?.message || errText;
-      } catch {
+  }
+  if (!cleanKey) {
+    const errMsg = "\u672A\u914D\u7F6E\u3010\u56FE\u50CFAPI\u8FDE\u63A5\u3011\u5BC6\u94A5\uFF0C\u8BF7\u524D\u5F80 \u8BBE\u7F6E \u2192 API\u8BBE\u7F6E \u2192 \u56FE\u50CFAPI\u8FDE\u63A5 \u914D\u7F6E\u72EC\u7ACB\u5BC6\u94A5\u3002";
+    return res.status(400).json({
+      success: false,
+      statusCode: 400,
+      errorType: "missing_api_key",
+      error: errMsg,
+      provider: resolvedProvider,
+      model: resolvedModel,
+      apiProtocol: effectiveProtocol,
+      latencyMs: Date.now() - startTime,
+      requestId: safeRequestId,
+      apiLog: buildApiLogObject({
+        appName: source,
+        provider: resolvedProvider,
+        modelName: resolvedModel,
+        interfaceType: "ImageGeneration",
+        category: "image_generation",
+        status: "failed",
+        httpStatus: 400,
+        requestId: safeRequestId,
+        durationMs: Date.now() - startTime,
+        errorType: "missing_api_key",
+        error: errMsg,
+        purpose: `${source} \u5931\u8D25 (\u672A\u914D\u7F6E\u5BC6\u94A5)`
+      })
+    });
+  }
+  const cached = imageGenCompletedCache.get(safeRequestId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return res.status(cached.payload.success ? 200 : cached.payload.statusCode || 500).json(cached.payload);
+  }
+  const existingFlight = imageGenInFlightCache.get(safeRequestId);
+  if (existingFlight) {
+    try {
+      const reused = await existingFlight;
+      return res.status(reused.success ? 200 : reused.statusCode || 500).json(reused);
+    } catch (e) {
+      return res.status(500).json({
+        success: false,
+        error: sanitizeSensitiveText(e?.message || "\u56FE\u50CF\u751F\u6210\u8BF7\u6C42\u5F02\u5E38"),
+        requestId: safeRequestId
+      });
+    }
+  }
+  const effectiveSize = (() => {
+    if (typeof size === "string" && size.trim()) return size.trim();
+    switch (aspectRatio) {
+      case "16:9":
+        return "1792x1024";
+      case "9:16":
+        return "1024x1792";
+      default:
+        return "1024x1024";
+    }
+  })();
+  const finalPrompt = negativePrompt ? `${cleanPrompt}
+(Avoid: ${String(negativePrompt).trim()})` : cleanPrompt;
+  const reqTimeout = Math.min(Math.max(Number(timeoutMs) || 75e3, 15e3), 12e4);
+  const runGeneration = async () => {
+    if (effectiveProtocol === "google_native") {
+      const googleBase = buildGoogleRestBase(cleanBaseUrl);
+      const cleanModelId = resolvedModel.replace(/^models\//, "");
+      const isImagenModel = /^imagen/i.test(cleanModelId);
+      if (isImagenModel) {
+        const endpoint = `${googleBase}/models/${encodeURIComponent(cleanModelId)}:predict`;
+        const resp = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": cleanKey,
+            "User-Agent": "aistudio-build"
+          },
+          body: JSON.stringify({
+            instances: [{ prompt: finalPrompt }],
+            parameters: {
+              sampleCount: 1,
+              aspectRatio: ["1:1", "3:4", "4:3", "9:16", "16:9"].includes(aspectRatio) ? aspectRatio : "1:1"
+            }
+          }),
+          signal: AbortSignal.timeout(reqTimeout)
+        });
+        const latencyMs = Date.now() - startTime;
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => "");
+          let msg = errText;
+          try {
+            const j = JSON.parse(errText);
+            msg = j.error?.message || j.message || errText;
+          } catch {
+          }
+          const safeMsg = sanitizeSensitiveText(msg, 220);
+          return {
+            success: false,
+            statusCode: resp.status,
+            errorType: resp.status === 401 || resp.status === 403 ? "auth_error" : resp.status === 429 ? "rate_limit" : resp.status === 404 ? "model_unavailable" : "upstream_error",
+            error: `Google Imagen \u751F\u56FE\u5931\u8D25 (HTTP ${resp.status}): ${safeMsg}`,
+            provider: resolvedProvider,
+            model: resolvedModel,
+            apiProtocol: effectiveProtocol,
+            latencyMs,
+            requestId: safeRequestId
+          };
+        }
+        const data = await resp.json();
+        const pred = data?.predictions?.[0];
+        const b64 = pred?.bytesBase64Encoded;
+        const mime = pred?.mimeType || "image/png";
+        if (!b64 || typeof b64 !== "string") {
+          return {
+            success: false,
+            statusCode: 502,
+            errorType: "no_image_returned",
+            error: "Google Imagen \u63A5\u53E3\u8FD4\u56DE\u6210\u529F\uFF0C\u4F46\u672A\u5305\u542B\u6709\u6548\u56FE\u7247\u6570\u636E (bytesBase64Encoded \u4E3A\u7A7A)\u3002",
+            provider: resolvedProvider,
+            model: resolvedModel,
+            apiProtocol: effectiveProtocol,
+            latencyMs,
+            requestId: safeRequestId
+          };
+        }
+        return {
+          success: true,
+          statusCode: resp.status,
+          latencyMs,
+          provider: resolvedProvider,
+          model: resolvedModel,
+          apiProtocol: effectiveProtocol,
+          mimeType: mime,
+          imageUrl: `data:${mime};base64,${b64}`,
+          revisedPrompt: pred?.prompt || cleanPrompt,
+          descriptionText: "",
+          requestId: safeRequestId,
+          messageId,
+          turnId,
+          characterId,
+          apiLog: buildApiLogObject({
+            appName: source,
+            provider: resolvedProvider,
+            modelName: resolvedModel,
+            interfaceType: "ImageGeneration",
+            category: "image_generation",
+            status: "success",
+            httpStatus: resp.status,
+            requestId: safeRequestId,
+            durationMs: latencyMs,
+            purpose: `${source}: ${cleanPrompt.slice(0, 36)}`
+          })
+        };
+      } else {
+        const endpoint = `${googleBase}/models/${encodeURIComponent(cleanModelId)}:generateContent`;
+        const genConfig = {
+          responseModalities: ["TEXT", "IMAGE"]
+        };
+        if (["1:1", "3:4", "4:3", "9:16", "16:9"].includes(aspectRatio)) {
+          genConfig.imageConfig = { aspectRatio };
+        }
+        const resp = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": cleanKey,
+            "User-Agent": "aistudio-build"
+          },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
+            generationConfig: genConfig
+          }),
+          signal: AbortSignal.timeout(reqTimeout)
+        });
+        const latencyMs = Date.now() - startTime;
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => "");
+          let msg = errText;
+          try {
+            const j = JSON.parse(errText);
+            msg = j.error?.message || j.message || errText;
+          } catch {
+          }
+          const safeMsg = sanitizeSensitiveText(msg, 220);
+          return {
+            success: false,
+            statusCode: resp.status,
+            errorType: resp.status === 401 || resp.status === 403 ? "auth_error" : resp.status === 429 ? "rate_limit" : resp.status === 404 ? "model_unavailable" : /modality|responseModalities|not support/i.test(safeMsg) ? "protocol_mismatch" : "upstream_error",
+            error: `Google \u539F\u751F\u751F\u56FE\u5931\u8D25 (HTTP ${resp.status}): ${safeMsg}`,
+            provider: resolvedProvider,
+            model: resolvedModel,
+            apiProtocol: effectiveProtocol,
+            latencyMs,
+            requestId: safeRequestId
+          };
+        }
+        const data = await resp.json();
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        let foundBase64 = "";
+        let foundMime = "image/png";
+        const textSnippets = [];
+        for (const part of parts) {
+          const inline = part?.inlineData || part?.inline_data;
+          if (inline && typeof inline.data === "string" && inline.data.length > 32) {
+            foundBase64 = inline.data;
+            foundMime = inline.mimeType || inline.mime_type || "image/png";
+          } else if (typeof part?.text === "string" && part.text.trim()) {
+            textSnippets.push(part.text.trim());
+          }
+        }
+        if (!foundBase64) {
+          const returnedText = sanitizeSensitiveText(textSnippets.join(" "), 140);
+          return {
+            success: false,
+            statusCode: 502,
+            errorType: "no_image_returned",
+            error: returnedText ? `\u6A21\u578B\u672A\u8FD4\u56DE\u56FE\u7247\uFF0C\u800C\u662F\u8FD4\u56DE\u4E86\u4E00\u6BB5\u6587\u5B57\uFF08${returnedText}\uFF09\u3002\u8BF7\u786E\u8BA4\u6A21\u578B ${resolvedModel} \u652F\u6301\u56FE\u50CF\u751F\u6210\u3002` : `Google \u63A5\u53E3\u8FD4\u56DE HTTP 200\uFF0C\u4F46\u672A\u5305\u542B\u6709\u6548\u56FE\u7247\u6570\u636E (inlineData \u4E3A\u7A7A)\uFF0C\u8BF7\u786E\u8BA4\u6A21\u578B ${resolvedModel} \u652F\u6301\u751F\u56FE\u3002`,
+            provider: resolvedProvider,
+            model: resolvedModel,
+            apiProtocol: effectiveProtocol,
+            latencyMs,
+            requestId: safeRequestId
+          };
+        }
+        const descText = textSnippets.join("\n").trim();
+        return {
+          success: true,
+          statusCode: resp.status,
+          latencyMs,
+          provider: resolvedProvider,
+          model: resolvedModel,
+          apiProtocol: effectiveProtocol,
+          mimeType: foundMime,
+          imageUrl: `data:${foundMime};base64,${foundBase64}`,
+          revisedPrompt: descText || cleanPrompt,
+          descriptionText: descText,
+          requestId: safeRequestId,
+          messageId,
+          turnId,
+          characterId,
+          apiLog: buildApiLogObject({
+            appName: source,
+            provider: resolvedProvider,
+            modelName: resolvedModel,
+            interfaceType: "ImageGeneration",
+            category: "image_generation",
+            status: "success",
+            httpStatus: resp.status,
+            requestId: safeRequestId,
+            durationMs: latencyMs,
+            purpose: `${source}: ${cleanPrompt.slice(0, 36)}`
+          })
+        };
       }
-      return res.status(resp.status).json({ success: false, error: `\u56FE\u50CF\u751F\u6210\u5931\u8D25 (${resp.status}): ${msg}` });
-    }
-    const data = await resp.json();
-    const item = data.data?.[0];
-    const latencyMs = Date.now() - startTime;
-    if (item?.b64_json) {
-      return res.json({
-        success: true,
+    } else {
+      const endpoint = buildOpenAiEndpoint(cleanBaseUrl, "/images/generations");
+      const sendOpenAiImgReq = async (includeResponseFormat) => {
+        const bodyObj = {
+          model: resolvedModel,
+          prompt: finalPrompt,
+          n: 1,
+          size: effectiveSize
+        };
+        if (quality && resolvedModel.toLowerCase().includes("dall-e-3")) {
+          bodyObj.quality = quality;
+        }
+        if (includeResponseFormat) {
+          bodyObj.response_format = "b64_json";
+        }
+        return fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${cleanKey}`
+          },
+          body: JSON.stringify(bodyObj),
+          signal: AbortSignal.timeout(reqTimeout)
+        });
+      };
+      let resp = await sendOpenAiImgReq(true);
+      if (!resp.ok && resp.status === 400) {
+        const peekErr = await resp.text().catch(() => "");
+        if (/response_format|unknown parameter|extra_forbidden|not supported/i.test(peekErr)) {
+          resp = await sendOpenAiImgReq(false);
+        } else {
+          const safeMsg = sanitizeSensitiveText(peekErr, 220);
+          return {
+            success: false,
+            statusCode: 400,
+            errorType: "upstream_error",
+            error: `OpenAI \u517C\u5BB9\u751F\u56FE\u5931\u8D25 (HTTP 400): ${safeMsg}`,
+            provider: resolvedProvider,
+            model: resolvedModel,
+            apiProtocol: effectiveProtocol,
+            latencyMs: Date.now() - startTime,
+            requestId: safeRequestId
+          };
+        }
+      }
+      const latencyMs = Date.now() - startTime;
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        let msg = errText;
+        try {
+          const j = JSON.parse(errText);
+          msg = j.error?.message || j.message || errText;
+        } catch {
+        }
+        const safeMsg = sanitizeSensitiveText(msg, 220);
+        return {
+          success: false,
+          statusCode: resp.status,
+          errorType: resp.status === 401 || resp.status === 403 ? "auth_error" : resp.status === 429 ? "rate_limit" : resp.status === 404 ? "model_unavailable" : "upstream_error",
+          error: `OpenAI \u517C\u5BB9\u751F\u56FE\u5931\u8D25 (HTTP ${resp.status}): ${safeMsg}`,
+          provider: resolvedProvider,
+          model: resolvedModel,
+          apiProtocol: effectiveProtocol,
+          latencyMs,
+          requestId: safeRequestId
+        };
+      }
+      const data = await resp.json();
+      const item = data?.data?.[0];
+      if (item?.b64_json && typeof item.b64_json === "string" && item.b64_json.length > 32) {
+        const mime = item.mime_type || "image/png";
+        return {
+          success: true,
+          statusCode: resp.status,
+          latencyMs,
+          provider: resolvedProvider,
+          model: resolvedModel,
+          apiProtocol: effectiveProtocol,
+          mimeType: mime,
+          imageUrl: `data:${mime};base64,${item.b64_json}`,
+          revisedPrompt: item.revised_prompt || cleanPrompt,
+          descriptionText: item.revised_prompt || "",
+          requestId: safeRequestId,
+          messageId,
+          turnId,
+          characterId,
+          apiLog: buildApiLogObject({
+            appName: source,
+            provider: resolvedProvider,
+            modelName: resolvedModel,
+            interfaceType: "ImageGeneration",
+            category: "image_generation",
+            status: "success",
+            httpStatus: resp.status,
+            requestId: safeRequestId,
+            durationMs: latencyMs,
+            purpose: `${source}: ${cleanPrompt.slice(0, 36)}`
+          })
+        };
+      }
+      if (item?.url && typeof item.url === "string" && /^https?:\/\//i.test(item.url)) {
+        return {
+          success: true,
+          statusCode: resp.status,
+          latencyMs,
+          provider: resolvedProvider,
+          model: resolvedModel,
+          apiProtocol: effectiveProtocol,
+          mimeType: "image/png",
+          imageUrl: item.url,
+          revisedPrompt: item.revised_prompt || cleanPrompt,
+          descriptionText: item.revised_prompt || "",
+          requestId: safeRequestId,
+          messageId,
+          turnId,
+          characterId,
+          apiLog: buildApiLogObject({
+            appName: source,
+            provider: resolvedProvider,
+            modelName: resolvedModel,
+            interfaceType: "ImageGeneration",
+            category: "image_generation",
+            status: "success",
+            httpStatus: resp.status,
+            requestId: safeRequestId,
+            durationMs: latencyMs,
+            purpose: `${source}: ${cleanPrompt.slice(0, 36)}`
+          })
+        };
+      }
+      return {
+        success: false,
+        statusCode: 502,
+        errorType: "no_image_returned",
+        error: "\u56FE\u50CF\u63A5\u53E3\u8FD4\u56DE HTTP 200\uFF0C\u4F46\u672A\u8FD4\u56DE\u6709\u6548\u7684 b64_json \u6216\u8FDC\u7A0B\u56FE\u7247 URL\u3002",
+        provider: resolvedProvider,
+        model: resolvedModel,
+        apiProtocol: effectiveProtocol,
         latencyMs,
-        model,
-        imageUrl: `data:image/png;base64,${item.b64_json}`,
-        revisedPrompt: item.revised_prompt || prompt,
-        apiLog: buildApiLogObject({
-          appName: "AI\u751F\u56FE\u7ED8\u5236",
-          modelName: model,
-          interfaceType: "ImageGeneration",
-          category: "image",
-          durationMs: latencyMs,
-          purpose: `\u751F\u6210\u56FE\u50CF: ${(prompt || "\u81EA\u5B9A\u4E49\u56FE\u50CF").slice(0, 30)}...`
-        })
-      });
-    } else if (item?.url) {
-      return res.json({
-        success: true,
-        latencyMs,
-        model,
-        imageUrl: item.url,
-        revisedPrompt: item.revised_prompt || prompt,
-        apiLog: buildApiLogObject({
-          appName: "AI\u751F\u56FE\u7ED8\u5236",
-          modelName: model,
-          interfaceType: "ImageGeneration",
-          category: "image",
-          durationMs: latencyMs,
-          purpose: `\u751F\u6210\u56FE\u50CF: ${(prompt || "\u81EA\u5B9A\u4E49\u56FE\u50CF").slice(0, 30)}...`
-        })
+        requestId: safeRequestId
+      };
+    }
+  };
+  const flightPromise = runGeneration().then((result) => {
+    if (!result.apiLog && !result.success) {
+      result.apiLog = buildApiLogObject({
+        appName: source,
+        provider: result.provider || resolvedProvider,
+        modelName: result.model || resolvedModel,
+        interfaceType: "ImageGeneration",
+        category: "image_generation",
+        status: "failed",
+        httpStatus: result.statusCode || 500,
+        requestId: safeRequestId,
+        durationMs: result.latencyMs || Date.now() - startTime,
+        errorType: result.errorType || "ImageGenerationError",
+        error: result.error || "\u56FE\u50CF\u751F\u6210\u5931\u8D25",
+        purpose: `${source} \u5931\u8D25`
       });
     }
-    return res.status(500).json({ success: false, error: "\u672A\u4ECE\u63A5\u53E3\u83B7\u53D6\u5230\u6709\u6548\u56FE\u50CF\u6570\u636E" });
+    if (result.success) {
+      imageGenCompletedCache.set(safeRequestId, {
+        expiresAt: Date.now() + IMAGE_IDEMPOTENCY_TTL_MS,
+        payload: result
+      });
+    }
+    return result;
+  }).finally(() => {
+    imageGenInFlightCache.delete(safeRequestId);
+  });
+  imageGenInFlightCache.set(safeRequestId, flightPromise);
+  try {
+    const result = await flightPromise;
+    return res.status(result.success ? 200 : result.statusCode || 500).json(result);
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message || "\u56FE\u50CF\u751F\u6210\u7F51\u7EDC\u5F02\u5E38" });
+    const latencyMs = Date.now() - startTime;
+    const isTimeout = err?.name === "TimeoutError" || err?.name === "AbortError";
+    const safeErr = sanitizeSensitiveText(
+      isTimeout ? "\u56FE\u50CF\u751F\u6210\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u6216\u68C0\u67E5\u53CD\u4EE3\u54CD\u5E94\u901F\u5EA6\u3002" : err?.message || "\u56FE\u50CF\u751F\u6210\u7F51\u7EDC\u5F02\u5E38",
+      240
+    );
+    return res.status(isTimeout ? 504 : 500).json({
+      success: false,
+      statusCode: isTimeout ? 504 : 500,
+      errorType: isTimeout ? "timeout" : "network_error",
+      error: safeErr,
+      provider: resolvedProvider,
+      model: resolvedModel,
+      apiProtocol: effectiveProtocol,
+      latencyMs,
+      requestId: safeRequestId,
+      apiLog: buildApiLogObject({
+        appName: source,
+        provider: resolvedProvider,
+        modelName: resolvedModel,
+        interfaceType: "ImageGeneration",
+        category: "image_generation",
+        status: "failed",
+        httpStatus: isTimeout ? 504 : 500,
+        requestId: safeRequestId,
+        durationMs: latencyMs,
+        errorType: isTimeout ? "timeout" : "network_error",
+        error: safeErr,
+        purpose: `${source} \u5F02\u5E38`
+      })
+    });
   }
 });
 app.post("/api/provider/generate-speech", async (req, res) => {

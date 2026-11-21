@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { pingBackendHealth } from '../../lib/localBackend';
 import {
@@ -10,15 +10,23 @@ import {
 } from '../../types';
 import {
   ApiSettings,
-  loadApiSettings,
-  saveApiSettings,
+  ApiConnectionConfig,
 } from '../../lib/apiConfigStore';
 import {
-  addDiagnosticLog,
-  subscribeDiagnosticLogs,
-  getDiagnosticLogs,
-  DiagnosticLogEvent,
-} from '../../lib/inputTracker';
+  ApiCapabilityCategory,
+  CAPABILITY_LABELS,
+  CapabilityPresetDefinition,
+  getPresetsByCategory,
+  maskApiKey,
+  sanitizeSensitiveText,
+} from '../../lib/apiCapabilities';
+import {
+  testImageGenerationConnection,
+  testImageRecognitionConnection,
+  ImageGenerationTestResult,
+  ImageRecognitionTestResult,
+} from '../../lib/image/imageCapabilitiesService';
+import { compressImage } from '../../lib/imageCompressor';
 import {
   Eye,
   EyeOff,
@@ -28,12 +36,20 @@ import {
   CheckCircle2,
   AlertCircle,
   X,
-  Settings2,
   Trash2,
   Plus,
-  Bug,
+  Image as ImageIcon,
+  ScanSearch,
+  Upload,
+  Clock,
+  Loader2,
+  Sparkles,
+  Info,
 } from 'lucide-react';
 import { StableTextInput } from '../common/StableTextInput';
+
+export type TopLevelApiGroup = 'text' | 'image' | 'voice' | 'recognition';
+export type RecognitionSubTab = 'image' | 'speech';
 
 export interface ProviderPreset {
   id: ProviderType;
@@ -44,111 +60,140 @@ export interface ProviderPreset {
   description: string;
 }
 
-export const TEXT_PROVIDER_PRESETS: ProviderPreset[] = [
-  {
-    id: 'google_gemini',
-    name: 'Google Gemini (官方 / 原生)',
-    defaultBaseUrl: 'https://generativelanguage.googleapis.com',
-    defaultModel: 'gemini-4-hydrogen',
-    badge: '官方推荐',
-    description: '支持 Gemini 4 Hydrogen / 3.1 Flash Lite 及自定义反代端点',
-  },
-  {
-    id: 'custom',
-    name: '自定义配置',
-    defaultBaseUrl: '',
-    defaultModel: 'gpt-4o',
-    badge: '自定义',
-    description: '任意符合规范的反代、自建网关或中转服务',
-  },
-];
-
-export const IMAGE_PROVIDER_PRESETS: ProviderPreset[] = [
-  {
-    id: 'google_gemini',
-    name: 'Google Gemini Imagen (官方 / 原生)',
-    defaultBaseUrl: 'https://generativelanguage.googleapis.com',
-    defaultModel: 'imagen-3.0-generate-002',
-    badge: '官方推荐',
-    description: '支持 Imagen 3.0 图像生成与多模态分析',
-  },
-  {
-    id: 'custom',
-    name: 'OpenAI / 自定义图像网关',
-    defaultBaseUrl: 'https://api.openai.com/v1',
-    defaultModel: 'dall-e-3',
-    badge: '自定义',
-    description: '支持 DALL-E 3、FLUX 或自定义中转图像接口',
-  },
-];
-
-export const VOICE_PROVIDER_PRESETS: ProviderPreset[] = [
-  {
-    id: 'google_gemini',
-    name: 'Google Gemini Voice (官方 / 原生)',
-    defaultBaseUrl: 'https://generativelanguage.googleapis.com',
-    defaultModel: 'gemini-2.5-flash',
-    badge: '官方推荐',
-    description: '支持 Gemini 音频多模态与 TTS/STT 交互',
-  },
-  {
-    id: 'custom',
-    name: 'OpenAI / 自定义语音网关',
-    defaultBaseUrl: 'https://api.openai.com/v1',
-    defaultModel: 'tts-1',
-    badge: '自定义',
-    description: '支持 OpenAI TTS-1、Whisper 或自定义语音中转接口',
-  },
-];
-
 export interface CustomPresetItem {
   id: string;
+  category: ApiCapabilityCategory;
   name: string;
+  provider?: string;
+  apiProtocol?: string;
   baseUrl: string;
   apiKey?: string;
   model: string;
   createdAt: number;
 }
 
-const STORAGE_KEY_CUSTOM_PRESETS = 'phone_user_custom_api_presets';
+const STORAGE_KEY_CUSTOM_PRESETS_LEGACY = 'phone_user_custom_api_presets';
+const STORAGE_KEY_CUSTOM_PRESETS_V2 = 'phone_user_custom_api_presets_v2';
 
-const loadSavedPresets = (): CustomPresetItem[] => {
+function loadSavedCustomPresets(): CustomPresetItem[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_CUSTOM_PRESETS);
-    return raw ? JSON.parse(raw) : [];
+    const rawV2 = localStorage.getItem(STORAGE_KEY_CUSTOM_PRESETS_V2);
+    if (rawV2) {
+      const parsed = JSON.parse(rawV2);
+      if (Array.isArray(parsed)) return parsed;
+    }
+    // Non-destructive one-time read of legacy presets (migrated to text_generation)
+    const rawLegacy = localStorage.getItem(STORAGE_KEY_CUSTOM_PRESETS_LEGACY);
+    if (rawLegacy) {
+      const parsedLegacy = JSON.parse(rawLegacy);
+      if (Array.isArray(parsedLegacy)) {
+        return parsedLegacy.map((item: any) => ({
+          id: String(item.id || 'custom_' + Date.now()),
+          category: (item.category as ApiCapabilityCategory) || 'text_generation',
+          name: String(item.name || '自定义预设'),
+          provider: item.provider || 'custom',
+          apiProtocol: item.apiProtocol || 'openai_compatible',
+          baseUrl: String(item.baseUrl || ''),
+          apiKey: item.apiKey || '',
+          model: String(item.model || ''),
+          createdAt: Number(item.createdAt || Date.now()),
+        }));
+      }
+    }
+    return [];
   } catch {
     return [];
   }
-};
+}
 
-const persistCustomPresets = (items: CustomPresetItem[]) => {
+function persistCustomPresets(items: CustomPresetItem[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY_CUSTOM_PRESETS, JSON.stringify(items));
+    localStorage.setItem(STORAGE_KEY_CUSTOM_PRESETS_V2, JSON.stringify(items));
   } catch (e) {
-    console.error('Failed to save custom presets to localStorage', e);
+    console.error('[ApiSettingsPanel] Failed to save custom presets:', e);
   }
-};
+}
+
+export function resolveActiveSlot(
+  group: TopLevelApiGroup,
+  recSubTab: RecognitionSubTab
+): ApiCapabilityCategory {
+  if (group === 'text') return 'text_generation';
+  if (group === 'image') return 'image_generation';
+  if (group === 'voice') return 'speech_generation';
+  return recSubTab === 'speech' ? 'speech_recognition' : 'image_recognition';
+}
+
+export function readSlotConfig(settings: ApiSettings, slot: ApiCapabilityCategory): ApiConnectionConfig {
+  switch (slot) {
+    case 'text_generation':
+      return settings.textGeneration || settings.text;
+    case 'image_generation':
+      return settings.imageGeneration || settings.image;
+    case 'speech_generation':
+      return settings.speechGeneration || settings.voice;
+    case 'image_recognition':
+      return settings.recognition.image;
+    case 'speech_recognition':
+      return settings.recognition.speech;
+  }
+}
+
+export function updateSlotConfig(
+  prev: ApiSettings,
+  slot: ApiCapabilityCategory,
+  patch: Partial<ApiConnectionConfig>
+): ApiSettings {
+  const current = readSlotConfig(prev, slot);
+  const nextConn: ApiConnectionConfig = { ...current, ...patch };
+
+  switch (slot) {
+    case 'text_generation':
+      return {
+        ...prev,
+        textGeneration: nextConn,
+        text: { ...nextConn },
+      };
+    case 'image_generation':
+      return {
+        ...prev,
+        imageGeneration: nextConn,
+        image: { ...nextConn },
+      };
+    case 'speech_generation':
+      return {
+        ...prev,
+        speechGeneration: nextConn,
+        voice: { ...nextConn },
+      };
+    case 'image_recognition':
+      return {
+        ...prev,
+        recognition: {
+          ...prev.recognition,
+          image: nextConn,
+        },
+      };
+    case 'speech_recognition':
+      return {
+        ...prev,
+        recognition: {
+          ...prev.recognition,
+          speech: nextConn,
+        },
+      };
+  }
+}
 
 export interface ApiSettingsPanelProps {
   settings: ApiSettings;
   setSettings: React.Dispatch<React.SetStateAction<ApiSettings>>;
-  activeCategory: 'text' | 'image' | 'voice';
-  setActiveCategory: (cat: 'text' | 'image' | 'voice') => void;
+  activeCategory: TopLevelApiGroup;
+  setActiveCategory: (cat: TopLevelApiGroup) => void;
+  recognitionSubTab: RecognitionSubTab;
+  setRecognitionSubTab: (sub: RecognitionSubTab) => void;
 
-  showTextKey: boolean;
-  setShowTextKey: (show: boolean) => void;
-  showImageKey: boolean;
-  setShowImageKey: (show: boolean) => void;
-  showVoiceKey: boolean;
-  setShowVoiceKey: (show: boolean) => void;
-
-  handleClearTextKey: () => void;
-  handleClearImageKey: () => void;
-  handleClearVoiceKey: () => void;
-
-  // Models & Test actions
-  fetchedModels: RemoteModelItem[];
-  fetchedModelsMap?: Record<'text' | 'image' | 'voice', RemoteModelItem[]>;
+  fetchedModelsMap: Record<ApiCapabilityCategory, RemoteModelItem[]>;
   isTestingConnection: boolean;
   connectionResult: ConnectionTestResult | null;
   handleTestConnection: () => Promise<void>;
@@ -162,50 +207,6 @@ export interface ApiSettingsPanelProps {
   handleTestSelectedModel: () => Promise<void>;
 
   handleGlobalSave: () => void;
-  applyTextPreset: (preset: ProviderPreset) => void;
-  fetchDebugInfo?: {
-    timestamp: string;
-    providerType: string;
-    baseUrl: string;
-    keyIsEmpty: boolean;
-    keyLength: number;
-    keyLast4: string;
-    httpStatus?: number | string;
-    reachedServer?: boolean;
-    responseMessage?: string;
-    responseError?: string;
-    isNativePlatform?: boolean;
-    capacitorPlatform?: string;
-    targetUrl?: string;
-    backendHealthOk?: boolean;
-    failureStage?: string;
-    upstreamDiagnostics?: {
-      upstreamProtocol?: string;
-      finalUpstreamUrl?: string;
-      httpMethod?: string;
-      authMethod?: string;
-      timeoutMs?: number;
-      upstreamStartTime?: string;
-      upstreamEndTime?: string;
-    } | null;
-    attemptsTrace?: Array<{
-      attemptIndex: number;
-      adapterName: string;
-      protocolKey: string;
-      finalUrl: string;
-      method: string;
-      authMethod: string;
-      timeoutMs: number;
-      startTime: string;
-      endTime: string;
-      latencyMs: number;
-      httpStatus?: number;
-      success: boolean;
-      modelsCount: number;
-      error?: string;
-    }> | null;
-  } | null;
-  savedVerification?: ApiSettings | null;
 }
 
 export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
@@ -213,16 +214,8 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   setSettings,
   activeCategory,
   setActiveCategory,
-  showTextKey,
-  setShowTextKey,
-  showImageKey,
-  setShowImageKey,
-  showVoiceKey,
-  setShowVoiceKey,
-  handleClearTextKey,
-  handleClearImageKey,
-  handleClearVoiceKey,
-  fetchedModels,
+  recognitionSubTab,
+  setRecognitionSubTab,
   fetchedModelsMap,
   isTestingConnection,
   connectionResult,
@@ -231,1220 +224,927 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   modelFetchResult,
   handleFetchModels,
   handleGlobalSave,
-  fetchDebugInfo,
-  savedVerification,
 }) => {
-  const formatKeyInfo = (key?: string) => {
-    if (!key || !key.trim()) {
-      return <span className="api-diag-err text-rose-400 font-bold">[为空] len=0</span>;
-    }
-    const k = key.trim();
-    return (
-      <span className="api-diag-ok text-emerald-400 font-medium">
-        [有值] len={k.length} (末尾: ***{k.slice(-4)})
-      </span>
-    );
-  };
+  const activeSlot = resolveActiveSlot(activeCategory, recognitionSubTab);
+  const currentConfig = readSlotConfig(settings, activeSlot);
+  const builtInPresets = getPresetsByCategory(activeSlot);
+  const isComingSoonSlot = activeSlot === 'speech_generation' || activeSlot === 'speech_recognition';
 
-  const formatKeyInfoFromFields = (isEmpty: boolean, length: number, last4: string) => {
-    if (isEmpty || length === 0) {
-      return <span className="api-diag-err text-rose-400 font-bold">[为空] len=0</span>;
-    }
-    return (
-      <span className="api-diag-ok text-emerald-400 font-medium">
-        [有值] len={length} (末尾: ***{last4})
-      </span>
-    );
-  };
+  // Key visibility per slot
+  const [showKeyMap, setShowKeyMap] = useState<Record<ApiCapabilityCategory, boolean>>({
+    text_generation: false,
+    image_generation: false,
+    speech_generation: false,
+    image_recognition: false,
+    speech_recognition: false,
+  });
 
-  // Realtime Android native health check state
-  const [liveHealth, setLiveHealth] = useState<string>('检测中...');
-
-  useEffect(() => {
-    let active = true;
-    if (Capacitor.isNativePlatform()) {
-      pingBackendHealth()
-        .then((ok) => {
-          if (active) {
-            setLiveHealth(ok ? '健康 (127.0.0.1:3000 响应正常)' : '未连通 (127.0.0.1:3000 未启动或无响应)');
-          }
-        })
-        .catch((e) => {
-          if (active) {
-            setLiveHealth(`检测异常: ${e?.message || '无法建立连接'}`);
-          }
-        });
-    } else {
-      setLiveHealth('Web 模式 (直连标准 API 路由)');
-    }
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  // 实时诊断追踪日志状态与 render # 记录
-  const [liveLogs, setLiveLogs] = useState<DiagnosticLogEvent[]>(getDiagnosticLogs());
-  const panelRenderCount = React.useRef(0);
-  panelRenderCount.current += 1;
-
-  useEffect(() => {
-    return subscribeDiagnosticLogs((logs) => {
-      setLiveLogs([...logs]);
-    });
-  }, []);
-
-  const currentCategoryConfig = settings[activeCategory];
-  const currentTextKey = settings.text.apiKey || '';
-  const currentTextBaseUrl = settings.text.baseUrl || '';
-  const currentImageKey = settings.image.apiKey || '';
-  const currentImageBaseUrl = settings.image.baseUrl || '';
-  const currentVoiceKey = settings.voice.apiKey || '';
-  const currentVoiceBaseUrl = settings.voice.baseUrl || '';
-
-  // 自定义配置列表状态
-  const [customPresets, setCustomPresets] = useState<CustomPresetItem[]>(loadSavedPresets);
-  const [showPresetManager, setShowPresetManager] = useState<boolean>(false);
-  const [selectedPresetId, setSelectedPresetId] = useState<string>('custom');
-  const [selectedImagePresetId, setSelectedImagePresetId] = useState<string>('custom');
-  const [selectedVoicePresetId, setSelectedVoicePresetId] = useState<string>('custom');
-  const [newPresetName, setNewPresetName] = useState<string>('');
+  // Custom presets state
+  const [customPresets, setCustomPresets] = useState<CustomPresetItem[]>(loadSavedCustomPresets);
+  const [showPresetManager, setShowPresetManager] = useState(false);
+  const [newPresetName, setNewPresetName] = useState('');
   const [actionNotice, setActionNotice] = useState<string | null>(null);
 
-  // 每次 customPresets 变更时同步保存
+  // Backend health status
+  const [liveHealth, setLiveHealth] = useState<string>('');
+
+  // Real Image Generation Test state
+  const [isTestingImageGen, setIsTestingImageGen] = useState(false);
+  const [imageGenTestResult, setImageGenTestResult] = useState<ImageGenerationTestResult | null>(null);
+  const [imageGenRenderState, setImageGenRenderState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
+
+  // Real Image Recognition Test state
+  const recFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [testRecImageUrl, setTestRecImageUrl] = useState<string>('');
+  const [testRecFileName, setTestRecFileName] = useState<string>('');
+  const [isTestingImageRec, setIsTestingImageRec] = useState(false);
+  const [imageRecTestResult, setImageRecTestResult] = useState<ImageRecognitionTestResult | null>(null);
+
   useEffect(() => {
     persistCustomPresets(customPresets);
   }, [customPresets]);
 
+  useEffect(() => {
+    let mounted = true;
+    if (Capacitor.isNativePlatform()) {
+      pingBackendHealth()
+        .then((ok) => {
+          if (mounted) {
+            setLiveHealth(ok ? '本地后端在线 (127.0.0.1:3000)' : '本地后端待唤醒 (将在请求时自动启动)');
+          }
+        })
+        .catch(() => {
+          if (mounted) setLiveHealth('本地后端待唤醒');
+        });
+    }
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const showNotice = (msg: string) => {
     setActionNotice(msg);
-    setTimeout(() => {
-      setActionNotice(null);
-    }, 2500);
+    setTimeout(() => setActionNotice(null), 2600);
   };
 
-  // 下拉切换图像预设配置
-  const handleSelectImagePreset = (id: string) => {
-    setSelectedImagePresetId(id);
-    if (id === 'custom') {
-      setSettings((prev) => ({
-        ...prev,
-        image: { ...prev.image, provider: 'custom' },
-      }));
+  const patchCurrent = (patch: Partial<ApiConnectionConfig>) => {
+    setSettings((prev) => updateSlotConfig(prev, activeSlot, patch));
+  };
+
+  const slotCustomPresets = customPresets.filter((p) => p.category === activeSlot);
+
+  const handleSelectPresetValue = (value: string) => {
+    if (!value || value === '__manual__') {
+      patchCurrent({ presetId: '' });
       return;
     }
-    const preset = IMAGE_PROVIDER_PRESETS.find((p) => p.id === id);
-    if (preset) {
-      setSettings((prev) => ({
-        ...prev,
-        image: {
-          ...prev.image,
-          provider: preset.id,
-          baseUrl: preset.defaultBaseUrl,
-          model: preset.defaultModel,
-        },
-      }));
-      showNotice(`已切换到图像预设：${preset.name}`);
-    }
-  };
 
-  // 下拉切换语音预设配置
-  const handleSelectVoicePreset = (id: string) => {
-    setSelectedVoicePresetId(id);
-    if (id === 'custom') {
-      setSettings((prev) => ({
-        ...prev,
-        voice: { ...prev.voice, provider: 'custom' },
-      }));
-      return;
-    }
-    const preset = VOICE_PROVIDER_PRESETS.find((p) => p.id === id);
-    if (preset) {
-      setSettings((prev) => ({
-        ...prev,
-        voice: {
-          ...prev.voice,
-          provider: preset.id,
-          baseUrl: preset.defaultBaseUrl,
-          model: preset.defaultModel,
-        },
-      }));
-      showNotice(`已切换到语音预设：${preset.name}`);
-    }
-  };
-
-  // 下拉切换预设配置
-  const handleSelectPreset = (id: string) => {
-    setSelectedPresetId(id);
-    if (id === 'custom') {
-      addDiagnosticLog({
-        tag: '[SETTINGS_WRITE:PANEL_SELECT_PRESET_CUSTOM]',
-        baseUrlLen: currentTextBaseUrl.length,
-        baseUrlVal: currentTextBaseUrl,
-        keyLen: currentTextKey.length,
-        keyLast4: currentTextKey.slice(-4),
-        details: 'select preset custom',
+    const builtIn = builtInPresets.find((p) => p.id === value);
+    if (builtIn) {
+      patchCurrent({
+        provider: builtIn.provider,
+        apiProtocol: builtIn.apiProtocol,
+        baseUrl: builtIn.defaultBaseUrl,
+        model: builtIn.defaultModel,
+        presetId: builtIn.id,
+        // Preserve existing non-empty apiKey!
       });
-      setSettings((prev) => ({
-        ...prev,
-        text: { ...prev.text, provider: 'custom' },
-      }));
+      showNotice(`已应用预设：${builtIn.name}（已保留你的密钥）`);
       return;
     }
-    const found = customPresets.find((p) => p.id === id);
-    if (found) {
-      addDiagnosticLog({
-        tag: '[SETTINGS_WRITE:PANEL_SELECT_PRESET_FOUND]',
-        baseUrlLen: found.baseUrl?.length || 0,
-        baseUrlVal: found.baseUrl || '',
-        keyLen: (found.apiKey || currentTextKey).length,
-        keyLast4: (found.apiKey || currentTextKey).slice(-4),
-        details: `select custom preset: ${found.name}`,
+
+    const custom = slotCustomPresets.find((p) => p.id === value);
+    if (custom) {
+      patchCurrent({
+        provider: custom.provider || 'custom',
+        apiProtocol: custom.apiProtocol || currentConfig.apiProtocol || 'openai_compatible',
+        baseUrl: custom.baseUrl,
+        model: custom.model,
+        apiKey: custom.apiKey ? custom.apiKey : currentConfig.apiKey,
+        presetId: custom.id,
       });
-      setSettings((prev) => ({
-        ...prev,
-        text: {
-          ...prev.text,
-          provider: 'custom',
-          baseUrl: found.baseUrl,
-          apiKey: found.apiKey || prev.text.apiKey || '',
-          model: found.model,
-        },
-      }));
-      showNotice(`已切换到预设：${found.name}`);
+      showNotice(`已切换到自定义预设：${custom.name}`);
     }
   };
 
-  // 保存当前参数为新的自定义配置
   const handleSaveAsCustomPreset = () => {
-    const name = newPresetName.trim() || `自定义配置 ${customPresets.length + 1}`;
-    const newPreset: CustomPresetItem = {
-      id: 'custom_' + Date.now(),
+    const name = newPresetName.trim() || `${CAPABILITY_LABELS[activeSlot]}预设 ${slotCustomPresets.length + 1}`;
+    const item: CustomPresetItem = {
+      id: `custom_${activeSlot}_${Date.now()}`,
+      category: activeSlot,
       name,
-      baseUrl: settings.text.baseUrl || '',
-      apiKey: currentTextKey,
-      model: settings.text.model || '',
+      provider: currentConfig.provider || 'custom',
+      apiProtocol: currentConfig.apiProtocol || 'openai_compatible',
+      baseUrl: currentConfig.baseUrl || '',
+      apiKey: currentConfig.apiKey || '',
+      model: currentConfig.model || '',
       createdAt: Date.now(),
     };
-    const updated = [...customPresets, newPreset];
-    setCustomPresets(updated);
-    setSelectedPresetId(newPreset.id);
+    setCustomPresets((prev) => [...prev, item]);
+    patchCurrent({ presetId: item.id });
     setNewPresetName('');
-    showNotice(`已保存自定义配置：“${name}”`);
+    showNotice(`已保存预设：“${name}”`);
   };
 
-  // 删除指定的自定义配置
   const handleDeleteCustomPreset = (id: string) => {
-    const target = customPresets.find((p) => p.id === id);
-    const updated = customPresets.filter((p) => p.id !== id);
-    setCustomPresets(updated);
-    if (selectedPresetId === id) {
-      setSelectedPresetId('custom');
+    setCustomPresets((prev) => prev.filter((p) => p.id !== id));
+    if (currentConfig.presetId === id) {
+      patchCurrent({ presetId: '' });
     }
-    showNotice(`已删除自定义配置：${target ? target.name : ''}`);
+    showNotice('已删除自定义预设');
   };
 
-  // 清空 / 删除当前的自定义配置内容
-  const handleClearCurrentConfig = () => {
-    if (currentTextBaseUrl.length > 0 || currentTextKey.length > 0) {
-      addDiagnosticLog({
-        tag: '[CLEAR_DETECTED]',
-        baseUrlLen: 0,
-        baseUrlVal: '',
-        keyLen: 0,
-        keyLast4: '',
-        details: `source: handleClearCurrentConfig button, previousBaseUrlLength: ${currentTextBaseUrl.length}, previousKeyLength: ${currentTextKey.length}`,
+  // Real Image Generation Test
+  const handleRunImageGenerationTest = async () => {
+    if (isTestingImageGen) return;
+    setIsTestingImageGen(true);
+    setImageGenTestResult(null);
+    setImageGenRenderState('idle');
+
+    try {
+      const result = await testImageGenerationConnection(currentConfig);
+      setImageGenTestResult(result);
+      if (result.success && result.imageUrl) {
+        setImageGenRenderState('loading');
+      }
+    } finally {
+      setIsTestingImageGen(false);
+    }
+  };
+
+  // Handle test image selection for Image Recognition Test
+  const handlePickRecognitionTestFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageRecTestResult(null);
+    try {
+      const compressed = await compressImage(file, {
+        maxWidth: 1280,
+        maxHeight: 1280,
+        quality: 0.82,
+        maxFileSizeBytes: 380 * 1024,
       });
+      setTestRecImageUrl(compressed.dataUrl);
+      setTestRecFileName(file.name);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') {
+          setTestRecImageUrl(reader.result);
+          setTestRecFileName(file.name);
+        }
+      };
+      reader.readAsDataURL(file);
+    } finally {
+      e.target.value = '';
     }
-    addDiagnosticLog({
-      tag: '[SETTINGS_WRITE:PANEL_CLEAR_CURRENT_CONFIG]',
-      baseUrlLen: 0,
-      baseUrlVal: '',
-      keyLen: 0,
-      keyLast4: '',
-      details: 'CLEARED current config',
-    });
-
-    setSettings((prev) => ({
-      ...prev,
-      text: {
-        provider: 'custom',
-        baseUrl: '',
-        apiKey: '',
-        model: '',
-      },
-    }));
-    setSelectedPresetId('custom');
-    showNotice('已清空当前自定义配置');
   };
+
+  // Real Image Recognition Test
+  const handleRunImageRecognitionTest = async () => {
+    if (isTestingImageRec) return;
+    setIsTestingImageRec(true);
+    setImageRecTestResult(null);
+    try {
+      const result = await testImageRecognitionConnection(currentConfig, testRecImageUrl);
+      setImageRecTestResult(result);
+    } finally {
+      setIsTestingImageRec(false);
+    }
+  };
+
+  // Group models by capability for the current slot without hiding ANY model
+  const rawModels = fetchedModelsMap[activeSlot] || [];
+  const recommendedModels = rawModels.filter((m) => {
+    if (Array.isArray(m.supportedCapabilities) && m.supportedCapabilities.length > 0) {
+      return m.confidence !== 'unknown' && m.supportedCapabilities.includes(activeSlot);
+    }
+    if (m.capabilityCategory) {
+      return m.capabilityCategory === activeSlot;
+    }
+    return true;
+  });
+  const recommendedIdSet = new Set(recommendedModels.map((m) => m.id));
+  const otherModels = rawModels.filter((m) => !recommendedIdSet.has(m.id));
+
+  const slotTitleMap: Record<ApiCapabilityCategory, { title: string; subtitle: string; basePlaceholder: string; modelPlaceholder: string }> = {
+    text_generation: {
+      title: 'API连接（语言生成）',
+      subtitle: '用于微信私聊、群聊、线下模式、记忆提取等文本对话能力',
+      basePlaceholder: 'https://generativelanguage.googleapis.com 或 https://api.openai.com/v1',
+      modelPlaceholder: '如：gemini-4-hydrogen、gpt-4o、deepseek-chat',
+    },
+    image_generation: {
+      title: '图像API连接（图像生成）',
+      subtitle: '独立配置生图接口，支持 Google 原生生图与 OpenAI /v1/images/generations 协议',
+      basePlaceholder: 'https://generativelanguage.googleapis.com 或 https://api.openai.com/v1',
+      modelPlaceholder: '如：gemini-3.1-flash-lite-image、imagen-3.0-generate-002、dall-e-3、flux-schnell',
+    },
+    speech_generation: {
+      title: '语音API连接（语音生成）',
+      subtitle: '独立预留 TTS 语音合成配置框架（不影响语言/图像配置）',
+      basePlaceholder: 'https://api.openai.com/v1 或自定义语音反代地址',
+      modelPlaceholder: '如：tts-1、gemini-3.8-flash-lite-tts',
+    },
+    image_recognition: {
+      title: '识别API — 图像识别',
+      subtitle: '独立配置视觉理解模型，严格与「图像生成」配置隔离，绝不混用密钥或模型',
+      basePlaceholder: 'https://generativelanguage.googleapis.com 或 https://api.openai.com/v1',
+      modelPlaceholder: '如：gemini-4-hydrogen、gpt-4o-mini、qwen2.5-vl-72b',
+    },
+    speech_recognition: {
+      title: '识别API — 语音识别',
+      subtitle: '独立预留 STT 语音转文字配置框架（不影响图像识别配置）',
+      basePlaceholder: 'https://api.openai.com/v1 或自定义转写反代地址',
+      modelPlaceholder: '如：whisper-1、gemini-3.5-transcribe',
+    },
+  };
+
+  const slotMeta = slotTitleMap[activeSlot];
+  const isKeyShown = showKeyMap[activeSlot];
+  const activeKey = currentConfig.apiKey || '';
+  const activeBaseUrl = currentConfig.baseUrl || '';
+  const activeModel = currentConfig.model || '';
+  const activeProtocol = currentConfig.apiProtocol || 'google_native';
 
   return (
-    <div className="api-settings-panel-root settings-section-card rounded-2xl bg-zinc-950 border border-zinc-850 p-4 sm:p-5 space-y-5 text-zinc-200">
-      {/* 标题分类切换: API连接 / 图像api连接 / 语音api连接 */}
-      <div className="api-category-tabs flex p-1 bg-zinc-900/90 rounded-xl border border-zinc-800">
-        <button
-          type="button"
-          onClick={() => setActiveCategory('text')}
-          className={`flex-1 py-2 rounded-lg text-xs font-medium transition ${
-            activeCategory === 'text'
-              ? 'bg-zinc-800 text-white shadow-sm'
-              : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          API连接
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveCategory('image')}
-          className={`flex-1 py-2 rounded-lg text-xs font-medium transition ${
-            activeCategory === 'image'
-              ? 'bg-zinc-800 text-white shadow-sm'
-              : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          图像api连接
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveCategory('voice')}
-          className={`flex-1 py-2 rounded-lg text-xs font-medium transition ${
-            activeCategory === 'voice'
-              ? 'bg-zinc-800 text-white shadow-sm'
-              : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          语音api连接
-        </button>
+    <div className="api-settings-panel-root settings-section-card rounded-2xl bg-zinc-950 border border-zinc-850 p-4 sm:p-5 space-y-4 text-zinc-200">
+      {/* 4 Top-Level Groups */}
+      <div className="api-category-tabs grid grid-cols-4 gap-1 p-1 bg-zinc-900/90 rounded-xl border border-zinc-800">
+        {(
+          [
+            { id: 'text', label: 'API连接', sub: '语言生成' },
+            { id: 'image', label: '图像API', sub: '图像生成' },
+            { id: 'voice', label: '语音API', sub: '语音生成' },
+            { id: 'recognition', label: '识别API', sub: '图像/语音' },
+          ] as Array<{ id: TopLevelApiGroup; label: string; sub: string }>
+        ).map((tab) => {
+          const active = activeCategory === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveCategory(tab.id)}
+              className={`py-2 px-1.5 rounded-lg text-center transition cursor-pointer ${
+                active
+                  ? 'bg-zinc-800 text-white shadow-sm border border-zinc-700/80'
+                  : 'text-zinc-400 hover:text-zinc-200 border border-transparent'
+              }`}
+            >
+              <div className="text-[11px] font-semibold leading-tight truncate">{tab.label}</div>
+              <div className="text-[9px] text-zinc-500 leading-tight mt-0.5 truncate">{tab.sub}</div>
+            </button>
+          );
+        })}
       </div>
 
-      {/* 提示消息 */}
+      {/* Recognition API Sub-Tabs (Image Recognition / Speech Recognition) */}
+      {activeCategory === 'recognition' && (
+        <div className="flex items-center gap-2 p-1 rounded-xl bg-zinc-900/70 border border-zinc-800/80">
+          <button
+            type="button"
+            onClick={() => setRecognitionSubTab('image')}
+            className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition cursor-pointer ${
+              recognitionSubTab === 'image'
+                ? 'bg-indigo-600/90 text-white shadow-xs'
+                : 'text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <ScanSearch className="w-3.5 h-3.5" />
+            <span>图像识别</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setRecognitionSubTab('speech')}
+            className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition cursor-pointer ${
+              recognitionSubTab === 'speech'
+                ? 'bg-zinc-800 text-zinc-100 border border-zinc-700'
+                : 'text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5" />
+            <span>语音识别</span>
+            <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300">待接入</span>
+          </button>
+        </div>
+      )}
+
+      {/* Group Header */}
+      <div className="flex items-start justify-between gap-2 px-0.5">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold text-zinc-100 flex items-center gap-2">
+            <span>{slotMeta.title}</span>
+            {isComingSoonSlot && (
+              <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-[10px] font-medium text-amber-300">
+                功能待后续完整接入
+              </span>
+            )}
+          </div>
+          <p className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">{slotMeta.subtitle}</p>
+        </div>
+        {liveHealth && (
+          <span className="text-[10px] text-zinc-500 font-mono shrink-0">{liveHealth}</span>
+        )}
+      </div>
+
+      {/* Honest Coming-Soon Banner for Speech Generation / Speech Recognition */}
+      {isComingSoonSlot && (
+        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 text-[11px] text-amber-200/90 flex items-start gap-2 leading-relaxed">
+          <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-amber-200">
+              {activeSlot === 'speech_generation' ? '语音生成' : '语音识别'}功能待后续完整接入
+            </p>
+            <p className="text-amber-200/80 mt-0.5">
+              本阶段已建立独立数据结构、兼容迁移与持久化保存框架，你可以提前填写并保存配置，系统不会显示虚假的“已连接/可用”状态。
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Action Feedback Toast */}
       {actionNotice && (
-        <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs flex items-center gap-2 animate-in fade-in">
+        <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs flex items-center gap-2">
           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
           <span>{actionNotice}</span>
         </div>
       )}
 
-      {/* ================= 1. API 连接 (文本) ================= */}
-      {activeCategory === 'text' && (
-        <div className="space-y-4">
-          {/* 1. 反代地址（Proxy / Base URL） */}
-          <div className="space-y-1.5">
-            <label className="text-xs text-zinc-300 font-medium block">
-              1. 反代地址 (Proxy / Base URL)
-            </label>
-            <StableTextInput
-              type="text"
-              placeholder="https://api.openai.com/v1 或留空使用默认"
-              value={currentTextBaseUrl}
-              onValueChange={(val) => {
-                const now = new Date().toLocaleTimeString();
-
-                addDiagnosticLog({
-                  tag: '[BASE_INPUT_EVENT]',
-                  baseUrlLen: val.length,
-                  baseUrlVal: val,
-                  keyLen: currentTextKey.length,
-                  keyLast4: currentTextKey.slice(-4),
-                  details: `onValueChange triggered at ${now}, rawValue="${val}" (len=${val.length})`,
-                });
-
-                if (currentTextBaseUrl.length > 0 && val.length === 0) {
-                  addDiagnosticLog({
-                    tag: '[CLEAR_DETECTED]',
-                    baseUrlLen: 0,
-                    baseUrlVal: '',
-                    keyLen: currentTextKey.length,
-                    keyLast4: currentTextKey.slice(-4),
-                    details: `source: Base URL input cleared, previousBaseUrlLength: ${currentTextBaseUrl.length}, nextBaseUrlLength: 0`,
-                  });
-                }
-
-                addDiagnosticLog({
-                  tag: '[SETTINGS_WRITE:BASE_INPUT]',
-                  baseUrlLen: val.length,
-                  baseUrlVal: val,
-                  keyLen: currentTextKey.length,
-                  keyLast4: currentTextKey.slice(-4),
-                  details: `[BASE_STATE_NEXT] baseLen: ${currentTextBaseUrl.length} -> ${val.length}`,
-                });
-
-                setSettings((prev) => ({
-                  ...prev,
-                  text: { ...prev.text, baseUrl: val },
-                }));
-              }}
-              onBlur={(e) => {
-                const val = e.target.value;
-                if (val !== currentTextBaseUrl) {
-                  setSettings((prev) => ({
-                    ...prev,
-                    text: { ...prev.text, baseUrl: val },
-                  }));
-                }
-              }}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
-            />
-          </div>
-
-          {/* 2. 密钥（Key / API Key） */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs text-zinc-300 font-medium">
-                2. 密钥 (Key / API Key)
-              </label>
-              {currentTextKey ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-zinc-400 font-mono">
-                    已配置 (••••{currentTextKey.slice(-4)})
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleClearTextKey}
-                    className="text-[11px] text-rose-400 hover:text-rose-300 transition underline underline-offset-2"
-                  >
-                    清除
-                  </button>
-                </div>
-              ) : null}
-            </div>
-            <div className="relative">
-              <StableTextInput
-                type={showTextKey ? 'text' : 'password'}
-                placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
-                value={currentTextKey}
-                onValueChange={(val) => {
-                  const now = new Date().toLocaleTimeString();
-                  const last4 = val.slice(-4);
-
-                  addDiagnosticLog({
-                    tag: '[KEY_INPUT_EVENT]',
-                    baseUrlLen: currentTextBaseUrl.length,
-                    baseUrlVal: currentTextBaseUrl,
-                    keyLen: val.length,
-                    keyLast4: last4,
-                    details: `onValueChange triggered at ${now}, keyLen=${val.length}, last4=${last4}`,
-                  });
-
-                  if (currentTextKey.length > 0 && val.length === 0) {
-                    addDiagnosticLog({
-                      tag: '[CLEAR_DETECTED]',
-                      baseUrlLen: currentTextBaseUrl.length,
-                      baseUrlVal: currentTextBaseUrl,
-                      keyLen: 0,
-                      keyLast4: '',
-                      details: `source: API Key input cleared, previousKeyLength: ${currentTextKey.length}, nextKeyLength: 0`,
-                    });
-                  }
-
-                  addDiagnosticLog({
-                    tag: '[SETTINGS_WRITE:KEY_INPUT]',
-                    baseUrlLen: currentTextBaseUrl.length,
-                    baseUrlVal: currentTextBaseUrl,
-                    keyLen: val.length,
-                    keyLast4: last4,
-                    details: `[KEY_STATE_NEXT] keyLen: ${currentTextKey.length} -> ${val.length}, last4=${last4}`,
-                  });
-
-                  setSettings((prev) => ({
-                    ...prev,
-                    text: { ...prev.text, apiKey: val },
-                  }));
-                }}
-                onBlur={(e) => {
-                  const val = e.target.value;
-                  if (val !== currentTextKey) {
-                    setSettings((prev) => ({
-                      ...prev,
-                      text: { ...prev.text, apiKey: val },
-                    }));
-                  }
-                }}
-                className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
-              />
-              <button
-                type="button"
-                onClick={() => setShowTextKey(!showTextKey)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-0.5 transition"
-                title={showTextKey ? '隐藏密钥' : '显示密钥'}
-              >
-                {showTextKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          {/* 3. 模型选择 */}
-          <div className="space-y-1.5">
-            <label className="text-xs text-zinc-300 font-medium block">
-              3. 模型选择
-            </label>
-            {fetchedModels.length > 0 && (
-              <select
-                value={settings.text.model || ''}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val) {
-                    addDiagnosticLog({
-                      tag: '[SETTINGS_WRITE:PANEL_TEXT_MODEL_SELECT]',
-                      baseUrlLen: currentTextBaseUrl.length,
-                      baseUrlVal: currentTextBaseUrl,
-                      keyLen: currentTextKey.length,
-                      keyLast4: currentTextKey.slice(-4),
-                      details: `model select val="${val}"`,
-                    });
-                    setSettings((prev) => ({
-                      ...prev,
-                      text: { ...prev.text, model: val },
-                    }));
-                  }
-                }}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs font-mono focus:outline-none focus:border-zinc-500 mb-1.5"
-              >
-                <option value="">-- 点击选择已拉取的模型 --</option>
-                {fetchedModels.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id} {m.name && m.name !== m.id ? `(${m.name})` : ''}
-                  </option>
-                ))}
-              </select>
-            )}
-            <StableTextInput
-              type="text"
-              placeholder="手动输入模型名 (如: gemini-4-hydrogen, deepseek-chat, gpt-4o)"
-              value={settings.text.model || ''}
-              onValueChange={(val) => {
-                addDiagnosticLog({
-                  tag: '[SETTINGS_WRITE:PANEL_TEXT_MODEL_INPUT]',
-                  baseUrlLen: currentTextBaseUrl.length,
-                  baseUrlVal: currentTextBaseUrl,
-                  keyLen: currentTextKey.length,
-                  keyLast4: currentTextKey.slice(-4),
-                  details: `model input val="${val}"`,
-                });
-                setSettings((prev) => ({
-                  ...prev,
-                  text: { ...prev.text, model: val },
-                }));
-              }}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
-            />
-          </div>
-
-          {/* 4. 预设配置 */}
-          <div className="space-y-1.5">
-            <label className="text-xs text-zinc-300 font-medium block">
-              4. 预设配置
-            </label>
-            <div className="flex gap-2">
-              <select
-                value={selectedPresetId}
-                onChange={(e) => handleSelectPreset(e.target.value)}
-                className="flex-1 px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs focus:outline-none focus:border-zinc-500 font-medium truncate"
-              >
-                <option value="custom">-- 自定义配置 --</option>
-                {customPresets.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-
-              {selectedPresetId !== 'custom' && (
-                <button
-                  type="button"
-                  onClick={() => handleDeleteCustomPreset(selectedPresetId)}
-                  className="px-3 py-2.5 rounded-xl bg-zinc-900 hover:bg-rose-950/40 border border-zinc-800 hover:border-rose-900/50 text-rose-400 text-xs font-medium transition active:scale-95 shrink-0 flex items-center gap-1"
-                  title="删除当前选中的自定义配置"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">删除</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setShowPresetManager(true)}
-                className="px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-xs font-medium transition active:scale-95 shrink-0"
-              >
-                管理
-              </button>
-            </div>
-          </div>
-
-          {/* 5. 底部按钮 */}
-          <div className="space-y-3 pt-2">
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={handleTestConnection}
-                disabled={isTestingConnection}
-                className="py-2.5 px-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50"
-              >
-                <Zap className="w-3.5 h-3.5 text-zinc-400" />
-                <span>{isTestingConnection ? '测试中...' : '测试连接'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleFetchModels}
-                disabled={isFetchingModels}
-                className="py-2.5 px-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 text-zinc-400 ${isFetchingModels ? 'animate-spin' : ''}`} />
-                <span>{isFetchingModels ? '拉取中...' : '拉取模型'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleGlobalSave}
-                className="py-2.5 px-2 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 font-semibold text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-sm"
-              >
-                <Check className="w-3.5 h-3.5 text-zinc-950" />
-                <span>保存配置</span>
-              </button>
-            </div>
-
-            {/* Status & Feedback */}
-            {connectionResult && (
-              <div
-                className={`api-diag-status-box p-3 rounded-xl border text-xs flex items-center justify-between ${
-                  connectionResult.success
-                    ? 'api-diag-status-box--ok bg-zinc-900/90 border-zinc-800 text-zinc-200'
-                    : 'api-diag-status-box--err bg-zinc-900/90 border-zinc-800 text-rose-300'
-                }`}
-              >
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  {connectionResult.success ? (
-                    <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
-                  ) : (
-                    <AlertCircle className="api-diag-err w-4 h-4 text-rose-400 shrink-0" />
-                  )}
-                  <span className="break-words [overflow-wrap:anywhere]">
-                    {connectionResult.message || (connectionResult.success ? '连接成功 (HTTP 200)' : '连接失败')}
-                  </span>
-                </div>
-                <span className="api-diag-muted font-mono text-[11px] text-zinc-400 shrink-0 ml-2">
-                  {connectionResult.latencyMs}ms
-                </span>
-              </div>
-            )}
-
-            {modelFetchResult && (
-              <div
-                className={`api-diag-status-box p-3 rounded-xl border text-xs flex items-center gap-2 ${
-                  modelFetchResult.success
-                    ? 'api-diag-status-box--ok bg-zinc-900/90 border-zinc-800 text-zinc-200'
-                    : 'api-diag-status-box--warn bg-zinc-900/90 border-zinc-800 text-amber-300'
-                }`}
-              >
-                {modelFetchResult.success ? (
-                  <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
-                ) : (
-                  <AlertCircle className="api-diag-warn w-4 h-4 text-amber-400 shrink-0" />
-                )}
-                <span className="break-words [overflow-wrap:anywhere]">{modelFetchResult.message}</span>
-              </div>
-            )}
-          </div>
+      {/* ================= Independent Slot Form Fields ================= */}
+      <div className="space-y-4">
+        {/* 1. 反代地址 */}
+        <div className="space-y-1.5">
+          <label className="text-xs text-zinc-300 font-medium block">
+            1. 反代地址 (Proxy / Base URL)
+          </label>
+          <StableTextInput
+            key={`base_${activeSlot}`}
+            type="text"
+            placeholder={slotMeta.basePlaceholder}
+            value={activeBaseUrl}
+            onValueChange={(val) => patchCurrent({ baseUrl: val })}
+            onBlur={(e) => {
+              if (e.target.value !== activeBaseUrl) {
+                patchCurrent({ baseUrl: e.target.value });
+              }
+            }}
+            className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
+          />
         </div>
-      )}
 
-      {/* ================= 2. 图像 API 连接 ================= */}
-      {activeCategory === 'image' && (
-        <div className="space-y-4">
-          {/* 1. 图像 API 反代地址 */}
-          <div className="space-y-1.5">
-            <label className="text-xs text-zinc-300 font-medium block">
-              1. 图像 API 反代地址 (Proxy / Base URL)
+        {/* 2. 密钥 */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs text-zinc-300 font-medium">
+              2. 密钥 (API Key)
             </label>
-            <StableTextInput
-              type="text"
-              placeholder="https://api.openai.com/v1 或留空使用默认"
-              value={currentImageBaseUrl}
-              onValueChange={(val) => {
-                addDiagnosticLog({
-                  tag: '[SETTINGS_WRITE:PANEL_IMAGE_BASE_URL_INPUT]',
-                  baseUrlLen: val.length,
-                  baseUrlVal: val,
-                  keyLen: currentImageKey.length,
-                  keyLast4: currentImageKey.slice(-4),
-                  details: `image.baseUrl changed to "${val}"`,
-                });
-                setSettings((prev) => ({
-                  ...prev,
-                  image: { ...prev.image, baseUrl: val },
-                }));
-              }}
-              onBlur={(e) => {
-                const val = e.target.value;
-                if (val !== currentImageBaseUrl) {
-                  setSettings((prev) => ({
-                    ...prev,
-                    image: { ...prev.image, baseUrl: val },
-                  }));
-                }
-              }}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
-            />
-          </div>
-
-          {/* 2. 图像 API 密钥 */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs text-zinc-300 font-medium">
-                2. 图像 API 密钥 (Key / API Key)
-              </label>
-              {currentImageKey ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-zinc-400 font-mono">
-                    已配置 (••••{currentImageKey.slice(-4)})
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleClearImageKey}
-                    className="text-[11px] text-rose-400 hover:text-rose-300 transition underline underline-offset-2"
-                  >
-                    清除
-                  </button>
-                </div>
-              ) : null}
-            </div>
-            <div className="relative">
-              <StableTextInput
-                type={showImageKey ? 'text' : 'password'}
-                placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
-                value={currentImageKey}
-                onValueChange={(val) => {
-                  addDiagnosticLog({
-                    tag: '[SETTINGS_WRITE:PANEL_IMAGE_KEY_INPUT]',
-                    baseUrlLen: currentImageBaseUrl.length,
-                    baseUrlVal: currentImageBaseUrl,
-                    keyLen: val.length,
-                    keyLast4: val.slice(-4),
-                    details: `image.apiKey changed (len=${val.length})`,
-                  });
-                  setSettings((prev) => ({
-                    ...prev,
-                    image: { ...prev.image, apiKey: val },
-                  }));
-                }}
-                onBlur={(e) => {
-                  const val = e.target.value;
-                  if (val !== currentImageKey) {
-                    setSettings((prev) => ({
-                      ...prev,
-                      image: { ...prev.image, apiKey: val },
-                    }));
-                  }
-                }}
-                className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
-              />
-              <button
-                type="button"
-                onClick={() => setShowImageKey(!showImageKey)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-0.5 transition"
-                title={showImageKey ? '隐藏密钥' : '显示密钥'}
-              >
-                {showImageKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          {/* 3. 图像模型选择 */}
-          <div className="space-y-1.5">
-            <label className="text-xs text-zinc-300 font-medium block">
-              3. 图像模型选择
-            </label>
-            {(fetchedModelsMap?.image || fetchedModels).length > 0 && (
-              <select
-                value={settings.image.model || ''}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val) {
-                    addDiagnosticLog({
-                      tag: '[SETTINGS_WRITE:PANEL_IMAGE_MODEL_SELECT]',
-                      baseUrlLen: currentImageBaseUrl.length,
-                      baseUrlVal: currentImageBaseUrl,
-                      keyLen: currentImageKey.length,
-                      keyLast4: currentImageKey.slice(-4),
-                      details: `image model select val="${val}"`,
-                    });
-                    setSettings((prev) => ({
-                      ...prev,
-                      image: { ...prev.image, model: val },
-                    }));
-                  }
-                }}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs font-mono focus:outline-none focus:border-zinc-500 mb-1.5"
-              >
-                <option value="">-- 点击选择已拉取的图像模型 --</option>
-                {(fetchedModelsMap?.image || fetchedModels).map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id} {m.name && m.name !== m.id ? `(${m.name})` : ''}
-                  </option>
-                ))}
-              </select>
-            )}
-            <StableTextInput
-              type="text"
-              placeholder="dall-e-3, imagen-3.0-generate-002, flux-schnell..."
-              value={settings.image.model || ''}
-              onValueChange={(val) => {
-                addDiagnosticLog({
-                  tag: '[SETTINGS_WRITE:PANEL_IMAGE_MODEL_INPUT]',
-                  baseUrlLen: currentImageBaseUrl.length,
-                  baseUrlVal: currentImageBaseUrl,
-                  keyLen: currentImageKey.length,
-                  keyLast4: currentImageKey.slice(-4),
-                  details: `image.model changed to "${val}"`,
-                });
-                setSettings((prev) => ({
-                  ...prev,
-                  image: { ...prev.image, model: val },
-                }));
-              }}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition select-text"
-            />
-          </div>
-
-          {/* 4. 图像预设配置 */}
-          <div className="space-y-1.5">
-            <label className="text-xs text-zinc-300 font-medium block">
-              4. 图像预设配置
-            </label>
-            <div className="flex gap-2">
-              <select
-                value={selectedImagePresetId}
-                onChange={(e) => handleSelectImagePreset(e.target.value)}
-                className="flex-1 px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs focus:outline-none focus:border-zinc-500 font-medium truncate"
-              >
-                <option value="custom">-- 自定义配置 --</option>
-                {IMAGE_PROVIDER_PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-                {customPresets.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-
-              {selectedImagePresetId !== 'custom' && (
-                <button
-                  type="button"
-                  onClick={() => handleDeleteCustomPreset(selectedImagePresetId)}
-                  className="px-3 py-2.5 rounded-xl bg-zinc-900 hover:bg-rose-950/40 border border-zinc-800 hover:border-rose-900/50 text-rose-400 text-xs font-medium transition active:scale-95 shrink-0 flex items-center gap-1"
-                  title="删除当前选中的自定义配置"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">删除</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setShowPresetManager(true)}
-                className="px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-xs font-medium transition active:scale-95 shrink-0"
-              >
-                管理
-              </button>
-            </div>
-          </div>
-
-          {/* 5. 底部按钮与状态 */}
-          <div className="space-y-3 pt-2">
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={handleTestConnection}
-                disabled={isTestingConnection}
-                className="py-2.5 px-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50"
-              >
-                <Zap className="w-3.5 h-3.5 text-zinc-400" />
-                <span>{isTestingConnection ? '测试中...' : '测试连接'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleFetchModels}
-                disabled={isFetchingModels}
-                className="py-2.5 px-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 text-zinc-400 ${isFetchingModels ? 'animate-spin' : ''}`} />
-                <span>{isFetchingModels ? '拉取中...' : '拉取模型'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleGlobalSave}
-                className="py-2.5 px-2 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 font-semibold text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-sm"
-              >
-                <Check className="w-3.5 h-3.5 text-zinc-950" />
-                <span>保存配置</span>
-              </button>
-            </div>
-
-            {connectionResult && (
-              <div
-                className={`api-diag-status-box p-3 rounded-xl border text-xs flex items-center justify-between ${
-                  connectionResult.success
-                    ? 'api-diag-status-box--ok bg-zinc-900/90 border-zinc-800 text-zinc-200'
-                    : 'api-diag-status-box--err bg-zinc-900/90 border-zinc-800 text-rose-300'
-                }`}
-              >
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  {connectionResult.success ? (
-                    <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
-                  ) : (
-                    <AlertCircle className="api-diag-err w-4 h-4 text-rose-400 shrink-0" />
-                  )}
-                  <span className="break-words [overflow-wrap:anywhere]">
-                    {connectionResult.message || (connectionResult.success ? '连接成功 (HTTP 200)' : '连接失败')}
-                  </span>
-                </div>
-                <span className="api-diag-muted font-mono text-[11px] text-zinc-400 shrink-0 ml-2">
-                  {connectionResult.latencyMs}ms
-                </span>
-              </div>
-            )}
-
-            {modelFetchResult && (
-              <div
-                className={`api-diag-status-box p-3 rounded-xl border text-xs flex items-center gap-2 ${
-                  modelFetchResult.success
-                    ? 'api-diag-status-box--ok bg-zinc-900/90 border-zinc-800 text-zinc-200'
-                    : 'api-diag-status-box--warn bg-zinc-900/90 border-zinc-800 text-amber-300'
-                }`}
-              >
-                {modelFetchResult.success ? (
-                  <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
-                ) : (
-                  <AlertCircle className="api-diag-warn w-4 h-4 text-amber-400 shrink-0" />
-                )}
-                <span className="break-words [overflow-wrap:anywhere]">{modelFetchResult.message}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ================= 3. 语音 API 连接 ================= */}
-      {activeCategory === 'voice' && (
-        <div className="space-y-4">
-          {/* 1. 语音 API 反代地址 */}
-          <div className="space-y-1.5">
-            <label className="text-xs text-zinc-300 font-medium block">
-              1. 语音 API 反代地址 (Proxy / Base URL)
-            </label>
-            <StableTextInput
-              type="text"
-              placeholder="https://api.openai.com/v1 或留空使用默认"
-              value={currentVoiceBaseUrl}
-              onValueChange={(val) => {
-                addDiagnosticLog({
-                  tag: '[SETTINGS_WRITE:PANEL_VOICE_BASE_URL_INPUT]',
-                  baseUrlLen: val.length,
-                  baseUrlVal: val,
-                  keyLen: currentVoiceKey.length,
-                  keyLast4: currentVoiceKey.slice(-4),
-                  details: `voice.baseUrl changed to "${val}"`,
-                });
-                setSettings((prev) => ({
-                  ...prev,
-                  voice: { ...prev.voice, baseUrl: val },
-                }));
-              }}
-              onBlur={(e) => {
-                const val = e.target.value;
-                if (val !== currentVoiceBaseUrl) {
-                  setSettings((prev) => ({
-                    ...prev,
-                    voice: { ...prev.voice, baseUrl: val },
-                  }));
-                }
-              }}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
-            />
-          </div>
-
-          {/* 2. 语音 API 密钥 */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs text-zinc-300 font-medium">
-                2. 语音 API 密钥 (Key / API Key)
-              </label>
-              {currentVoiceKey ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-zinc-400 font-mono">
-                    已配置 (••••{currentVoiceKey.slice(-4)})
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleClearVoiceKey}
-                    className="text-[11px] text-rose-400 hover:text-rose-300 transition underline underline-offset-2"
-                  >
-                    清除
-                  </button>
-                </div>
-              ) : null}
-            </div>
-            <div className="relative">
-              <StableTextInput
-                type={showVoiceKey ? 'text' : 'password'}
-                placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
-                value={currentVoiceKey}
-                onValueChange={(val) => {
-                  addDiagnosticLog({
-                    tag: '[SETTINGS_WRITE:PANEL_VOICE_KEY_INPUT]',
-                    baseUrlLen: currentVoiceBaseUrl.length,
-                    baseUrlVal: currentVoiceBaseUrl,
-                    keyLen: val.length,
-                    keyLast4: val.slice(-4),
-                    details: `voice.apiKey changed (len=${val.length})`,
-                  });
-                  setSettings((prev) => ({
-                    ...prev,
-                    voice: { ...prev.voice, apiKey: val },
-                  }));
-                }}
-                onBlur={(e) => {
-                  const val = e.target.value;
-                  if (val !== currentVoiceKey) {
-                    setSettings((prev) => ({
-                      ...prev,
-                      voice: { ...prev.voice, apiKey: val },
-                    }));
-                  }
-                }}
-                className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
-              />
-              <button
-                type="button"
-                onClick={() => setShowVoiceKey(!showVoiceKey)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-0.5 transition"
-                title={showVoiceKey ? '隐藏密钥' : '显示密钥'}
-              >
-                {showVoiceKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          {/* 3. 语音模型选择 */}
-          <div className="space-y-1.5">
-            <label className="text-xs text-zinc-300 font-medium block">
-              3. 语音模型选择
-            </label>
-            {(fetchedModelsMap?.voice || fetchedModels).length > 0 && (
-              <select
-                value={settings.voice.model || ''}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val) {
-                    addDiagnosticLog({
-                      tag: '[SETTINGS_WRITE:PANEL_VOICE_MODEL_SELECT]',
-                      baseUrlLen: currentVoiceBaseUrl.length,
-                      baseUrlVal: currentVoiceBaseUrl,
-                      keyLen: currentVoiceKey.length,
-                      keyLast4: currentVoiceKey.slice(-4),
-                      details: `voice model select val="${val}"`,
-                    });
-                    setSettings((prev) => ({
-                      ...prev,
-                      voice: { ...prev.voice, model: val },
-                    }));
-                  }
-                }}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs font-mono focus:outline-none focus:border-zinc-500 mb-1.5"
-              >
-                <option value="">-- 点击选择已拉取的语音模型 --</option>
-                {(fetchedModelsMap?.voice || fetchedModels).map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id} {m.name && m.name !== m.id ? `(${m.name})` : ''}
-                  </option>
-                ))}
-              </select>
-            )}
-            <StableTextInput
-              type="text"
-              placeholder="tts-1, tts-1-hd, whisper-1..."
-              value={settings.voice.model || ''}
-              onValueChange={(val) => {
-                addDiagnosticLog({
-                  tag: '[SETTINGS_WRITE:PANEL_VOICE_MODEL_INPUT]',
-                  baseUrlLen: currentVoiceBaseUrl.length,
-                  baseUrlVal: currentVoiceBaseUrl,
-                  keyLen: currentVoiceKey.length,
-                  keyLast4: currentVoiceKey.slice(-4),
-                  details: `voice.model changed to "${val}"`,
-                });
-                setSettings((prev) => ({
-                  ...prev,
-                  voice: { ...prev.voice, model: val },
-                }));
-              }}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500 transition select-text"
-            />
-          </div>
-
-          {/* 4. 语音预设配置 */}
-          <div className="space-y-1.5">
-            <label className="text-xs text-zinc-300 font-medium block">
-              4. 语音预设配置
-            </label>
-            <div className="flex gap-2">
-              <select
-                value={selectedVoicePresetId}
-                onChange={(e) => handleSelectVoicePreset(e.target.value)}
-                className="flex-1 px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs focus:outline-none focus:border-zinc-500 font-medium truncate"
-              >
-                <option value="custom">-- 自定义配置 --</option>
-                {VOICE_PROVIDER_PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-                {customPresets.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-
-              {selectedVoicePresetId !== 'custom' && (
-                <button
-                  type="button"
-                  onClick={() => handleDeleteCustomPreset(selectedVoicePresetId)}
-                  className="px-3 py-2.5 rounded-xl bg-zinc-900 hover:bg-rose-950/40 border border-zinc-800 hover:border-rose-900/50 text-rose-400 text-xs font-medium transition active:scale-95 shrink-0 flex items-center gap-1"
-                  title="删除当前选中的自定义配置"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">删除</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setShowPresetManager(true)}
-                className="px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-xs font-medium transition active:scale-95 shrink-0"
-              >
-                管理
-              </button>
-            </div>
-          </div>
-
-          {/* 5. 底部按钮与状态 */}
-          <div className="space-y-3 pt-2">
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={handleTestConnection}
-                disabled={isTestingConnection}
-                className="py-2.5 px-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50"
-              >
-                <Zap className="w-3.5 h-3.5 text-zinc-400" />
-                <span>{isTestingConnection ? '测试中...' : '测试连接'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleFetchModels}
-                disabled={isFetchingModels}
-                className="py-2.5 px-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 text-zinc-400 ${isFetchingModels ? 'animate-spin' : ''}`} />
-                <span>{isFetchingModels ? '拉取中...' : '拉取模型'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleGlobalSave}
-                className="py-2.5 px-2 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 font-semibold text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-sm"
-              >
-                <Check className="w-3.5 h-3.5 text-zinc-950" />
-                <span>保存配置</span>
-              </button>
-            </div>
-
-            {connectionResult && (
-              <div
-                className={`api-diag-status-box p-3 rounded-xl border text-xs flex items-center justify-between ${
-                  connectionResult.success
-                    ? 'api-diag-status-box--ok bg-zinc-900/90 border-zinc-800 text-zinc-200'
-                    : 'api-diag-status-box--err bg-zinc-900/90 border-zinc-800 text-rose-300'
-                }`}
-              >
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  {connectionResult.success ? (
-                    <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
-                  ) : (
-                    <AlertCircle className="api-diag-err w-4 h-4 text-rose-400 shrink-0" />
-                  )}
-                  <span className="break-words [overflow-wrap:anywhere]">
-                    {connectionResult.message || (connectionResult.success ? '连接成功 (HTTP 200)' : '连接失败')}
-                  </span>
-                </div>
-                <span className="api-diag-muted font-mono text-[11px] text-zinc-400 shrink-0 ml-2">
-                  {connectionResult.latencyMs}ms
-                </span>
-              </div>
-            )}
-
-            {modelFetchResult && (
-              <div
-                className={`api-diag-status-box p-3 rounded-xl border text-xs flex items-center gap-2 ${
-                  modelFetchResult.success
-                    ? 'api-diag-status-box--ok bg-zinc-900/90 border-zinc-800 text-zinc-200'
-                    : 'api-diag-status-box--warn bg-zinc-900/90 border-zinc-800 text-amber-300'
-                }`}
-              >
-                {modelFetchResult.success ? (
-                  <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
-                ) : (
-                  <AlertCircle className="api-diag-warn w-4 h-4 text-amber-400 shrink-0" />
-                )}
-                <span className="break-words [overflow-wrap:anywhere]">{modelFetchResult.message}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 预设管理 Modal (管理与删除自定义配置) */}
-      {showPresetManager && (
-        <div className="api-preset-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="api-preset-modal settings-modal-card bg-zinc-950 border border-zinc-800 rounded-2xl p-5 w-full max-w-md shadow-2xl space-y-4">
-            <div className="settings-card-divider flex items-center justify-between border-b border-zinc-850 pb-3">
+            {activeKey ? (
               <div className="flex items-center gap-2">
-                <Settings2 className="w-4 h-4 text-zinc-400" />
-                <h3 className="text-sm font-semibold text-zinc-100">管理自定义配置</h3>
+                <span className="text-[11px] text-zinc-400 font-mono">
+                  已配置 ({maskApiKey(activeKey)})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => patchCurrent({ apiKey: '' })}
+                  className="text-[11px] text-rose-400 hover:text-rose-300 transition underline underline-offset-2 cursor-pointer"
+                >
+                  清除
+                </button>
               </div>
+            ) : (
+              <span className="text-[11px] text-zinc-500">未配置</span>
+            )}
+          </div>
+          <div className="relative">
+            <StableTextInput
+              key={`key_${activeSlot}`}
+              type={isKeyShown ? 'text' : 'password'}
+              placeholder="输入当前能力专用 API Key（本地加密隔离保存）"
+              value={activeKey}
+              onValueChange={(val) => patchCurrent({ apiKey: val })}
+              onBlur={(e) => {
+                if (e.target.value !== activeKey) {
+                  patchCurrent({ apiKey: e.target.value });
+                }
+              }}
+              className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
+            />
+            <button
+              type="button"
+              onClick={() =>
+                setShowKeyMap((prev) => ({ ...prev, [activeSlot]: !prev[activeSlot] }))
+              }
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-0.5 transition cursor-pointer"
+              title={isKeyShown ? '隐藏密钥' : '显示密钥'}
+            >
+              {isKeyShown ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+
+        {/* 3. 协议适配 */}
+        <div className="space-y-1.5">
+          <label className="text-xs text-zinc-300 font-medium block">
+            3. 接口协议
+          </label>
+          <select
+            value={activeProtocol}
+            onChange={(e) => {
+              const proto = e.target.value;
+              patchCurrent({
+                apiProtocol: proto,
+                provider:
+                  proto === 'google_native'
+                    ? 'google_gemini'
+                    : proto === 'anthropic'
+                    ? 'anthropic'
+                    : currentConfig.provider === 'google_gemini'
+                    ? 'openai_compatible'
+                    : currentConfig.provider || 'openai_compatible',
+              });
+            }}
+            className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs focus:outline-none focus:border-zinc-500"
+          >
+            <option value="google_native">Google 原生协议 (Gemini / Imagen 原生与兼容反代)</option>
+            <option value="openai_compatible">OpenAI 兼容协议 (/v1/chat/completions 或 /v1/images/generations)</option>
+            {activeSlot === 'text_generation' && (
+              <option value="anthropic">Anthropic 原生协议 (/v1/messages)</option>
+            )}
+          </select>
+        </div>
+
+        {/* 4. 模型选择（能力分组提示 + 保留全部未标注模型 + 手动输入） */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs text-zinc-300 font-medium">
+              4. 模型选择
+            </label>
+            <span className="text-[10px] text-zinc-500">支持下拉选择与手动输入任意模型 ID</span>
+          </div>
+
+          {rawModels.length > 0 && (
+            <select
+              value={rawModels.some((m) => m.id === activeModel) ? activeModel : ''}
+              onChange={(e) => {
+                if (e.target.value) {
+                  patchCurrent({ model: e.target.value });
+                }
+              }}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs font-mono focus:outline-none focus:border-zinc-500"
+            >
+              <option value="">-- 选择已拉取 / 推荐模型（也可下方手动输入） --</option>
+              {recommendedModels.length > 0 && (
+                <optgroup label={`推荐 · ${CAPABILITY_LABELS[activeSlot]}模型 (${recommendedModels.length})`}>
+                  {recommendedModels.map((m) => (
+                    <option key={`rec_${m.id}`} value={m.id}>
+                      {m.id}
+                      {m.capabilityHint ? ` · ${m.capabilityHint}` : m.name && m.name !== m.id ? ` (${m.name})` : ''}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {otherModels.length > 0 && (
+                <optgroup label={`其他 / 未明确标注能力模型 (${otherModels.length}，均可选用)`}>
+                  {otherModels.map((m) => (
+                    <option key={`other_${m.id}`} value={m.id}>
+                      {m.id}
+                      {m.capabilityHint ? ` · ${m.capabilityHint}` : ' · 能力未明确标注，以实际测试为准'}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          )}
+
+          <StableTextInput
+            key={`model_${activeSlot}`}
+            type="text"
+            placeholder={slotMeta.modelPlaceholder}
+            value={activeModel}
+            onValueChange={(val) => patchCurrent({ model: val })}
+            className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 transition select-text"
+          />
+        </div>
+
+        {/* 5. 预设配置（独立分组预设 + 自定义预设管理，无伪造密钥） */}
+        <div className="space-y-1.5">
+          <label className="text-xs text-zinc-300 font-medium block">
+            5. 预设配置
+          </label>
+          <div className="flex gap-2">
+            <select
+              value={currentConfig.presetId || '__manual__'}
+              onChange={(e) => handleSelectPresetValue(e.target.value)}
+              className="flex-1 px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs focus:outline-none focus:border-zinc-500 font-medium truncate"
+            >
+              <option value="__manual__">-- 手动自定义配置 --</option>
+              <optgroup label="内置标准预设（不含密钥）">
+                {builtInPresets.map((p: CapabilityPresetDefinition) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </optgroup>
+              {slotCustomPresets.length > 0 && (
+                <optgroup label="我保存的自定义预设">
+                  {slotCustomPresets.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+
+            <button
+              type="button"
+              onClick={() => setShowPresetManager(true)}
+              className="px-3.5 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-xs font-medium transition active:scale-95 shrink-0 cursor-pointer"
+            >
+              管理
+            </button>
+          </div>
+        </div>
+
+        {/* ================= Real Image Recognition Test Picker (Only in recognition.image) ================= */}
+        {activeSlot === 'image_recognition' && (
+          <div className="p-3.5 rounded-xl bg-zinc-900/75 border border-indigo-500/25 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-indigo-300">
+                <ScanSearch className="w-4 h-4" />
+                <span>真实图像识别测试</span>
+              </div>
+              <span className="text-[10px] text-zinc-500">仅读取「图像识别」当前配置</span>
+            </div>
+
+            <input
+              ref={recFileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              onChange={handlePickRecognitionTestFile}
+              className="hidden"
+            />
+
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => recFileInputRef.current?.click()}
+                className="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-100 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>{testRecImageUrl ? '更换测试图片' : '选择测试图片'}</span>
+              </button>
+
+              {testRecImageUrl && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTestRecImageUrl('');
+                    setTestRecFileName('');
+                    setImageRecTestResult(null);
+                  }}
+                  className="px-2.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-zinc-200 text-xs transition cursor-pointer"
+                >
+                  清除
+                </button>
+              )}
+
+              {testRecFileName && (
+                <span className="text-[11px] text-zinc-400 truncate flex-1">{testRecFileName}</span>
+              )}
+            </div>
+
+            {testRecImageUrl && (
+              <div className="flex items-start gap-3">
+                <img
+                  src={testRecImageUrl}
+                  alt="测试图片预览"
+                  className="w-20 h-20 rounded-lg object-cover border border-zinc-700 shrink-0 bg-black"
+                />
+                <div className="flex-1 space-y-2">
+                  <button
+                    type="button"
+                    onClick={handleRunImageRecognitionTest}
+                    disabled={isTestingImageRec}
+                    className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer"
+                  >
+                    {isTestingImageRec ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3.5 h-3.5" />
+                    )}
+                    <span>{isTestingImageRec ? '正在真实识别图片...' : '发起真实识别测试'}</span>
+                  </button>
+                  <p className="text-[10px] text-zinc-500">
+                    将使用你选择的图片真实调用当前图像识别模型并返回结构化识别结果。
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {imageRecTestResult && (
+              <div
+                className={`p-3 rounded-xl border text-xs space-y-1.5 ${
+                  imageRecTestResult.success
+                    ? 'bg-emerald-950/25 border-emerald-500/35 text-emerald-100'
+                    : 'bg-rose-950/30 border-rose-500/35 text-rose-200'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 font-semibold">
+                    {imageRecTestResult.success ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    )}
+                    <span>{imageRecTestResult.success ? '图像识别测试成功' : '图像识别测试失败'}</span>
+                  </div>
+                  <span className="text-[10px] font-mono opacity-80">
+                    {imageRecTestResult.latencyMs}ms
+                  </span>
+                </div>
+
+                {imageRecTestResult.success ? (
+                  <div className="space-y-1 text-[11px] leading-relaxed">
+                    <p>
+                      <span className="text-zinc-400">识别描述：</span>
+                      {imageRecTestResult.description}
+                    </p>
+                    {imageRecTestResult.detectedText && (
+                      <p>
+                        <span className="text-zinc-400">图中文字：</span>
+                        {imageRecTestResult.detectedText}
+                      </p>
+                    )}
+                    {imageRecTestResult.scene && (
+                      <p>
+                        <span className="text-zinc-400">画面场景：</span>
+                        {imageRecTestResult.scene}
+                      </p>
+                    )}
+                    {imageRecTestResult.objects && imageRecTestResult.objects.length > 0 && (
+                      <p>
+                        <span className="text-zinc-400">识别元素：</span>
+                        {imageRecTestResult.objects.join('、')}
+                      </p>
+                    )}
+                    <p className="text-[10px] font-mono text-zinc-400 pt-1">
+                      模型：{imageRecTestResult.model || activeModel} · 协议：{imageRecTestResult.protocol || activeProtocol}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-[11px] break-words">
+                    {sanitizeSensitiveText(imageRecTestResult.error || '未能完成图像识别')}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ================= Action Buttons Row ================= */}
+        <div className="space-y-3 pt-1">
+          <div className="grid grid-cols-3 gap-2">
+            {/* Test Button varies honestly by capability */}
+            {activeSlot === 'text_generation' && (
+              <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={isTestingConnection}
+                className="py-2.5 px-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                <Zap className="w-3.5 h-3.5 text-zinc-400" />
+                <span>{isTestingConnection ? '测试中...' : '测试连接'}</span>
+              </button>
+            )}
+
+            {activeSlot === 'image_generation' && (
+              <button
+                type="button"
+                onClick={handleRunImageGenerationTest}
+                disabled={isTestingImageGen}
+                className="py-2.5 px-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                {isTestingImageGen ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <ImageIcon className="w-3.5 h-3.5" />
+                )}
+                <span>{isTestingImageGen ? '真实生图中...' : '测试生图'}</span>
+              </button>
+            )}
+
+            {activeSlot === 'image_recognition' && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (!testRecImageUrl) {
+                    recFileInputRef.current?.click();
+                  } else {
+                    void handleRunImageRecognitionTest();
+                  }
+                }}
+                disabled={isTestingImageRec}
+                className="py-2.5 px-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                {isTestingImageRec ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <ScanSearch className="w-3.5 h-3.5" />
+                )}
+                <span>{isTestingImageRec ? '识别中...' : testRecImageUrl ? '测试识别' : '选图测试'}</span>
+              </button>
+            )}
+
+            {isComingSoonSlot && (
+              <button
+                type="button"
+                disabled
+                className="py-2.5 px-2 rounded-xl bg-zinc-900/60 border border-zinc-800 text-zinc-500 font-medium text-[11px] flex items-center justify-center gap-1 cursor-not-allowed"
+                title="语音能力待后续完整接入，当前不做虚假测试"
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>待接入测试</span>
+              </button>
+            )}
+
+            {/* Fetch Models */}
+            <button
+              type="button"
+              onClick={handleFetchModels}
+              disabled={isFetchingModels}
+              className="py-2.5 px-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-zinc-400 ${isFetchingModels ? 'animate-spin' : ''}`} />
+              <span>{isFetchingModels ? '拉取中...' : '拉取模型'}</span>
+            </button>
+
+            {/* Save Config */}
+            <button
+              type="button"
+              onClick={handleGlobalSave}
+              className="py-2.5 px-2 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 font-semibold text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-sm cursor-pointer"
+            >
+              <Check className="w-3.5 h-3.5 text-zinc-950" />
+              <span>保存配置</span>
+            </button>
+          </div>
+
+          {/* Real Image Generation Test Result Card (with real <img> decode verification!) */}
+          {activeSlot === 'image_generation' && imageGenTestResult && (
+            <div
+              className={`p-3.5 rounded-xl border text-xs space-y-2.5 ${
+                imageGenTestResult.success && imageGenRenderState === 'loaded'
+                  ? 'bg-emerald-950/25 border-emerald-500/35 text-emerald-100'
+                  : imageGenTestResult.success && imageGenRenderState === 'loading'
+                  ? 'bg-zinc-900 border-zinc-700 text-zinc-200'
+                  : 'bg-rose-950/30 border-rose-500/35 text-rose-200'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 font-semibold">
+                  {imageGenTestResult.success && imageGenRenderState === 'loaded' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : imageGenTestResult.success && imageGenRenderState === 'loading' ? (
+                    <Loader2 className="w-4 h-4 text-indigo-400 animate-spin shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  )}
+                  <span>
+                    {imageGenTestResult.success && imageGenRenderState === 'loaded'
+                      ? '图像生成测试成功（真实图片已加载）'
+                      : imageGenTestResult.success && imageGenRenderState === 'loading'
+                      ? '接口已返回图片，正在校验图片解码渲染...'
+                      : imageGenTestResult.success && imageGenRenderState === 'error'
+                      ? '接口返回成功，但图片资源无法解码渲染'
+                      : '图像生成测试失败'}
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono opacity-80 shrink-0">
+                  {imageGenTestResult.latencyMs}ms
+                </span>
+              </div>
+
+              {imageGenTestResult.success && imageGenTestResult.imageUrl && (
+                <div className="space-y-2">
+                  <div className="rounded-xl overflow-hidden border border-zinc-700/80 bg-zinc-900 flex items-center justify-center max-h-56">
+                    <img
+                      src={imageGenTestResult.imageUrl}
+                      alt="测试生成结果：一颗蓝色星星"
+                      className="max-h-52 object-contain"
+                      onLoad={() => setImageGenRenderState('loaded')}
+                      onError={() => setImageGenRenderState('error')}
+                    />
+                  </div>
+                  <div className="text-[10px] font-mono text-zinc-400 space-y-0.5">
+                    <div>
+                      模型：{imageGenTestResult.model || activeModel} · 协议：{imageGenTestResult.protocol || activeProtocol}
+                    </div>
+                    {imageGenTestResult.revisedPrompt && (
+                      <div className="text-zinc-300 font-sans">
+                        修订提示词：{imageGenTestResult.revisedPrompt}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {!imageGenTestResult.success && (
+                <p className="text-[11px] break-words leading-relaxed">
+                  {sanitizeSensitiveText(imageGenTestResult.error || '未能生成有效图片')}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Text Connection Test Result */}
+          {activeSlot === 'text_generation' && connectionResult && (
+            <div
+              className={`api-diag-status-box p-3 rounded-xl border text-xs flex items-center justify-between ${
+                connectionResult.success
+                  ? 'api-diag-status-box--ok bg-zinc-900/90 border-emerald-500/30 text-zinc-200'
+                  : 'api-diag-status-box--err bg-zinc-900/90 border-rose-500/35 text-rose-300'
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                {connectionResult.success ? (
+                  <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertCircle className="api-diag-err w-4 h-4 text-rose-400 shrink-0" />
+                )}
+                <span className="break-words [overflow-wrap:anywhere]">
+                  {sanitizeSensitiveText(
+                    connectionResult.message || (connectionResult.success ? '连接成功 (HTTP 200)' : '连接失败')
+                  )}
+                </span>
+              </div>
+              <span className="api-diag-muted font-mono text-[11px] text-zinc-400 shrink-0 ml-2">
+                {connectionResult.latencyMs}ms
+              </span>
+            </div>
+          )}
+
+          {/* Fetch Models Status */}
+          {modelFetchResult && (
+            <div
+              className={`api-diag-status-box p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                modelFetchResult.success
+                  ? 'api-diag-status-box--ok bg-zinc-900/90 border-zinc-800 text-zinc-200'
+                  : 'api-diag-status-box--warn bg-zinc-900/90 border-amber-500/30 text-amber-300'
+              }`}
+            >
+              {modelFetchResult.success ? (
+                <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertCircle className="api-diag-warn w-4 h-4 text-amber-400 shrink-0" />
+              )}
+              <span className="break-words [overflow-wrap:anywhere]">
+                {sanitizeSensitiveText(modelFetchResult.message || modelFetchResult.error || '')}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Custom Preset Manager Modal */}
+      {showPresetManager && (
+        <div
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setShowPresetManager(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl bg-zinc-950 border border-zinc-800 p-4 space-y-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-zinc-100">
+                管理「{CAPABILITY_LABELS[activeSlot]}」自定义预设
+              </span>
               <button
                 type="button"
                 onClick={() => setShowPresetManager(false)}
-                className="text-zinc-400 hover:text-zinc-200 p-1 transition"
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-100 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* 1. 保存当前参数为新自定义预设 */}
-            <div className="api-preset-subcard settings-sub-card p-3 rounded-xl bg-zinc-900/80 border border-zinc-800 space-y-2">
-              <label className="text-xs text-zinc-300 font-medium block">
-                将当前参数保存为新配置
+            <div className="space-y-2">
+              <label className="text-[11px] text-zinc-400 block">
+                将当前「{CAPABILITY_LABELS[activeSlot]}」配置另存为预设
               </label>
               <div className="flex gap-2">
-                <StableTextInput
+                <input
                   type="text"
-                  placeholder="配置名称 (如: 我的反向代理 / 公司中转)"
                   value={newPresetName}
-                  onValueChange={setNewPresetName}
-                  className="flex-1 px-3 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100 text-xs focus:outline-none focus:border-zinc-500 min-w-0"
+                  onChange={(e) => setNewPresetName(e.target.value)}
+                  placeholder="输入预设名称..."
+                  className="flex-1 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-100 focus:outline-none focus:border-zinc-500"
                 />
                 <button
                   type="button"
                   onClick={handleSaveAsCustomPreset}
-                  className="api-preset-save-btn px-3.5 py-2 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-semibold flex items-center gap-1 transition active:scale-95 shrink-0"
+                  className="px-3 py-2 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>保存</span>
@@ -1452,260 +1152,45 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               </div>
             </div>
 
-            {/* 2. 已保存的自定义预设列表 */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-zinc-400">已保存的自定义配置 ({customPresets.length})</span>
-              </div>
-
-              <div className="space-y-2 max-h-[38vh] overflow-y-auto pr-1">
-                {customPresets.length === 0 ? (
-                  <div className="api-preset-empty settings-sub-card p-4 rounded-xl bg-zinc-900/40 border border-zinc-800/80 text-center text-xs text-zinc-500">
-                    暂无已保存的自定义配置。可以在上方输入名称，将当前配置保存为新预设。
-                  </div>
-                ) : (
-                  customPresets.map((preset) => {
-                    const isSelected = selectedPresetId === preset.id;
-                    return (
-                      <div
-                        key={preset.id}
-                        className={`api-preset-item p-3 rounded-xl border transition flex items-center justify-between gap-3 ${
-                          isSelected
-                            ? 'api-preset-item--selected bg-zinc-900 border-zinc-600'
-                            : 'bg-zinc-900/40 border-zinc-800/80 hover:border-zinc-700'
-                        }`}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 mb-0.5">
-                            <span className="font-semibold text-xs text-zinc-100 truncate">{preset.name}</span>
-                            {isSelected && (
-                              <span className="api-diagnostic-badge text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300 font-medium shrink-0">
-                                使用中
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[11px] text-zinc-400 font-mono truncate">
-                            端点: {preset.baseUrl || '(默认)'}
-                          </div>
-                          <div className="text-[10px] text-zinc-500 font-mono truncate">
-                            模型: {preset.model || '(未指定)'}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              handleSelectPreset(preset.id);
-                              setShowPresetManager(false);
-                            }}
-                            className="api-preset-apply-btn px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition"
-                          >
-                            应用
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteCustomPreset(preset.id)}
-                            className="api-preset-del-btn p-1.5 rounded-lg bg-zinc-800 hover:bg-rose-950/50 text-zinc-400 hover:text-rose-400 transition"
-                            title="删除此自定义配置"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+            <div className="space-y-1.5 max-h-52 overflow-y-auto">
+              {slotCustomPresets.length === 0 ? (
+                <p className="text-[11px] text-zinc-500 text-center py-4">
+                  当前分组尚无已保存的自定义预设
+                </p>
+              ) : (
+                slotCustomPresets.map((preset) => (
+                  <div
+                    key={preset.id}
+                    className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-between gap-2"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleSelectPresetValue(preset.id);
+                        setShowPresetManager(false);
+                      }}
+                      className="text-left min-w-0 flex-1 cursor-pointer"
+                    >
+                      <div className="text-xs font-medium text-zinc-100 truncate">{preset.name}</div>
+                      <div className="text-[10px] text-zinc-500 font-mono truncate">
+                        {preset.model || '未填模型'} · {preset.baseUrl || '默认地址'}
                       </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-            {/* 3. 清空 / 删除当前配置内容 */}
-            <div className="settings-card-divider pt-2 border-t border-zinc-850 flex items-center justify-between">
-              <button
-                type="button"
-                onClick={handleClearCurrentConfig}
-                className="api-diag-err text-xs text-rose-400 hover:text-rose-300 transition flex items-center gap-1"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>清空当前配置参数</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowPresetManager(false)}
-                className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 text-xs font-medium transition"
-              >
-                完成
-              </button>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteCustomPreset(preset.id)}
+                      className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-950/40 transition shrink-0 cursor-pointer"
+                      title="删除预设"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
       )}
-
-      {/* ========================================================================= */}
-      {/* 4. 🔧 真机可视化 API 状态实时诊断看板 */}
-      {/* ========================================================================= */}
-      <div className="api-diagnostic-panel mt-5 p-3.5 rounded-2xl bg-amber-950/20 border border-amber-500/30 space-y-3 font-mono text-[11px] text-zinc-300">
-        <div className="api-diagnostic-header flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/20 pb-2">
-          <span className="api-diagnostic-title font-bold text-amber-400 flex items-center gap-1.5 text-xs font-sans min-w-0">
-            <Bug className="api-diagnostic-bug w-4 h-4 text-amber-400 shrink-0" />
-            <span className="break-words">Android APK 真机 API 状态与链路实时诊断看板</span>
-          </span>
-          <span className="api-diagnostic-shield-note text-[10px] text-amber-300/60 font-sans shrink-0">密钥脱敏保护中</span>
-        </div>
-
-        {/* 0. 输入事件实时追踪 */}
-        <div className="api-diagnostic-card api-diagnostic-card--amber space-y-1.5 bg-zinc-950/90 p-2.5 rounded-xl border border-amber-500/40">
-          <div className="api-diagnostic-section-title api-diagnostic-section-title--amber text-amber-300 font-bold flex flex-wrap items-center justify-between gap-1 text-xs font-sans border-b border-amber-500/20 pb-1.5 mb-1.5">
-            <span>【输入事件实时追踪 (最近 30 条)】</span>
-            <span className="api-diagnostic-muted text-[10px] text-zinc-400 font-normal">捕获 Input 事件、State 写入与 Render 序号</span>
-          </div>
-          <div className="max-h-64 overflow-y-auto space-y-1 font-mono text-[10px] pr-1">
-            {liveLogs.length === 0 ? (
-              <div className="api-diagnostic-muted text-zinc-500 italic p-1">尚无输入事件记录</div>
-            ) : (
-              liveLogs.slice(0, 30).map((log) => (
-                <div key={log.id} className="api-diagnostic-log-row p-1.5 rounded bg-zinc-900/90 border border-zinc-800/80 flex flex-col gap-0.5">
-                  <div className="flex flex-wrap items-center justify-between gap-1 font-bold">
-                    <span
-                      className={`break-all ${
-                        log.tag.includes('INPUT')
-                          ? 'api-diagnostic-info text-sky-300'
-                          : log.tag.includes('RENDER')
-                          ? 'api-diagnostic-ok text-emerald-400'
-                          : 'api-diagnostic-warn text-amber-400'
-                      }`}
-                    >
-                      {log.tag}
-                    </span>
-                    <span className="api-diagnostic-muted text-zinc-500 text-[9px] font-normal shrink-0">{log.timestamp}</span>
-                  </div>
-                  <div className="api-diagnostic-value text-zinc-300 flex flex-wrap items-center gap-x-3 gap-y-0.5 break-all">
-                    <span>BaseURL len={log.baseUrlLen} {log.baseUrlVal ? `("${log.baseUrlVal.slice(0, 20)}")` : ''}</span>
-                    <span>Key len={log.keyLen} {log.keyLast4 ? `(末尾:${log.keyLast4})` : ''}</span>
-                  </div>
-                  {log.details && <div className="api-diagnostic-muted text-zinc-400 text-[9px] break-words [overflow-wrap:anywhere]">{log.details}</div>}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* 1. 当前 Input & State 状态 */}
-        <div className="api-diagnostic-card space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800 break-words [overflow-wrap:anywhere]">
-          <div className="api-diagnostic-section-title api-diagnostic-section-title--amber text-amber-300 font-semibold mb-1 text-[11px] font-sans">1. 当前 Input & State 内存状态：</div>
-          <div className="api-diagnostic-label">• Base URL: <span className="api-diagnostic-info text-sky-300">{currentCategoryConfig.baseUrl ? `[有值] len=${currentCategoryConfig.baseUrl.length}` : '[为空] len=0'}</span></div>
-          <div className="api-diagnostic-label">• API Key: {formatKeyInfo(currentCategoryConfig.apiKey)}</div>
-          <div className="api-diagnostic-label">• Provider: <span className="api-diagnostic-info text-sky-300 font-bold">{currentCategoryConfig.provider || 'google_gemini'}</span></div>
-          <div className="api-diagnostic-label">• Model: <span className="api-diagnostic-info text-sky-300 font-bold">{currentCategoryConfig.model || 'gemini-4-hydrogen'}</span></div>
-        </div>
-
-        {/* 2. ai_phone_api_settings_v1 校验 */}
-        <div className="api-diagnostic-card space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800 break-words [overflow-wrap:anywhere]">
-          <div className="api-diagnostic-section-title api-diagnostic-section-title--emerald text-emerald-300 font-semibold mb-1 text-[11px] font-sans">2. localStorage [ai_phone_api_settings_v1] 校验：</div>
-          {(() => {
-            const saved = savedVerification || loadApiSettings();
-            const savedCat = saved[activeCategory];
-            return (
-              <>
-                <div className="api-diagnostic-label">• 保存的 Base URL: <span className="api-diagnostic-info text-sky-300">{savedCat?.baseUrl ? `[有值] len=${savedCat.baseUrl.length}` : '[为空] len=0'}</span></div>
-                <div className="api-diagnostic-label">• 保存的 API Key: {formatKeyInfo(savedCat?.apiKey)}</div>
-                <div className="api-diagnostic-label">• 保存的 Provider: <span className="api-diagnostic-info text-sky-300">{savedCat?.provider}</span></div>
-                <div className="api-diagnostic-label">• 保存的 Model: <span className="api-diagnostic-info text-sky-300">{savedCat?.model}</span></div>
-              </>
-            );
-          })()}
-        </div>
-
-        {/* 3. 点击拉取模型时实际 Request Payload */}
-        <div className="api-diagnostic-card space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800 break-words [overflow-wrap:anywhere]">
-          <div className="api-diagnostic-section-title api-diagnostic-section-title--sky text-sky-300 font-semibold mb-1 text-[11px] font-sans">3. 点击「拉取模型」实际 Request Payload：</div>
-          {fetchDebugInfo ? (
-            <>
-              <div className="api-diagnostic-label">• 抓拍时间: <span className="api-diagnostic-muted text-zinc-400">{fetchDebugInfo.timestamp}</span></div>
-              <div className="api-diagnostic-label">• 实际发送 Base URL: <span className="api-diagnostic-info text-sky-300">{fetchDebugInfo.baseUrl ? `[有值] len=${fetchDebugInfo.baseUrl.length}` : '[为空] len=0'}</span></div>
-              <div className="api-diagnostic-label">• 实际发送 API Key: {formatKeyInfoFromFields(fetchDebugInfo.keyIsEmpty, fetchDebugInfo.keyLength, fetchDebugInfo.keyLast4)}</div>
-              <div className="api-diagnostic-label">• 实际发送 Provider: <span className="api-diagnostic-warn text-amber-300">{fetchDebugInfo.providerType}</span></div>
-            </>
-          ) : (
-            <div className="api-diagnostic-muted text-zinc-500 italic">尚未点击「拉取模型」按钮</div>
-          )}
-        </div>
-
-        {/* 4. server.ts 接收与响应状态 */}
-        <div className="api-diagnostic-card space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800 break-words [overflow-wrap:anywhere]">
-          <div className="api-diagnostic-section-title api-diagnostic-section-title--purple text-purple-300 font-semibold mb-1 text-[11px] font-sans">4. server.ts 接收与响应状态：</div>
-          <div className="api-diagnostic-label">• HTTP Status: <span className={fetchDebugInfo?.httpStatus === 200 ? 'api-diagnostic-ok text-emerald-400 font-bold' : 'api-diagnostic-err text-rose-400 font-bold'}>{fetchDebugInfo?.httpStatus || '未发送'}</span></div>
-          <div className="api-diagnostic-label">• 到达 server.ts: <span className={fetchDebugInfo?.reachedServer ? 'api-diagnostic-ok text-emerald-400 font-bold' : fetchDebugInfo ? 'api-diagnostic-err text-rose-400 font-bold' : 'api-diagnostic-muted text-zinc-500'}>{fetchDebugInfo ? (fetchDebugInfo.reachedServer ? '是 (Reached server.ts)' : '否 (未到达 / 离线代理拦截)') : '(等待点击)'}</span></div>
-          {fetchDebugInfo?.responseMessage && (
-            <div className="api-diagnostic-label">• Response Message: <span className="api-diagnostic-warn text-amber-300">{fetchDebugInfo.responseMessage}</span></div>
-          )}
-          {fetchDebugInfo?.responseError && (
-            <div className="api-diagnostic-label">• Response Error: <span className="api-diagnostic-err text-rose-300">{fetchDebugInfo.responseError}</span></div>
-          )}
-          {fetchDebugInfo?.failureStage && (
-            <div className="api-diagnostic-label">• 当前链路阶段: <span className="api-diagnostic-warn text-amber-300 font-bold">{fetchDebugInfo.failureStage}</span></div>
-          )}
-        </div>
-
-        {/* 5. Android APK 特有 Node 后端链路 */}
-        <div className="api-diagnostic-card space-y-1 bg-zinc-950/80 p-2.5 rounded-xl border border-zinc-800 break-words [overflow-wrap:anywhere]">
-          <div className="api-diagnostic-section-title api-diagnostic-section-title--purple text-purple-300 font-semibold mb-1 text-[11px] font-sans">5. Android APK 特有网络与 Node 后端链路诊断：</div>
-          <div className="api-diagnostic-label">• 是否 Native 平台: <span className="api-diagnostic-warn text-amber-300 font-bold">{Capacitor.isNativePlatform() ? '是 (Native APK)' : '否 (Web/Preview)'}</span></div>
-          <div className="api-diagnostic-label">• Capacitor 平台: <span className="api-diagnostic-info text-sky-300">{Capacitor.getPlatform()}</span></div>
-          <div className="api-diagnostic-label">• 127.0.0.1:3000 健康状态: <span className={liveHealth.includes('健康') ? 'api-diagnostic-ok text-emerald-400 font-bold' : 'api-diagnostic-err text-rose-400 font-bold'}>{liveHealth}</span></div>
-        </div>
-
-        {/* 6. 上游请求协议与多 Adapter 探测诊断 */}
-        <div className="api-diagnostic-card api-diagnostic-card--sky space-y-2 bg-zinc-950/90 p-2.5 rounded-xl border border-sky-500/30 break-words [overflow-wrap:anywhere]">
-          <div className="api-diagnostic-section-title api-diagnostic-section-title--sky text-sky-300 font-bold text-[11px] font-sans flex items-center justify-between">
-            <span>6. 上游请求协议与多 Adapter 自动探测诊断：</span>
-          </div>
-
-          {fetchDebugInfo?.attemptsTrace && fetchDebugInfo.attemptsTrace.length > 0 ? (
-            <div className="space-y-1.5 mt-1">
-              <div className="api-diagnostic-muted text-[10px] text-zinc-400 font-semibold">探测历程 (共 {fetchDebugInfo.attemptsTrace.length} 次尝试)：</div>
-              {fetchDebugInfo.attemptsTrace.map((att) => (
-                <div
-                  key={att.attemptIndex}
-                  className={`api-diagnostic-attempt p-2 rounded-lg text-[10px] font-mono border ${
-                    att.success
-                      ? 'api-diagnostic-attempt--ok bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
-                      : 'api-diagnostic-attempt--fail bg-zinc-900 border-zinc-800 text-zinc-400'
-                  }`}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-1 font-bold">
-                    <span>
-                      Attempt #{att.attemptIndex}: {att.adapterName}
-                    </span>
-                    <span className={att.success ? 'api-diagnostic-ok text-emerald-400' : 'api-diagnostic-err text-rose-400'}>
-                      {att.success ? `SUCCESS (获取 ${att.modelsCount} 个模型)` : `FAILED (${att.httpStatus || 'Timeout'})`}
-                    </span>
-                  </div>
-                  <div className="api-diagnostic-info mt-1 text-sky-300/80 break-all">• URL: {att.finalUrl}</div>
-                  <div className="api-diagnostic-muted mt-0.5 text-zinc-400 flex flex-wrap gap-x-3">
-                    <span>Auth: {att.authMethod}</span>
-                    <span>耗时: {att.latencyMs}ms</span>
-                    <span>超时限制: {att.timeoutMs}ms</span>
-                  </div>
-                  {att.error && <div className="api-diagnostic-err mt-0.5 text-rose-300 break-words">• 错误信息: {att.error}</div>}
-                </div>
-              ))}
-            </div>
-          ) : fetchDebugInfo?.upstreamDiagnostics ? (
-            <div className="space-y-0.5 text-[10px]">
-              <div className="api-diagnostic-label">• Upstream Protocol: <span className="api-diagnostic-warn text-amber-300 font-bold">{fetchDebugInfo.upstreamDiagnostics.upstreamProtocol}</span></div>
-              <div className="api-diagnostic-label">• Final Upstream URL: <span className="api-diagnostic-info text-sky-300 break-all">{fetchDebugInfo.upstreamDiagnostics.finalUpstreamUrl}</span></div>
-              <div className="api-diagnostic-label">• HTTP Method: <span className="api-diagnostic-ok text-emerald-300 font-bold">{fetchDebugInfo.upstreamDiagnostics.httpMethod}</span></div>
-              <div className="api-diagnostic-label">• Auth Method: <span className="api-diagnostic-purple text-purple-300">{fetchDebugInfo.upstreamDiagnostics.authMethod}</span></div>
-            </div>
-          ) : (
-            <div className="api-diagnostic-muted text-zinc-500 italic text-[10px]">
-              点击「拉取模型」后，系统将自动发起多协议链路顺序探测并展示结果
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 };

@@ -27,6 +27,11 @@ export type ChatDbSaveEvent =
       message: ChatMessage;
     }
   | {
+      type: 'message_updated';
+      characterId: string;
+      message: ChatMessage;
+    }
+  | {
       type: 'turn_replaced';
       characterId: string;
       oldMessageIds: string[];
@@ -483,9 +488,27 @@ export async function getRecentChatMessages(
           text: rawMsg.text || '',
           timestamp: rawMsg.timestamp,
           quoteMessageId: rawMsg.quoteMessageId,
+          messageType: rawMsg.messageType,
           imageUrl: rawMsg.imageUrl,
           imageAnalysis: rawMsg.imageAnalysis,
           imageAnalysisStatus: rawMsg.imageAnalysisStatus,
+          imageDescription: rawMsg.imageDescription,
+          detectedText: rawMsg.detectedText,
+          imageObjects: rawMsg.imageObjects,
+          imageScene: rawMsg.imageScene,
+          recognitionStatus: rawMsg.recognitionStatus,
+          recognitionError: rawMsg.recognitionError,
+          recognitionProvider: rawMsg.recognitionProvider,
+          recognitionModel: rawMsg.recognitionModel,
+          generationPrompt: rawMsg.generationPrompt,
+          revisedPrompt: rawMsg.revisedPrompt,
+          aspectRatio: rawMsg.aspectRatio,
+          negativePrompt: rawMsg.negativePrompt,
+          generationStatus: rawMsg.generationStatus,
+          generationError: rawMsg.generationError,
+          generationRequestId: rawMsg.generationRequestId,
+          provider: rawMsg.provider,
+          model: rawMsg.model,
           sourceType: rawMsg.sourceType,
           importance: rawMsg.importance,
           thinkingProcess: rawMsg.thinkingProcess,
@@ -495,7 +518,10 @@ export async function getRecentChatMessages(
           isRefreshed: rawMsg.isRefreshed,
           isProactive: rawMsg.isProactive,
           proactiveMeta: rawMsg.proactiveMeta,
+          isSystemEvent: rawMsg.isSystemEvent,
           type: rawMsg.type,
+          offlineEventData: rawMsg.offlineEventData,
+          offlineCardData: rawMsg.offlineCardData,
         };
         items.push(lightMsg);
         cursor.continue();
@@ -551,9 +577,27 @@ export async function getMessagesByIds(
             text: rawMsg.text || '',
             timestamp: rawMsg.timestamp,
             quoteMessageId: rawMsg.quoteMessageId,
+            messageType: rawMsg.messageType,
             imageUrl: rawMsg.imageUrl,
             imageAnalysis: rawMsg.imageAnalysis,
             imageAnalysisStatus: rawMsg.imageAnalysisStatus,
+            imageDescription: rawMsg.imageDescription,
+            detectedText: rawMsg.detectedText,
+            imageObjects: rawMsg.imageObjects,
+            imageScene: rawMsg.imageScene,
+            recognitionStatus: rawMsg.recognitionStatus,
+            recognitionError: rawMsg.recognitionError,
+            recognitionProvider: rawMsg.recognitionProvider,
+            recognitionModel: rawMsg.recognitionModel,
+            generationPrompt: rawMsg.generationPrompt,
+            revisedPrompt: rawMsg.revisedPrompt,
+            aspectRatio: rawMsg.aspectRatio,
+            negativePrompt: rawMsg.negativePrompt,
+            generationStatus: rawMsg.generationStatus,
+            generationError: rawMsg.generationError,
+            generationRequestId: rawMsg.generationRequestId,
+            provider: rawMsg.provider,
+            model: rawMsg.model,
             sourceType: rawMsg.sourceType,
             importance: rawMsg.importance,
             thinkingProcess: rawMsg.thinkingProcess,
@@ -563,7 +607,10 @@ export async function getMessagesByIds(
             isRefreshed: rawMsg.isRefreshed,
             isProactive: rawMsg.isProactive,
             proactiveMeta: rawMsg.proactiveMeta,
+            isSystemEvent: rawMsg.isSystemEvent,
             type: rawMsg.type,
+            offlineEventData: rawMsg.offlineEventData,
+            offlineCardData: rawMsg.offlineCardData,
           });
         }
         done();
@@ -811,7 +858,11 @@ export async function updateChatMessage(msg: ChatMessage): Promise<void> {
   await addMessageToStore(db, msg);
   clearChatIndexCache(msg.characterId);
   await reloadMetaCache(db);
-  notifyChange();
+  notifyChange({
+    type: 'message_updated',
+    characterId: msg.characterId,
+    message: msg,
+  });
 }
 
 /**
