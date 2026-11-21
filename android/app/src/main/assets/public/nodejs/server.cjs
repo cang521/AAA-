@@ -73848,6 +73848,203 @@ function resolveEffectiveProtocol(config) {
   return "openai_compatible";
 }
 
+// src/lib/contextWindow.ts
+var STANDARD_CONTEXT_LIMIT = 100;
+var OVERFLOW_RAW_TAIL_LIMIT = 30;
+var DEFAULT_CONTEXT_TOKEN_BUDGET = 26e3;
+var DEFAULT_SINGLE_MESSAGE_MAX_CHARS = 4e3;
+function estimateTextTokens(text) {
+  if (!text) return 0;
+  let cjkCount = 0;
+  for (let i2 = 0; i2 < text.length; i2++) {
+    const code = text.charCodeAt(i2);
+    if (code >= 19968 && code <= 40959) {
+      cjkCount += 1;
+    }
+  }
+  const nonCjkCount = text.length - cjkCount;
+  return Math.max(1, Math.ceil(cjkCount * 1.5 + nonCjkCount * 0.35));
+}
+function truncateSingleMessageText(text, maxChars = DEFAULT_SINGLE_MESSAGE_MAX_CHARS) {
+  const clean = String(text || "");
+  if (clean.length <= maxChars) return clean;
+  const keep = Math.max(120, maxChars - 24);
+  return `${clean.slice(0, keep)}...(\u5DF2\u622A\u65AD\u8FC7\u957F\u6587\u672C)`;
+}
+function formatShortTime(ts) {
+  if (!ts || !Number.isFinite(ts) || ts <= 0) return "";
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return "";
+  const MM = String(d.getMonth() + 1).padStart(2, "0");
+  const DD = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${MM}-${DD} ${hh}:${mm}`;
+}
+function summarizeMessagesChronologically(items, getSummaryMeta, maxSummaryChars = 6500) {
+  if (!items || items.length === 0) return "";
+  const lines = [];
+  for (const item of items) {
+    const meta = getSummaryMeta(item);
+    const timeStr = formatShortTime(meta.timestamp);
+    const sender = (meta.senderName || "").trim();
+    const snippet = String(meta.text || "").replace(/\s+/g, " ").trim().slice(0, 110);
+    if (!snippet) continue;
+    const prefix = [timeStr ? `[${timeStr}]` : "", sender ? `${sender}:` : ""].filter(Boolean).join(" ");
+    lines.push(`- ${prefix ? `${prefix} ` : ""}${snippet}`);
+  }
+  if (lines.length === 0) return "";
+  const header = `\u3010\u8F83\u65E9 ${items.length} \u6761\u8BB0\u5F55\u65F6\u95F4\u7EBF\u6458\u8981\uFF08\u8D85\u957F\u4FDD\u62A4\u81EA\u52A8\u6298\u53E0\uFF09\u3011`;
+  const joined = `${header}
+${lines.join("\n")}`;
+  if (joined.length <= maxSummaryChars) return joined;
+  const keptTail = [];
+  let charCount = header.length + 60;
+  for (let i2 = lines.length - 1; i2 >= 0; i2--) {
+    const line = lines[i2];
+    if (charCount + line.length + 1 > maxSummaryChars) break;
+    keptTail.unshift(line);
+    charCount += line.length + 1;
+  }
+  const omitted = lines.length - keptTail.length;
+  return `${header}
+${omitted > 0 ? `(\u7565\u53BB\u6700\u65E9\u671F ${omitted} \u6761\u6B21\u8981\u6D41\u6C34)
+` : ""}${keptTail.join("\n")}`;
+}
+function applyOverlengthContextProtection(params) {
+  const maxRawLimit = Math.max(1, params.maxRawLimit ?? STANDARD_CONTEXT_LIMIT);
+  const overflowRawTail = Math.max(1, Math.min(maxRawLimit, params.overflowRawTail ?? OVERFLOW_RAW_TAIL_LIMIT));
+  const tokenBudget = Math.max(2e3, params.tokenBudget ?? DEFAULT_CONTEXT_TOKEN_BUDGET);
+  const singleMessageMaxChars = Math.max(300, params.singleMessageMaxChars ?? DEFAULT_SINGLE_MESSAGE_MAX_CHARS);
+  const input = Array.isArray(params.messages) ? params.messages : [];
+  const candidateSlice = input.length > maxRawLimit ? input.slice(-maxRawLimit) : [...input];
+  const normalized = candidateSlice.map((item) => {
+    const meta = params.formatForEstimate(item);
+    if (meta.text && meta.text.length > singleMessageMaxChars && params.cloneWithTruncatedText) {
+      return params.cloneWithTruncatedText(item, truncateSingleMessageText(meta.text, singleMessageMaxChars));
+    }
+    return item;
+  });
+  let totalTokens = 0;
+  for (const item of normalized) {
+    const meta = params.formatForEstimate(item);
+    totalTokens += estimateTextTokens(`${meta.senderName || ""}: ${truncateSingleMessageText(meta.text || "", singleMessageMaxChars)}`);
+  }
+  if (totalTokens <= tokenBudget || normalized.length <= overflowRawTail) {
+    if (totalTokens > tokenBudget && normalized.length > 0) {
+      const perMsgCap = Math.max(400, Math.floor(tokenBudget * 0.75 / normalized.length));
+      const trimmedTail = params.cloneWithTruncatedText ? normalized.map((item) => {
+        const meta = params.formatForEstimate(item);
+        return meta.text.length > perMsgCap ? params.cloneWithTruncatedText(item, truncateSingleMessageText(meta.text, perMsgCap)) : item;
+      }) : normalized;
+      const reEstimated = trimmedTail.reduce((sum, item) => {
+        const meta = params.formatForEstimate(item);
+        return sum + estimateTextTokens(`${meta.senderName || ""}: ${meta.text || ""}`);
+      }, 0);
+      return {
+        rawMessages: trimmedTail,
+        earlierSummaryText: "",
+        metrics: {
+          totalCandidateCount: input.length,
+          rawCount: trimmedTail.length,
+          summarizedCount: 0,
+          didCompress: false,
+          estimatedTokens: reEstimated,
+          tokenBudget
+        }
+      };
+    }
+    return {
+      rawMessages: normalized,
+      earlierSummaryText: "",
+      metrics: {
+        totalCandidateCount: input.length,
+        rawCount: normalized.length,
+        summarizedCount: 0,
+        didCompress: false,
+        estimatedTokens: totalTokens,
+        tokenBudget
+      }
+    };
+  }
+  const tailRaw = normalized.slice(-overflowRawTail);
+  const earlierRaw = normalized.slice(0, normalized.length - tailRaw.length);
+  const summaryBudgetTokens = Math.max(800, Math.floor(tokenBudget * 0.28));
+  const maxSummaryChars = Math.min(8e3, Math.max(1200, Math.floor(summaryBudgetTokens * 0.65)));
+  const earlierSummaryText = summarizeMessagesChronologically(
+    earlierRaw,
+    params.formatForEstimate,
+    maxSummaryChars
+  );
+  let tailTokens = tailRaw.reduce((sum, item) => {
+    const meta = params.formatForEstimate(item);
+    return sum + estimateTextTokens(`${meta.senderName || ""}: ${truncateSingleMessageText(meta.text || "", singleMessageMaxChars)}`);
+  }, 0);
+  const summaryTokens = estimateTextTokens(earlierSummaryText);
+  let finalTail = tailRaw;
+  const remainingForTail = Math.max(1500, tokenBudget - summaryTokens);
+  if (tailTokens > remainingForTail && params.cloneWithTruncatedText) {
+    const avgCharAllowance = Math.max(300, Math.floor(remainingForTail / tailTokens * singleMessageMaxChars));
+    finalTail = tailRaw.map((item) => {
+      const meta = params.formatForEstimate(item);
+      if (meta.text.length > avgCharAllowance) {
+        return params.cloneWithTruncatedText(item, truncateSingleMessageText(meta.text, avgCharAllowance));
+      }
+      return item;
+    });
+    tailTokens = finalTail.reduce((sum, item) => {
+      const meta = params.formatForEstimate(item);
+      return sum + estimateTextTokens(`${meta.senderName || ""}: ${meta.text || ""}`);
+    }, 0);
+  }
+  return {
+    rawMessages: finalTail,
+    earlierSummaryText,
+    metrics: {
+      totalCandidateCount: input.length,
+      rawCount: finalTail.length,
+      summarizedCount: earlierRaw.length,
+      didCompress: true,
+      estimatedTokens: tailTokens + summaryTokens,
+      tokenBudget
+    }
+  };
+}
+
+// src/lib/forward/forwardBundleService.ts
+function formatBundleTime(ts) {
+  if (!ts || !Number.isFinite(ts)) return "";
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return "";
+  const MM = String(d.getMonth() + 1).padStart(2, "0");
+  const DD = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${MM}-${DD} ${hh}:${mm}`;
+}
+function serializeForwardBundleForAi(bundle) {
+  if (!bundle || !Array.isArray(bundle.items) || bundle.items.length === 0) {
+    return bundle?.title ? `[\u8F6C\u53D1\u7684\u804A\u5929\u8BB0\u5F55\uFF1A${bundle.title}\uFF08\u65E0\u660E\u7EC6\uFF09]` : "[\u8F6C\u53D1\u7684\u804A\u5929\u8BB0\u5F55]";
+  }
+  const lines = bundle.items.slice(0, 60).map((item, idx) => {
+    const t2 = formatBundleTime(item.timestamp);
+    const quotePart = item.quoteSummary ? `[\u5F15\u7528 ${item.quoteSummary.senderName}: ${item.quoteSummary.text}] ` : "";
+    let contentPart = item.cardSummary || item.text || "";
+    if (item.messageType === "image" || item.messageType === "generated_image") {
+      const desc = item.imageDescription ? `\u753B\u9762: ${item.imageDescription}` : "\u56FE\u7247\u5185\u5BB9\u672A\u8BC6\u522B";
+      const ocr = item.detectedText ? ` | \u6587\u5B57: ${item.detectedText}` : "";
+      contentPart = `[\u56FE\u7247(${desc}${ocr})]${item.text ? ` ${item.text}` : ""}`;
+    } else if (!contentPart && item.imageDescription) {
+      contentPart = `[\u56FE\u7247: ${item.imageDescription}]`;
+    }
+    return `  ${idx + 1}. ${t2 ? `[${t2}] ` : ""}${item.senderName}: ${quotePart}${contentPart || "[\u7A7A\u6D88\u606F]"}`;
+  });
+  const extraNote = bundle.items.length > 60 ? `
+  ...(\u5171 ${bundle.items.length} \u6761\u8BB0\u5F55\uFF0C\u4EE5\u4E0A\u5C55\u793A\u524D 60 \u6761)` : "";
+  return `[\u8F6C\u53D1\u7684\u804A\u5929\u8BB0\u5F55\uFF1A${bundle.title}\uFF08\u5171 ${bundle.items.length} \u6761\uFF09]
+${lines.join("\n")}${extraNote}`;
+}
+
 // server.ts
 import_dotenv.default.config();
 var app = (0, import_express.default)();
@@ -73905,7 +74102,11 @@ function buildApiLogObject(params) {
     costDisplay: defaultCostDisplay,
     errorType: isFailed ? params.errorType || "ModelError" : void 0,
     errorMessage: params.error ? sanitizeSensitiveText(params.error, 260) : void 0,
-    purpose: sanitizeSensitiveText(params.purpose, 160)
+    purpose: sanitizeSensitiveText(params.purpose, 160),
+    ...typeof params.contextRawCount === "number" ? { contextRawCount: params.contextRawCount } : {},
+    ...typeof params.contextSummarizedCount === "number" ? { contextSummarizedCount: params.contextSummarizedCount } : {},
+    ...typeof params.contextEstimatedTokens === "number" ? { contextEstimatedTokens: params.contextEstimatedTokens } : {},
+    ...typeof params.contextCompressed === "boolean" ? { contextCompressed: params.contextCompressed } : {}
   };
 }
 function buildGoogleRestBase(baseUrl) {
@@ -76561,6 +76762,9 @@ app.post("/api/gemini/chat", async (req, res) => {
     userMessage,
     currentTurnMessageIds = [],
     conversationHistory = [],
+    earlierContextSummary,
+    contextMetrics: clientContextMetrics,
+    crossChannelTransitionContext,
     recalledMemoriesSummary,
     userProfile,
     systemTime,
@@ -76718,6 +76922,11 @@ ${devicesSummary}
 ${req.body.lifeStateContext}
 `;
     }
+    if (crossChannelTransitionContext && typeof crossChannelTransitionContext === "string" && crossChannelTransitionContext.trim()) {
+      contextPrompt += `
+${crossChannelTransitionContext.trim()}
+`;
+    }
     contextPrompt += `
 \u3010\u{1F3A8} \u771F\u5B9E\u56FE\u50CF\u751F\u6210\u5DE5\u5177\u8C03\u7528\u80FD\u529B (generate_image)\u3011:
 \u4F60\u8FDE\u63A5\u4E86\u72EC\u7ACB\u7684\u56FE\u50CF\u751F\u6210\u7CFB\u7EDF\u3002\u8BF7\u4E25\u683C\u9075\u5B88\u4EE5\u4E0B\u8BED\u4E49\u89E6\u53D1\u89C4\u8303\uFF1A
@@ -76738,11 +76947,24 @@ ${req.body.lifeStateContext}
 \u5728 </think> \u6807\u7B7E\u4E4B\u540E\uFF0C\u76F4\u63A5\u8F93\u51FA\u4F60\u7ED9\u7528\u6237\u7684\u5FAE\u4FE1\u56DE\u590D\u6587\u672C\uFF08\u4FDD\u6301\u5FAE\u4FE1\u53E3\u8BED\u5316\u3001\u4EB2\u5207\u81EA\u5982\uFF0C\u9002\u5408\u5FAE\u4FE1\u804A\u5929\uFF0C\u591A\u53E5\u8BDD\u4E4B\u95F4\u6362\u884C\u9694\u5F00\uFF09\uFF1B\u82E5\u9700\u8981\u89E6\u53D1\u753B\u56FE\uFF0C\u8BF7\u5728\u56DE\u590D\u672B\u5C3E\u7D27\u8DDF <image_action>{...}</image_action>\u3002
 `;
     const turnMsgIdSet = new Set(Array.isArray(currentTurnMessageIds) ? currentTurnMessageIds : []);
-    const cleanedHistory = (conversationHistory || []).filter((msg) => {
+    const preFilteredHistory = (conversationHistory || []).filter((msg) => {
       if (!msg) return false;
       if (msg.id && turnMsgIdSet.has(msg.id)) return false;
       return true;
     });
+    const serverChatProtection = applyOverlengthContextProtection({
+      messages: preFilteredHistory,
+      maxRawLimit: STANDARD_CONTEXT_LIMIT,
+      formatForEstimate: (msg) => ({
+        timestamp: msg.timestamp || msg.createdAt,
+        senderName: msg.sender === "user" ? userProfile?.name || "\u7528\u6237" : character.name,
+        text: msg.type === "forward_bundle" || msg.messageType === "forward_bundle" || msg.forwardBundle ? serializeForwardBundleForAi(msg.forwardBundle) : msg.text || msg.imageDescription || ""
+      }),
+      cloneWithTruncatedText: (msg, truncatedText) => ({ ...msg, text: truncatedText })
+    });
+    const cleanedHistory = serverChatProtection.rawMessages;
+    const effectiveChatMetrics = clientContextMetrics && typeof clientContextMetrics.rawCount === "number" ? clientContextMetrics : serverChatProtection.metrics;
+    const mergedEarlierChatSummary = [earlierContextSummary, serverChatProtection.earlierSummaryText].filter((s2) => typeof s2 === "string" && s2.trim().length > 0).join("\n\n");
     const currentMs = req.body.userMessageTimestamp || Date.now();
     let lastMs;
     if (cleanedHistory && cleanedHistory.length > 0) {
@@ -76849,6 +77071,10 @@ ${req.body.lifeStateContext}
           }
           return;
         }
+        if (msg.type === "forward_bundle" || msg.messageType === "forward_bundle" || msg.forwardBundle) {
+          contents.push(`[${msgTime}] ${senderLabel}: ${serializeForwardBundleForAi(msg.forwardBundle)}`);
+          return;
+        }
         let msgStr = `[${msgTime}] ${senderLabel}: ${msg.text || ""}`;
         if (msg.imageUrl) {
           const desc = (msg.imageDescription || msg.imageAnalysis || "").trim();
@@ -76864,7 +77090,10 @@ ${req.body.lifeStateContext}
 ${req.body.currentImageAnalysis}`;
     }
     contents.push(currentMsgStr);
-    const promptText = contextPrompt + "\n\u5BF9\u8BDD\u5386\u53F2\uFF1A\n" + contents.join("\n");
+    const summaryBlock = mergedEarlierChatSummary ? `
+${mergedEarlierChatSummary}
+` : "";
+    const promptText = contextPrompt + summaryBlock + "\n\u5BF9\u8BDD\u5386\u53F2\uFF1A\n" + contents.join("\n");
     let responseText = "";
     let thinkingProcess = "\u5206\u6790\u7528\u6237\u610F\u56FE\uFF0C\u5339\u914D\u4EBA\u8BBE\u7279\u5F81\uFF0C\u5F62\u6210\u5FAE\u4FE1\u53E3\u8BED\u5316\u56DE\u590D\u3002";
     let replyContent = "";
@@ -76960,6 +77189,7 @@ ${req.body.currentImageAnalysis}`;
       thinkingProcess,
       deviceActions: extractedDeviceActions,
       actions: extractedActions,
+      contextMetrics: effectiveChatMetrics,
       apiLog: buildApiLogObject({
         appName: "\u5FAE\u4FE1-AI\u804A\u5929",
         provider: apiConfig?.textProvider || "google_gemini",
@@ -76972,7 +77202,11 @@ ${req.body.currentImageAnalysis}`;
         usage: aiDetailedResult?.usage,
         isRealTokens: aiDetailedResult?.isRealTokens,
         error: aiErrorMessage || void 0,
-        purpose: `\u4E0E ${character.name} \u5BF9\u8BDD\u4EA4\u4E92 (\u8017\u65F6 ${duration}ms)`
+        purpose: `\u4E0E ${character.name} \u5BF9\u8BDD\u4EA4\u4E92 (\u8017\u65F6 ${duration}ms)`,
+        contextRawCount: effectiveChatMetrics.rawCount,
+        contextSummarizedCount: effectiveChatMetrics.summarizedCount,
+        contextEstimatedTokens: effectiveChatMetrics.estimatedTokens,
+        contextCompressed: effectiveChatMetrics.didCompress
       })
     });
   } catch (error) {
@@ -76986,6 +77220,9 @@ app.post("/api/gemini/group-chat", async (req, res) => {
     activityLevel = "natural",
     targetPollId,
     activePolls = [],
+    activeRelays = [],
+    aiPrivateContexts = [],
+    contextMetrics: clientGroupContextMetrics,
     olderContextSummary = "",
     group,
     recentMessages = [],
@@ -77053,16 +77290,33 @@ app.post("/api/gemini/group-chat", async (req, res) => {
     const relationshipsText = Array.isArray(aiRelationships) && aiRelationships.length > 0 ? aiRelationships.map(
       (r2) => typeof r2 === "string" ? `- ${r2}` : `- ${r2.summary || `${r2.memberAName}\u4E0E${r2.memberBName}:${r2.status}`}`
     ).join("\n") : "\u6682\u65E0\u7279\u6B8A\u5DF2\u8BB0\u5F55\u7684AI\u6210\u5458\u79C1\u4EBA\u5173\u7CFB\uFF0C\u6309\u7FA4\u5185\u6210\u5458\u6027\u683C\u81EA\u7136\u76F8\u5904\u3002";
-    const historyText = (Array.isArray(recentMessages) ? recentMessages : []).map((m2) => {
+    const rawGroupMsgs = Array.isArray(recentMessages) ? recentMessages : [];
+    const serverGroupProtection = applyOverlengthContextProtection({
+      messages: rawGroupMsgs,
+      maxRawLimit: STANDARD_CONTEXT_LIMIT,
+      formatForEstimate: (m2) => ({
+        timestamp: m2.timestamp || m2.createdAt || m2.time,
+        senderName: m2.senderName,
+        text: m2.messageType === "forward_bundle" && (m2.forwardBundle || m2.payload) ? serializeForwardBundleForAi(m2.forwardBundle || m2.payload) : m2.text || ""
+      }),
+      cloneWithTruncatedText: (m2, truncatedText) => ({ ...m2, text: truncatedText })
+    });
+    const effectiveGroupMessages = serverGroupProtection.rawMessages;
+    const effectiveGroupMetrics = clientGroupContextMetrics && typeof clientGroupContextMetrics.rawCount === "number" ? clientGroupContextMetrics : serverGroupProtection.metrics;
+    const mergedGroupOlderSummary = [olderContextSummary, serverGroupProtection.earlierSummaryText].filter((s2) => typeof s2 === "string" && s2.trim().length > 0).join("\n\n");
+    const historyText = effectiveGroupMessages.map((m2) => {
       const msgTime = formatFullDateTime(m2.timestamp || m2.createdAt || m2.time);
       const mentions = m2.mentionedMemberIds && m2.mentionedMemberIds.length > 0 ? ` [@${m2.mentionedMemberIds.join(", ")}]` : "";
       const quotePrefix = m2.quoteMessage?.text ? `[\u5F15\u7528 ${m2.quoteMessage.senderName || "\u67D0\u4EBA"}: ${String(m2.quoteMessage.text).slice(0, 40)}] ` : "";
       let body = m2.text || "";
-      if (m2.messageType === "image") {
+      if (m2.messageType === "forward_bundle") {
+        const bundle = m2.forwardBundle || (m2.payload && Array.isArray(m2.payload.items) ? m2.payload : null);
+        body = bundle ? serializeForwardBundleForAi(bundle) : body;
+      } else if (m2.messageType === "image") {
         body = body.startsWith("[\u56FE\u7247") ? body : `[\u56FE\u7247\u6D88\u606F\uFF1A${body || "\u672A\u9644\u63CF\u8FF0"}]`;
       } else if (m2.messageType === "relay" && m2.payload) {
         const entries = Array.isArray(m2.payload.entries) ? m2.payload.entries.map((e2, i2) => `${i2 + 1}.${e2.memberName}:${e2.content}`).join("\uFF1B") : "";
-        body = `[\u7FA4\u63A5\u9F99: ${m2.payload.title || m2.text}] \u5DF2\u63A5\u9F99(${m2.payload.entries?.length || 0}): ${entries || "\u6682\u65E0"}`;
+        body = `[\u7FA4\u63A5\u9F99 relayMessageId="${m2.id}" | ${m2.payload.closed ? "\u5DF2\u7ED3\u675F" : "\u8FDB\u884C\u4E2D"}: ${m2.payload.title || m2.text}] \u5DF2\u63A5\u9F99(${m2.payload.entries?.length || 0}): ${entries || "\u6682\u65E0"}`;
       } else if (m2.messageType === "poll" && m2.payload) {
         const opts = Array.isArray(m2.payload.options) ? m2.payload.options.map((o) => {
           const count = typeof o.votes === "number" ? o.votes : o.voterIds?.length || 0;
@@ -77090,6 +77344,25 @@ app.post("/api/gemini/group-chat", async (req, res) => {
   \u53EF\u9009\u9879:
 ${optLines}`;
     }).join("\n\n") : "\u5F53\u524D\u7FA4\u5185\u6CA1\u6709\u8FDB\u884C\u4E2D\u7684\u6295\u7968\u3002";
+    const openRelaysList = Array.isArray(activeRelays) ? activeRelays : [];
+    const activeRelaysText = openRelaysList.length > 0 ? openRelaysList.map((r2) => {
+      const entryLines = (Array.isArray(r2.entries) ? r2.entries : []).map((e2, idx) => `    ${idx + 1}. ${e2.memberName}: ${e2.content}`).join("\n");
+      const joinedText = Array.isArray(r2.alreadyJoinedAiIds) && r2.alreadyJoinedAiIds.length > 0 ? r2.alreadyJoinedAiIds.join(", ") : "\u6682\u65E0AI\u5DF2\u53C2\u4E0E";
+      return `\u2022 relayMessageId="${r2.relayMessageId}"
+  \u6807\u9898: ${r2.title}${r2.description ? ` | \u8BF4\u660E: ${r2.description}` : ""}
+  \u89C4\u5219: ${r2.allowDuplicate ? "\u5141\u8BB8\u540C\u4E00\u6210\u5458\u591A\u6B21\u63A5\u9F99" : "\u6BCF\u4EBA\u9650\u53C2\u4E0E\u4E00\u6B21(\u5DF2\u53C2\u4E0E\u7684AI\u4E25\u7981\u91CD\u590D\u53C2\u4E0E)"}
+  \u5DF2\u63A5\u9F99\u8FC7\u7684AI: ${joinedText}
+  \u5F53\u524D\u63A5\u9F99\u5217\u8868:
+${entryLines || "    (\u6682\u65E0\u6210\u5458\u5199\u5165)"}`;
+    }).join("\n\n") : "\u5F53\u524D\u7FA4\u5185\u6CA1\u6709\u8FDB\u884C\u4E2D\u7684\u63A5\u9F99\u3002";
+    const privateContextList = Array.isArray(aiPrivateContexts) ? aiPrivateContexts : [];
+    const isolatedPrivateText = privateContextList.length > 0 ? privateContextList.map((ctx) => {
+      const lines = Array.isArray(ctx.recentPrivateLines) ? ctx.recentPrivateLines : [];
+      const stateLine = ctx.continuitySummary ? `
+  \u72B6\u6001\u5907\u5FD8: ${ctx.continuitySummary}` : "";
+      return `\u25B8 [${ctx.characterName}] (memberId="${ctx.memberId || ctx.characterId}") \u4E0E\u7528\u6237\u7684\u4E13\u5C5E\u79C1\u804A\u8FD1\u51B5\uFF08\u5171${ctx.privateMessageCount || lines.length}\u6761\uFF0C\u4EC5\u9650\u8BE5\u89D2\u8272\u672C\u4EBA\u77E5\u6653\uFF09:${stateLine}
+${lines.length > 0 ? lines.map((l) => `    ${l}`).join("\n") : "    (\u8FD1\u671F\u65E0\u79C1\u804A\u8BB0\u5F55)"}`;
+    }).join("\n\n") : "";
     const nativeTime = systemTime || (/* @__PURE__ */ new Date()).toLocaleString("zh-CN", { hour12: false, timeZone: "Asia/Shanghai" });
     const latestUserLine = latestUserMessage?.text ? `
 \u7528\u6237\u6700\u65B0\u6D88\u606F\uFF1A${latestUserMessage.senderName || userProfile?.name || "\u5C0F\u6E05"} \u8BF4\u300C${latestUserMessage.text}\u300D` : "";
@@ -77109,9 +77382,15 @@ ${candidateProfilesText}
 
 \u7FA4\u6210\u5458\u5F53\u524D\u5DF2\u77E5\u793E\u4F1A\u5173\u7CFB\uFF1A
 ${relationshipsText}
-
+${isolatedPrivateText ? `
+\u5404AI\u6210\u5458\u4E0E\u7528\u6237\u7684\u4E13\u5C5E\u79C1\u804A\u8FD1\u51B5\uFF08\u4E25\u683C\u9690\u79C1\u9694\u79BB\u51C6\u5219\uFF1A\u6BCF\u4F4DAI\u53EA\u80FD\u77E5\u9053\u81EA\u5DF1\u4E0E\u7528\u6237\u7684\u79C1\u804A\u7ECF\u5386\uFF0C\u7EDD\u4E0D\u5141\u8BB8\u628AAI A\u4E0E\u7528\u6237\u7684\u79C1\u804A\u5F53\u6210AI B\u77E5\u9053\u7684\u4E8B\uFF0C\u4E5F\u4E0D\u8981\u5728\u7FA4\u91CC\u751F\u786C\u6CC4\u9732\u7528\u6237\u7684\u79C1\u5BC6\u8BDD\u9898\uFF01\uFF09\uFF1A
+${isolatedPrivateText}
+` : ""}
 \u5F53\u524D\u7FA4\u5185\u8FDB\u884C\u4E2D\u7684\u6295\u7968\uFF1A
 ${activePollsText}
+
+\u5F53\u524D\u7FA4\u5185\u8FDB\u884C\u4E2D\u7684\u63A5\u9F99\uFF1A
+${activeRelaysText}
 
 \u3010\u7EDF\u4E00\u7F16\u6392\u6838\u5FC3\u89C4\u5219\u3011\uFF1A
 1. \u6D3B\u8DC3\u5EA6\u4E0E\u4EBA\u6570\u63A7\u5236\uFF1A
@@ -77123,18 +77402,24 @@ ${activePollsText}
    - \u4E0D\u8981\u6BCF\u6B21\u53D1\u8A00\u90FD\u673A\u68B0\u5730 @ \u522B\u4EBA\uFF0C\u53EA\u5728\u771F\u6B63\u70B9\u540D\u6216\u8DE8\u8BDD\u9898\u53EB\u4EBA\u65F6\u81EA\u7136\u4F7F\u7528\u3002
 3. \u591A\u4EBA\u4EA4\u9519\u63A5\u8BDD\uFF08\u975E\u5E38\u91CD\u8981\uFF09\uFF1A
    - \u9F13\u52B1\u628A\u4E0D\u540CAI\u7684\u53D1\u8A00\u4EA4\u9519\u6392\u5728 events \u4E2D\uFF08\u4F8B\u5982 A \u8BF4 1~2 \u53E5 -> B \u63A5\u8BDD/\u5410\u69FD -> A \u56DE\u5E94 B -> C \u63D2\u8BDD -> B \u8865\u4E00\u53E5\uFF09\uFF0C\u800C\u4E0D\u662F\u6BCF\u4EBA\u4E00\u53E3\u6C14\u8BF4\u5B8C\u5927\u6BB5\u8BDD\u3002
-   - \u540E\u9762\u51FA\u73B0\u7684\u4E8B\u4EF6\u5FC5\u987B\u628A\u524D\u9762\u4E8B\u4EF6\u7684\u5185\u5BB9\u548C\u6295\u7968\u52A8\u4F5C\u5F53\u6210\u201C\u521A\u521A\u5DF2\u7ECF\u53D1\u751F\u201D\uFF0C\u76F4\u63A5\u987A\u7740\u63A5\u8BDD\u6216\u56DE\u5E94\uFF01
+   - \u540E\u9762\u51FA\u73B0\u7684\u4E8B\u4EF6\u5FC5\u987B\u628A\u524D\u9762\u4E8B\u4EF6\u7684\u5185\u5BB9\u548C\u6295\u7968/\u63A5\u9F99\u52A8\u4F5C\u5F53\u6210\u201C\u521A\u521A\u5DF2\u7ECF\u53D1\u751F\u201D\uFF0C\u76F4\u63A5\u987A\u7740\u63A5\u8BDD\u6216\u56DE\u5E94\uFF01
 4. AI \u771F\u5B9E\u6295\u7968\u673A\u5236\uFF08vote_poll\uFF09\uFF1A
    - \u5F53\u7FA4\u5185\u6709\u8FDB\u884C\u4E2D\u7684\u6295\u7968\u4E14AI\u51B3\u5B9A\u53C2\u4E0E\u6295\u7968\u65F6\uFF0C\u5FC5\u987B\u8F93\u51FA\u771F\u6B63\u7684 type="vote_poll" \u4E8B\u4EF6\uFF08\u4F7F\u7528\u51C6\u786E\u7684 pollId\u3001actorId \u548C optionId/optionIds\uFF09\u3002
    - \u4E25\u7981\u53EA\u53D1\u6D88\u606F\u8BF4\u201C\u6211\u6295\u4E86XX\u201D\u5374\u4E0D\u8F93\u51FA\u5BF9\u5E94\u7684 vote_poll \u4E8B\u4EF6\uFF01
    - \u4E25\u7981\u7ED9\u201C\u5DF2\u6295\u8FC7\u7684AI\u201D\u91CD\u590D\u8F93\u51FA vote_poll\uFF1B\u4E25\u7981\u5BF9\u5DF2\u7ED3\u675F\u6295\u7968\u8F93\u51FA vote_poll\u3002
    - \u4E0D\u540CAI\u8981\u6839\u636E\u81EA\u5DF1\u7684\u4EBA\u8BBE\u3001\u504F\u597D\u3001\u5FC3\u60C5\u4E0E\u5F7C\u6B64\u5173\u7CFB\u505A\u51FA\u6709\u5DEE\u5F02\u7684\u9009\u62E9\uFF0C\u800C\u4E0D\u662F\u673A\u68B0\u5730\u5168\u6295\u540C\u4E00\u4E2A\u9009\u9879\u3002
-   - \u5141\u8BB8\uFF1AA \u8FB9\u6295\u7968\u8FB9\u53D1\u8A00\u3001B \u9ED8\u9ED8\u53EA\u53D1 vote_poll \u4E0D\u8BF4\u8BDD\u3001C \u89C2\u671B\u5F03\u6743\u53EA\u8C03\u4F83\u3001D \u5148\u5410\u69FD\u518D\u6295\u7968\u7B49\u771F\u5B9E\u7FA4\u804A\u8282\u594F\uFF08\u5C06 vote_poll \u4E0E message \u4E8B\u4EF6\u81EA\u7136\u7A7F\u63D2\uFF09\u3002
-5. \u89D2\u8272\u4EBA\u8BBE\u4E0E\u5173\u7CFB\uFF1A
+5. AI \u771F\u5B9E\u53C2\u4E0E\u7FA4\u63A5\u9F99\uFF08join_relay\uFF09\uFF1A
+   - \u5F53\u7FA4\u5185\u6709\u8FDB\u884C\u4E2D\u7684\u63A5\u9F99\uFF08\u672A\u7ED3\u675F\u4E14\u672A\u8FC7\u671F\uFF09\u4E14\u4E0E\u5F53\u524D\u8BDD\u9898\u76F8\u5173\u6216\u7528\u6237\u53D1\u8D77/\u62DB\u547C\u63A5\u9F99\u65F6\uFF0C\u7B26\u5408\u4EBA\u8BBE\u4E14\u613F\u610F\u53C2\u4E0E\u7684 AI \u5FC5\u987B\u8F93\u51FA\u771F\u5B9E\u7684 type="join_relay" \u4E8B\u4EF6\uFF08\u4F7F\u7528\u51C6\u786E\u7684 relayMessageId\u3001actorId \u548C\u975E\u7A7A\u63A5\u9F99\u5185\u5BB9 content\uFF09\uFF0C\u524D\u7AEF\u4F1A\u81EA\u52A8\u5C06\u8BE5\u6210\u5458\u540D\u548C\u5185\u5BB9\u5199\u5165\u63A5\u9F99\u5361\u7247\u4E2D\u3002
+   - \u4E25\u7981\u53EA\u53E3\u5934\u8BF4\u201C\u6211\u63A5\u4E0A\u4E86\u201D\u5374\u4E0D\u8F93\u51FA join_relay \u4E8B\u4EF6\uFF1B\u82E5\u63A5\u9F99\u89C4\u5219\u4E3A\u6BCF\u4EBA\u9650\u4E00\u6B21\u4E14\u8BE5AI\u5DF2\u5728\u201C\u5DF2\u63A5\u9F99\u8FC7\u7684AI\u201D\u5217\u8868\u4E2D\uFF0C\u4E25\u7981\u91CD\u590D\u8F93\u51FA join_relay\uFF1B\u4E0D\u8981\u5F3A\u8FEB\u6240\u6709AI\u5168\u5458\u7ACB\u523B\u586B\u6EE1\uFF0C\u6309\u6027\u683C/\u5728\u7EBF\u611F\u9009\u62E9\u6027\u53C2\u4E0E\u3002
+6. \u7FA4\u804A\u8F6C\u79C1\u804A\uFF08continue_in_private\uFF0C\u4E25\u683C\u4F4E\u9891\u9AD8\u95E8\u69DB\uFF09\uFF1A
+   - \u4EC5\u5F53\u67D0\u4E2A AI \u5728\u5F53\u524D\u7FA4\u804A\u4E2D\u9047\u5230\u4E86**\u660E\u663E\u79C1\u5BC6\u3001\u654F\u611F\u3001\u918B\u610F/\u60C5\u7EEA\u6CE2\u52A8\u3001\u62C5\u5FC3\u7528\u6237\u4E0D\u8212\u670D\u3001\u6216\u6709\u660E\u786E\u53EA\u9002\u54081\u5BF91\u79C1\u4E0B\u4EA4\u4EE3\u7684\u8BDD**\u65F6\uFF0C\u624D\u53EF\u7531\u8BE5 AI \u989D\u5916\u53D1\u51FA\u4E00\u4E2A type="continue_in_private" \u4E8B\u4EF6\uFF08\u5148\u5728\u7FA4\u91CC\u53D1\u5B8C\u672C\u8F6E\u516C\u5F00\u56DE\u5E94\u6216\u9690\u5FCD\u6536\u4F4F\uFF0C\u518D\u968F\u540E\u5207\u5230\u79C1\u804A\uFF09\u3002
+   - \u666E\u901A\u5BD2\u6684\u3001\u65E5\u5E38\u7FA4\u804A\u3001\u6295\u7968\u3001\u63A5\u9F99**\u4E25\u7981**\u6EE5\u7528 continue_in_private\uFF01\u82E5\u72B6\u6001\u5907\u5FD8\u5DF2\u63D0\u793A\u8BE5 AI \u521A\u8F6C\u53BB\u79C1\u804A\u4E14\u7528\u6237\u5C1A\u672A\u56DE\u590D\uFF0C\u4E25\u7981\u91CD\u590D\u5237\u5C4F\u8FFD\u95EE\u3002
+   - continue_in_private \u683C\u5F0F\uFF1A{ "eventId": "ev_priv_1", "type": "continue_in_private", "actorId": "AI\u7684\u51C6\u786Eid", "reason": "\u79C1\u804A\u89E6\u53D1\u539F\u56E0", "triggerSummary": "\u7B80\u77ED\u89E6\u53D1\u573A\u666F", "privateOpeningMessages": ["\u5207\u79C1\u804A\u540E\u53D1\u51FA\u7684\u7B2C1\u53E5\u81EA\u7136\u77ED\u8BDD", "\u53EF\u9009\u7684\u7B2C2\u53E5"] }\u3002
+7. \u89D2\u8272\u4EBA\u8BBE\u4E0E\u8DE8\u9891\u9053\u8FDE\u7EED\u6027\uFF1A
    - \u6BCF\u4E2AAI\u4E25\u683C\u4FDD\u6301\u5404\u81EA\u8BED\u6C14\u3001\u53E3\u7656\u548C\u957F\u671F\u8BB0\u5FC6\uFF0C\u7EDD\u4E0D\u4E32\u620F\u3001\u7EDD\u4E0D\u8BF4\u201C\u4F5C\u4E3AAI/\u8BED\u8A00\u6A21\u578B\u201D\u3002
    - \u5173\u7CFB\u7D27\u5F20\u6216\u51B7\u6218\u7684AI\u5728\u7FA4\u5185\u4E92\u52A8\u5E94\u81EA\u7136\u4F53\u73B0\u514B\u5236\u3001\u522B\u626D\u6216\u8F7B\u5EA6\u4E92\u603C\u3002
-6. \u5EF6\u8FDF\u8282\u594F\uFF1A
-   - \u6BCF\u4E2A\u4E8B\u4EF6\u8BBE\u7F6E\u5408\u7406\u7684 delayMs\uFF08650~1800ms\uFF09\uFF0C\u957F\u6C14\u6CE1\u6216\u601D\u8003\u6295\u7968\u53EF\u7A0D\u957F\u3002`;
+8. \u5EF6\u8FDF\u8282\u594F\uFF1A
+   - \u6BCF\u4E2A\u4E8B\u4EF6\u8BBE\u7F6E\u5408\u7406\u7684 delayMs\uFF08650~1800ms\uFF09\uFF0C\u957F\u6C14\u6CE1\u6216\u601D\u8003\u6295\u7968/\u63A5\u9F99\u53EF\u7A0D\u957F\u3002`;
     let triggerDirective = "";
     if (triggerType === "invite_poll_vote" && targetPollId) {
       triggerDirective = `\u3010\u672C\u8F6E\u89E6\u53D1\u7C7B\u578B\uFF1A\u9080\u8BF7\u7FA4\u5185AI\u53C2\u4E0E\u6295\u7968 (targetPollId="${targetPollId}")\u3011
@@ -77157,10 +77442,10 @@ ${activePollsText}
 \u7528\u6237\u70B9\u51FB\u4E86\u201C\u53EC\u5524\u8BA8\u8BBA\u201D\uFF0C\u8BF7\u7ED3\u5408\u8FD1\u671F\u7FA4\u804A\u4E0A\u4E0B\u6587\u548C\u6210\u5458\u5173\u7CFB\uFF0C\u81EA\u7136\u5F00\u542F\u6216\u5EF6\u7EED\u4E00\u8F6E\u591A\u4EBA\u4EA4\u9519\u8BA8\u8BBA\u3002`;
     } else {
       triggerDirective = `\u3010\u672C\u8F6E\u89E6\u53D1\u7C7B\u578B\uFF1A\u7528\u6237\u53CC\u51FB\u89E6\u53D1\u7FA4\u804A\u56DE\u590D\u3011
-\u8BF7\u6839\u636E\u6700\u65B0\u804A\u5929\u4E0A\u4E0B\u6587\u3001\u7FA4\u804A\u6D3B\u8DC3\u5EA6\uFF08${preset.label}\uFF09\u548C\u6210\u5458\u5173\u7CFB\uFF0C\u81EA\u7136\u7F16\u6392\u4E00\u8F6E\u4EA4\u9519\u53D1\u8A00\uFF08\u5982\u6709\u5408\u9002\u8FDB\u884C\u4E2D\u6295\u7968\u4E14\u7B26\u5408\u5F53\u524D\u8BDD\u9898\uFF0C\u4E5F\u53EF\u987A\u5E26\u771F\u5B9E\u6295\u7968\uFF09\u3002`;
+\u8BF7\u6839\u636E\u6700\u65B0\u804A\u5929\u4E0A\u4E0B\u6587\u3001\u7FA4\u804A\u6D3B\u8DC3\u5EA6\uFF08${preset.label}\uFF09\u548C\u6210\u5458\u5173\u7CFB\uFF0C\u81EA\u7136\u7F16\u6392\u4E00\u8F6E\u4EA4\u9519\u53D1\u8A00\uFF08\u5982\u6709\u5408\u9002\u8FDB\u884C\u4E2D\u6295\u7968/\u63A5\u9F99\u4E14\u7B26\u5408\u5F53\u524D\u8BDD\u9898\uFF0C\u4E5F\u53EF\u987A\u5E26\u771F\u5B9E\u53C2\u4E0E\uFF09\u3002`;
     }
-    const userPrompt = `${olderContextSummary ? `\u3010\u66F4\u65E9\u5386\u53F2\u6458\u8981\u3011
-${olderContextSummary}
+    const userPrompt = `${mergedGroupOlderSummary ? `\u3010\u66F4\u65E9\u5386\u53F2\u6458\u8981\u3011
+${mergedGroupOlderSummary}
 
 ` : ""}\u3010\u8FD1\u671F\u7FA4\u804A\u8BB0\u5F55\u3011
 ---
@@ -77175,7 +77460,7 @@ ${triggerDirective}
 {
   "roundId": "${roundId}",
   "shouldRespond": true,
-  "thinkingSummary": "\u7B80\u8981\u8BF4\u660E\u672C\u8F6E\u4E3A\u4F55\u5B89\u6392\u8FD9\u4E9BAI\u53D1\u8A00/\u6295\u7968\u4EE5\u53CA\u4E92\u52A8\u8282\u594F",
+  "thinkingSummary": "\u7B80\u8981\u8BF4\u660E\u672C\u8F6E\u4E3A\u4F55\u5B89\u6392\u8FD9\u4E9BAI\u53D1\u8A00/\u6295\u7968/\u63A5\u9F99\u4EE5\u53CA\u4E92\u52A8\u8282\u594F",
   "events": [
     {
       "eventId": "ev_1",
@@ -77196,10 +77481,19 @@ ${triggerDirective}
       "optionId": "\u6240\u9009\u9009\u9879\u7684\u51C6\u786EoptionId",
       "optionIds": ["\u5355\u9009\u4F201\u4E2A\uFF0C\u591A\u9009\u6309\u4E0A\u9650\u4F20\u591A\u4E2AoptionId"],
       "delayMs": 750
+    },
+    {
+      "eventId": "ev_3",
+      "type": "join_relay",
+      "actorId": "\u63A5\u9F99AI\u7684\u51C6\u786Eid",
+      "actorName": "\u63A5\u9F99AI\u540D\u79F0",
+      "relayMessageId": "\u8FDB\u884C\u4E2D\u63A5\u9F99\u7684\u51C6\u786ErelayMessageId",
+      "content": "\u8BE5AI\u586B\u5165\u63A5\u9F99\u5361\u7247\u7684\u5177\u4F53\u5185\u5BB9",
+      "delayMs": 850
     }
   ]
 }
-\u6CE8\u610F\uFF1A\u5982\u679C\u6CA1\u6709\u6295\u7968\u52A8\u4F5C\uFF0Cevents \u4E2D\u53EA\u653E message \u4E8B\u4EF6\u5373\u53EF\uFF1B\u5982\u679C\u53EA\u6709\u6295\u7968\u52A8\u4F5C\uFF0C\u4E5F\u53EF\u4EE5\u5305\u542B vote_poll \u4E8B\u4EF6\u3002`;
+\u6CE8\u610F\uFF1A\u5982\u679C\u6CA1\u6709\u6295\u7968/\u63A5\u9F99/\u8F6C\u79C1\u804A\u52A8\u4F5C\uFF0Cevents \u4E2D\u53EA\u653E\u9700\u8981\u7684\u4E8B\u4EF6\u5373\u53EF\uFF1B\u4E0D\u8981\u5F3A\u884C\u8F93\u51FA\u672A\u89E6\u53D1\u7684\u4E8B\u4EF6\u7C7B\u578B\u3002`;
     const detailed = await callAiServiceDetailed({
       prompt: userPrompt,
       systemInstruction: systemPrompt,
@@ -77254,6 +77548,9 @@ ${triggerDirective}
         thinkingProcess: parsed.thinkingProcess || ""
       });
     }
+    if (Array.isArray(parsed?.actions) && parsed.actions.length > 0) {
+      rawEvents.push(...parsed.actions);
+    }
     const resolveCandidate = (id, name) => aiCandidates.find((c) => c.id === id || c.characterId === id) || aiCandidates.find((c) => name && c.name === String(name).trim());
     const normalizedEvents = [];
     for (let i2 = 0; i2 < rawEvents.length; i2++) {
@@ -77297,6 +77594,40 @@ ${triggerDirective}
           optionIds,
           delayMs: Math.max(550, Math.min(1400, Number(ev.delayMs) || 750))
         });
+      } else if (evType === "join_relay") {
+        const candidate = resolveCandidate(ev.actorId || ev.senderId, ev.actorName || ev.senderName);
+        const relayMessageId = String(ev.relayMessageId || ev.relayId || ev.messageId || "").trim();
+        const content = sanitizeReplyText(String(ev.content || ev.text || "")).trim();
+        if (!candidate || !relayMessageId || !content) continue;
+        normalizedEvents.push({
+          eventId,
+          type: "join_relay",
+          actorId: candidate.id,
+          actorName: candidate.name,
+          relayMessageId,
+          content,
+          delayMs: Math.max(600, Math.min(1500, Number(ev.delayMs) || 850))
+        });
+      } else if (evType === "continue_in_private") {
+        const candidate = resolveCandidate(
+          ev.actorId || ev.characterId || ev.senderId,
+          ev.actorName || ev.senderName
+        );
+        if (!candidate) continue;
+        const rawList = Array.isArray(ev.privateOpeningMessages) ? ev.privateOpeningMessages : Array.isArray(ev.messages) ? ev.messages : Array.isArray(ev.openingMessages) ? ev.openingMessages : typeof ev.text === "string" ? [ev.text] : [];
+        const openings = rawList.map((s2) => sanitizeReplyText(String(s2 || "")).trim()).filter(Boolean).slice(0, 3);
+        if (openings.length === 0) continue;
+        normalizedEvents.push({
+          eventId,
+          type: "continue_in_private",
+          actorId: candidate.id,
+          actorName: candidate.name,
+          characterId: candidate.characterId || candidate.id,
+          reason: typeof ev.reason === "string" && ev.reason.trim() ? ev.reason.trim() : "\u6709\u4E9B\u8BDD\u60F3\u79C1\u4E0B\u8DDF\u4F60\u8BF4",
+          triggerSummary: typeof ev.triggerSummary === "string" && ev.triggerSummary.trim() ? ev.triggerSummary.trim() : void 0,
+          privateOpeningMessages: openings,
+          delayMs: 250
+        });
       }
     }
     const normalizedReplies = normalizedEvents.filter((ev) => ev.type === "message").map((ev) => ({
@@ -77315,12 +77646,14 @@ ${triggerDirective}
     );
     const totalBubblesCount = normalizedEvents.filter((ev) => ev.type === "message").reduce((sum, ev) => sum + (ev.bubbles?.length || 0), 0);
     const totalVotesCount = normalizedEvents.filter((ev) => ev.type === "vote_poll").length;
+    const totalRelaysCount = normalizedEvents.filter((ev) => ev.type === "join_relay").length;
     res.json({
       success: true,
       roundId: typeof parsed?.roundId === "string" && parsed.roundId.trim() ? parsed.roundId.trim() : roundId,
       shouldRespond: parsed?.shouldRespond !== false && normalizedEvents.length > 0,
       thinkingSummary: typeof parsed?.thinkingSummary === "string" ? parsed.thinkingSummary.trim() : "",
       events: normalizedEvents,
+      contextMetrics: effectiveGroupMetrics,
       // Backward-compatible legacy fields
       responderId: firstReply?.responderId || parsed?.responderId || aiCandidates[0]?.id,
       responderName: firstReply?.responderName || parsed?.responderName || aiCandidates[0]?.name,
@@ -77335,7 +77668,11 @@ ${triggerDirective}
         durationMs: duration,
         usage: detailed.usage,
         isRealTokens: detailed.isRealTokens,
-        purpose: `\u7FA4\u804A\u7EDF\u4E00\u7F16\u6392(${preset.label}): ${participantNames.join("\u3001") || "AI"} \xB7 ${totalBubblesCount}\u6C14\u6CE1${totalVotesCount > 0 ? `/${totalVotesCount}\u6295\u7968` : ""} (\u8017\u65F6 ${duration}ms)`
+        purpose: `\u7FA4\u804A\u7EDF\u4E00\u7F16\u6392(${preset.label}): ${participantNames.join("\u3001") || "AI"} \xB7 ${totalBubblesCount}\u6C14\u6CE1${totalVotesCount > 0 ? `/${totalVotesCount}\u6295\u7968` : ""}${totalRelaysCount > 0 ? `/${totalRelaysCount}\u63A5\u9F99` : ""} (\u8017\u65F6 ${duration}ms)`,
+        contextRawCount: effectiveGroupMetrics.rawCount,
+        contextSummarizedCount: effectiveGroupMetrics.summarizedCount,
+        contextEstimatedTokens: effectiveGroupMetrics.estimatedTokens,
+        contextCompressed: effectiveGroupMetrics.didCompress
       })
     });
   } catch (error) {
@@ -78127,6 +78464,7 @@ app.post("/api/gemini/offline-chat", async (req, res) => {
       currentTime,
       timezone,
       contextSummary,
+      contextMetrics: clientOfflineMetrics,
       needsSummaryUpdate = false,
       recentMessages = [],
       recalledMemories,
@@ -78232,7 +78570,22 @@ ${character.memories.slice(-25).map((m2) => `  \xB7 ${m2}`).join("\n")}
 }`;
       const prevTemp = typeof previousState?.bodyTemp === "number" ? previousState.bodyTemp.toFixed(1) : "36.5";
       const prevIntimateLine = previousState?.intimateState?.active ? `- \u4E0A\u8F6E\u79C1\u5BC6\u72B6\u6001(\u5DF2\u6FC0\u6D3B): \u5524\u8D77=${previousState.intimateState.arousal ?? 30}%, \u654F\u611F=${previousState.intimateState.sensitivity ?? 30}%, \u72B6\u6001=${previousState.intimateState.physiologicalState || "\u6E29\u70ED"}` : `- \u4E0A\u8F6E\u79C1\u5BC6\u72B6\u6001: \u672A\u6FC0\u6D3B (active: false)`;
-      const formattedHistoryLines = (recentMessages || []).map((m2) => {
+      const serverOfflineProtection = applyOverlengthContextProtection({
+        messages: Array.isArray(recentMessages) ? recentMessages : [],
+        maxRawLimit: STANDARD_CONTEXT_LIMIT,
+        formatForEstimate: (m2) => ({
+          timestamp: m2.timestamp,
+          senderName: m2.senderName || (m2.sender === "user" ? userProfile?.name || "\u7528\u6237" : character?.name || "AI"),
+          text: m2.renderedText || m2.text || ""
+        }),
+        cloneWithTruncatedText: (m2, truncatedText) => ({
+          ...m2,
+          renderedText: truncatedText,
+          text: truncatedText
+        })
+      });
+      const effectiveOfflineMetrics = clientOfflineMetrics && typeof clientOfflineMetrics.rawCount === "number" ? clientOfflineMetrics : serverOfflineProtection.metrics;
+      const formattedHistoryLines = serverOfflineProtection.rawMessages.map((m2) => {
         const who = m2.senderName || (m2.sender === "user" ? userProfile?.name || "\u7528\u6237" : character?.name || "AI");
         const tStr = m2.timeStr ? `[${m2.timeStr}] ` : "";
         const body = m2.renderedText || m2.text || "";
@@ -78240,9 +78593,12 @@ ${character.memories.slice(-25).map((m2) => `  \xB7 ${m2}`).join("\n")}
         return `${tStr}${who}:
 ${body}${stNote}`;
       });
+      const mergedOfflineSummary = [contextSummary, serverOfflineProtection.earlierSummaryText].filter((s2) => typeof s2 === "string" && s2.trim().length > 0).join("\n\n");
       const promptParts = [];
-      promptParts.push(`\u30106. \u672C\u573A\u524D\u60C5\u6458\u8981\u3011:
-${contextSummary ? contextSummary : "\uFF08\u672C\u573A\u4ECD\u5728\u521D\u59CB\u8FDE\u7EED\u4E0A\u4E0B\u6587\u7A97\u53E3\u5185\uFF0C\u65E0\u989D\u5916\u6298\u53E0\u524D\u60C5\uFF09"}`);
+      promptParts.push(
+        `\u30106. \u672C\u573A\u524D\u60C5\u6458\u8981\u3011:
+${mergedOfflineSummary ? mergedOfflineSummary : "\uFF08\u672C\u573A\u4ECD\u5728\u521D\u59CB\u8FDE\u7EED\u4E0A\u4E0B\u6587\u7A97\u53E3\u5185\uFF0C\u65E0\u989D\u5916\u6298\u53E0\u524D\u60C5\uFF09"}`
+      );
       promptParts.push(
         `\u30107. \u672C\u573A\u6700\u8FD1\u5BF9\u8BDD\u4E0E\u52A8\u4F5C\u8BB0\u5F55\uFF08\u5171 ${formattedHistoryLines.length} \u6761\uFF09\u3011:
 ${formattedHistoryLines.length > 0 ? formattedHistoryLines.join("\n\n") : "\uFF08\u672C\u573A\u521A\u521A\u5F00\u59CB\uFF0C\u5C1A\u65E0\u5386\u53F2\u5BF9\u8BDD\uFF09"}`
@@ -78267,7 +78623,8 @@ ${userInput}
 
 \u8BF7\u4E25\u683C\u6309\u7167 segments\uFF08\u52A8\u4F5C\u4E0E\u8BED\u8A00\u5206\u6BB5\uFF09\u4E0E state \u683C\u5F0F\u8F93\u51FA JSON\uFF1A`
       );
-      const responseText = await callAiService({
+      const offlineStart = Date.now();
+      const detailedOffline = await callAiServiceDetailed({
         prompt: promptParts.join("\n\n"),
         systemInstruction,
         model: selectedModel,
@@ -78281,6 +78638,7 @@ ${userInput}
         maxTokens: 3500,
         timeoutMs: 65e3
       });
+      const responseText = detailedOffline.text;
       const extracted = extractThinkingAndContent(responseText);
       const cleanJson = (extracted.cleanText || "").replace(/```json\n?|```\n?/g, "").trim();
       let rawSegments = null;
@@ -78337,13 +78695,32 @@ ${userInput}
       }
       const plainReply = segments.map((s2) => s2.text).join("\n");
       const firstAction = segments.find((s2) => s2.type === "action")?.text || "";
+      const offlineDuration = Date.now() - offlineStart;
       return {
         success: true,
         segments,
         reply: plainReply,
         action: firstAction,
         state: parsedState,
-        contextSummaryUpdate: contextSummaryUpdate || void 0
+        contextSummaryUpdate: contextSummaryUpdate || void 0,
+        contextMetrics: effectiveOfflineMetrics,
+        apiLog: buildApiLogObject({
+          appName: "\u7EBF\u4E0B\u6A21\u5F0F-AI",
+          provider: provider || "google_gemini",
+          modelName: detailedOffline.modelUsed || selectedModel,
+          interfaceType: "OfflineChat",
+          category: "text_generation",
+          status: "success",
+          httpStatus: 200,
+          durationMs: offlineDuration,
+          usage: detailedOffline.usage,
+          isRealTokens: detailedOffline.isRealTokens,
+          purpose: `\u4E0E ${character?.name || "AI"} \u7EBF\u4E0B\u4E92\u52A8 (\u8017\u65F6 ${offlineDuration}ms)`,
+          contextRawCount: effectiveOfflineMetrics.rawCount,
+          contextSummarizedCount: effectiveOfflineMetrics.summarizedCount,
+          contextEstimatedTokens: effectiveOfflineMetrics.estimatedTokens,
+          contextCompressed: effectiveOfflineMetrics.didCompress
+        })
       };
     };
     const reqKey = typeof requestId === "string" && requestId.trim() ? requestId.trim() : "";

@@ -17,13 +17,14 @@ import { AiCharacter } from '../../types';
 import { ensureAiMemoryVault } from '../../lib/aiMemoryVaultDb';
 import { DEFAULT_AI_AVATAR } from '../../lib/storage';
 import { generateNotificationAvatarThumbnail } from '../../lib/notificationAvatar';
+import { compressImage } from '../../lib/imageCompressor';
 import { StableTextInput } from '../common/StableTextInput';
 import { StableTextarea } from '../common/StableTextarea';
 
 interface CustomAiCreatorModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreateCharacter: (character: AiCharacter) => void;
+  onCreateCharacter: (character: AiCharacter) => Promise<void> | void;
 }
 
 export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
@@ -47,6 +48,9 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
   const [systemPromptPrefix, setSystemPromptPrefix] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [activeAvatarTab, setActiveAvatarTab] = useState<'upload' | 'url'>('upload');
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const isSavingRef = React.useRef(false);
 
   const nameRef = React.useRef<HTMLInputElement | null>(null);
   const wxidRef = React.useRef<HTMLInputElement | null>(null);
@@ -59,10 +63,30 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Handle local photo file upload
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle local photo file upload (compressed to prevent Android WebView localStorage QuotaExceededError)
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
+    if (!file) return;
+    setSaveError(null);
+    try {
+      if (file.type === 'image/svg+xml' && file.size <= 64 * 1024) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === 'string') {
+            setAvatar(reader.result);
+          }
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+      const compressed = await compressImage(file, {
+        maxWidth: 512,
+        maxHeight: 512,
+        quality: 0.82,
+        maxFileSizeBytes: 150 * 1024,
+      });
+      setAvatar(compressed.dataUrl);
+    } catch {
       const reader = new FileReader();
       reader.onload = () => {
         if (typeof reader.result === 'string') {
@@ -100,60 +124,88 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
 
   // Handle final submission
   const handleSave = async () => {
-    const finalName = (nameRef.current?.value !== undefined ? nameRef.current.value : name).trim() || '自定义 AI';
-    const finalWxid = (wxidRef.current?.value !== undefined ? wxidRef.current.value : wxid).trim() || `ai_${Date.now().toString().slice(-6)}`;
-    const finalAvatar = avatar || DEFAULT_AI_AVATAR;
-    const finalPersona = (personaRef.current?.value !== undefined ? personaRef.current.value : persona).trim();
-    const finalPersonality = (personalityRef.current?.value !== undefined ? personalityRef.current.value : personality).trim();
-    const finalGreeting = (greetingRef.current?.value !== undefined ? greetingRef.current.value : greeting).trim();
-    const finalRelationship = (relationshipRef.current?.value !== undefined ? relationshipRef.current.value : relationship).trim() || '好友';
-    const rawTags = (tagsRef.current?.value !== undefined ? tagsRef.current.value : tagsInput);
-    const finalTags = rawTags
-      .split(/[,，、\s]+/)
-      .map((t) => t.trim())
-      .filter(Boolean);
+    if (isSavingRef.current) return;
+    isSavingRef.current = true;
+    setIsSaving(true);
+    setSaveError(null);
 
-    let notificationAvatar: string | undefined;
     try {
-      const thumbRes = await generateNotificationAvatarThumbnail(finalAvatar, { timeoutMs: 800 });
-      if (thumbRes.dataUrl) {
-        notificationAvatar = thumbRes.dataUrl;
+      const finalName = (nameRef.current?.value !== undefined ? nameRef.current.value : name).trim() || '自定义 AI';
+      const finalWxid = (wxidRef.current?.value !== undefined ? wxidRef.current.value : wxid).trim() || `ai_${Date.now().toString().slice(-6)}`;
+      let finalAvatar = avatar || DEFAULT_AI_AVATAR;
+      if (finalAvatar.startsWith('data:image/') && !finalAvatar.startsWith('data:image/svg+xml') && finalAvatar.length > 260 * 1024) {
+        try {
+          const compressed = await compressImage(finalAvatar, {
+            maxWidth: 512,
+            maxHeight: 512,
+            quality: 0.8,
+            maxFileSizeBytes: 150 * 1024,
+          });
+          finalAvatar = compressed.dataUrl;
+        } catch {
+          // Keep original avatar; strict persistence will verify & report if quota exceeded
+        }
       }
-    } catch {
-      // Non-blocking: lazy backfill will retry when needed
+      const finalPersona = (personaRef.current?.value !== undefined ? personaRef.current.value : persona).trim();
+      const finalPersonality = (personalityRef.current?.value !== undefined ? personalityRef.current.value : personality).trim();
+      const finalGreeting = (greetingRef.current?.value !== undefined ? greetingRef.current.value : greeting).trim();
+      const finalRelationship = (relationshipRef.current?.value !== undefined ? relationshipRef.current.value : relationship).trim() || '好友';
+      const rawTags = (tagsRef.current?.value !== undefined ? tagsRef.current.value : tagsInput);
+      const finalTags = rawTags
+        .split(/[,，、\s]+/)
+        .map((t) => t.trim())
+        .filter(Boolean);
+
+      let notificationAvatar: string | undefined;
+      try {
+        const thumbRes = await generateNotificationAvatarThumbnail(finalAvatar, { timeoutMs: 800 });
+        if (thumbRes.dataUrl) {
+          notificationAvatar = thumbRes.dataUrl;
+        }
+      } catch {
+        // Non-blocking: lazy backfill will retry when needed
+      }
+
+      const newChar: AiCharacter = {
+        id: `char_custom_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name: finalName,
+        wxid: finalWxid,
+        avatar: finalAvatar,
+        notificationAvatar,
+        persona: finalPersona,
+        personality: finalPersonality,
+        relationship: finalRelationship,
+        greeting: finalGreeting,
+        memories: memories,
+        isLocked: false,
+        tags: finalTags,
+        createdAt: Date.now(),
+        isCustom: true,
+        modelConfig:
+          modelName.trim() || systemPromptPrefix.trim()
+            ? {
+                modelName: modelName.trim() || undefined,
+                systemPromptPrefix: systemPromptPrefix.trim() || undefined,
+              }
+            : undefined,
+      };
+
+      // Must persist and verify BEFORE closing modal or creating memory vault
+      await onCreateCharacter(newChar);
+
+      // Automatically initialize isolated local memory vault AFTER persistence succeeds
+      ensureAiMemoryVault(newChar.id, newChar.name).catch((err) => {
+        console.warn('Failed to ensure memory vault on character creation:', err);
+      });
+
+      onClose();
+    } catch (err: any) {
+      console.error('[CustomAiCreatorModal] Save character failed:', err);
+      setSaveError(err?.message || '角色保存失败，请检查存储空间后重试');
+    } finally {
+      isSavingRef.current = false;
+      setIsSaving(false);
     }
-
-    const newChar: AiCharacter = {
-      id: `char_custom_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name: finalName,
-      wxid: finalWxid,
-      avatar: finalAvatar,
-      notificationAvatar,
-      persona: finalPersona,
-      personality: finalPersonality,
-      relationship: finalRelationship,
-      greeting: finalGreeting,
-      memories: memories,
-      isLocked: false,
-      tags: finalTags,
-      createdAt: Date.now(),
-      isCustom: true,
-      modelConfig:
-        modelName.trim() || systemPromptPrefix.trim()
-          ? {
-              modelName: modelName.trim() || undefined,
-              systemPromptPrefix: systemPromptPrefix.trim() || undefined,
-            }
-          : undefined,
-    };
-
-    // Automatically initialize isolated local memory vault for this new AI
-    ensureAiMemoryVault(newChar.id, newChar.name).catch((err) => {
-      console.warn('Failed to ensure memory vault on character creation:', err);
-    });
-
-    onCreateCharacter(newChar);
-    onClose();
   };
 
   return (
@@ -480,22 +532,30 @@ export const CustomAiCreatorModal: React.FC<CustomAiCreatorModalProps> = ({
           <span><b>独立本地记忆空间</b>：创建后将自动为其建立专属记忆文件夹，支持导入各类大型文件，离线保存且严格隔离。</span>
         </div>
 
+        {saveError && (
+          <div className="mx-4 mb-2 p-2.5 rounded-xl bg-rose-950/60 border border-rose-500/40 text-[11px] text-rose-200 leading-relaxed">
+            {saveError}
+          </div>
+        )}
+
         {/* Modal Footer Actions */}
         <div className="wx-modal-footer p-3 border-t border-zinc-800 bg-zinc-900/90 flex items-center justify-end gap-2 shrink-0">
           <button
             type="button"
+            disabled={isSaving}
             onClick={onClose}
-            className="wx-btn-secondary px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition"
+            className="wx-btn-secondary px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-300 text-xs font-medium transition"
           >
             取消
           </button>
           <button
             type="button"
+            disabled={isSaving}
             onClick={handleSave}
-            className="wx-btn-primary px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white text-xs font-semibold shadow-md transition active:scale-95 flex items-center gap-1.5"
+            className="wx-btn-primary px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 disabled:opacity-60 text-white text-xs font-semibold shadow-md transition active:scale-95 flex items-center gap-1.5"
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-            <span>完成创建并立即开聊</span>
+            <span>{isSaving ? '正在保存...' : '完成创建并立即开聊'}</span>
           </button>
         </div>
       </div>

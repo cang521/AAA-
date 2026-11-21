@@ -39,6 +39,10 @@ import {
   saveGroupChatsToDb,
   waitForGroupChatSave,
 } from './groupChatDb';
+import {
+  loadCharactersFromStorage,
+  writeCharactersStrictSync,
+} from './characterPersistence';
 
 if (isIndexedDbAvailable()) {
   void hydrateGroupChatsFromDb();
@@ -399,16 +403,9 @@ export const loadWidgets = (): WidgetConfig[] => {
 };
 export const saveWidgets = (widgets: WidgetConfig[]) => saveToStorage(STORAGE_KEYS.LAUNCHER_WIDGETS, widgets);
 
-export const loadCharacters = (): AiCharacter[] => {
-  const loaded = loadFromStorage<AiCharacter[]>(STORAGE_KEYS.CHARACTERS, []);
-  if (!Array.isArray(loaded)) return [];
-  const cleaned = loaded.filter((c) => c && c.id && !PRESET_DEMO_CHARACTER_IDS.has(c.id));
-  if (cleaned.length !== loaded.length) {
-    saveToStorage(STORAGE_KEYS.CHARACTERS, cleaned);
-  }
-  return cleaned;
-};
-export const saveCharacters = (chars: AiCharacter[]) => saveToStorage(STORAGE_KEYS.CHARACTERS, chars);
+export const loadCharacters = (): AiCharacter[] => loadCharactersFromStorage();
+export const saveCharacters = (chars: AiCharacter[]): AiCharacter[] =>
+  writeCharactersStrictSync(chars, '角色保存');
 
 export const loadMessages = (): ChatMessage[] => {
   const loaded = loadFromStorage<ChatMessage[]>(STORAGE_KEYS.MESSAGES, []);

@@ -26,8 +26,8 @@ import {
   loadTelepathyCharStats,
   saveTelepathyCharStats,
   loadUserProfile,
-  saveCharacters,
 } from '../../../lib/storage';
+import { updateCharacterByIdIfExists } from '../../../lib/characterPersistence';
 import { getRecentChatMessages } from '../../../lib/chatDb';
 import {
   ArrowLeft,
@@ -393,16 +393,15 @@ export const TelepathyGame: React.FC<TelepathyGameProps> = ({
         );
         setSavedMemoryText(memText);
 
-        // Update character's memories array
-        const currentMems = activeChar.memories || [];
-        if (!currentMems.includes(memText)) {
-          const updatedCharList = characters.map((c) =>
-            c.id === activeChar.id
-              ? { ...c, memories: [memText, ...currentMems].slice(0, 30) }
-              : c
-          );
-          saveCharacters(updatedCharList);
-        }
+        // Update character's memories array atomically by ID (avoids stale closure overwrite)
+        await updateCharacterByIdIfExists(activeChar.id, (latestChar) => {
+          const currentMems = latestChar.memories || [];
+          if (currentMems.includes(memText)) return null;
+          return {
+            ...latestChar,
+            memories: [memText, ...currentMems].slice(0, 30),
+          };
+        });
       } catch (err) {
         console.warn('Auto memory sync error:', err);
       } finally {

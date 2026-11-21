@@ -414,6 +414,22 @@ export const ApiMonitorApp: React.FC<ApiMonitorAppProps> = ({
                       </strong>
                     </div>
                   </div>
+
+                  {typeof log.contextRawCount === 'number' && (
+                    <div className="col-span-2 flex items-center justify-between text-[10px] bg-zinc-950/40 px-2 py-1 rounded-lg border border-zinc-850/80 text-zinc-400">
+                      <span>
+                        上下文窗口: <strong className="text-zinc-200 font-mono">{log.contextRawCount}</strong> 条原样
+                        {log.contextCompressed && typeof log.contextSummarizedCount === 'number' && log.contextSummarizedCount > 0 ? (
+                          <span className="ml-1.5 text-amber-300">
+                            · 已启用超长保护（前 {log.contextSummarizedCount} 条已自动折叠摘要）
+                          </span>
+                        ) : null}
+                      </span>
+                      {typeof log.contextEstimatedTokens === 'number' && (
+                        <span className="font-mono text-zinc-500">~{log.contextEstimatedTokens} tok</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             );

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChatMessage } from '../../types';
+import { ChatMessage, ForwardBundlePayload } from '../../types';
 import {
   Brain,
   Sparkles,
@@ -12,8 +12,10 @@ import {
   Download,
   ScanSearch,
   Image as ImageIcon,
+  Check,
 } from 'lucide-react';
 import { OfflineShareCard } from '../offline/OfflineShareCard';
+import { ForwardBundleCard } from '../wechat/ForwardBundleCard';
 import { formatOfflineTimeRange, formatOfflineDuration } from '../../lib/offline/offlineTimeFormat';
 
 interface ChatMessageBubbleProps {
@@ -23,6 +25,10 @@ interface ChatMessageBubbleProps {
   name: string;
   quoteText?: string;
   isHighlighted?: boolean;
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (msgId: string) => void;
+  onOpenForwardBundle?: (bundle: ForwardBundlePayload) => void;
   onOpenCoT?: (msgId: string) => void;
   onContextMenu: (msg: ChatMessage) => void;
   onOpenOfflineDetail?: (sessionId: string) => void;
@@ -41,6 +47,10 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
     name,
     quoteText,
     isHighlighted,
+    selectionMode = false,
+    isSelected = false,
+    onToggleSelect,
+    onOpenForwardBundle,
     onOpenCoT,
     onContextMenu,
     onOpenOfflineDetail,
@@ -101,24 +111,117 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
       );
     }
 
+    const isSelectable = !msg.isSystemEvent && msg.type !== 'offline_session_event';
+
+    const renderSelectCheckbox = () => {
+      if (!selectionMode || !isSelectable) return null;
+      return (
+        <div className="pt-2 pr-1 shrink-0 flex items-center justify-center">
+          <span
+            className={`w-5 h-5 rounded-full border flex items-center justify-center transition ${
+              isSelected
+                ? 'bg-emerald-500 border-emerald-500 text-white'
+                : 'border-zinc-400 dark:border-zinc-600 bg-transparent'
+            }`}
+          >
+            {isSelected && <Check className="w-3 h-3" />}
+          </span>
+        </div>
+      );
+    };
+
     if (msg.type === 'offline_share_card' && msg.offlineCardData) {
       return (
         <div
           id={`msg-bubble-${msg.id}`}
-          className={`flex gap-2.5 transition-all duration-300 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}
+          onClick={() => {
+            if (selectionMode && isSelectable) {
+              onToggleSelect?.(msg.id);
+            }
+          }}
+          className={`flex items-start gap-2 transition-all duration-200 rounded-2xl p-1 ${
+            selectionMode ? 'cursor-pointer' : ''
+          } ${isSelected ? 'bg-emerald-500/10' : ''}`}
         >
-          <img src={avatar} alt="" className="wx-avatar w-9 h-9 rounded-2xl object-cover border border-zinc-700 shrink-0" />
-          <OfflineShareCard
-            sessionId={msg.offlineCardData.sessionId}
-            sceneName={msg.offlineCardData.sceneName}
-            characterName={msg.offlineCardData.characterName}
-            characterAvatar={msg.offlineCardData.characterAvatar}
-            dateStr={msg.offlineCardData.dateStr}
-            summaryText={msg.offlineCardData.summaryText}
-            onOpenDetail={(sid) => {
-              if (onOpenOfflineDetail) onOpenOfflineDetail(sid);
+          {renderSelectCheckbox()}
+          <div
+            onContextMenu={(e) => {
+              e.preventDefault();
+              if (!selectionMode) onContextMenu(msg);
             }}
-          />
+            className={`flex-1 flex gap-2.5 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}
+          >
+            <img src={avatar} alt="" className="wx-avatar w-9 h-9 rounded-2xl object-cover border border-zinc-700 shrink-0" />
+            <div className={selectionMode ? 'pointer-events-none' : ''}>
+              <OfflineShareCard
+                sessionId={msg.offlineCardData.sessionId}
+                sceneName={msg.offlineCardData.sceneName}
+                characterName={msg.offlineCardData.characterName}
+                characterAvatar={msg.offlineCardData.characterAvatar}
+                dateStr={msg.offlineCardData.dateStr}
+                summaryText={msg.offlineCardData.summaryText}
+                onOpenDetail={(sid) => {
+                  if (!selectionMode && onOpenOfflineDetail) onOpenOfflineDetail(sid);
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const isForwardBundle =
+      (msg.type === 'forward_bundle' || msg.messageType === 'forward_bundle' || Boolean(msg.forwardBundle)) &&
+      Boolean(msg.forwardBundle);
+
+    if (isForwardBundle && msg.forwardBundle) {
+      return (
+        <div
+          id={`msg-bubble-${msg.id}`}
+          onClick={() => {
+            if (selectionMode && isSelectable) {
+              onToggleSelect?.(msg.id);
+            }
+          }}
+          className={`flex items-start gap-2 transition-all duration-200 rounded-2xl p-1 ${
+            selectionMode ? 'cursor-pointer' : ''
+          } ${isHighlighted ? 'ring-2 ring-amber-400 bg-amber-400/10' : ''} ${
+            isSelected ? 'bg-emerald-500/10' : ''
+          }`}
+        >
+          {renderSelectCheckbox()}
+          <div className={`flex-1 flex items-start gap-2.5 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+            <button
+              type="button"
+              onClick={(e) => {
+                if (selectionMode) return;
+                e.stopPropagation();
+                if (!isUser && onOpenCoT) {
+                  onOpenCoT(msg.id);
+                }
+              }}
+              className="wx-avatar relative shrink-0 w-9 h-9 rounded-2xl overflow-hidden border border-zinc-700 focus:outline-none"
+              title={!isUser ? '点击查看 AI 思考链 (CoT)' : name}
+            >
+              <img src={avatar} alt="" className="w-full h-full object-cover" loading="lazy" />
+            </button>
+            <div
+              onContextMenu={(e) => {
+                e.preventDefault();
+                if (!selectionMode) onContextMenu(msg);
+              }}
+              className="max-w-[78%] min-w-0 flex flex-col"
+            >
+              <ForwardBundleCard
+                bundle={msg.forwardBundle}
+                isMe={isUser}
+                disabled={selectionMode}
+                onOpen={(b) => {
+                  if (!selectionMode) onOpenForwardBundle?.(b);
+                }}
+              />
+            </div>
+          </div>
         </div>
       );
     }
@@ -129,14 +232,25 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
     return (
       <div
         id={`msg-bubble-${msg.id}`}
-        className={`flex items-start gap-2.5 transition-all duration-300 rounded-2xl p-1 ${
-          isHighlighted ? 'ring-2 ring-amber-400 bg-amber-400/10' : ''
-        } ${isUser ? 'flex-row-reverse' : 'flex-row'}`}
+        onClick={() => {
+          if (selectionMode && isSelectable) {
+            onToggleSelect?.(msg.id);
+          }
+        }}
+        className={`flex items-start gap-2 transition-all duration-200 rounded-2xl p-1 ${
+          selectionMode ? 'cursor-pointer' : ''
+        } ${isHighlighted ? 'ring-2 ring-amber-400 bg-amber-400/10' : ''} ${
+          isSelected ? 'bg-emerald-500/10' : ''
+        }`}
       >
+        {renderSelectCheckbox()}
+        <div className={`flex-1 flex items-start gap-2.5 min-w-0 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
         {/* Avatar */}
         <button
           type="button"
-          onClick={() => {
+          onClick={(e) => {
+            if (selectionMode) return;
+            e.stopPropagation();
             if (!isUser && onOpenCoT) {
               onOpenCoT(msg.id);
             }
@@ -153,11 +267,11 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
         </button>
 
         {/* Bubble Content */}
-        <div className="max-w-[78%] min-w-0 flex flex-col">
+        <div className={`max-w-[78%] min-w-0 flex flex-col ${selectionMode ? 'pointer-events-none' : ''}`}>
           <div
             onContextMenu={(e) => {
               e.preventDefault();
-              onContextMenu(msg);
+              if (!selectionMode) onContextMenu(msg);
             }}
             className={`wx-message-bubble relative rounded-2xl px-3.5 py-2.5 text-xs shadow-xs whitespace-pre-wrap leading-relaxed ${
               isUser
@@ -346,6 +460,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
             )}
           </div>
         </div>
+        </div>
       </div>
     );
   },
@@ -355,6 +470,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
       prev.msg.text === next.msg.text &&
       prev.msg.type === next.msg.type &&
       prev.msg.messageType === next.msg.messageType &&
+      prev.msg.forwardBundle === next.msg.forwardBundle &&
       prev.msg.offlineEventData === next.msg.offlineEventData &&
       prev.msg.imageUrl === next.msg.imageUrl &&
       prev.msg.imageAnalysisStatus === next.msg.imageAnalysisStatus &&
@@ -369,6 +485,8 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
       prev.msg.turnId === next.msg.turnId &&
       prev.quoteText === next.quoteText &&
       prev.isHighlighted === next.isHighlighted &&
+      prev.selectionMode === next.selectionMode &&
+      prev.isSelected === next.isSelected &&
       prev.avatar === next.avatar
     );
   }

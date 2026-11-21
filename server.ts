@@ -7,6 +7,8 @@ import {
   resolveEffectiveProtocol,
   sanitizeSensitiveText,
 } from './src/lib/apiCapabilities';
+import { applyOverlengthContextProtection, STANDARD_CONTEXT_LIMIT } from './src/lib/contextWindow';
+import { serializeForwardBundleForAi } from './src/lib/forward/forwardBundleService';
 
 dotenv.config();
 
@@ -107,6 +109,10 @@ function buildApiLogObject(params: {
   error?: string;
   errorType?: string;
   isOfficial?: boolean;
+  contextRawCount?: number;
+  contextSummarizedCount?: number;
+  contextEstimatedTokens?: number;
+  contextCompressed?: boolean;
 }) {
   const isFailed = params.status === 'failed' || Boolean(params.error);
   const isOfficial =
@@ -151,6 +157,14 @@ function buildApiLogObject(params: {
     errorType: isFailed ? params.errorType || 'ModelError' : undefined,
     errorMessage: params.error ? sanitizeSensitiveText(params.error, 260) : undefined,
     purpose: sanitizeSensitiveText(params.purpose, 160),
+    ...(typeof params.contextRawCount === 'number' ? { contextRawCount: params.contextRawCount } : {}),
+    ...(typeof params.contextSummarizedCount === 'number'
+      ? { contextSummarizedCount: params.contextSummarizedCount }
+      : {}),
+    ...(typeof params.contextEstimatedTokens === 'number'
+      ? { contextEstimatedTokens: params.contextEstimatedTokens }
+      : {}),
+    ...(typeof params.contextCompressed === 'boolean' ? { contextCompressed: params.contextCompressed } : {}),
   };
 }
 
@@ -3316,6 +3330,9 @@ app.post('/api/gemini/chat', async (req, res) => {
     userMessage,
     currentTurnMessageIds = [],
     conversationHistory = [],
+    earlierContextSummary,
+    contextMetrics: clientContextMetrics,
+    crossChannelTransitionContext,
     recalledMemoriesSummary,
     userProfile,
     systemTime,
@@ -3469,6 +3486,10 @@ ${devicesSummary}
       contextPrompt += `\n${req.body.lifeStateContext}\n`;
     }
 
+    if (crossChannelTransitionContext && typeof crossChannelTransitionContext === 'string' && crossChannelTransitionContext.trim()) {
+      contextPrompt += `\n${crossChannelTransitionContext.trim()}\n`;
+    }
+
     contextPrompt += `\n【🎨 真实图像生成工具调用能力 (generate_image)】:
 你连接了独立的图像生成系统。请严格遵守以下语义触发规范：
 1. 仅当用户**明确要求你画图、生成图片、制作图片、做头像、画场景、拍一张发过来、画一只/画一幅……**时，才触发画图工具。
@@ -3490,11 +3511,34 @@ ${devicesSummary}
 
     // Defensive ID-based filtering: Ensure conversationHistory contains ONLY prior history messages and excludes current turn pending messages strictly by ID
     const turnMsgIdSet = new Set(Array.isArray(currentTurnMessageIds) ? currentTurnMessageIds : []);
-    const cleanedHistory = (conversationHistory || []).filter((msg: any) => {
+    const preFilteredHistory = (conversationHistory || []).filter((msg: any) => {
       if (!msg) return false;
       if (msg.id && turnMsgIdSet.has(msg.id)) return false;
       return true;
     });
+
+    // Server-side 100-message window + over-length protection safeguard (30 raw + up to 70 condensed summary)
+    const serverChatProtection = applyOverlengthContextProtection<any>({
+      messages: preFilteredHistory,
+      maxRawLimit: STANDARD_CONTEXT_LIMIT,
+      formatForEstimate: (msg) => ({
+        timestamp: msg.timestamp || msg.createdAt,
+        senderName: msg.sender === 'user' ? userProfile?.name || '用户' : character.name,
+        text:
+          msg.type === 'forward_bundle' || msg.messageType === 'forward_bundle' || msg.forwardBundle
+            ? serializeForwardBundleForAi(msg.forwardBundle)
+            : msg.text || msg.imageDescription || '',
+      }),
+      cloneWithTruncatedText: (msg, truncatedText) => ({ ...msg, text: truncatedText }),
+    });
+    const cleanedHistory = serverChatProtection.rawMessages;
+    const effectiveChatMetrics =
+      clientContextMetrics && typeof clientContextMetrics.rawCount === 'number'
+        ? clientContextMetrics
+        : serverChatProtection.metrics;
+    const mergedEarlierChatSummary = [earlierContextSummary, serverChatProtection.earlierSummaryText]
+      .filter((s) => typeof s === 'string' && s.trim().length > 0)
+      .join('\n\n');
 
     // Calculate exact time gap since last chat turn for AI Time Gap Perception
     const currentMs = req.body.userMessageTimestamp || Date.now();
@@ -3621,6 +3665,11 @@ ${devicesSummary}
           return;
         }
 
+        if (msg.type === 'forward_bundle' || msg.messageType === 'forward_bundle' || msg.forwardBundle) {
+          contents.push(`[${msgTime}] ${senderLabel}: ${serializeForwardBundleForAi(msg.forwardBundle)}`);
+          return;
+        }
+
         let msgStr = `[${msgTime}] ${senderLabel}: ${msg.text || ''}`;
         if (msg.imageUrl) {
           const desc = (msg.imageDescription || msg.imageAnalysis || '').trim();
@@ -3636,7 +3685,8 @@ ${devicesSummary}
     }
     contents.push(currentMsgStr);
 
-    const promptText = contextPrompt + '\n对话历史：\n' + contents.join('\n');
+    const summaryBlock = mergedEarlierChatSummary ? `\n${mergedEarlierChatSummary}\n` : '';
+    const promptText = contextPrompt + summaryBlock + '\n对话历史：\n' + contents.join('\n');
 
     let responseText = '';
     let thinkingProcess = '分析用户意图，匹配人设特征，形成微信口语化回复。';
@@ -3775,6 +3825,7 @@ ${devicesSummary}
       thinkingProcess,
       deviceActions: extractedDeviceActions,
       actions: extractedActions,
+      contextMetrics: effectiveChatMetrics,
       apiLog: buildApiLogObject({
         appName: '微信-AI聊天',
         provider: apiConfig?.textProvider || 'google_gemini',
@@ -3788,6 +3839,10 @@ ${devicesSummary}
         isRealTokens: aiDetailedResult?.isRealTokens,
         error: aiErrorMessage || undefined,
         purpose: `与 ${character.name} 对话交互 (耗时 ${duration}ms)`,
+        contextRawCount: effectiveChatMetrics.rawCount,
+        contextSummarizedCount: effectiveChatMetrics.summarizedCount,
+        contextEstimatedTokens: effectiveChatMetrics.estimatedTokens,
+        contextCompressed: effectiveChatMetrics.didCompress,
       }),
     });
   } catch (error: any) {
@@ -3803,6 +3858,9 @@ app.post('/api/gemini/group-chat', async (req, res) => {
     activityLevel = 'natural',
     targetPollId,
     activePolls = [],
+    activeRelays = [],
+    aiPrivateContexts = [],
+    contextMetrics: clientGroupContextMetrics,
     olderContextSummary = '',
     group,
     recentMessages = [],
@@ -3892,8 +3950,32 @@ app.post('/api/gemini/group-chat', async (req, res) => {
             .join('\n')
         : '暂无特殊已记录的AI成员私人关系，按群内成员性格自然相处。';
 
-    // Format recent chat history (including tool cards, polls, quotes & image descriptions)
-    const historyText = (Array.isArray(recentMessages) ? recentMessages : [])
+    // Server-side 100-message window + over-length protection safeguard for group recentMessages
+    const rawGroupMsgs = Array.isArray(recentMessages) ? recentMessages : [];
+    const serverGroupProtection = applyOverlengthContextProtection<any>({
+      messages: rawGroupMsgs,
+      maxRawLimit: STANDARD_CONTEXT_LIMIT,
+      formatForEstimate: (m) => ({
+        timestamp: m.timestamp || m.createdAt || m.time,
+        senderName: m.senderName,
+        text:
+          m.messageType === 'forward_bundle' && (m.forwardBundle || m.payload)
+            ? serializeForwardBundleForAi(m.forwardBundle || m.payload)
+            : m.text || '',
+      }),
+      cloneWithTruncatedText: (m, truncatedText) => ({ ...m, text: truncatedText }),
+    });
+    const effectiveGroupMessages = serverGroupProtection.rawMessages;
+    const effectiveGroupMetrics =
+      clientGroupContextMetrics && typeof clientGroupContextMetrics.rawCount === 'number'
+        ? clientGroupContextMetrics
+        : serverGroupProtection.metrics;
+    const mergedGroupOlderSummary = [olderContextSummary, serverGroupProtection.earlierSummaryText]
+      .filter((s) => typeof s === 'string' && s.trim().length > 0)
+      .join('\n\n');
+
+    // Format recent chat history (including tool cards, polls, forward_bundle, quotes & image descriptions)
+    const historyText = effectiveGroupMessages
       .map((m: any) => {
         const msgTime = formatFullDateTime(m.timestamp || m.createdAt || m.time);
         const mentions =
@@ -3904,13 +3986,16 @@ app.post('/api/gemini/group-chat', async (req, res) => {
           ? `[引用 ${m.quoteMessage.senderName || '某人'}: ${String(m.quoteMessage.text).slice(0, 40)}] `
           : '';
         let body = m.text || '';
-        if (m.messageType === 'image') {
+        if (m.messageType === 'forward_bundle') {
+          const bundle = m.forwardBundle || (m.payload && Array.isArray(m.payload.items) ? m.payload : null);
+          body = bundle ? serializeForwardBundleForAi(bundle) : body;
+        } else if (m.messageType === 'image') {
           body = body.startsWith('[图片') ? body : `[图片消息：${body || '未附描述'}]`;
         } else if (m.messageType === 'relay' && m.payload) {
           const entries = Array.isArray(m.payload.entries)
             ? m.payload.entries.map((e: any, i: number) => `${i + 1}.${e.memberName}:${e.content}`).join('；')
             : '';
-          body = `[群接龙: ${m.payload.title || m.text}] 已接龙(${m.payload.entries?.length || 0}): ${entries || '暂无'}`;
+          body = `[群接龙 relayMessageId="${m.id}" | ${m.payload.closed ? '已结束' : '进行中'}: ${m.payload.title || m.text}] 已接龙(${m.payload.entries?.length || 0}): ${entries || '暂无'}`;
         } else if (m.messageType === 'poll' && m.payload) {
           const opts = Array.isArray(m.payload.options)
             ? m.payload.options
@@ -3966,6 +4051,43 @@ ${optLines}`;
             .join('\n\n')
         : '当前群内没有进行中的投票。';
 
+    // Format active open relays for real join_relay actions
+    const openRelaysList = Array.isArray(activeRelays) ? activeRelays : [];
+    const activeRelaysText =
+      openRelaysList.length > 0
+        ? openRelaysList
+            .map((r: any) => {
+              const entryLines = (Array.isArray(r.entries) ? r.entries : [])
+                .map((e: any, idx: number) => `    ${idx + 1}. ${e.memberName}: ${e.content}`)
+                .join('\n');
+              const joinedText =
+                Array.isArray(r.alreadyJoinedAiIds) && r.alreadyJoinedAiIds.length > 0
+                  ? r.alreadyJoinedAiIds.join(', ')
+                  : '暂无AI已参与';
+              return `• relayMessageId="${r.relayMessageId}"
+  标题: ${r.title}${r.description ? ` | 说明: ${r.description}` : ''}
+  规则: ${r.allowDuplicate ? '允许同一成员多次接龙' : '每人限参与一次(已参与的AI严禁重复参与)'}
+  已接龙过的AI: ${joinedText}
+  当前接龙列表:
+${entryLines || '    (暂无成员写入)'}`;
+            })
+            .join('\n\n')
+        : '当前群内没有进行中的接龙。';
+
+    // Format strictly isolated per-AI private context (ONLY their own 30 private messages & continuity state)
+    const privateContextList = Array.isArray(aiPrivateContexts) ? aiPrivateContexts : [];
+    const isolatedPrivateText =
+      privateContextList.length > 0
+        ? privateContextList
+            .map((ctx: any) => {
+              const lines = Array.isArray(ctx.recentPrivateLines) ? ctx.recentPrivateLines : [];
+              const stateLine = ctx.continuitySummary ? `\n  状态备忘: ${ctx.continuitySummary}` : '';
+              return `▸ [${ctx.characterName}] (memberId="${ctx.memberId || ctx.characterId}") 与用户的专属私聊近况（共${ctx.privateMessageCount || lines.length}条，仅限该角色本人知晓）:${stateLine}
+${lines.length > 0 ? lines.map((l: string) => `    ${l}`).join('\n') : '    (近期无私聊记录)'}`;
+            })
+            .join('\n\n')
+        : '';
+
     const nativeTime = systemTime || new Date().toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
     const latestUserLine = latestUserMessage?.text
       ? `\n用户最新消息：${latestUserMessage.senderName || userProfile?.name || '小清'} 说「${latestUserMessage.text}」`
@@ -3987,9 +4109,12 @@ ${candidateProfilesText}
 
 群成员当前已知社会关系：
 ${relationshipsText}
-
+${isolatedPrivateText ? `\n各AI成员与用户的专属私聊近况（严格隐私隔离准则：每位AI只能知道自己与用户的私聊经历，绝不允许把AI A与用户的私聊当成AI B知道的事，也不要在群里生硬泄露用户的私密话题！）：\n${isolatedPrivateText}\n` : ''}
 当前群内进行中的投票：
 ${activePollsText}
+
+当前群内进行中的接龙：
+${activeRelaysText}
 
 【统一编排核心规则】：
 1. 活跃度与人数控制：
@@ -4001,18 +4126,24 @@ ${activePollsText}
    - 不要每次发言都机械地 @ 别人，只在真正点名或跨话题叫人时自然使用。
 3. 多人交错接话（非常重要）：
    - 鼓励把不同AI的发言交错排在 events 中（例如 A 说 1~2 句 -> B 接话/吐槽 -> A 回应 B -> C 插话 -> B 补一句），而不是每人一口气说完大段话。
-   - 后面出现的事件必须把前面事件的内容和投票动作当成“刚刚已经发生”，直接顺着接话或回应！
+   - 后面出现的事件必须把前面事件的内容和投票/接龙动作当成“刚刚已经发生”，直接顺着接话或回应！
 4. AI 真实投票机制（vote_poll）：
    - 当群内有进行中的投票且AI决定参与投票时，必须输出真正的 type="vote_poll" 事件（使用准确的 pollId、actorId 和 optionId/optionIds）。
    - 严禁只发消息说“我投了XX”却不输出对应的 vote_poll 事件！
    - 严禁给“已投过的AI”重复输出 vote_poll；严禁对已结束投票输出 vote_poll。
    - 不同AI要根据自己的人设、偏好、心情与彼此关系做出有差异的选择，而不是机械地全投同一个选项。
-   - 允许：A 边投票边发言、B 默默只发 vote_poll 不说话、C 观望弃权只调侃、D 先吐槽再投票等真实群聊节奏（将 vote_poll 与 message 事件自然穿插）。
-5. 角色人设与关系：
+5. AI 真实参与群接龙（join_relay）：
+   - 当群内有进行中的接龙（未结束且未过期）且与当前话题相关或用户发起/招呼接龙时，符合人设且愿意参与的 AI 必须输出真实的 type="join_relay" 事件（使用准确的 relayMessageId、actorId 和非空接龙内容 content），前端会自动将该成员名和内容写入接龙卡片中。
+   - 严禁只口头说“我接上了”却不输出 join_relay 事件；若接龙规则为每人限一次且该AI已在“已接龙过的AI”列表中，严禁重复输出 join_relay；不要强迫所有AI全员立刻填满，按性格/在线感选择性参与。
+6. 群聊转私聊（continue_in_private，严格低频高门槛）：
+   - 仅当某个 AI 在当前群聊中遇到了**明显私密、敏感、醋意/情绪波动、担心用户不舒服、或有明确只适合1对1私下交代的话**时，才可由该 AI 额外发出一个 type="continue_in_private" 事件（先在群里发完本轮公开回应或隐忍收住，再随后切到私聊）。
+   - 普通寒暄、日常群聊、投票、接龙**严禁**滥用 continue_in_private！若状态备忘已提示该 AI 刚转去私聊且用户尚未回复，严禁重复刷屏追问。
+   - continue_in_private 格式：{ "eventId": "ev_priv_1", "type": "continue_in_private", "actorId": "AI的准确id", "reason": "私聊触发原因", "triggerSummary": "简短触发场景", "privateOpeningMessages": ["切私聊后发出的第1句自然短话", "可选的第2句"] }。
+7. 角色人设与跨频道连续性：
    - 每个AI严格保持各自语气、口癖和长期记忆，绝不串戏、绝不说“作为AI/语言模型”。
    - 关系紧张或冷战的AI在群内互动应自然体现克制、别扭或轻度互怼。
-6. 延迟节奏：
-   - 每个事件设置合理的 delayMs（650~1800ms），长气泡或思考投票可稍长。`;
+8. 延迟节奏：
+   - 每个事件设置合理的 delayMs（650~1800ms），长气泡或思考投票/接龙可稍长。`;
 
     let triggerDirective = '';
     if (triggerType === 'invite_poll_vote' && targetPollId) {
@@ -4036,11 +4167,11 @@ ${activePollsText}
 用户点击了“召唤讨论”，请结合近期群聊上下文和成员关系，自然开启或延续一轮多人交错讨论。`;
     } else {
       triggerDirective = `【本轮触发类型：用户双击触发群聊回复】
-请根据最新聊天上下文、群聊活跃度（${preset.label}）和成员关系，自然编排一轮交错发言（如有合适进行中投票且符合当前话题，也可顺带真实投票）。`;
+请根据最新聊天上下文、群聊活跃度（${preset.label}）和成员关系，自然编排一轮交错发言（如有合适进行中投票/接龙且符合当前话题，也可顺带真实参与）。`;
     }
 
     const userPrompt = `${
-      olderContextSummary ? `【更早历史摘要】\n${olderContextSummary}\n\n` : ''
+      mergedGroupOlderSummary ? `【更早历史摘要】\n${mergedGroupOlderSummary}\n\n` : ''
     }【近期群聊记录】
 ---
 ${historyText || '(群内暂无更多历史)'}
@@ -4053,7 +4184,7 @@ ${triggerDirective}
 {
   "roundId": "${roundId}",
   "shouldRespond": true,
-  "thinkingSummary": "简要说明本轮为何安排这些AI发言/投票以及互动节奏",
+  "thinkingSummary": "简要说明本轮为何安排这些AI发言/投票/接龙以及互动节奏",
   "events": [
     {
       "eventId": "ev_1",
@@ -4074,10 +4205,19 @@ ${triggerDirective}
       "optionId": "所选选项的准确optionId",
       "optionIds": ["单选传1个，多选按上限传多个optionId"],
       "delayMs": 750
+    },
+    {
+      "eventId": "ev_3",
+      "type": "join_relay",
+      "actorId": "接龙AI的准确id",
+      "actorName": "接龙AI名称",
+      "relayMessageId": "进行中接龙的准确relayMessageId",
+      "content": "该AI填入接龙卡片的具体内容",
+      "delayMs": 850
     }
   ]
 }
-注意：如果没有投票动作，events 中只放 message 事件即可；如果只有投票动作，也可以包含 vote_poll 事件。`;
+注意：如果没有投票/接龙/转私聊动作，events 中只放需要的事件即可；不要强行输出未触发的事件类型。`;
 
     const detailed = await callAiServiceDetailed({
       prompt: userPrompt,
@@ -4141,6 +4281,10 @@ ${triggerDirective}
       });
     }
 
+    if (Array.isArray(parsed?.actions) && parsed.actions.length > 0) {
+      rawEvents.push(...parsed.actions);
+    }
+
     const resolveCandidate = (id?: string, name?: string) =>
       aiCandidates.find((c: any) => c.id === id || c.characterId === id) ||
       aiCandidates.find((c: any) => name && c.name === String(name).trim());
@@ -4197,6 +4341,52 @@ ${triggerDirective}
           optionIds,
           delayMs: Math.max(550, Math.min(1400, Number(ev.delayMs) || 750)),
         });
+      } else if (evType === 'join_relay') {
+        const candidate = resolveCandidate(ev.actorId || ev.senderId, ev.actorName || ev.senderName);
+        const relayMessageId = String(ev.relayMessageId || ev.relayId || ev.messageId || '').trim();
+        const content = sanitizeReplyText(String(ev.content || ev.text || '')).trim();
+        if (!candidate || !relayMessageId || !content) continue;
+        normalizedEvents.push({
+          eventId,
+          type: 'join_relay',
+          actorId: candidate.id,
+          actorName: candidate.name,
+          relayMessageId,
+          content,
+          delayMs: Math.max(600, Math.min(1500, Number(ev.delayMs) || 850)),
+        });
+      } else if (evType === 'continue_in_private') {
+        const candidate = resolveCandidate(
+          ev.actorId || ev.characterId || ev.senderId,
+          ev.actorName || ev.senderName
+        );
+        if (!candidate) continue;
+        const rawList = Array.isArray(ev.privateOpeningMessages)
+          ? ev.privateOpeningMessages
+          : Array.isArray(ev.messages)
+            ? ev.messages
+            : Array.isArray(ev.openingMessages)
+              ? ev.openingMessages
+              : typeof ev.text === 'string'
+                ? [ev.text]
+                : [];
+        const openings = rawList
+          .map((s: any) => sanitizeReplyText(String(s || '')).trim())
+          .filter(Boolean)
+          .slice(0, 3);
+        if (openings.length === 0) continue;
+        normalizedEvents.push({
+          eventId,
+          type: 'continue_in_private',
+          actorId: candidate.id,
+          actorName: candidate.name,
+          characterId: candidate.characterId || candidate.id,
+          reason: typeof ev.reason === 'string' && ev.reason.trim() ? ev.reason.trim() : '有些话想私下跟你说',
+          triggerSummary:
+            typeof ev.triggerSummary === 'string' && ev.triggerSummary.trim() ? ev.triggerSummary.trim() : undefined,
+          privateOpeningMessages: openings,
+          delayMs: 250,
+        });
       }
     }
 
@@ -4224,6 +4414,7 @@ ${triggerDirective}
       .filter((ev) => ev.type === 'message')
       .reduce((sum, ev) => sum + (ev.bubbles?.length || 0), 0);
     const totalVotesCount = normalizedEvents.filter((ev) => ev.type === 'vote_poll').length;
+    const totalRelaysCount = normalizedEvents.filter((ev) => ev.type === 'join_relay').length;
 
     res.json({
       success: true,
@@ -4231,6 +4422,7 @@ ${triggerDirective}
       shouldRespond: parsed?.shouldRespond !== false && normalizedEvents.length > 0,
       thinkingSummary: typeof parsed?.thinkingSummary === 'string' ? parsed.thinkingSummary.trim() : '',
       events: normalizedEvents,
+      contextMetrics: effectiveGroupMetrics,
       // Backward-compatible legacy fields
       responderId: firstReply?.responderId || parsed?.responderId || aiCandidates[0]?.id,
       responderName: firstReply?.responderName || parsed?.responderName || aiCandidates[0]?.name,
@@ -4247,7 +4439,11 @@ ${triggerDirective}
         isRealTokens: detailed.isRealTokens,
         purpose: `群聊统一编排(${preset.label}): ${participantNames.join('、') || 'AI'} · ${totalBubblesCount}气泡${
           totalVotesCount > 0 ? `/${totalVotesCount}投票` : ''
-        } (耗时 ${duration}ms)`,
+        }${totalRelaysCount > 0 ? `/${totalRelaysCount}接龙` : ''} (耗时 ${duration}ms)`,
+        contextRawCount: effectiveGroupMetrics.rawCount,
+        contextSummarizedCount: effectiveGroupMetrics.summarizedCount,
+        contextEstimatedTokens: effectiveGroupMetrics.estimatedTokens,
+        contextCompressed: effectiveGroupMetrics.didCompress,
       }),
     });
   } catch (error: any) {
@@ -5128,6 +5324,7 @@ app.post('/api/gemini/offline-chat', async (req, res) => {
       currentTime,
       timezone,
       contextSummary,
+      contextMetrics: clientOfflineMetrics,
       needsSummaryUpdate = false,
       recentMessages = [],
       recalledMemories,
@@ -5252,7 +5449,27 @@ ${
         ? `- 上轮私密状态(已激活): 唤起=${previousState.intimateState.arousal ?? 30}%, 敏感=${previousState.intimateState.sensitivity ?? 30}%, 状态=${previousState.intimateState.physiologicalState || '温热'}`
         : `- 上轮私密状态: 未激活 (active: false)`;
 
-      const formattedHistoryLines = (recentMessages || []).map((m: any) => {
+      const serverOfflineProtection = applyOverlengthContextProtection<any>({
+        messages: Array.isArray(recentMessages) ? recentMessages : [],
+        maxRawLimit: STANDARD_CONTEXT_LIMIT,
+        formatForEstimate: (m) => ({
+          timestamp: m.timestamp,
+          senderName: m.senderName || (m.sender === 'user' ? userProfile?.name || '用户' : character?.name || 'AI'),
+          text: m.renderedText || m.text || '',
+        }),
+        cloneWithTruncatedText: (m, truncatedText) => ({
+          ...m,
+          renderedText: truncatedText,
+          text: truncatedText,
+        }),
+      });
+
+      const effectiveOfflineMetrics =
+        clientOfflineMetrics && typeof clientOfflineMetrics.rawCount === 'number'
+          ? clientOfflineMetrics
+          : serverOfflineProtection.metrics;
+
+      const formattedHistoryLines = serverOfflineProtection.rawMessages.map((m: any) => {
         const who = m.senderName || (m.sender === 'user' ? userProfile?.name || '用户' : character?.name || 'AI');
         const tStr = m.timeStr ? `[${m.timeStr}] ` : '';
         const body = m.renderedText || m.text || '';
@@ -5260,10 +5477,18 @@ ${
         return `${tStr}${who}:\n${body}${stNote}`;
       });
 
+      const mergedOfflineSummary = [contextSummary, serverOfflineProtection.earlierSummaryText]
+        .filter((s) => typeof s === 'string' && s.trim().length > 0)
+        .join('\n\n');
+
       const promptParts: string[] = [];
       // Block 6: Session rolling summary
-      promptParts.push(`【6. 本场前情摘要】:\n${contextSummary ? contextSummary : '（本场仍在初始连续上下文窗口内，无额外折叠前情）'}`);
-      // Block 7: Recent 30..60 raw messages
+      promptParts.push(
+        `【6. 本场前情摘要】:\n${
+          mergedOfflineSummary ? mergedOfflineSummary : '（本场仍在初始连续上下文窗口内，无额外折叠前情）'
+        }`
+      );
+      // Block 7: Up to 100 raw messages (or 30 raw + earlier summary under over-length protection)
       promptParts.push(
         `【7. 本场最近对话与动作记录（共 ${formattedHistoryLines.length} 条）】:\n${
           formattedHistoryLines.length > 0 ? formattedHistoryLines.join('\n\n') : '（本场刚刚开始，尚无历史对话）'
@@ -5289,7 +5514,8 @@ ${prevIntimateLine}`);
         `【用户此刻的动作或话语（${realNowStr}）】:\n${userInput}\n\n请严格按照 segments（动作与语言分段）与 state 格式输出 JSON：`
       );
 
-      const responseText = await callAiService({
+      const offlineStart = Date.now();
+      const detailedOffline = await callAiServiceDetailed({
         prompt: promptParts.join('\n\n'),
         systemInstruction,
         model: selectedModel,
@@ -5303,6 +5529,7 @@ ${prevIntimateLine}`);
         maxTokens: 3500,
         timeoutMs: 65000,
       });
+      const responseText = detailedOffline.text;
 
       const extracted = extractThinkingAndContent(responseText);
       const cleanJson = (extracted.cleanText || '').replace(/```json\n?|```\n?/g, '').trim();
@@ -5366,6 +5593,7 @@ ${prevIntimateLine}`);
 
       const plainReply = segments.map((s) => s.text).join('\n');
       const firstAction = segments.find((s) => s.type === 'action')?.text || '';
+      const offlineDuration = Date.now() - offlineStart;
 
       return {
         success: true,
@@ -5374,6 +5602,24 @@ ${prevIntimateLine}`);
         action: firstAction,
         state: parsedState,
         contextSummaryUpdate: contextSummaryUpdate || undefined,
+        contextMetrics: effectiveOfflineMetrics,
+        apiLog: buildApiLogObject({
+          appName: '线下模式-AI',
+          provider: provider || 'google_gemini',
+          modelName: detailedOffline.modelUsed || selectedModel,
+          interfaceType: 'OfflineChat',
+          category: 'text_generation',
+          status: 'success',
+          httpStatus: 200,
+          durationMs: offlineDuration,
+          usage: detailedOffline.usage,
+          isRealTokens: detailedOffline.isRealTokens,
+          purpose: `与 ${character?.name || 'AI'} 线下互动 (耗时 ${offlineDuration}ms)`,
+          contextRawCount: effectiveOfflineMetrics.rawCount,
+          contextSummarizedCount: effectiveOfflineMetrics.summarizedCount,
+          contextEstimatedTokens: effectiveOfflineMetrics.estimatedTokens,
+          contextCompressed: effectiveOfflineMetrics.didCompress,
+        }),
       };
     };
 

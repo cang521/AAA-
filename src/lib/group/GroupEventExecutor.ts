@@ -1,4 +1,6 @@
 import { AiCharacter, GroupChatMessage } from '../../types';
+import { CROSS_CHANNEL_GROUP_LIMIT } from '../crossChannel/crossChannelStore';
+import { scheduleContinueInPrivate } from '../crossChannel/crossChannelExecutor';
 import { NativeNotificationService } from '../NativeNotificationService';
 import { loadCharacters } from '../storage';
 import { calculateTypingDelay } from '../wechatMultiBubble';
@@ -9,6 +11,7 @@ import {
 import {
   appendGroupAiMessagesAndPersist,
   applyAiPollVoteAndPersist,
+  applyAiRelayJoinAndPersist,
   loadLatestGroupFromStore,
 } from './GroupStateStore';
 
@@ -230,6 +233,80 @@ export async function executeGroupTimelinePlan(params: {
         console.info(
           `[GroupEventExecutor] Skipped vote_poll (${ev.eventId}) for ${actorMember.name}: ${voteResult.reason}`
         );
+      }
+
+      executedEvents.add(ev.eventId);
+      callbacks.onEventExecuted(ev.eventId);
+    } else if (ev.type === 'join_relay') {
+      const actorMember =
+        liveGroup.members.find((m) => m.id === ev.actorId || m.characterId === ev.actorId) ||
+        liveGroup.members.find((m) => m.name === ev.actorName && m.memberType !== 'human');
+
+      if (!actorMember) {
+        executedEvents.add(ev.eventId);
+        callbacks.onEventExecuted(ev.eventId);
+        continue;
+      }
+
+      callbacks.onIndicatorChange({
+        status: signal.isPaused() ? 'paused' : 'delivering',
+        roundId: plan.roundId,
+        activeActorId: actorMember.id,
+        activeActorName: actorMember.name,
+        activeActionType: 'relay',
+        remainingEventCount: remainingEvents,
+        totalEventCount: totalEvents,
+      });
+
+      const relayDelay = Math.max(600, Math.min(1400, ev.delayMs || 850));
+      const waitRes = await signal.waitWhilePausedOrSleep(relayDelay);
+      if (waitRes === 'cancelled' || signal.isCancelled()) {
+        callbacks.onIndicatorChange(null);
+        return 'cancelled';
+      }
+
+      const relayRes = await applyAiRelayJoinAndPersist(liveGroup.id, {
+        relayMessageId: ev.relayMessageId,
+        actorId: actorMember.id,
+        content: ev.content,
+      });
+
+      if (!relayRes.applied) {
+        console.info(
+          `[GroupEventExecutor] Skipped join_relay (${ev.eventId}) for ${actorMember.name}: ${relayRes.reason}`
+        );
+      }
+
+      executedEvents.add(ev.eventId);
+      callbacks.onEventExecuted(ev.eventId);
+    } else if (ev.type === 'continue_in_private') {
+      const actorMember =
+        liveGroup.members.find(
+          (m) => m.id === ev.actorId || m.characterId === ev.actorId || m.characterId === ev.characterId || m.id === ev.characterId
+        ) ||
+        liveGroup.members.find((m) => m.name === ev.actorName && m.memberType !== 'human');
+
+      const targetCharId = ev.characterId || actorMember?.characterId || actorMember?.id || '';
+      if (targetCharId && ev.privateOpeningMessages.length > 0) {
+        const recentGroupSnippet = (liveGroup.messages || [])
+          .filter((m) => !m.isRecalled && (m.text || m.payload))
+          .slice(-CROSS_CHANNEL_GROUP_LIMIT)
+          .map((m) => {
+            const snippet = (m.text || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+            return `${m.senderName}: ${snippet || `[${m.messageType || '消息'}]`}`;
+          });
+
+        scheduleContinueInPrivate({
+          eventId: `${plan.roundId}_${ev.eventId}`,
+          roundId: plan.roundId,
+          groupId: liveGroup.id,
+          groupName: liveGroup.name,
+          characterId: targetCharId,
+          reason: ev.reason,
+          triggerSummary: ev.triggerSummary,
+          privateOpeningMessages: ev.privateOpeningMessages,
+          recentGroupSnippet,
+        });
       }
 
       executedEvents.add(ev.eventId);

@@ -48,6 +48,7 @@ import {
   DEFAULT_DESKTOP_WALLPAPER,
   DEFAULT_LOCK_WALLPAPER,
 } from './lib/storage';
+import { subscribeCharactersChange } from './lib/characterPersistence';
 
 import { PhoneContainer } from './components/PhoneContainer';
 import { LockScreen } from './components/LockScreen';
@@ -76,6 +77,7 @@ import { agentOrchestrator } from './lib/agent/AgentOrchestrator';
 import { proactiveScheduler } from './lib/proactive/ProactiveScheduler';
 import { aiReplyTaskManager } from './lib/aiReply/AiReplyTaskManager';
 import { groupReplyTaskManager } from './lib/group/GroupReplyTaskManager';
+import { initCrossChannelRecovery } from './lib/crossChannel/crossChannelExecutor';
 import { setupLocalBackend } from './lib/localBackend';
 import { AgentAskPrompt, InPhoneNotification } from './lib/agent/types';
 import { getApiConfigForEngine } from './lib/apiConfigStore';
@@ -216,9 +218,14 @@ export function App() {
     };
     window.addEventListener('record_api_log', handleRecordApiLog);
 
+    const unsubChars = subscribeCharactersChange((nextChars) => {
+      setCharactersState(nextChars);
+    });
+
     return () => {
       unsubAsk();
       unsubNotif();
+      unsubChars();
       window.removeEventListener('ai_proactive_message_received', handleProactiveMsg);
       window.removeEventListener('record_api_log', handleRecordApiLog);
     };
@@ -229,6 +236,7 @@ export function App() {
     setupLocalBackend();
     aiReplyTaskManager.init().catch((err) => console.warn('aiReplyTaskManager init warning:', err));
     groupReplyTaskManager.init();
+    initCrossChannelRecovery();
   }, []);
 
   // Automatically ensure independent local memory vaults exist for each AI character
@@ -288,8 +296,8 @@ export function App() {
   };
 
   const updateCharacters = (newChars: AiCharacter[]) => {
-    setCharactersState(newChars);
-    saveCharacters(newChars);
+    const verified = saveCharacters(newChars);
+    setCharactersState(verified);
   };
 
   const updateMessages = (newMsgs: ChatMessage[]) => {

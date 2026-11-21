@@ -1,6 +1,7 @@
 import {
   AiCharacter,
   AiRelationshipEdge,
+  ForwardBundlePayload,
   GroupChat,
   GroupChatMessage,
   GroupMember,
@@ -9,6 +10,9 @@ import {
   GroupRelayPayload,
   UserProfile,
 } from '../../types';
+import { applyOverlengthContextProtection, ContextWindowMetrics, STANDARD_CONTEXT_LIMIT } from '../contextWindow';
+import { buildIsolatedPrivateContextForGroup } from '../crossChannel/crossChannelStore';
+import { serializeForwardBundleForAi } from '../forward/forwardBundleService';
 import { apiFetch } from '../localBackend';
 import { getAllRelationshipEdges } from '../social/socialDb';
 import { loadApiConfig, loadCharacters, loadUserProfile } from '../storage';
@@ -18,6 +22,8 @@ import {
   splitMessageIntoSentenceBubbles,
 } from '../wechatMultiBubble';
 import {
+  GroupContinueInPrivateTimelineEvent,
+  GroupJoinRelayTimelineEvent,
   GroupMessageTimelineEvent,
   GroupReplyTask,
   GroupRoundPlan,
@@ -26,8 +32,8 @@ import {
   resolveGroupActivityPreset,
 } from './groupRoundTypes';
 
-const BASE_CONTEXT_WINDOW = 30;
-const MAX_DYNAMIC_CONTEXT_WINDOW = 60;
+const BASE_CONTEXT_WINDOW = STANDARD_CONTEXT_LIMIT;
+const MAX_DYNAMIC_CONTEXT_WINDOW = STANDARD_CONTEXT_LIMIT;
 
 const STATUS_LABEL_MAP: Record<string, string> = {
   strangers: '陌生',
@@ -110,9 +116,20 @@ function sanitizePollPayloadForPrompt(payload: GroupPollPayload): Record<string,
   };
 }
 
+function resolveForwardBundleFromGroupMsg(message: GroupChatMessage): ForwardBundlePayload | undefined {
+  if (message.forwardBundle) return message.forwardBundle;
+  if (message.messageType === 'forward_bundle' && message.payload && 'items' in (message.payload as any)) {
+    return message.payload as ForwardBundlePayload;
+  }
+  return undefined;
+}
+
 export function buildLeanGroupMessage(message: GroupChatMessage): Record<string, unknown> {
   let text = message.text;
-  if (message.messageType === 'image') {
+  const bundle = resolveForwardBundleFromGroupMsg(message);
+  if (message.messageType === 'forward_bundle' && bundle) {
+    text = serializeForwardBundleForAi(bundle);
+  } else if (message.messageType === 'image') {
     const desc = (message.imageAnalysisText || '').trim();
     if (desc) {
       text = `[图片消息：${desc}]`;
@@ -126,6 +143,12 @@ export function buildLeanGroupMessage(message: GroupChatMessage): Record<string,
   let leanPayload: unknown = undefined;
   if (message.messageType === 'poll' && message.payload) {
     leanPayload = sanitizePollPayloadForPrompt(message.payload as GroupPollPayload);
+  } else if (message.messageType === 'forward_bundle' && bundle) {
+    leanPayload = {
+      title: bundle.title,
+      itemCount: bundle.items?.length || 0,
+      sourceName: bundle.sourceName,
+    };
   } else if (message.payload) {
     leanPayload = stripBinaryTransportData(message.payload);
   }
@@ -151,89 +174,101 @@ export function buildLeanGroupMessage(message: GroupChatMessage): Record<string,
 }
 
 /**
- * Dynamic context window:
- * - Base: last 30 messages.
- * - Dynamic extension: if trailing continuous AI messages after the last human
- *   message haven't been settled by a new human reply yet, extend the window so
- *   all base 30 messages + current uninterrupted AI round stay intact.
- * - Older messages outside the window are condensed into a lightweight text summary.
+ * Unified 100-message context window with over-length protection:
+ * - Normal case: keep the latest 100 valid messages verbatim in chronological order.
+ * - Over-length protection: ONLY when formatted context exceeds token budget, retain the
+ *   latest 30 raw messages verbatim and condense earlier (up to 70) into a chronological summary.
+ * - Messages earlier than the 100-message window are summarized concisely with zero API calls.
  */
 export function selectDynamicGroupContext(allMessages: GroupChatMessage[]): {
   recentMessages: GroupChatMessage[];
   olderContextSummary: string;
+  contextMetrics: ContextWindowMetrics;
 } {
   const validMessages = (allMessages || []).filter((m) => !m.isRecalled);
-  if (validMessages.length <= BASE_CONTEXT_WINDOW) {
-    return { recentMessages: validMessages, olderContextSummary: '' };
-  }
-
-  // Count trailing uninterrupted non-human messages after the last human message
-  let trailingAiCount = 0;
-  for (let i = validMessages.length - 1; i >= 0; i--) {
-    if (validMessages[i].senderType !== 'human' && validMessages[i].senderId !== 'system') {
-      trailingAiCount += 1;
-    } else {
-      break;
-    }
-  }
-
-  const dynamicWindow = Math.min(
-    MAX_DYNAMIC_CONTEXT_WINDOW,
-    validMessages.length,
-    BASE_CONTEXT_WINDOW + trailingAiCount
-  );
-
-  const splitIndex = Math.max(0, validMessages.length - dynamicWindow);
+  const splitIndex = Math.max(0, validMessages.length - MAX_DYNAMIC_CONTEXT_WINDOW);
   const olderMessages = validMessages.slice(0, splitIndex);
-  const recentMessages = validMessages.slice(splitIndex);
+  const candidateRecent = validMessages.slice(splitIndex);
 
-  if (olderMessages.length === 0) {
-    return { recentMessages, olderContextSummary: '' };
-  }
+  const protection = applyOverlengthContextProtection<GroupChatMessage>({
+    messages: candidateRecent,
+    maxRawLimit: BASE_CONTEXT_WINDOW,
+    formatForEstimate: (m) => {
+      const bundle = resolveForwardBundleFromGroupMsg(m);
+      const formattedText =
+        m.messageType === 'forward_bundle' && bundle
+          ? serializeForwardBundleForAi(bundle)
+          : m.messageType === 'image'
+            ? `[图片:${m.imageAnalysisText || m.text || '图片'}]`
+            : m.text || '';
+      return {
+        timestamp: m.timestamp,
+        senderName: m.senderName,
+        text: formattedText,
+      };
+    },
+    cloneWithTruncatedText: (m, truncatedText) => ({
+      ...m,
+      text: truncatedText,
+    }),
+  });
 
-  // Build concise deterministic summary of older messages (zero extra API calls)
+  const recentMessages = protection.rawMessages;
   const summaryParts: string[] = [];
-  const toolSummaries: string[] = [];
-  const sampleOlderLines: string[] = [];
 
-  for (const m of olderMessages) {
-    if (m.messageType === 'poll' && m.payload) {
-      const p = m.payload as GroupPollPayload;
-      const topOpts = (p.options || [])
-        .map((o) => `${o.text}(${o.voterIds?.length || 0}票)`)
-        .join('/');
-      toolSummaries.push(`历史投票「${p.title}」(${p.closed ? '已结束' : '进行中'}): ${topOpts}`);
-    } else if (m.messageType === 'relay' && m.payload) {
-      const r = m.payload as GroupRelayPayload;
-      toolSummaries.push(`历史接龙「${r.title}」(${r.entries?.length || 0}条)`);
-    } else if (m.messageType === 'random_draw' && m.payload) {
-      const d = m.payload as GroupRandomDrawPayload;
-      const names = (d.winners || []).map((w) => w.memberName).join('、');
-      toolSummaries.push(`历史抽人(${d.taskDescription || '随机抽取'}): 抽中${names}`);
+  if (olderMessages.length > 0) {
+    const toolSummaries: string[] = [];
+    const sampleOlderLines: string[] = [];
+
+    for (const m of olderMessages) {
+      if (m.messageType === 'poll' && m.payload) {
+        const p = m.payload as GroupPollPayload;
+        const topOpts = (p.options || [])
+          .map((o) => `${o.text}(${o.voterIds?.length || 0}票)`)
+          .join('/');
+        toolSummaries.push(`历史投票「${p.title}」(${p.closed ? '已结束' : '进行中'}): ${topOpts}`);
+      } else if (m.messageType === 'relay' && m.payload) {
+        const r = m.payload as GroupRelayPayload;
+        toolSummaries.push(`历史接龙「${r.title}」(${r.entries?.length || 0}条)`);
+      } else if (m.messageType === 'random_draw' && m.payload) {
+        const d = m.payload as GroupRandomDrawPayload;
+        const names = (d.winners || []).map((w) => w.memberName).join('、');
+        toolSummaries.push(`历史抽人(${d.taskDescription || '随机抽取'}): 抽中${names}`);
+      } else if (m.messageType === 'forward_bundle') {
+        const b = resolveForwardBundleFromGroupMsg(m);
+        if (b) {
+          toolSummaries.push(`历史聊天记录「${b.title}」(${b.items?.length || 0}条)`);
+        }
+      }
+    }
+
+    const tailOlder = olderMessages
+      .filter((m) => m.senderId !== 'system' && (!m.messageType || m.messageType === 'text'))
+      .slice(-6);
+    for (const m of tailOlder) {
+      const snippet = (m.text || '').replace(/\s+/g, ' ').slice(0, 40);
+      if (snippet) {
+        sampleOlderLines.push(`${m.senderName}:${snippet}`);
+      }
+    }
+
+    summaryParts.push(`更早（100条以前）共有 ${olderMessages.length} 条群消息。`);
+    if (toolSummaries.length > 0) {
+      summaryParts.push(`历史群工具记录：${toolSummaries.slice(-3).join('；')}。`);
+    }
+    if (sampleOlderLines.length > 0) {
+      summaryParts.push(`较早话题片段：${sampleOlderLines.join(' | ')}`);
     }
   }
 
-  const tailOlder = olderMessages
-    .filter((m) => m.senderId !== 'system' && (!m.messageType || m.messageType === 'text'))
-    .slice(-6);
-  for (const m of tailOlder) {
-    const snippet = (m.text || '').replace(/\s+/g, ' ').slice(0, 40);
-    if (snippet) {
-      sampleOlderLines.push(`${m.senderName}:${snippet}`);
-    }
-  }
-
-  summaryParts.push(`更早共有 ${olderMessages.length} 条群消息。`);
-  if (toolSummaries.length > 0) {
-    summaryParts.push(`历史群工具记录：${toolSummaries.slice(-3).join('；')}。`);
-  }
-  if (sampleOlderLines.length > 0) {
-    summaryParts.push(`较早话题片段：${sampleOlderLines.join(' | ')}`);
+  if (protection.earlierSummaryText) {
+    summaryParts.push(protection.earlierSummaryText);
   }
 
   return {
     recentMessages,
-    olderContextSummary: summaryParts.join(' '),
+    olderContextSummary: summaryParts.join('\n'),
+    contextMetrics: protection.metrics,
   };
 }
 
@@ -340,6 +375,56 @@ function collectActivePolls(group: GroupChat, aiMembers: GroupMember[], targetPo
   // Keep target poll plus at most 2 latest open polls so context stays focused
   polls.sort((a, b) => Number(b.isTargetPoll) - Number(a.isTargetPoll));
   return polls.slice(0, 3);
+}
+
+function collectActiveRelays(group: GroupChat, aiMembers: GroupMember[]) {
+  const now = Date.now();
+  const aiIdLookup = new Set<string>();
+  for (const m of aiMembers) {
+    aiIdLookup.add(m.id);
+    if (m.characterId) aiIdLookup.add(m.characterId);
+  }
+
+  const relays: Array<{
+    relayMessageId: string;
+    title: string;
+    description?: string;
+    allowDuplicate: boolean;
+    alreadyJoinedAiIds: string[];
+    entries: Array<{
+      memberName: string;
+      content: string;
+    }>;
+  }> = [];
+
+  for (const msg of group.messages || []) {
+    if (msg.messageType !== 'relay' || !msg.payload) continue;
+    const payload = msg.payload as GroupRelayPayload;
+    const isExpired = Boolean(payload.deadline && now > payload.deadline);
+    if (payload.closed || isExpired) continue;
+
+    const joinedAiSet = new Set<string>();
+    for (const entry of payload.entries || []) {
+      if (aiIdLookup.has(entry.memberId)) {
+        const matched = aiMembers.find((m) => m.id === entry.memberId || m.characterId === entry.memberId);
+        joinedAiSet.add(matched ? matched.id : entry.memberId);
+      }
+    }
+
+    relays.push({
+      relayMessageId: msg.id,
+      title: payload.title,
+      description: payload.description,
+      allowDuplicate: Boolean(payload.allowDuplicate),
+      alreadyJoinedAiIds: Array.from(joinedAiSet),
+      entries: (payload.entries || []).slice(-20).map((e) => ({
+        memberName: e.memberName,
+        content: e.content,
+      })),
+    });
+  }
+
+  return relays.slice(-3);
 }
 
 function resolveMemberId(
@@ -474,8 +559,14 @@ export function normalizeGroupRoundPlan(params: {
     });
   }
 
+  if (Array.isArray(data?.actions) && data.actions.length > 0) {
+    rawEvents.push(...data.actions);
+  }
+
   const events: GroupTimelineEvent[] = [];
   const seenVoteKeys = new Set<string>();
+  const seenRelayContentKeys = new Set<string>();
+  const seenPrivateTransitions = new Set<string>();
   const usedEventIds = new Set<string>();
   let totalBubblesPlanned = 0;
 
@@ -558,6 +649,69 @@ export function normalizeGroupRoundPlan(params: {
         delayMs: Math.max(550, Math.min(1400, Number(raw.delayMs) || 750)),
       };
       events.push(voteEvent);
+    } else if (rawType === 'join_relay') {
+      const actor = resolveMemberId(raw.actorId || raw.senderId, raw.actorName || raw.senderName, aiMembers);
+      const relayMessageId = String(raw.relayMessageId || raw.relayId || raw.messageId || '').trim();
+      const content = sanitizeReplyText(String(raw.content || raw.text || '')).trim();
+      if (!actor || !relayMessageId || !content) continue;
+
+      const dedupeRelayKey = `${relayMessageId}::${actor.id}::${content}`;
+      if (seenRelayContentKeys.has(dedupeRelayKey)) continue;
+      seenRelayContentKeys.add(dedupeRelayKey);
+
+      const relayEvent: GroupJoinRelayTimelineEvent = {
+        eventId,
+        type: 'join_relay',
+        actorId: actor.id,
+        actorName: actor.name,
+        relayMessageId,
+        content,
+        delayMs: Math.max(600, Math.min(1500, Number(raw.delayMs) || 850)),
+      };
+      events.push(relayEvent);
+    } else if (rawType === 'continue_in_private') {
+      const actor = resolveMemberId(
+        raw.actorId || raw.characterId || raw.senderId,
+        raw.actorName || raw.senderName,
+        aiMembers
+      );
+      if (!actor) continue;
+
+      const targetCharacterId = actor.characterId || actor.id;
+      if (seenPrivateTransitions.has(targetCharacterId)) continue;
+
+      const rawList = Array.isArray(raw.privateOpeningMessages)
+        ? raw.privateOpeningMessages
+        : Array.isArray(raw.messages)
+          ? raw.messages
+          : Array.isArray(raw.openingMessages)
+            ? raw.openingMessages
+            : typeof raw.text === 'string'
+              ? [raw.text]
+              : [];
+
+      const openings = rawList
+        .map((s: unknown) => sanitizeReplyText(String(s || '')).trim())
+        .filter(Boolean)
+        .slice(0, 3);
+      if (openings.length === 0) continue;
+
+      seenPrivateTransitions.add(targetCharacterId);
+      const ccpEvent: GroupContinueInPrivateTimelineEvent = {
+        eventId,
+        type: 'continue_in_private',
+        actorId: actor.id,
+        actorName: actor.name,
+        characterId: targetCharacterId,
+        reason: typeof raw.reason === 'string' && raw.reason.trim() ? raw.reason.trim() : '有些话想私下跟你说',
+        triggerSummary:
+          typeof raw.triggerSummary === 'string' && raw.triggerSummary.trim()
+            ? raw.triggerSummary.trim()
+            : undefined,
+        privateOpeningMessages: openings,
+        delayMs: 250,
+      };
+      events.push(ccpEvent);
     } else {
       // Requirement XI.3: Ignore unknown event types safely and log without crashing
       console.warn('[GroupRoundOrchestrator] Ignoring unknown event type:', rawType, raw);
@@ -628,7 +782,7 @@ export async function orchestrateGroupRound(params: {
   const edges = await getAllRelationshipEdges().catch(() => []);
   const aiRelationships = buildRelationshipSummaryLines(edges, memberLookup);
 
-  const { recentMessages: recentSourceMessages, olderContextSummary } =
+  const { recentMessages: recentSourceMessages, olderContextSummary, contextMetrics } =
     selectDynamicGroupContext(group.messages || []);
 
   const latestUserSourceMessage =
@@ -654,6 +808,27 @@ export async function orchestrateGroupRound(params: {
       : null;
 
   const activePolls = collectActivePolls(group, aiMembers, task.targetPollId);
+  const activeRelays = collectActiveRelays(group, aiMembers);
+
+  // Strictly isolated 30-message private context + continuity state per AI member
+  const userName = (userProfile?.name || '用户').trim() || '用户';
+  const aiPrivateContexts = await Promise.all(
+    aiMembers.map(async (m) => {
+      const charId = m.characterId || m.id;
+      const isolated = await buildIsolatedPrivateContextForGroup(
+        { id: charId, name: m.name },
+        userName
+      );
+      return {
+        memberId: m.id,
+        ...isolated,
+      };
+    })
+  );
+
+  const combinedOlderSummary = [olderContextSummary, group.contextSummary]
+    .filter((s) => typeof s === 'string' && s.trim().length > 0)
+    .join('\n');
 
   const requestBody = {
     roundId: task.roundId,
@@ -661,7 +836,10 @@ export async function orchestrateGroupRound(params: {
     activityLevel,
     targetPollId: task.targetPollId,
     activePolls,
-    olderContextSummary: olderContextSummary || group.contextSummary || undefined,
+    activeRelays,
+    aiPrivateContexts,
+    contextMetrics,
+    olderContextSummary: combinedOlderSummary || undefined,
     group: {
       id: group.id,
       name: group.name,

@@ -216,15 +216,23 @@ export class OfflineSessionService {
         formatOfflineMessageForPrompt(m, userProfile?.name || '用户', character.name)
       );
 
-      // Combine persisted rolling summary with deterministic fallback if messages > dynamic window
-      let effectiveContextSummary = (session.contextSummary || '').trim();
-      if (selection.droppedOlderMessages.length > 0 && !effectiveContextSummary) {
-        effectiveContextSummary = buildSessionRollingFallbackSummary(
-          selection.droppedOlderMessages,
-          userProfile?.name || '用户',
-          character.name
+      // Combine persisted rolling summary with deterministic fallback + overlength protection summary
+      const summaryChunks: string[] = [];
+      if (session.contextSummary && session.contextSummary.trim()) {
+        summaryChunks.push(session.contextSummary.trim());
+      } else if (selection.droppedOlderMessages.length > 0) {
+        summaryChunks.push(
+          buildSessionRollingFallbackSummary(
+            selection.droppedOlderMessages,
+            userProfile?.name || '用户',
+            character.name
+          )
         );
       }
+      if (selection.earlierSummaryText) {
+        summaryChunks.push(selection.earlierSummaryText);
+      }
+      const effectiveContextSummary = summaryChunks.join('\n\n');
 
       const lastState: CharacterState =
         session.stateHistory.length > 0
@@ -293,6 +301,7 @@ export class OfflineSessionService {
         currentTime,
         timezone,
         contextSummary: effectiveContextSummary || undefined,
+        contextMetrics: selection.contextMetrics,
         needsSummaryUpdate: selection.droppedOlderMessages.length > 0 && priorMessages.length % 10 === 0,
         recentMessages: formattedRecentMessages,
         recalledMemories: [recalledText, vaultRecall.recalledText, pastOfflineMemories]
@@ -488,7 +497,11 @@ export class OfflineSessionService {
       startedAtStr: formatOfflinePromptDateTime(session.startedAt),
       currentTime: formatOfflinePromptDateTime(Date.now()),
       timezone,
-      contextSummary: session.contextSummary || undefined,
+      contextSummary:
+        [session.contextSummary?.trim(), selection.earlierSummaryText]
+          .filter(Boolean)
+          .join('\n\n') || undefined,
+      contextMetrics: selection.contextMetrics,
       recentMessages: formattedRecentMessages,
       recalledMemories: [recalledText, vaultRecall.recalledText, pastOfflineMemories]
         .filter(Boolean)
@@ -577,6 +590,7 @@ export class OfflineSessionService {
 
     try {
       await ensureBackendReady('offline:summary');
+      const summarySelection = selectDynamicOfflineContextMessages(allMessages, 100, 100);
 
       const res = await apiFetch('/api/gemini/offline-summary', {
         method: 'POST',
@@ -594,7 +608,8 @@ export class OfflineSessionService {
           character,
           userProfile,
           sceneSnapshot: session.sceneSnapshot,
-          sessionMessages: allMessages.map((m) =>
+          contextSummary: summarySelection.earlierSummaryText || session.contextSummary || undefined,
+          sessionMessages: summarySelection.selectedMessages.map((m) =>
             formatOfflineMessageForPrompt(m, userProfile?.name || '用户', character.name)
           ),
           apiConfig,

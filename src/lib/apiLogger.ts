@@ -20,6 +20,10 @@ export interface ApiLogPayload {
   errorType?: string;
   errorMessage?: string;
   purpose: string;
+  contextRawCount?: number;
+  contextSummarizedCount?: number;
+  contextEstimatedTokens?: number;
+  contextCompressed?: boolean;
 }
 
 export function normalizeApiLogCategory(
@@ -99,6 +103,12 @@ export function recordApiLog(
         payload.purpose || (isFailed ? 'API 请求失败' : '模型接口调用'),
         160
       ),
+      contextRawCount: typeof payload.contextRawCount === 'number' ? payload.contextRawCount : undefined,
+      contextSummarizedCount:
+        typeof payload.contextSummarizedCount === 'number' ? payload.contextSummarizedCount : undefined,
+      contextEstimatedTokens:
+        typeof payload.contextEstimatedTokens === 'number' ? payload.contextEstimatedTokens : undefined,
+      contextCompressed: typeof payload.contextCompressed === 'boolean' ? payload.contextCompressed : undefined,
     };
 
     if (typeof window !== 'undefined') {

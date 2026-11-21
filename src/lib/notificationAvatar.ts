@@ -1,5 +1,6 @@
 import { AiCharacter } from '../types';
-import { loadCharacters, saveCharacters } from './storage';
+import { loadCharacters } from './storage';
+import { updateCharacterByIdIfExists, mutateCharactersAtomic } from './characterPersistence';
 
 export type AvatarSourceType =
   | 'empty'
@@ -356,14 +357,9 @@ export async function getOrBackfillCharacterNotificationAvatar(character: {
     const res = await generateNotificationAvatarThumbnail(rawAvatar, { timeoutMs: 2200 });
     if (res.dataUrl && charId && typeof localStorage !== 'undefined') {
       try {
-        const chars = loadCharacters();
-        const idx = chars.findIndex((c) => c.id === charId);
-        if (idx !== -1 && chars[idx].notificationAvatar !== res.dataUrl) {
-          const updated = chars.map((c, i) =>
-            i === idx ? { ...c, notificationAvatar: res.dataUrl } : c
-          );
-          saveCharacters(updated);
-        }
+        await updateCharacterByIdIfExists(charId, (c) =>
+          c.notificationAvatar !== res.dataUrl ? { ...c, notificationAvatar: res.dataUrl } : null
+        );
       } catch (e) {
         console.warn(`[NotificationAvatar] Failed to persist backfilled thumbnail for char=${charId}:`, e);
       }
@@ -414,15 +410,23 @@ export async function backfillAllCharactersNotificationAvatars(): Promise<boolea
   }
 
   if (changed) {
-    // Re-read latest characters in case user edited anything concurrently
-    const latest = loadCharacters();
+    // Re-read & merge atomically under serialized lock so concurrent creates/deletes are preserved
     const thumbMap = new Map(nextChars.filter((c) => c.notificationAvatar).map((c) => [c.id, c.notificationAvatar]));
-    const merged = latest.map((c) =>
-      !isValidNotificationThumbnail(c.notificationAvatar) && thumbMap.has(c.id)
-        ? { ...c, notificationAvatar: thumbMap.get(c.id) }
-        : c
-    );
-    saveCharacters(merged);
+    try {
+      await mutateCharactersAtomic((latest) => {
+        let hasUpdates = false;
+        const merged = latest.map((c) => {
+          if (!isValidNotificationThumbnail(c.notificationAvatar) && thumbMap.has(c.id)) {
+            hasUpdates = true;
+            return { ...c, notificationAvatar: thumbMap.get(c.id) };
+          }
+          return c;
+        });
+        return hasUpdates ? merged : null;
+      });
+    } catch (e) {
+      console.warn('[NotificationAvatar] Startup backfill persistence skipped:', e);
+    }
   }
 
   return changed;

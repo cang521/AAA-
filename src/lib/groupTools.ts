@@ -84,6 +84,81 @@ export function appendGroupRelayEntry(
   };
 }
 
+export function validateAndApplyAiRelayJoin(params: {
+  payload: GroupRelayPayload;
+  actorId: string;
+  members: GroupMember[];
+  content: string;
+  now?: number;
+}): {
+  ok: boolean;
+  payload: GroupRelayPayload;
+  actorName?: string;
+  appliedContent?: string;
+  reason?: string;
+} {
+  const { payload, actorId, members, content } = params;
+  const now = params.now ?? Date.now();
+
+  if (!payload || !Array.isArray(payload.entries)) {
+    return { ok: false, payload, reason: '接龙卡片数据不存在' };
+  }
+  if (payload.closed) {
+    return { ok: false, payload, reason: '该群接龙已结束，禁止写入' };
+  }
+  if (payload.deadline && now > payload.deadline) {
+    return { ok: false, payload, reason: '该群接龙已超过截止时间，禁止写入' };
+  }
+
+  const actorMember = members.find(
+    (m) =>
+      (m.id === actorId || m.characterId === actorId) &&
+      m.memberType !== 'human' &&
+      !m.isMuted
+  );
+  if (!actorMember) {
+    return { ok: false, payload, reason: `成员 ${actorId} 不属于当前群聊的活跃未静音 AI` };
+  }
+
+  const cleanContent = String(content || '').trim();
+  if (!cleanContent) {
+    return { ok: false, payload, reason: '接龙内容不能为空' };
+  }
+
+  if (!payload.allowDuplicate) {
+    const alreadyJoined = payload.entries.some(
+      (e) =>
+        e.memberId === actorMember.id ||
+        (actorMember.characterId ? e.memberId === actorMember.characterId : false)
+    );
+    if (alreadyJoined) {
+      return { ok: false, payload, reason: `${actorMember.name} 已参与过该接龙且不允许重复接龙` };
+    }
+  }
+
+  const result = appendGroupRelayEntry(
+    payload,
+    {
+      id: actorMember.id,
+      name: actorMember.name,
+      avatar: actorMember.avatar,
+    },
+    cleanContent,
+    now
+  );
+
+  if (result.error) {
+    return { ok: false, payload, reason: result.error };
+  }
+
+  return {
+    ok: true,
+    payload: result.payload,
+    actorName: actorMember.name,
+    appliedContent: cleanContent,
+  };
+}
+
 export function createGroupPollPayload(params: {
   title: string;
   options: string[];

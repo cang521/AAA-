@@ -841,7 +841,16 @@ function deriveCategory(
   return 'text_generation';
 }
 
-function deriveRequestMeta(init?: RequestInit): { requestId?: string; provider?: string; model?: string; purposeHint?: string } {
+function deriveRequestMeta(init?: RequestInit): {
+  requestId?: string;
+  provider?: string;
+  model?: string;
+  purposeHint?: string;
+  contextRawCount?: number;
+  contextSummarizedCount?: number;
+  contextEstimatedTokens?: number;
+  contextCompressed?: boolean;
+} {
   if (init?.body && typeof init.body === 'string') {
     try {
       const parsed = JSON.parse(init.body);
@@ -851,11 +860,16 @@ function deriveRequestMeta(init?: RequestInit): { requestId?: string; provider?:
       else if (parsed.source) purposeHint = `来源: ${String(parsed.source).slice(0, 40)}`;
       else if (parsed.prompt) purposeHint = `执行指令: ${String(parsed.prompt).slice(0, 40)}`;
       else if (parsed.text) purposeHint = `处理文本: ${String(parsed.text).slice(0, 40)}`;
+      const cm = parsed.contextMetrics;
       return {
         requestId: typeof parsed.requestId === 'string' ? parsed.requestId : undefined,
         provider: parsed.provider || parsed.providerType || parsed.recognitionConfig?.provider || parsed.apiConfig?.textProvider,
         model: parsed.model || parsed.recognitionConfig?.model || parsed.apiConfig?.textModel,
         purposeHint,
+        contextRawCount: typeof cm?.rawCount === 'number' ? cm.rawCount : undefined,
+        contextSummarizedCount: typeof cm?.summarizedCount === 'number' ? cm.summarizedCount : undefined,
+        contextEstimatedTokens: typeof cm?.estimatedTokens === 'number' ? cm.estimatedTokens : undefined,
+        contextCompressed: typeof cm?.didCompress === 'boolean' ? cm.didCompress : undefined,
       };
     } catch {}
   }
@@ -884,15 +898,24 @@ async function logModelApiResponse(
       const clone = resp.clone();
       const data = await clone.json().catch(() => null);
       if (data) {
+        const respCm = data.contextMetrics;
+        const contextExtras = {
+          contextRawCount: data.apiLog?.contextRawCount ?? data.log?.contextRawCount ?? respCm?.rawCount ?? meta.contextRawCount,
+          contextSummarizedCount: data.apiLog?.contextSummarizedCount ?? data.log?.contextSummarizedCount ?? respCm?.summarizedCount ?? meta.contextSummarizedCount,
+          contextEstimatedTokens: data.apiLog?.contextEstimatedTokens ?? data.log?.contextEstimatedTokens ?? respCm?.estimatedTokens ?? meta.contextEstimatedTokens,
+          contextCompressed: data.apiLog?.contextCompressed ?? data.log?.contextCompressed ?? respCm?.didCompress ?? meta.contextCompressed,
+        };
         if (data.apiLog) {
           recordApiLog({
             ...data.apiLog,
+            ...contextExtras,
             httpStatus: data.apiLog.httpStatus ?? resp.status,
             requestId: data.apiLog.requestId || data.requestId || meta.requestId,
           });
         } else if (data.log) {
           recordApiLog({
             ...data.log,
+            ...contextExtras,
             httpStatus: data.log.httpStatus ?? resp.status,
             requestId: data.log.requestId || data.requestId || meta.requestId,
           });
@@ -910,6 +933,7 @@ async function logModelApiResponse(
             errorType: data.errorType || 'ModelError',
             errorMessage: data.error || data.message || '模型响应失败',
             purpose: derivePurpose(apiPath, init),
+            ...contextExtras,
           });
         } else {
           recordApiLog({
@@ -923,6 +947,7 @@ async function logModelApiResponse(
             requestId: data.requestId || meta.requestId,
             durationMs,
             purpose: derivePurpose(apiPath, init),
+            ...contextExtras,
           });
         }
       }

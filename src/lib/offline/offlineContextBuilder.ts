@@ -15,9 +15,14 @@
 import { OfflineMessage } from './OfflineSessionDb';
 import { formatOfflinePromptDateTime } from './offlineTimeFormat';
 import { normalizeOfflineSegments, segmentsToPlainText } from './offlineSegments';
+import {
+  applyOverlengthContextProtection,
+  ContextWindowMetrics,
+  STANDARD_CONTEXT_LIMIT,
+} from '../contextWindow';
 
-export const DEFAULT_OFFLINE_CONTEXT_MIN = 30;
-export const DEFAULT_OFFLINE_CONTEXT_MAX = 60;
+export const DEFAULT_OFFLINE_CONTEXT_MIN = STANDARD_CONTEXT_LIMIT;
+export const DEFAULT_OFFLINE_CONTEXT_MAX = STANDARD_CONTEXT_LIMIT;
 
 export interface DynamicContextSelection {
   selectedMessages: OfflineMessage[];
@@ -25,6 +30,8 @@ export interface DynamicContextSelection {
   windowSize: number;
   extendedBeyond30: boolean;
   extensionReason?: string;
+  earlierSummaryText?: string;
+  contextMetrics?: ContextWindowMetrics;
 }
 
 const SCENE_BREAK_REGEX = /(第二天|次日|隔天|清晨醒来|转眼到了|睡醒之后|换了个地方|回到家后|过了几个小时|离开这里|结束了这次)/;
@@ -47,7 +54,6 @@ function isContinuousEventLink(prev: OfflineMessage, next: OfflineMessage): { co
   const gapMs = Math.max(0, (next.timestamp || 0) - (prev.timestamp || 0));
   const gapMinutes = gapMs / 60000;
 
-  // Hard break: long silence (> 25 min) or explicit scene transition marker
   if (gapMinutes > 25) {
     return { continuous: false };
   }
@@ -56,7 +62,6 @@ function isContinuousEventLink(prev: OfflineMessage, next: OfflineMessage): { co
     return { continuous: false };
   }
 
-  // Strong ongoing signals: active intimate/high-tension state, explicit ongoing markers, or tight back-and-forth (<= 8 min)
   if (hasHighEmotionOrIntimateState(prev) || hasHighEmotionOrIntimateState(next)) {
     return { continuous: true, reason: '情绪/亲密/紧张互动持续中' };
   }
@@ -67,7 +72,6 @@ function isContinuousEventLink(prev: OfflineMessage, next: OfflineMessage): { co
   if (/[？\?]$/.test((prev.text || '').trim())) {
     return { continuous: true, reason: '上一句提问尚未结束' };
   }
-  // Short consecutive turns within 8 minutes indicate the same uninterrupted exchange
   if (gapMinutes <= 8) {
     return { continuous: true, reason: '紧密连续互动（时间间隔<=8分钟）' };
   }
@@ -76,7 +80,8 @@ function isContinuousEventLink(prev: OfflineMessage, next: OfflineMessage): { co
 }
 
 /**
- * Select 30..60 valid messages dynamically without making any extra API call.
+ * Select up to 100 valid offline messages in chronological order, and apply
+ * over-length protection (30 raw + up to 70 condensed chronological summary) ONLY when over token budget.
  */
 export function selectDynamicOfflineContextMessages(
   allMessages: OfflineMessage[],
@@ -87,43 +92,43 @@ export function selectDynamicOfflineContextMessages(
     .filter((m) => m && m.status !== 'failed' && ((m.text && m.text.trim()) || (m.segments && m.segments.length > 0)))
     .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
+  const targetLimit = Math.max(minWindow, maxWindow);
   const total = valid.length;
-  if (total <= minWindow) {
-    return {
-      selectedMessages: valid,
-      droppedOlderMessages: [],
-      windowSize: total,
-      extendedBeyond30: false,
-    };
-  }
+  const candidateStart = Math.max(0, total - targetLimit);
+  const droppedOlderMessages = valid.slice(0, candidateStart);
+  const candidateMessages = valid.slice(candidateStart);
 
-  const floorIndex = Math.max(0, total - maxWindow);
-  let startIndex = total - minWindow;
+  // Preserve continuous event check signal cleanly when extending beyond 30
   let extensionReason: string | undefined;
-
-  // Inspect whether the 30th-from-end boundary sits inside an ongoing continuous event
-  while (startIndex > floorIndex) {
-    const prevMsg = valid[startIndex - 1];
-    const currMsg = valid[startIndex];
-    const check = isContinuousEventLink(prevMsg, currMsg);
-    if (!check.continuous) {
-      break;
-    }
-    if (!extensionReason && check.reason) {
-      extensionReason = check.reason;
-    }
-    startIndex--;
+  if (candidateMessages.length > 30) {
+    const idx30 = candidateMessages.length - 30;
+    const link = isContinuousEventLink(candidateMessages[idx30 - 1], candidateMessages[idx30]);
+    extensionReason = link.reason;
   }
 
-  const selectedMessages = valid.slice(startIndex);
-  const droppedOlderMessages = valid.slice(0, startIndex);
+  const protection = applyOverlengthContextProtection<OfflineMessage>({
+    messages: candidateMessages,
+    maxRawLimit: targetLimit,
+    formatForEstimate: (m) => ({
+      timestamp: m.timestamp,
+      senderName: m.sender === 'user' ? '用户' : 'AI',
+      text: `${m.action ? `（${m.action}）` : ''}${m.text || ''}`,
+    }),
+    cloneWithTruncatedText: (m, truncatedText) => ({
+      ...m,
+      text: truncatedText,
+      segments: undefined,
+    }),
+  });
 
   return {
-    selectedMessages,
+    selectedMessages: protection.rawMessages,
     droppedOlderMessages,
-    windowSize: selectedMessages.length,
-    extendedBeyond30: selectedMessages.length > minWindow,
+    windowSize: protection.rawMessages.length,
+    extendedBeyond30: protection.rawMessages.length > 30,
     extensionReason,
+    earlierSummaryText: protection.earlierSummaryText,
+    contextMetrics: protection.metrics,
   };
 }
 

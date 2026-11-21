@@ -1,5 +1,6 @@
 import { ChatMessage, AiCharacter } from '../../types';
-import { loadCharacters, saveCharacters } from '../storage';
+import { loadCharacters } from '../storage';
+import { updateCharacterByIdIfExists } from '../characterPersistence';
 import { hasChatMessage, saveChatMessage } from '../chatDb';
 import { sanitizeReplyText } from '../thinkCleaner';
 import { splitMessageIntoSentenceBubbles, calculateTypingDelay, getMultiBubbleConfig } from '../wechatMultiBubble';
@@ -211,17 +212,13 @@ class ChatMessageBridge {
       return [];
     }
 
-    // 3. Increment unread badge for the character by actual persisted bubbles count
-    const updatedCharacters = characters.map((c) => {
-      if (c.id === character.id) {
-        return {
-          ...c,
-          unreadAiCount: (c.unreadAiCount || 0) + results.length,
-        };
-      }
-      return c;
+    // 3. Increment unread badge for the character atomically by ID (no stale snapshot overwrite)
+    await updateCharacterByIdIfExists(character.id, (c) => ({
+      ...c,
+      unreadAiCount: (c.unreadAiCount || 0) + results.length,
+    })).catch((err) => {
+      console.warn('[ChatMessageBridge] Failed to update unreadAiCount:', err);
     });
-    saveCharacters(updatedCharacters);
 
     // 4. Emit custom events so UI reflects new messages immediately
     if (typeof window !== 'undefined') {

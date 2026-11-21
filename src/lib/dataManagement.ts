@@ -14,7 +14,6 @@ import {
 } from '../types';
 import {
   loadCharacters,
-  saveCharacters,
   loadGroupChats,
   loadGroupChatsAsync,
   saveGroupChats,
@@ -37,6 +36,7 @@ import {
   saveWorldBooks,
   DEFAULT_AI_AVATAR,
 } from './storage';
+import { replaceCharactersAtomic } from './characterPersistence';
 import { mergeImportedApiSettings } from './apiConfigStore';
 import {
   getAllChatMessages,
@@ -1802,8 +1802,8 @@ export async function executeImport(
         }
       }
 
-      // Save Characters
-      saveCharacters(finalChars);
+      // Save Characters atomically
+      await replaceCharactersAtomic(finalChars);
       void backfillAllCharactersNotificationAvatars().catch(() => {});
     }
 
@@ -1836,7 +1836,7 @@ export async function executeImport(
           }
         }
       }
-      saveCharacters(finalChars);
+      await replaceCharactersAtomic(finalChars);
     }
 
     // 3. Import Chat Messages

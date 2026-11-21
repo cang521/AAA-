@@ -23,7 +23,8 @@ import {
   markMessageIdExecuted,
   markStepIdExecuted,
 } from './proactiveStore';
-import { loadCharacters, saveCharacters, loadUserProfile, loadApiConfig } from '../storage';
+import { loadCharacters, loadUserProfile, loadApiConfig } from '../storage';
+import { mutateCharactersAtomic } from '../characterPersistence';
 import { getRecentChatMessages, hasChatMessage, saveChatMessage } from '../chatDb';
 import { permissionManager } from '../agent/PermissionManager';
 import { getLifeEventsSync } from '../lifeState/lifeStateStore';
@@ -337,17 +338,22 @@ export async function drainAndMergeNativeInbox(): Promise<{
       mergedCount++;
     }
 
-    // 2. Update character unread counts for newly merged background messages
+    // 2. Update character unread counts for newly merged background messages atomically
     if (unreadDeltaByChar.size > 0) {
-      const characters = loadCharacters();
-      const updatedChars = characters.map((c) => {
-        const delta = unreadDeltaByChar.get(c.id) || 0;
-        if (delta > 0) {
-          return { ...c, unreadAiCount: (c.unreadAiCount || 0) + delta };
-        }
-        return c;
+      await mutateCharactersAtomic((latestChars) => {
+        let anyUpdated = false;
+        const nextChars = latestChars.map((c) => {
+          const delta = unreadDeltaByChar.get(c.id) || 0;
+          if (delta > 0) {
+            anyUpdated = true;
+            return { ...c, unreadAiCount: (c.unreadAiCount || 0) + delta };
+          }
+          return c;
+        });
+        return anyUpdated ? nextChars : null;
+      }).catch((err) => {
+        console.warn('[ProactiveNativeBridge] Failed to update unreadAiCount:', err);
       });
-      saveCharacters(updatedChars);
     }
 
     // 3. Reconcile pausedUntil (keep max) without overwriting user's other settings

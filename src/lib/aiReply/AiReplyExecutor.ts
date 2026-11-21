@@ -12,7 +12,8 @@ import { triggerSmartMemoryExtraction } from '../memoryExtractor';
 import { NativeNotificationService } from '../NativeNotificationService';
 import { sanitizeReplyText } from '../thinkCleaner';
 import { splitMessageIntoSentenceBubbles, calculateTypingDelay, getMultiBubbleConfig } from '../wechatMultiBubble';
-import { loadFromStorage, saveToStorage, loadApiConfig } from '../storage';
+import { loadFromStorage, loadCharacters, loadApiConfig } from '../storage';
+import { updateCharacterByIdIfExists } from '../characterPersistence';
 import { evaluateWeatherContext, evaluateMenstrualContext, evaluateWorldBookContext } from './contextEvaluator';
 import { AiReplyTask, AiReplyTaskStatus } from './AiReplyTaskStore';
 import {
@@ -20,6 +21,13 @@ import {
   buildCurrentTurnImageContext,
   generateImageForMessage,
 } from '../image/imageCapabilitiesService';
+import { applyOverlengthContextProtection, STANDARD_CONTEXT_LIMIT } from '../contextWindow';
+import { serializeForwardBundleForAi } from '../forward/forwardBundleService';
+import {
+  buildGroupToPrivateTransitionPromptBlock,
+  markCrossChannelAiRepliedInPrivate,
+  markCrossChannelUserReplied,
+} from '../crossChannel/crossChannelStore';
 
 const nativeNotificationService = NativeNotificationService.getInstance();
 
@@ -82,7 +90,7 @@ export async function executeAiReplyTask(
 ): Promise<void> {
   if (onStatusChange) await onStatusChange('preparing');
 
-  const characters = loadFromStorage<AiCharacter[]>('phone_ai_characters', []);
+  const characters = loadCharacters();
   const activeCharacter = characters.find((c) => c.id === task.characterId);
   if (!activeCharacter) {
     throw new Error(`Character ${task.characterId} not found`);
@@ -225,12 +233,41 @@ export async function executeAiReplyTask(
       : '';
 
   // Strip heavy data:image/* Base64 payloads from historical conversation messages
-  // while preserving all semantic image metadata (imageDescription, detectedText, revisedPrompt, etc.)
-  const lightConversationHistory = conversationHistory.map((m) =>
-    m.imageUrl && m.imageUrl.startsWith('data:image/')
-      ? { ...m, imageUrl: undefined }
-      : m
-  );
+  // while preserving semantic image metadata and serializing forward_bundle items
+  const lightConversationHistory = conversationHistory.map((m) => {
+    const base =
+      m.imageUrl && m.imageUrl.startsWith('data:image/')
+        ? { ...m, imageUrl: undefined }
+        : { ...m };
+    if (base.type === 'forward_bundle' || base.messageType === 'forward_bundle' || base.forwardBundle) {
+      return {
+        ...base,
+        text: serializeForwardBundleForAi(base.forwardBundle),
+      };
+    }
+    return base;
+  });
+
+  // Apply unified 100-message window + over-length protection (30 raw + 70 summary only when over budget)
+  const effectiveMaxWindow = Math.min(STANDARD_CONTEXT_LIMIT, Math.max(30, contextLimit));
+  const contextProtection = applyOverlengthContextProtection<ChatMessage>({
+    messages: lightConversationHistory,
+    maxRawLimit: effectiveMaxWindow,
+    formatForEstimate: (m) => ({
+      timestamp: m.timestamp,
+      senderName: m.sender === 'user' ? userProfile?.name || '用户' : activeCharacter.name,
+      text: m.text || (m.imageDescription ? `[图片:${m.imageDescription}]` : ''),
+    }),
+    cloneWithTruncatedText: (m, truncatedText) => ({
+      ...m,
+      text: truncatedText,
+    }),
+  });
+
+  if (effectiveUserMessage && !task.isReroll) {
+    markCrossChannelUserReplied(activeCharacter.id, effectiveUserMessage);
+  }
+  const crossChannelTransitionContext = buildGroupToPrivateTransitionPromptBlock(activeCharacter.id);
 
   // Send request to Gemini API
   if (onStatusChange) await onStatusChange('generating');
@@ -242,7 +279,10 @@ export async function executeAiReplyTask(
       userMessage: effectiveUserMessage,
       currentTurnMessageIds: task.currentTurnMessageIds,
       currentImageAnalysis: resolvedCurrentImageAnalysis,
-      conversationHistory: lightConversationHistory,
+      conversationHistory: contextProtection.rawMessages,
+      earlierContextSummary: contextProtection.earlierSummaryText || undefined,
+      contextMetrics: contextProtection.metrics,
+      crossChannelTransitionContext,
       recalledMemoriesSummary: combinedRecalledMemories || undefined,
       userProfile,
       systemTime: systemNativeService.getRealSystemTime().summaryString,
@@ -465,6 +505,9 @@ export async function executeAiReplyTask(
     }
   }
 
+  // Mark any pending group->private transition as cleanly answered now that AI responded
+  markCrossChannelAiRepliedInPrivate(activeCharacter.id, cleanRawText);
+
   // Background Life State Extraction
   triggerLifeStateExtraction(
     [
@@ -483,9 +526,12 @@ export async function executeAiReplyTask(
       userProfile,
       apiConfig,
       onUpdateCharacterMemories: (newMemories: string[]) => {
-        const currentChars = loadFromStorage<AiCharacter[]>('phone_ai_characters', []);
-        const updated = currentChars.map((c) => (c.id === activeCharacter.id ? { ...c, memories: newMemories } : c));
-        saveToStorage('phone_ai_characters', updated);
+        void updateCharacterByIdIfExists(activeCharacter.id, (c) => ({
+          ...c,
+          memories: newMemories,
+        })).catch((err) => {
+          console.warn('[SmartMemoryExtract] Persist memories failed:', err);
+        });
       },
     }).catch((err) => console.warn('[SmartMemoryExtract] error', err));
   }

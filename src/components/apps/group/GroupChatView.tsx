@@ -27,6 +27,10 @@ import {
   Plus,
   AlertCircle,
   RotateCcw,
+  Check,
+  CheckSquare,
+  Forward,
+  Layers,
 } from 'lucide-react';
 import {
   GroupChat,
@@ -35,6 +39,7 @@ import {
   GroupPollPayload,
   GroupRandomDrawPayload,
   GroupRelayPayload,
+  ForwardBundlePayload,
   AiCharacter,
   UserProfile,
   ApiConfig,
@@ -54,11 +59,23 @@ import { GroupPollModal } from './tools/GroupPollModal';
 import { GroupPollCard } from './tools/GroupPollCard';
 import { GroupRandomDrawModal } from './tools/GroupRandomDrawModal';
 import { GroupRandomDrawCard } from './tools/GroupRandomDrawCard';
+import { ForwardBundleCard } from '../../wechat/ForwardBundleCard';
+import { ForwardBundleDetailModal } from '../../wechat/ForwardBundleDetailModal';
+import { ForwardTargetModal } from '../../wechat/ForwardTargetModal';
+import {
+  createForwardBundleFromGroup,
+  forwardBundleToTargets,
+  forwardMessagesIndividuallyToTargets,
+  ForwardTargetDescriptor,
+} from '../../../lib/forward/forwardBundleService';
+import { saveChatMessage } from '../../../lib/chatDb';
+import { getCachedGroupChats, hydrateGroupChatsFromDb, saveGroupChatsToDb } from '../../../lib/groupChatDb';
 
 interface GroupChatViewProps {
   group: GroupChat;
   onBack: () => void;
   allCharacters: AiCharacter[];
+  allGroups?: GroupChat[];
   userProfile: UserProfile;
   apiConfig?: ApiConfig;
   onUpdateGroup: (updatedGroup: GroupChat) => void;
@@ -70,6 +87,7 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   group,
   onBack,
   allCharacters,
+  allGroups,
   userProfile,
   apiConfig,
   onUpdateGroup,
@@ -92,6 +110,17 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   const [failedTaskError, setFailedTaskError] = useState<string | null>(null);
   const [groupToast, setGroupToast] = useState<string | null>(null);
   const [zoomedImageUrl, setZoomedImageUrl] = useState<string | null>(null);
+
+  // Multi-select & forwarding state
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
+  const [selectedMsgIds, setSelectedMsgIds] = useState<string[]>([]);
+  const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
+  const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+  const [forwardTargetRequest, setForwardTargetRequest] = useState<{
+    mode: 'merged' | 'individual';
+    messages: GroupChatMessage[];
+  } | null>(null);
+  const [bundleDetailPayload, setBundleDetailPayload] = useState<ForwardBundlePayload | null>(null);
 
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -175,6 +204,11 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     setShowMentionPicker(false);
     setLocalErrorMsg(null);
     setGroupToast(null);
+    setIsMultiSelectMode(false);
+    setSelectedMsgIds([]);
+    setShowBatchDeleteConfirm(false);
+    setForwardTargetRequest(null);
+    setBundleDetailPayload(null);
     scrollToBottom(false);
   }, [group.id, scrollToBottom]);
 
@@ -475,6 +509,122 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
     setActiveLongPressMsg(null);
   };
 
+  const toggleSelectMessage = useCallback((msgId: string) => {
+    setSelectedMsgIds((prev) =>
+      prev.includes(msgId) ? prev.filter((id) => id !== msgId) : [...prev, msgId]
+    );
+  }, []);
+
+  const exitMultiSelectMode = useCallback(() => {
+    setIsMultiSelectMode(false);
+    setSelectedMsgIds([]);
+    setShowBatchDeleteConfirm(false);
+  }, []);
+
+  const getSelectedGroupMessages = useCallback((): GroupChatMessage[] => {
+    const idSet = new Set(selectedMsgIds);
+    return messagesRef.current.filter((m) => idSet.has(m.id) && m.senderId !== 'system');
+  }, [selectedMsgIds]);
+
+  const handleConfirmBatchDelete = async () => {
+    if (isBatchDeleting || selectedMsgIds.length === 0) return;
+    setIsBatchDeleting(true);
+    const idSet = new Set(selectedMsgIds);
+    const remaining = messagesRef.current.filter((m) => !idSet.has(m.id));
+    try {
+      const ok = await persistMessages(remaining);
+      if (ok) {
+        setShowBatchDeleteConfirm(false);
+        setIsMultiSelectMode(false);
+        setSelectedMsgIds([]);
+        setGroupToast(`已删除 ${idSet.size} 条消息`);
+        setTimeout(() => setGroupToast(null), 2200);
+      } else {
+        setShowBatchDeleteConfirm(false);
+      }
+    } finally {
+      setIsBatchDeleting(false);
+    }
+  };
+
+  const appendGroupMessagesToTarget = useCallback(
+    async (targetGroupId: string, newMsgs: GroupChatMessage[]) => {
+      const currentList =
+        allGroups && allGroups.length > 0
+          ? allGroups
+          : getCachedGroupChats() || (await hydrateGroupChatsFromDb());
+      const targetGroup = currentList.find((g) => g.id === targetGroupId);
+      if (!targetGroup) {
+        throw new Error('目标群聊不存在');
+      }
+      const mergedMessages = [...(targetGroup.messages || []), ...newMsgs];
+      const updatedTarget: GroupChat = {
+        ...targetGroup,
+        messages: mergedMessages,
+        updatedAt: Date.now(),
+      };
+      const updatedList = currentList.map((g) => (g.id === targetGroupId ? updatedTarget : g));
+      await saveGroupChatsToDb(updatedList);
+      const ok = await waitForGroupChatSave();
+      if (!ok) {
+        throw new Error('群聊记录写入本地存储失败');
+      }
+      if (targetGroupId === groupRef.current.id) {
+        messagesRef.current = mergedMessages;
+        setMessages(mergedMessages);
+        onUpdateGroup(updatedTarget);
+      }
+      try {
+        void syncGroupToServer(updatedTarget);
+      } catch {
+        // non-fatal
+      }
+    },
+    [allGroups, onUpdateGroup]
+  );
+
+  const handleConfirmForwardTargets = async (targets: ForwardTargetDescriptor[]) => {
+    if (!forwardTargetRequest || forwardTargetRequest.messages.length === 0) return;
+    const { mode, messages: srcMsgs } = forwardTargetRequest;
+    const results =
+      mode === 'merged'
+        ? await forwardBundleToTargets({
+            bundle: createForwardBundleFromGroup({
+              messages: srcMsgs,
+              group: groupRef.current,
+            }),
+            targets,
+            userProfile,
+            savePrivateMessage: saveChatMessage,
+            appendGroupMessages: appendGroupMessagesToTarget,
+          })
+        : await forwardMessagesIndividuallyToTargets({
+            sourceType: 'group',
+            sourceMessages: srcMsgs,
+            sourceGroup: groupRef.current,
+            targets,
+            userProfile,
+            savePrivateMessage: saveChatMessage,
+            appendGroupMessages: appendGroupMessagesToTarget,
+          });
+
+    const successCount = results.filter((r) => r.ok).length;
+    const failCount = results.length - successCount;
+    setForwardTargetRequest(null);
+
+    if (successCount > 0) {
+      exitMultiSelectMode();
+      setGroupToast(
+        failCount > 0
+          ? `已转发至 ${successCount} 个会话，${failCount} 个发送失败`
+          : `已转发至 ${successCount} 个会话`
+      );
+      setTimeout(() => setGroupToast(null), 2600);
+    } else {
+      setLocalErrorMsg(results[0]?.error || '转发失败，请检查本地存储后重试');
+    }
+  };
+
   // ==================== Group '+' Tool Handlers ====================
   const createUserToolMessage = (
     overrides: Partial<GroupChatMessage> & { text: string; messageType: GroupChatMessage['messageType'] }
@@ -685,52 +835,70 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
       className="wx-chat-viewport wechat-chat-font-isolated flex flex-col h-full bg-[#EDEDED] dark:bg-zinc-950 select-none relative overflow-hidden font-sans"
     >
       {/* Top Header */}
-      <div className="wx-header h-12 bg-[#EDEDED] dark:bg-zinc-900 border-b border-zinc-300/70 dark:border-zinc-800 px-3 flex items-center justify-between shrink-0 z-20">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <button
-            onClick={onBack}
-            className="wx-header-back p-1 -ml-1 text-zinc-800 dark:text-zinc-200 hover:text-emerald-600 transition flex items-center shrink-0"
-          >
-            <ChevronLeft className="w-6 h-6" />
-          </button>
-          <GroupAvatar
-            members={group.members}
-            avatarMode={group.avatarMode}
-            customAvatar={group.customAvatar}
-            legacyAvatar={group.avatar}
-            allCharacters={allCharacters}
-            userProfile={userProfile}
-            size={30}
-            alt={group.name}
-            className="border border-zinc-300/60 dark:border-zinc-700"
-          />
-          <div className="min-w-0 flex items-center gap-1">
-            <h2 className="wx-header-title text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate max-w-[160px]">
-              {group.name}
-            </h2>
-            <span className="wx-muted-text text-xs font-semibold text-zinc-500 shrink-0">
-              ({group.members.length})
+      {isMultiSelectMode ? (
+        <div className="wx-header h-12 bg-[#EDEDED] dark:bg-zinc-900 border-b border-zinc-300/70 dark:border-zinc-800 px-3 flex items-center justify-between shrink-0 z-20">
+          <div className="flex items-center gap-2 min-w-0">
+            <CheckSquare className="w-4 h-4 text-emerald-500 shrink-0" />
+            <span className="wx-header-title text-sm font-bold text-zinc-900 dark:text-zinc-100">
+              已选择 {selectedMsgIds.length} 条
             </span>
           </div>
+          <button
+            type="button"
+            onClick={exitMultiSelectMode}
+            className="wx-header-action px-3 py-1 rounded-xl text-xs font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition cursor-pointer"
+          >
+            取消
+          </button>
         </div>
+      ) : (
+        <div className="wx-header h-12 bg-[#EDEDED] dark:bg-zinc-900 border-b border-zinc-300/70 dark:border-zinc-800 px-3 flex items-center justify-between shrink-0 z-20">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <button
+              onClick={onBack}
+              className="wx-header-back p-1 -ml-1 text-zinc-800 dark:text-zinc-200 hover:text-emerald-600 transition flex items-center shrink-0"
+            >
+              <ChevronLeft className="w-6 h-6" />
+            </button>
+            <GroupAvatar
+              members={group.members}
+              avatarMode={group.avatarMode}
+              customAvatar={group.customAvatar}
+              legacyAvatar={group.avatar}
+              allCharacters={allCharacters}
+              userProfile={userProfile}
+              size={30}
+              alt={group.name}
+              className="border border-zinc-300/60 dark:border-zinc-700"
+            />
+            <div className="min-w-0 flex items-center gap-1">
+              <h2 className="wx-header-title text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate max-w-[160px]">
+                {group.name}
+              </h2>
+              <span className="wx-muted-text text-xs font-semibold text-zinc-500 shrink-0">
+                ({group.members.length})
+              </span>
+            </div>
+          </div>
 
-        <div className="flex items-center gap-1">
-          <button
-            onClick={handleSummonDiscussion}
-            title="召唤群内AI讨论"
-            className="wx-header-action wx-green-text p-1.5 rounded-full text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 transition flex items-center gap-1 text-[11px] font-bold"
-          >
-            <Sparkles className="w-4 h-4" />
-            <span className="hidden sm:inline">召唤讨论</span>
-          </button>
-          <button
-            onClick={() => setShowSettingsModal(true)}
-            className="wx-header-action p-1.5 rounded-full text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition"
-          >
-            <MoreHorizontal className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleSummonDiscussion}
+              title="召唤群内AI讨论"
+              className="wx-header-action wx-green-text p-1.5 rounded-full text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 transition flex items-center gap-1 text-[11px] font-bold"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span className="hidden sm:inline">召唤讨论</span>
+            </button>
+            <button
+              onClick={() => setShowSettingsModal(true)}
+              className="wx-header-action p-1.5 rounded-full text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition"
+            >
+              <MoreHorizontal className="w-5 h-5" />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Group Notice Bar */}
       {group.notice && (
@@ -768,9 +936,12 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
             );
           }
 
-          // Check for @mention highlighting
-          const hasMentionMe =
-            msg.mentionedMemberIds?.includes('user_main') || msg.mentionedMemberIds?.includes('@all');
+          const isSelected = isMultiSelectMode && selectedMsgIds.includes(msg.id);
+          const forwardBundlePayload: ForwardBundlePayload | undefined =
+            msg.forwardBundle ||
+            (msg.messageType === 'forward_bundle' && msg.payload && 'items' in (msg.payload as any)
+              ? (msg.payload as ForwardBundlePayload)
+              : undefined);
 
           return (
             <React.Fragment key={msg.id}>
@@ -782,177 +953,209 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
                 </div>
               )}
               <div
-                className={`flex items-start gap-2 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}
-              >
-              {/* Avatar */}
-              <div
                 onClick={() => {
-                  if (isMe) return;
-                  if (msg.senderType === 'ai' || msg.thinkingProcess) {
-                    setShowCoTModal(msg.thinkingProcess || '该条消息生成时暂未附带详细思考链数据。');
-                  } else {
-                    appendMentionText(`@${msg.senderName} `);
+                  if (isMultiSelectMode) {
+                    toggleSelectMessage(msg.id);
                   }
                 }}
-                className="relative cursor-pointer shrink-0"
-                title={msg.senderType === 'ai' || msg.thinkingProcess ? '点击查看 AI 思考链 (CoT)' : `点击快捷@${msg.senderName}`}
+                className={`flex items-start gap-2 rounded-2xl transition ${
+                  isMultiSelectMode ? 'cursor-pointer px-1 py-0.5' : ''
+                } ${isSelected ? 'bg-emerald-500/10' : ''}`}
               >
-                <img
-                  src={
-                    msg.senderAvatar ||
-                    group.members.find((m) => m.id === msg.senderId)?.avatar ||
-                    (isMe
-                      ? userProfile.avatar
-                      : allCharacters.find((c) => c.id === msg.senderId)?.avatar) ||
-                    DEFAULT_USER_AVATAR
-                  }
-                  alt={msg.senderName}
-                  className="wx-avatar w-9 h-9 rounded-lg object-cover shadow-sm border border-black/5 dark:border-white/10"
-                />
-                {(msg.senderType === 'ai' || msg.thinkingProcess) && (
-                  <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-amber-400 rounded-full border border-zinc-900 flex items-center justify-center shadow-xs">
-                    <Brain className="w-2.5 h-2.5 text-zinc-950" />
-                  </span>
+                {isMultiSelectMode && (
+                  <div className="pt-2.5 pr-0.5 shrink-0 flex items-center justify-center">
+                    <span
+                      className={`w-5 h-5 rounded-full border flex items-center justify-center transition ${
+                        isSelected
+                          ? 'bg-emerald-500 border-emerald-500 text-white'
+                          : 'border-zinc-400 dark:border-zinc-600 bg-transparent'
+                      }`}
+                    >
+                      {isSelected && <Check className="w-3 h-3" />}
+                    </span>
+                  </div>
                 )}
-              </div>
-
-              {/* Message Content & Name */}
-              <div className={`flex flex-col max-w-[76%] ${isMe ? 'items-end' : 'items-start'}`}>
-                {/* Sender Name & Role Tag */}
-                <div className="flex items-center gap-1 mb-0.5 px-0.5">
-                  <span className="wx-secondary-text text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
-                    {msg.senderName}
-                  </span>
-                  {msg.senderType === 'ai' ? (
-                    <span className="wx-group-tag-ai px-1 rounded bg-purple-500/20 text-purple-600 dark:text-purple-300 text-[8px] font-bold leading-tight">
-                      AI
-                    </span>
-                  ) : msg.senderType === 'npc' ? (
-                    <span className="wx-group-tag-ai px-1 rounded bg-blue-500/20 text-blue-600 dark:text-blue-300 text-[8px] font-bold leading-tight">
-                      NPC
-                    </span>
-                  ) : (
-                    <span className="wx-group-tag-human px-1 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 text-[8px] font-bold leading-tight">
-                      真人
-                    </span>
-                  )}
-                  {!isMe && lastTypingActorMsgIndex === index && (
-                    <span className="wx-muted-text text-[10px] text-zinc-400 dark:text-zinc-500 ml-0.5 animate-pulse">
-                      正在输入…
+                <div className={`flex-1 flex items-start gap-2 min-w-0 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                {/* Avatar */}
+                <div
+                  onClick={(e) => {
+                    if (isMultiSelectMode) return;
+                    e.stopPropagation();
+                    if (isMe) return;
+                    if (msg.senderType === 'ai' || msg.thinkingProcess) {
+                      setShowCoTModal(msg.thinkingProcess || '该条消息生成时暂未附带详细思考链数据。');
+                    } else {
+                      appendMentionText(`@${msg.senderName} `);
+                    }
+                  }}
+                  className="relative cursor-pointer shrink-0"
+                  title={msg.senderType === 'ai' || msg.thinkingProcess ? '点击查看 AI 思考链 (CoT)' : `点击快捷@${msg.senderName}`}
+                >
+                  <img
+                    src={
+                      msg.senderAvatar ||
+                      group.members.find((m) => m.id === msg.senderId)?.avatar ||
+                      (isMe
+                        ? userProfile.avatar
+                        : allCharacters.find((c) => c.id === msg.senderId)?.avatar) ||
+                      DEFAULT_USER_AVATAR
+                    }
+                    alt={msg.senderName}
+                    className="wx-avatar w-9 h-9 rounded-lg object-cover shadow-sm border border-black/5 dark:border-white/10"
+                  />
+                  {(msg.senderType === 'ai' || msg.thinkingProcess) && (
+                    <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-amber-400 rounded-full border border-zinc-900 flex items-center justify-center shadow-xs">
+                      <Brain className="w-2.5 h-2.5 text-zinc-950" />
                     </span>
                   )}
                 </div>
 
-                {/* Quoted Message Preview */}
-                {msg.quoteMessage && (
-                  <div
-                    className={`wx-quote-preview mb-1 p-1.5 rounded-lg text-[10px] border line-clamp-2 max-w-full ${
-                      isMe
-                        ? 'bg-emerald-600/10 border-emerald-500/20 text-emerald-800 dark:text-emerald-300'
-                        : 'bg-zinc-200/80 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300'
-                    }`}
-                  >
-                    <span className="font-bold">{msg.quoteMessage.senderName}: </span>
-                    <span>{msg.quoteMessage.text}</span>
-                  </div>
-                )}
-
-                {/* Main Bubble or Structured Card */}
-                {msg.messageType === 'relay' && msg.payload ? (
-                  <div
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setActiveLongPressMsg(msg);
-                    }}
-                  >
-                    <GroupRelayCard
-                      payload={msg.payload as GroupRelayPayload}
-                      currentUserId="user_main"
-                      canClose={isMe}
-                      onJoinRelay={(content) => handleJoinRelay(msg.id, content)}
-                      onCloseRelay={() => handleCloseRelay(msg.id)}
-                    />
-                  </div>
-                ) : msg.messageType === 'poll' && msg.payload ? (
-                  <div
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setActiveLongPressMsg(msg);
-                    }}
-                  >
-                    <GroupPollCard
-                      payload={msg.payload as GroupPollPayload}
-                      currentUserId="user_main"
-                      canManage={isMe}
-                      hasAiMembers={group.members.some((m) => m.memberType !== 'human' && !m.isMuted)}
-                      isAiVoting={Boolean(taskStatusInfo && taskStatusInfo.activePollId === msg.id)}
-                      votingActorName={
-                        taskStatusInfo?.activeActionType === 'voting' &&
-                        taskStatusInfo.activePollId === msg.id
-                          ? taskStatusInfo.activeActorName || null
-                          : null
-                      }
-                      members={group.members}
-                      allCharacters={allCharacters}
-                      userAvatar={userProfile.avatar || DEFAULT_USER_AVATAR}
-                      onCastVote={(optionIds) => handleCastPollVote(msg.id, optionIds)}
-                      onClosePoll={() => handleClosePoll(msg.id)}
-                      onRequestAiVotes={() => void handleRequestAiPollVotes(msg.id)}
-                    />
-                  </div>
-                ) : msg.messageType === 'random_draw' && msg.payload ? (
-                  <div
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setActiveLongPressMsg(msg);
-                    }}
-                  >
-                    <GroupRandomDrawCard payload={msg.payload as GroupRandomDrawPayload} />
-                  </div>
-                ) : msg.messageType === 'image' && msg.imageUrl ? (
-                  <div
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setActiveLongPressMsg(msg);
-                    }}
-                    onClick={() => setZoomedImageUrl(msg.imageUrl || null)}
-                    className="rounded-2xl overflow-hidden border border-black/10 dark:border-white/10 shadow-sm cursor-pointer max-w-[210px] bg-white dark:bg-zinc-900"
-                  >
-                    <img
-                      src={msg.imageUrl}
-                      alt="群聊图片"
-                      className="w-full max-h-60 object-cover block"
-                    />
-                  </div>
-                ) : (
-                  <div
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setActiveLongPressMsg(msg);
-                    }}
-                    className={`wx-message-bubble relative px-3.5 py-2 rounded-2xl text-[13px] leading-relaxed break-words shadow-sm ${
-                      isMe
-                        ? 'wx-message-bubble-user bg-[#95EC69] dark:bg-emerald-600 text-black dark:text-white rounded-tr-none'
-                        : hasMentionMe
-                        ? 'wx-message-bubble-ai bg-amber-50 dark:bg-amber-950/40 text-zinc-900 dark:text-zinc-100 border border-amber-400 rounded-tl-none ring-1 ring-amber-400/40'
-                        : 'wx-message-bubble-ai bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-black/5 dark:border-white/5 rounded-tl-none'
-                    }`}
-                  >
-                    {/* Mention Badge if targeting user */}
-                    {hasMentionMe && !isMe && (
-                      <div className="text-[9px] font-bold text-amber-600 dark:text-amber-400 mb-0.5 flex items-center gap-0.5">
-                        <AtSign className="w-2.5 h-2.5" />
-                        <span>提到了你</span>
-                      </div>
+                {/* Message Content & Name */}
+                <div className={`flex flex-col max-w-[76%] ${isMe ? 'items-end' : 'items-start'} ${isMultiSelectMode ? 'pointer-events-none' : ''}`}>
+                  {/* Sender Name & Role Tag */}
+                  <div className="flex items-center gap-1 mb-0.5 px-0.5">
+                    <span className="wx-secondary-text text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
+                      {msg.senderName}
+                    </span>
+                    {msg.senderType === 'ai' ? (
+                      <span className="wx-group-tag-ai px-1 rounded bg-purple-500/20 text-purple-600 dark:text-purple-300 text-[8px] font-bold leading-tight">
+                        AI
+                      </span>
+                    ) : msg.senderType === 'npc' ? (
+                      <span className="wx-group-tag-ai px-1 rounded bg-blue-500/20 text-blue-600 dark:text-blue-300 text-[8px] font-bold leading-tight">
+                        NPC
+                      </span>
+                    ) : (
+                      <span className="wx-group-tag-human px-1 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 text-[8px] font-bold leading-tight">
+                        真人
+                      </span>
                     )}
-
-                    <p className="whitespace-pre-wrap">{msg.text}</p>
+                    {!isMe && lastTypingActorMsgIndex === index && (
+                      <span className="wx-muted-text text-[10px] text-zinc-400 dark:text-zinc-500 ml-0.5 animate-pulse">
+                        正在输入…
+                      </span>
+                    )}
                   </div>
-                )}
+
+                  {/* Quoted Message Preview */}
+                  {msg.quoteMessage && (
+                    <div
+                      className={`wx-quote-preview mb-1 p-1.5 rounded-lg text-[10px] border line-clamp-2 max-w-full ${
+                        isMe
+                          ? 'bg-emerald-600/10 border-emerald-500/20 text-emerald-800 dark:text-emerald-300'
+                          : 'bg-zinc-200/80 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300'
+                      }`}
+                    >
+                      <span className="font-bold">{msg.quoteMessage.senderName}: </span>
+                      <span>{msg.quoteMessage.text}</span>
+                    </div>
+                  )}
+
+                  {/* Main Bubble or Structured Card */}
+                  {msg.messageType === 'forward_bundle' && forwardBundlePayload ? (
+                    <div
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (!isMultiSelectMode) setActiveLongPressMsg(msg);
+                      }}
+                    >
+                      <ForwardBundleCard
+                        bundle={forwardBundlePayload}
+                        isMe={isMe}
+                        disabled={isMultiSelectMode}
+                        onOpen={(bundle) => {
+                          if (!isMultiSelectMode) setBundleDetailPayload(bundle);
+                        }}
+                      />
+                    </div>
+                  ) : msg.messageType === 'relay' && msg.payload ? (
+                    <div
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (!isMultiSelectMode) setActiveLongPressMsg(msg);
+                      }}
+                    >
+                      <GroupRelayCard
+                        payload={msg.payload as GroupRelayPayload}
+                        currentUserId="user_main"
+                        canClose={isMe}
+                        onJoinRelay={(content) => handleJoinRelay(msg.id, content)}
+                        onCloseRelay={() => handleCloseRelay(msg.id)}
+                      />
+                    </div>
+                  ) : msg.messageType === 'poll' && msg.payload ? (
+                    <div
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (!isMultiSelectMode) setActiveLongPressMsg(msg);
+                      }}
+                    >
+                      <GroupPollCard
+                        payload={msg.payload as GroupPollPayload}
+                        currentUserId="user_main"
+                        canManage={isMe}
+                        hasAiMembers={group.members.some((m) => m.memberType !== 'human' && !m.isMuted)}
+                        isAiVoting={Boolean(taskStatusInfo && taskStatusInfo.activePollId === msg.id)}
+                        votingActorName={
+                          taskStatusInfo?.activeActionType === 'voting' &&
+                          taskStatusInfo.activePollId === msg.id
+                            ? taskStatusInfo.activeActorName || null
+                            : null
+                        }
+                        members={group.members}
+                        allCharacters={allCharacters}
+                        userAvatar={userProfile.avatar || DEFAULT_USER_AVATAR}
+                        onCastVote={(optionIds) => handleCastPollVote(msg.id, optionIds)}
+                        onClosePoll={() => handleClosePoll(msg.id)}
+                        onRequestAiVotes={() => void handleRequestAiPollVotes(msg.id)}
+                      />
+                    </div>
+                  ) : msg.messageType === 'random_draw' && msg.payload ? (
+                    <div
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (!isMultiSelectMode) setActiveLongPressMsg(msg);
+                      }}
+                    >
+                      <GroupRandomDrawCard payload={msg.payload as GroupRandomDrawPayload} />
+                    </div>
+                  ) : msg.messageType === 'image' && msg.imageUrl ? (
+                    <div
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (!isMultiSelectMode) setActiveLongPressMsg(msg);
+                      }}
+                      onClick={() => {
+                        if (!isMultiSelectMode) setZoomedImageUrl(msg.imageUrl || null);
+                      }}
+                      className="rounded-2xl overflow-hidden border border-black/10 dark:border-white/10 shadow-sm cursor-pointer max-w-[210px] bg-white dark:bg-zinc-900"
+                    >
+                      <img
+                        src={msg.imageUrl}
+                        alt="群聊图片"
+                        className="w-full max-h-60 object-cover block"
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (!isMultiSelectMode) setActiveLongPressMsg(msg);
+                      }}
+                      className={`wx-message-bubble relative px-3.5 py-2 rounded-2xl text-[13px] leading-relaxed break-words shadow-sm ${
+                        isMe
+                          ? 'wx-message-bubble-user bg-[#95EC69] dark:bg-emerald-600 text-black dark:text-white rounded-tr-none'
+                          : 'wx-message-bubble-ai bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-black/5 dark:border-white/5 rounded-tl-none'
+                      }`}
+                    >
+                      <p className="whitespace-pre-wrap">{msg.text}</p>
+                    </div>
+                  )}
+                </div>
+                </div>
               </div>
-            </div>
-          </React.Fragment>
-        );
+            </React.Fragment>
+          );
         })}
 
         {/* Ephemeral Status Toast */}
@@ -1057,68 +1260,110 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
         </div>
       )}
 
-      {/* Input Bar */}
-      <div className="wx-composer p-2.5 bg-[#F7F7F7] dark:bg-zinc-900 border-t border-zinc-300/70 dark:border-zinc-800 flex items-center gap-1.5 shrink-0">
-        <PressableButton
-          onClick={() => {
-            setShowPlusMenu(false);
-            setShowMentionPicker(!showMentionPicker);
-          }}
-          title="@群成员"
-          className="wx-header-action w-8 h-8 rounded-full flex items-center justify-center text-zinc-500 hover:text-emerald-600 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition cursor-pointer shrink-0"
-        >
-          <AtSign className="w-5 h-5" />
-        </PressableButton>
+      {/* Bottom Action Bar (Multi-select) OR Standard Input Bar */}
+      {isMultiSelectMode ? (
+        <div className="wx-composer px-3 py-2.5 bg-[#F7F7F7] dark:bg-zinc-900 border-t border-zinc-300/70 dark:border-zinc-800 flex items-center justify-around gap-2 shrink-0 z-20">
+          <button
+            type="button"
+            disabled={selectedMsgIds.length === 0}
+            onClick={() => {
+              const selected = getSelectedGroupMessages();
+              if (selected.length > 0) {
+                setForwardTargetRequest({ mode: 'merged', messages: selected });
+              }
+            }}
+            className="flex-1 py-2 px-2 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 disabled:opacity-40 text-xs font-semibold text-zinc-800 dark:text-zinc-100 flex items-center justify-center gap-1.5 transition cursor-pointer"
+          >
+            <Layers className="w-3.5 h-3.5 text-emerald-500" />
+            <span>合并转发</span>
+          </button>
+          <button
+            type="button"
+            disabled={selectedMsgIds.length === 0}
+            onClick={() => {
+              const selected = getSelectedGroupMessages();
+              if (selected.length > 0) {
+                setForwardTargetRequest({ mode: 'individual', messages: selected });
+              }
+            }}
+            className="flex-1 py-2 px-2 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 disabled:opacity-40 text-xs font-semibold text-zinc-800 dark:text-zinc-100 flex items-center justify-center gap-1.5 transition cursor-pointer"
+          >
+            <Forward className="w-3.5 h-3.5 text-blue-500" />
+            <span>逐条转发</span>
+          </button>
+          <button
+            type="button"
+            disabled={selectedMsgIds.length === 0}
+            onClick={() => setShowBatchDeleteConfirm(true)}
+            className="flex-1 py-2 px-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-500/30 disabled:opacity-40 text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center justify-center gap-1.5 transition cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>删除</span>
+          </button>
+        </div>
+      ) : (
+        <div className="wx-composer p-2.5 bg-[#F7F7F7] dark:bg-zinc-900 border-t border-zinc-300/70 dark:border-zinc-800 flex items-center gap-1.5 shrink-0">
+          <PressableButton
+            onClick={() => {
+              setShowPlusMenu(false);
+              setShowMentionPicker(!showMentionPicker);
+            }}
+            title="@群成员"
+            className="wx-header-action w-8 h-8 rounded-full flex items-center justify-center text-zinc-500 hover:text-emerald-600 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition cursor-pointer shrink-0"
+          >
+            <AtSign className="w-5 h-5" />
+          </PressableButton>
 
-        <input
-          key={group.id}
-          ref={composerEditor.mergedRef}
-          type="text"
-          defaultValue=""
-          onFocus={() => setShowPlusMenu(false)}
-          {...composerEditor.eventProps}
-          onKeyDown={(e) => {
-            composerEditor.eventProps.onKeyDown(e);
-            const isComposing = composerEditor.isCompositionActive(e.nativeEvent);
+          <input
+            key={group.id}
+            ref={composerEditor.mergedRef}
+            type="text"
+            defaultValue=""
+            onFocus={() => setShowPlusMenu(false)}
+            {...composerEditor.eventProps}
+            onKeyDown={(e) => {
+              composerEditor.eventProps.onKeyDown(e);
+              const isComposing = composerEditor.isCompositionActive(e.nativeEvent);
 
-            if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
-              e.preventDefault();
-              void handleSendUserOnlyMessage();
-            }
-          }}
-          placeholder={taskStatusInfo ? '对方正在输入……' : '发送群消息，输入 @ 提及成员...'}
-          className="wx-composer-input flex-1 min-w-0 px-3.5 py-2 text-xs rounded-xl bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-300/70 dark:border-zinc-700 focus:outline-none focus:border-emerald-500"
-        />
+              if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
+                e.preventDefault();
+                void handleSendUserOnlyMessage();
+              }
+            }}
+            placeholder={taskStatusInfo ? '对方正在输入……' : '发送群消息，输入 @ 提及成员...'}
+            className="wx-composer-input flex-1 min-w-0 px-3.5 py-2 text-xs rounded-xl bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-300/70 dark:border-zinc-700 focus:outline-none focus:border-emerald-500"
+          />
 
-        <PressableButton
-          onClick={() => {
-            setShowMentionPicker(false);
-            setShowPlusMenu((v) => !v);
-          }}
-          title="更多群聊工具（接龙、投票、抽人、图片）"
-          className={`wx-header-action w-8 h-8 rounded-full flex items-center justify-center transition cursor-pointer shrink-0 ${
-            showPlusMenu
-              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-              : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-800'
-          }`}
-        >
-          <Plus className="w-5 h-5" />
-        </PressableButton>
+          <PressableButton
+            onClick={() => {
+              setShowMentionPicker(false);
+              setShowPlusMenu((v) => !v);
+            }}
+            title="更多群聊工具（接龙、投票、抽人、图片）"
+            className={`wx-header-action w-8 h-8 rounded-full flex items-center justify-center transition cursor-pointer shrink-0 ${
+              showPlusMenu
+                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-800'
+            }`}
+          >
+            <Plus className="w-5 h-5" />
+          </PressableButton>
 
-        <PressableButton
-          type="button"
-          onClick={() => void handleSendButtonClick()}
-          withRipple={false}
-          title="单击发送群消息 | 快速双击触发 AI 回复"
-          className={`wx-send-button ${
-            hasDraftText
-              ? 'wx-send-button--active bg-[#07C160] hover:bg-[#06ad56] text-white'
-              : 'bg-zinc-400/80 dark:bg-zinc-700 hover:bg-zinc-500/80 text-white/90'
-          } px-3 py-2 rounded-xl font-bold text-xs shadow-sm transition flex items-center justify-center shrink-0 cursor-pointer`}
-        >
-          <Send className="w-4 h-4" />
-        </PressableButton>
-      </div>
+          <PressableButton
+            type="button"
+            onClick={() => void handleSendButtonClick()}
+            withRipple={false}
+            title="单击发送群消息 | 快速双击触发 AI 回复"
+            className={`wx-send-button ${
+              hasDraftText
+                ? 'wx-send-button--active bg-[#07C160] hover:bg-[#06ad56] text-white'
+                : 'bg-zinc-400/80 dark:bg-zinc-700 hover:bg-zinc-500/80 text-white/90'
+            } px-3 py-2 rounded-xl font-bold text-xs shadow-sm transition flex items-center justify-center shrink-0 cursor-pointer`}
+          >
+            <Send className="w-4 h-4" />
+          </PressableButton>
+        </div>
+      )}
 
       {/* Group "+" Tools Sheet */}
       {showPlusMenu && (
@@ -1178,6 +1423,20 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
             >
               <Copy className="w-3.5 h-3.5 text-blue-600" />
               <span>复制文本</span>
+            </button>
+            <button
+              onClick={() => {
+                const targetId = activeLongPressMsg.id;
+                setActiveLongPressMsg(null);
+                setShowPlusMenu(false);
+                setShowMentionPicker(false);
+                setIsMultiSelectMode(true);
+                setSelectedMsgIds([targetId]);
+              }}
+              className="wx-dropdown-item w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
+            >
+              <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
+              <span>多选</span>
             </button>
             <button
               onClick={() => handleDeleteMessage(activeLongPressMsg.id)}
@@ -1250,6 +1509,64 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
           />
         </div>
       )}
+
+      {/* Batch Delete Confirmation Modal */}
+      {showBatchDeleteConfirm && (
+        <div
+          className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => {
+            if (!isBatchDeleting) setShowBatchDeleteConfirm(false);
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="wx-modal-card w-full max-w-xs bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-3xl p-4 shadow-2xl space-y-3"
+          >
+            <h3 className="wx-primary-text text-sm font-bold text-zinc-900 dark:text-zinc-100">
+              确认删除已选消息
+            </h3>
+            <p className="wx-secondary-text text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+              确定要从当前群聊记录中删除所选的 {selectedMsgIds.length} 条消息吗？删除后仅移除原消息，已转发的聊天记录包不受影响，此操作不可撤销。
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={isBatchDeleting}
+                onClick={() => setShowBatchDeleteConfirm(false)}
+                className="wx-btn-secondary px-3.5 py-1.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-200 cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={isBatchDeleting}
+                onClick={() => void handleConfirmBatchDelete()}
+                className="wx-btn-danger px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer"
+              >
+                {isBatchDeleting ? '删除中...' : '确认删除'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Multi-Target Forward Modal */}
+      <ForwardTargetModal
+        isOpen={Boolean(forwardTargetRequest)}
+        mode={forwardTargetRequest?.mode || 'merged'}
+        selectedMessageCount={forwardTargetRequest?.messages.length || 0}
+        characters={allCharacters}
+        groupChats={allGroups && allGroups.length > 0 ? allGroups : getCachedGroupChats() || [group]}
+        userProfile={userProfile}
+        onClose={() => setForwardTargetRequest(null)}
+        onConfirm={handleConfirmForwardTargets}
+      />
+
+      {/* Forward Bundle Detail Modal */}
+      <ForwardBundleDetailModal
+        bundle={bundleDetailPayload}
+        onClose={() => setBundleDetailPayload(null)}
+      />
 
       {/* Settings Modal */}
       {showSettingsModal && (

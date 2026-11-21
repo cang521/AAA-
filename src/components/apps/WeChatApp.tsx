@@ -65,6 +65,9 @@ import {
   Globe2,
   Loader2,
   ScanSearch,
+  CheckSquare,
+  Forward,
+  Layers,
 } from 'lucide-react';
 import {
   recognizeMessageImage,
@@ -95,6 +98,7 @@ import {
   GroupChatMessage,
   GroupJoinRequest,
   AiRomanticState,
+  ForwardBundlePayload,
 } from '../../types';
 import { ImagePickerModal } from '../ImagePickerModal';
 import { CustomAiCreatorModal } from './CustomAiCreatorModal';
@@ -105,8 +109,14 @@ import { calculateCycleStats } from '../../lib/menstrual';
 import { weatherService } from '../../lib/weatherService';
 import { deviceService } from '../../lib/deviceService';
 import { systemNativeService } from '../../lib/systemNativeService';
-import { loadCharacters, loadGroupChats, loadGroupChatsAsync, saveGroupChats, DEFAULT_AI_AVATAR, DEFAULT_USER_AVATAR } from '../../lib/storage';
-import { hydrateGroupChatsFromDb, subscribeGroupChatDb } from '../../lib/groupChatDb';
+import { loadCharacters, loadGroupChats, loadGroupChatsAsync, saveGroupChats, waitForGroupChatSave, DEFAULT_AI_AVATAR, DEFAULT_USER_AVATAR } from '../../lib/storage';
+import {
+  createCharacterAtomic,
+  updateCharacterById,
+  updateCharacterByIdIfExists,
+  deleteCharacterById,
+} from '../../lib/characterPersistence';
+import { hydrateGroupChatsFromDb, saveGroupChatsToDb, subscribeGroupChatDb } from '../../lib/groupChatDb';
 import { ensureCharacterNotificationAvatar } from '../../lib/notificationAvatar';
 import { CreateGroupModal } from './group/CreateGroupModal';
 import { GroupChatView } from './group/GroupChatView';
@@ -116,6 +126,7 @@ import {
   getMessagesPaged,
   saveChatMessage,
   deleteChatMessage,
+  deleteChatMessagesBatch,
   updateChatMessage,
   searchCharacterMessages,
   recallCharacterMemories,
@@ -124,6 +135,15 @@ import {
   clearCharacterMessages,
   getRecentChatMessages,
 } from '../../lib/chatDb';
+import { registerActivePrivateChatIdProvider } from '../../lib/crossChannel/crossChannelExecutor';
+import { ForwardBundleDetailModal } from '../wechat/ForwardBundleDetailModal';
+import { ForwardTargetModal } from '../wechat/ForwardTargetModal';
+import {
+  createForwardBundleFromPrivate,
+  forwardBundleToTargets,
+  forwardMessagesIndividuallyToTargets,
+  ForwardTargetDescriptor,
+} from '../../lib/forward/forwardBundleService';
 import {
   splitMessageIntoSentenceBubbles,
   calculateTypingDelay,
@@ -359,6 +379,16 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   // Modals & Drawers
   const [showCoTModal, setShowCoTModal] = useState<string | null>(null);
   const [msgLongPressMenu, setMsgLongPressMenu] = useState<ChatMessage | null>(null);
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
+  const [selectedMsgIds, setSelectedMsgIds] = useState<string[]>([]);
+  const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
+  const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+  const [batchActionError, setBatchActionError] = useState<string | null>(null);
+  const [forwardTargetRequest, setForwardTargetRequest] = useState<{
+    mode: 'merged' | 'individual';
+    messages: ChatMessage[];
+  } | null>(null);
+  const [bundleDetailPayload, setBundleDetailPayload] = useState<ForwardBundlePayload | null>(null);
   const [showAiSettingsModal, setShowAiSettingsModal] = useState(false);
   const [showChatOptionsMenu, setShowChatOptionsMenu] = useState(false);
   const [showNewAiModal, setShowNewAiModal] = useState(false);
@@ -395,18 +425,22 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     setShowCleanupModal(true);
   };
 
-  const handleConfirmCleanupMemories = () => {
+  const handleConfirmCleanupMemories = async () => {
     if (!activeCharacter) return;
-    onUpdateCharacters(
-      characters.map((c) =>
-        c.id === activeCharacter.id ? { ...c, memories: cleanupValidList } : c
-      )
-    );
-    setCleanupFeedback(`已成功清理 ${cleanupPseudoList.length} 条历史伪记忆！`);
-    setTimeout(() => {
-      setShowCleanupModal(false);
-      setCleanupFeedback(null);
-    }, 1200);
+    try {
+      const { characters: verified } = await updateCharacterById(activeCharacter.id, (c) => ({
+        ...c,
+        memories: cleanupValidList,
+      }));
+      onUpdateCharacters(verified);
+      setCleanupFeedback(`已成功清理 ${cleanupPseudoList.length} 条历史伪记忆！`);
+      setTimeout(() => {
+        setShowCleanupModal(false);
+        setCleanupFeedback(null);
+      }, 1200);
+    } catch (e: any) {
+      setCleanupFeedback(e?.message || '清理记忆保存失败');
+    }
   };
 
   // Real user invite code adding state (Requirement 12)
@@ -437,6 +471,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   // Character Deletion with Memory Space Option Modal (Requirement 8)
   const [characterToDelete, setCharacterToDelete] = useState<AiCharacter | null>(null);
   const [deleteMemoryVaultWithChar, setDeleteMemoryVaultWithChar] = useState(true);
+  const [isDeletingCharacter, setIsDeletingCharacter] = useState(false);
+  const [deleteCharacterError, setDeleteCharacterError] = useState<string | null>(null);
 
   // Moments post creation & comments
   const [newPostContent, setNewPostContent] = useState('');
@@ -458,6 +494,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const [editedAvatar, setEditedAvatar] = useState('');
   const [editedMenstrualCareEnabled, setEditedMenstrualCareEnabled] = useState(true);
   const [editedRomanticState, setEditedRomanticState] = useState<AiRomanticState | null>(null);
+  const [isSavingAiSettings, setIsSavingAiSettings] = useState(false);
+  const [aiSettingsError, setAiSettingsError] = useState<string | null>(null);
   const [addFriendSearchQuery, setAddFriendSearchQuery] = useState('');
 
   // Per-AI chat message font size preference & modal draft state
@@ -569,13 +607,57 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const [lightboxShowDetails, setLightboxShowDetails] = useState(false);
 
   const activeChatIdRef = useRef<string | null>(activeChatId);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  const activeGroupIdForProviderRef = useRef(activeGroupChatId);
+  activeGroupIdForProviderRef.current = activeGroupChatId;
+
+  useEffect(() => {
+    return registerActivePrivateChatIdProvider(() =>
+      activeTabRef.current === 'chats' && !activeGroupIdForProviderRef.current
+        ? activeChatIdRef.current
+        : null
+    );
+  }, []);
+
+  useEffect(() => {
+    setUnreadAiCounts((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const c of characters) {
+        if (activeChatIdRef.current === c.id && activeTabRef.current === 'chats' && !activeGroupIdForProviderRef.current) {
+          if (next[c.id]) {
+            next[c.id] = 0;
+            changed = true;
+          }
+          continue;
+        }
+        const persisted = c.unreadAiCount || 0;
+        if (persisted > (next[c.id] || 0)) {
+          next[c.id] = persisted;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [characters]);
+
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
+    setIsMultiSelectMode(false);
+    setSelectedMsgIds([]);
+    setShowBatchDeleteConfirm(false);
+    setBatchActionError(null);
+    setForwardTargetRequest(null);
+    setBundleDetailPayload(null);
     if (activeChatId) {
       setUnreadAiCounts((prev) => ({
         ...prev,
         [activeChatId]: 0,
       }));
+      void updateCharacterByIdIfExists(activeChatId, (c) =>
+        c.unreadAiCount ? { ...c, unreadAiCount: 0 } : c
+      ).catch(() => {});
       void recoverPendingImageTasks(activeChatId);
     }
   }, [activeChatId]);
@@ -692,6 +774,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       );
       setDraftFontResetPending(!hasSavedPref);
       setDraftPresetHint(null);
+      setAiSettingsError(null);
     }
   }, [activeCharacter?.id, showAiSettingsModal]);
 
@@ -725,6 +808,9 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       ...prev,
       [charId]: 0,
     }));
+    void updateCharacterByIdIfExists(charId, (c) =>
+      c.unreadAiCount ? { ...c, unreadAiCount: 0 } : c
+    ).catch(() => {});
   };
 
   // Navigate directly to target AI chat when launched from an Android notification tap
@@ -744,6 +830,18 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     }
     onConsumePendingChatId?.();
   }, [pendingChatId, characters, onConsumePendingChatId]);
+
+  // If the active chat character was deleted from persistence, leave chat immediately
+  useEffect(() => {
+    if (
+      activeChatId &&
+      !characters.some((c) => c.id === activeChatId) &&
+      !loadCharacters().some((c) => c.id === activeChatId)
+    ) {
+      setActiveChatId(null);
+      setShowAiSettingsModal(false);
+    }
+  }, [activeChatId, characters]);
 
   // Load initial page of messages when opening a chat
   useEffect(() => {
@@ -1182,31 +1280,49 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   };
 
   // Add/Delete Memory in Collapsible Folder
-  const handleAddMemory = () => {
+  const handleAddMemory = async () => {
     if (!newMemoryInput.trim() || !activeCharacter) return;
-    const updated = [...(activeCharacter.memories || []), newMemoryInput.trim()];
-    onUpdateCharacters(
-      characters.map((c) => (c.id === activeCharacter.id ? { ...c, memories: updated } : c))
-    );
-    setNewMemoryInput('');
+    const item = newMemoryInput.trim();
+    try {
+      const { characters: verified } = await updateCharacterById(activeCharacter.id, (c) => ({
+        ...c,
+        memories: [...(c.memories || []), item],
+      }));
+      onUpdateCharacters(verified);
+      setNewMemoryInput('');
+    } catch (e: any) {
+      setMultiBubbleToast(e?.message || '记忆保存失败');
+      setTimeout(() => setMultiBubbleToast(null), 2600);
+    }
   };
 
-  const handleDeleteMemory = (index: number) => {
+  const handleDeleteMemory = async (index: number) => {
     if (!activeCharacter) return;
-    const updated = (activeCharacter.memories || []).filter((_, i) => i !== index);
-    onUpdateCharacters(
-      characters.map((c) => (c.id === activeCharacter.id ? { ...c, memories: updated } : c))
-    );
+    try {
+      const { characters: verified } = await updateCharacterById(activeCharacter.id, (c) => ({
+        ...c,
+        memories: (c.memories || []).filter((_, i) => i !== index),
+      }));
+      onUpdateCharacters(verified);
+    } catch (e: any) {
+      setMultiBubbleToast(e?.message || '删除记忆失败');
+      setTimeout(() => setMultiBubbleToast(null), 2600);
+    }
   };
 
   // Save Custom Chat Background (Requirement 4)
-  const handleSaveChatBackground = (bgUrl: string | undefined) => {
+  const handleSaveChatBackground = async (bgUrl: string | undefined) => {
     if (!activeCharacter) return;
-    onUpdateCharacters(
-      characters.map((c) =>
-        c.id === activeCharacter.id ? { ...c, customBackground: bgUrl } : c
-      )
-    );
+    try {
+      const { characters: verified } = await updateCharacterById(activeCharacter.id, (c) => ({
+        ...c,
+        customBackground: bgUrl,
+      }));
+      onUpdateCharacters(verified);
+    } catch (e: any) {
+      setMultiBubbleToast(e?.message || '聊天背景保存失败');
+      setTimeout(() => setMultiBubbleToast(null), 2600);
+    }
   };
 
   // Save "Me" profile self persona (Requirement 13)
@@ -1266,9 +1382,131 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const handleDeleteMessage = async (msgId: string) => {
     if (!activeCharacter) return;
     await deleteChatMessage(msgId, activeCharacter.id);
-    setDisplayedMessages((prev) => prev.filter((m) => m.id !== msgId));
+    setDisplayedMessages((prev) => {
+      const updated = prev.filter((m) => m.id !== msgId);
+      latestMessagesRef.current = updated;
+      return updated;
+    });
     setTotalHistoryCount((c) => Math.max(0, c - 1));
     setMsgLongPressMenu(null);
+  };
+
+  const toggleSelectMessage = useCallback((msgId: string) => {
+    setSelectedMsgIds((prev) =>
+      prev.includes(msgId) ? prev.filter((id) => id !== msgId) : [...prev, msgId]
+    );
+  }, []);
+
+  const exitMultiSelectMode = useCallback(() => {
+    setIsMultiSelectMode(false);
+    setSelectedMsgIds([]);
+    setShowBatchDeleteConfirm(false);
+    setBatchActionError(null);
+  }, []);
+
+  const getSelectedPrivateMessages = useCallback((): ChatMessage[] => {
+    const idSet = new Set(selectedMsgIds);
+    return (latestMessagesRef.current.length > 0 ? latestMessagesRef.current : displayedMessages).filter(
+      (m) => idSet.has(m.id) && !m.isSystemEvent && m.type !== 'offline_session_event'
+    );
+  }, [displayedMessages, selectedMsgIds]);
+
+  const handleConfirmBatchDelete = async () => {
+    if (!activeCharacter || isBatchDeleting || selectedMsgIds.length === 0) return;
+    setIsBatchDeleting(true);
+    setBatchActionError(null);
+    const idsToDelete = [...selectedMsgIds];
+    const idSet = new Set(idsToDelete);
+    try {
+      const deletedCount = await deleteChatMessagesBatch(idsToDelete, activeCharacter.id);
+      setDisplayedMessages((prev) => {
+        const next = prev.filter((m) => !idSet.has(m.id));
+        latestMessagesRef.current = next;
+        return next;
+      });
+      setTotalHistoryCount((c) => Math.max(0, c - deletedCount));
+      setShowBatchDeleteConfirm(false);
+      setIsMultiSelectMode(false);
+      setSelectedMsgIds([]);
+      setMultiBubbleToast(`已删除 ${deletedCount} 条消息`);
+      setTimeout(() => setMultiBubbleToast(null), 2200);
+    } catch (err: any) {
+      console.error('Batch delete failed:', err);
+      setShowBatchDeleteConfirm(false);
+      setBatchActionError(err?.message || '批量删除失败，本地数据未变动，请重试');
+    } finally {
+      setIsBatchDeleting(false);
+    }
+  };
+
+  const appendGroupMessagesFromPrivate = useCallback(
+    async (targetGroupId: string, newMsgs: GroupChatMessage[]) => {
+      const currentList = groupChatsRef.current;
+      const targetGroup = currentList.find((g) => g.id === targetGroupId);
+      if (!targetGroup) {
+        throw new Error('目标群聊不存在');
+      }
+      const updatedTarget: GroupChat = {
+        ...targetGroup,
+        messages: [...(targetGroup.messages || []), ...newMsgs],
+        updatedAt: Date.now(),
+      };
+      const nextList = currentList.map((g) => (g.id === targetGroupId ? updatedTarget : g));
+      groupChatsRef.current = nextList;
+      setGroupChats(nextList);
+      await saveGroupChatsToDb(nextList);
+      const persisted = await waitForGroupChatSave();
+      if (!persisted) {
+        throw new Error('群聊消息写入本地存储失败');
+      }
+    },
+    []
+  );
+
+  const handleConfirmPrivateForwardTargets = async (targets: ForwardTargetDescriptor[]) => {
+    if (!activeCharacter || !forwardTargetRequest || forwardTargetRequest.messages.length === 0) return;
+    const { mode, messages: srcMsgs } = forwardTargetRequest;
+    setBatchActionError(null);
+
+    const results =
+      mode === 'merged'
+        ? await forwardBundleToTargets({
+            bundle: createForwardBundleFromPrivate({
+              messages: srcMsgs,
+              allMessagesLookup: latestMessagesRef.current.length > 0 ? latestMessagesRef.current : displayedMessages,
+              character: activeCharacter,
+              userProfile,
+            }),
+            targets,
+            userProfile,
+            savePrivateMessage: saveChatMessage,
+            appendGroupMessages: appendGroupMessagesFromPrivate,
+          })
+        : await forwardMessagesIndividuallyToTargets({
+            sourceType: 'private',
+            sourceMessages: srcMsgs,
+            sourceCharacter: activeCharacter,
+            targets,
+            userProfile,
+            savePrivateMessage: saveChatMessage,
+            appendGroupMessages: appendGroupMessagesFromPrivate,
+          });
+
+    const successCount = results.filter((r) => r.ok).length;
+    const failCount = results.length - successCount;
+    setForwardTargetRequest(null);
+
+    if (successCount > 0) {
+      exitMultiSelectMode();
+      setMultiBubbleToast(
+        failCount > 0
+          ? `已转发至 ${successCount} 个会话，${failCount} 个发送失败`
+          : `已转发至 ${successCount} 个会话`
+      );
+      setTimeout(() => setMultiBubbleToast(null), 2600);
+    } else {
+      setBatchActionError(results[0]?.error || '转发失败，请检查本地存储后重试');
+    }
   };
 
   // Refresh / Regenerate AI response (Whole turn re-roll with data integrity)
@@ -1378,23 +1616,22 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     setShowCoTModal(msgId);
   };
 
-  // Add custom AI character (Requirement 11)
-  const handleAddCustomCharacter = (newChar: AiCharacter) => {
-    onUpdateCharacters([...characters, newChar]);
+  // Add custom AI character (Requirement 11) — atomic verified persistence
+  const handleAddCustomCharacter = async (newChar: AiCharacter): Promise<void> => {
+    const { character: persistedChar, characters: verified } = await createCharacterAtomic(newChar);
+    onUpdateCharacters(verified);
     setShowNewAiModal(false);
-    setActiveChatId(newChar.id);
+    setActiveChatId(persistedChar.id);
     setActiveTab('chats');
-    if (!newChar.notificationAvatar && newChar.avatar) {
-      void ensureCharacterNotificationAvatar(newChar).then((enriched) => {
+    if (!persistedChar.notificationAvatar && persistedChar.avatar) {
+      void ensureCharacterNotificationAvatar(persistedChar).then((enriched) => {
         if (enriched.notificationAvatar) {
-          const latest = loadCharacters();
-          onUpdateCharacters(
-            latest.map((c) =>
-              c.id === enriched.id
-                ? { ...c, notificationAvatar: enriched.notificationAvatar }
-                : c
-            )
-          );
+          void updateCharacterByIdIfExists(enriched.id, (c) => ({
+            ...c,
+            notificationAvatar: enriched.notificationAvatar,
+          })).catch((err) => {
+            console.warn('[WeChatApp] Failed to persist generated notificationAvatar:', err);
+          });
         }
       });
     }
@@ -1526,6 +1763,24 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
             activeTab === 'chats' && activeChatId ? 'wechat-chat-font-isolated' : ''
           }`}
         >
+          {activeTab === 'chats' && activeChatId && isMultiSelectMode ? (
+            <>
+              <div className="flex items-center gap-2 min-w-0">
+                <CheckSquare className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="wx-header-title text-sm font-semibold">
+                  已选择 {selectedMsgIds.length} 条
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={exitMultiSelectMode}
+                className="wx-header-action px-3 py-1 rounded-xl text-xs font-semibold text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
+              >
+                取消
+              </button>
+            </>
+          ) : (
+            <>
           <PressableButton
             onClick={() => {
               if (activeChatId) {
@@ -1883,6 +2138,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
               </PressableButton>
             )}
           </div>
+            </>
+          )}
         </div>
       )}
 
@@ -1894,6 +2151,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
             group={groupChats.find((g) => g.id === activeGroupChatId) || groupChats[0]}
             onBack={() => setActiveGroupChatId(null)}
             allCharacters={characters}
+            allGroups={groupChats}
             userProfile={userProfile}
             apiConfig={apiConfig}
             onUpdateGroup={handleUpdateGroup}
@@ -1978,6 +2236,10 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                               avatar={msg.sender === 'user' ? userProfile.avatar : activeCharacter.avatar}
                               name={msg.sender === 'user' ? userProfile.name : activeCharacter.name}
                               quoteText={msg.quoteMessageId ? quotesMap.get(msg.quoteMessageId) : undefined}
+                              selectionMode={isMultiSelectMode}
+                              isSelected={isMultiSelectMode && selectedMsgIds.includes(msg.id)}
+                              onToggleSelect={toggleSelectMessage}
+                              onOpenForwardBundle={(bundle) => setBundleDetailPayload(bundle)}
                               onOpenCoT={handleOpenCoT}
                               onContextMenu={handleMessageContextMenu}
                               onOpenOfflineDetail={(sid) => setOfflineDetailSessionId(sid)}
@@ -2075,8 +2337,63 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                       </div>
                     )}
 
-                    {/* Message Input Box with Attachment Preview & Plus Button */}
-                    {(() => {
+                    {/* Multi-select / Forward Error Banner */}
+                    {batchActionError && (
+                      <div className="mx-3 mb-1 px-3 py-2 rounded-xl bg-rose-950/75 border border-rose-500/40 text-xs text-rose-200 flex items-center justify-between gap-2 z-20">
+                        <span className="truncate">{batchActionError}</span>
+                        <button
+                          type="button"
+                          onClick={() => setBatchActionError(null)}
+                          className="text-rose-300 hover:text-white cursor-pointer shrink-0"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Multi-Select Action Bar OR Standard Composer */}
+                    {isMultiSelectMode ? (
+                      <div className="wx-composer px-3 py-2.5 bg-zinc-850/95 backdrop-blur-xs border-t border-zinc-800 flex items-center justify-around gap-2 shrink-0 z-10">
+                        <button
+                          type="button"
+                          disabled={selectedMsgIds.length === 0}
+                          onClick={() => {
+                            const selected = getSelectedPrivateMessages();
+                            if (selected.length > 0) {
+                              setForwardTargetRequest({ mode: 'merged', messages: selected });
+                            }
+                          }}
+                          className="flex-1 py-2 px-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 disabled:opacity-40 text-xs font-semibold text-zinc-100 flex items-center justify-center gap-1.5 transition cursor-pointer"
+                        >
+                          <Layers className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>合并转发</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={selectedMsgIds.length === 0}
+                          onClick={() => {
+                            const selected = getSelectedPrivateMessages();
+                            if (selected.length > 0) {
+                              setForwardTargetRequest({ mode: 'individual', messages: selected });
+                            }
+                          }}
+                          className="flex-1 py-2 px-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 disabled:opacity-40 text-xs font-semibold text-zinc-100 flex items-center justify-center gap-1.5 transition cursor-pointer"
+                        >
+                          <Forward className="w-3.5 h-3.5 text-blue-400" />
+                          <span>逐条转发</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={selectedMsgIds.length === 0}
+                          onClick={() => setShowBatchDeleteConfirm(true)}
+                          className="flex-1 py-2 px-2 rounded-xl bg-rose-950/50 hover:bg-rose-900/60 border border-rose-500/35 disabled:opacity-40 text-xs font-semibold text-rose-400 flex items-center justify-center gap-1.5 transition cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>删除</span>
+                        </button>
+                      </div>
+                    ) : (
+                    (() => {
                       return (
                         <div className="flex flex-col shrink-0 z-10">
                           {/* Image Attachment Preview Bar */}
@@ -2189,7 +2506,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                           </div>
                         </div>
                       );
-                    })()}
+                    })()
+                    )}
                   </div>
                 ) : (
                   // Chat List View (Includes Group Chats + 1-on-1 Character Chats)
@@ -2522,11 +2840,18 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                             setActiveTab('chats');
                           }}
                           onToggleLock={(targetChar) => {
-                            onUpdateCharacters(
-                              characters.map((c) => (c.id === targetChar.id ? { ...c, isLocked: !c.isLocked } : c))
-                            );
+                            void updateCharacterById(targetChar.id, (c) => ({
+                              ...c,
+                              isLocked: !c.isLocked,
+                            }))
+                              .then(({ characters: verified }) => onUpdateCharacters(verified))
+                              .catch((err) => {
+                                setMultiBubbleToast(err?.message || '切换锁定状态失败');
+                                setTimeout(() => setMultiBubbleToast(null), 2600);
+                              });
                           }}
                           onRequestDelete={(targetChar) => {
+                            setDeleteCharacterError(null);
                             setCharacterToDelete(targetChar);
                             setDeleteMemoryVaultWithChar(true);
                           }}
@@ -2621,11 +2946,18 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                           setActiveTab('chats');
                         }}
                         onToggleLock={(targetChar) => {
-                          onUpdateCharacters(
-                            characters.map((c) => (c.id === targetChar.id ? { ...c, isLocked: !c.isLocked } : c))
-                          );
+                          void updateCharacterById(targetChar.id, (c) => ({
+                            ...c,
+                            isLocked: !c.isLocked,
+                          }))
+                            .then(({ characters: verified }) => onUpdateCharacters(verified))
+                            .catch((err) => {
+                              setMultiBubbleToast(err?.message || '切换锁定状态失败');
+                              setTimeout(() => setMultiBubbleToast(null), 2600);
+                            });
                         }}
                         onRequestDelete={(targetChar) => {
+                          setDeleteCharacterError(null);
                           setCharacterToDelete(targetChar);
                           setDeleteMemoryVaultWithChar(true);
                         }}
@@ -3499,6 +3831,20 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
             )}
 
             <button
+              onClick={() => {
+                const targetId = msgLongPressMenu.id;
+                setMsgLongPressMenu(null);
+                setShowChatOptionsMenu(false);
+                setIsMultiSelectMode(true);
+                setSelectedMsgIds([targetId]);
+              }}
+              className="wx-dropdown-item wx-primary-text w-full p-2.5 rounded-xl hover:bg-zinc-800 flex items-center gap-2 text-zinc-200 cursor-pointer"
+            >
+              <CheckSquare className="w-4 h-4 text-emerald-400" />
+              <span>多选</span>
+            </button>
+
+            <button
               onClick={() => handleDeleteMessage(msgLongPressMenu.id)}
               className="wx-dropdown-item w-full p-2.5 rounded-xl hover:bg-rose-950/40 flex items-center gap-2 text-rose-500 cursor-pointer"
             >
@@ -3878,11 +4224,15 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                           checked={activeCharacter.autoExtractMemoryEnabled !== false}
                           onChange={(e) => {
                             const enabled = e.target.checked;
-                            onUpdateCharacters(
-                              characters.map((c) =>
-                                c.id === activeCharacter.id ? { ...c, autoExtractMemoryEnabled: enabled } : c
-                              )
-                            );
+                            void updateCharacterById(activeCharacter.id, (c) => ({
+                              ...c,
+                              autoExtractMemoryEnabled: enabled,
+                            }))
+                              .then(({ characters: verified }) => onUpdateCharacters(verified))
+                              .catch((err) => {
+                                setMultiBubbleToast(err?.message || '保存记忆提取开关失败');
+                                setTimeout(() => setMultiBubbleToast(null), 2600);
+                              });
                           }}
                           className="rounded accent-emerald-500"
                         />
@@ -4126,78 +4476,112 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
               </button>
             </div>
 
+            {aiSettingsError && (
+              <div className="p-2.5 rounded-xl bg-rose-950/60 border border-rose-500/40 text-[11px] text-rose-200 leading-relaxed">
+                {aiSettingsError}
+              </div>
+            )}
+
             {/* Save Button */}
             <div className="wx-divider pt-2 flex justify-end gap-2 border-t border-zinc-800">
               <button
-                onClick={() => {
-                  const nextAvatar = editedAvatar || activeCharacter.avatar;
-                  const avatarChanged = nextAvatar !== activeCharacter.avatar;
-                  const updatedTarget: AiCharacter = {
-                    ...activeCharacter,
-                    name: editedName,
-                    wxid: editedWxid,
-                    relationship: editedRelationship,
-                    persona: editedPersona,
-                    personality: editedPersonality,
-                    modelConfig: editedModelName
-                      ? { ...activeCharacter.modelConfig, modelName: editedModelName }
-                      : activeCharacter.modelConfig,
-                    avatar: nextAvatar,
-                    notificationAvatar: avatarChanged ? undefined : activeCharacter.notificationAvatar,
-                    menstrualCare: {
-                      ...(activeCharacter.menstrualCare || {}),
-                      enabled: editedMenstrualCareEnabled,
-                    },
-                    romanticConfig: editedRomanticState
-                      ? {
-                          romanticTargetId: editedRomanticState.romanticTargetId,
-                          romanticTargetLocked: editedRomanticState.romanticTargetLocked,
-                          allowNaturalRomance: editedRomanticState.allowNaturalRomance,
-                          status: editedRomanticState.status,
-                        }
-                      : activeCharacter.romanticConfig,
-                  };
-                  if (editedRomanticState) {
-                    void saveRomanticState({
-                      ...editedRomanticState,
-                      characterId: activeCharacter.id,
-                    }).catch(() => {});
-                  }
-                  onUpdateCharacters(
-                    characters.map((c) => (c.id === activeCharacter.id ? updatedTarget : c))
-                  );
-                  if (avatarChanged || !updatedTarget.notificationAvatar) {
-                    void ensureCharacterNotificationAvatar(updatedTarget, { forceRegenerate: avatarChanged }).then(
-                      (enriched) => {
-                        if (enriched.notificationAvatar) {
-                          const latest = loadCharacters();
-                          onUpdateCharacters(
-                            latest.map((c) =>
-                              c.id === enriched.id
-                                ? { ...c, notificationAvatar: enriched.notificationAvatar }
-                                : c
-                            )
-                          );
-                        }
+                disabled={isSavingAiSettings}
+                onClick={async () => {
+                  if (isSavingAiSettings) return;
+                  setIsSavingAiSettings(true);
+                  setAiSettingsError(null);
+                  try {
+                    let nextAvatar = editedAvatar || activeCharacter.avatar;
+                    if (
+                      nextAvatar.startsWith('data:image/') &&
+                      !nextAvatar.startsWith('data:image/svg+xml') &&
+                      nextAvatar.length > 260 * 1024
+                    ) {
+                      try {
+                        const compressed = await compressImage(nextAvatar, {
+                          maxWidth: 512,
+                          maxHeight: 512,
+                          quality: 0.8,
+                          maxFileSizeBytes: 150 * 1024,
+                        });
+                        nextAvatar = compressed.dataUrl;
+                      } catch {
+                        // Fall through to strict write verification
                       }
+                    }
+                    const avatarChanged = nextAvatar !== activeCharacter.avatar;
+                    const { character: savedTarget, characters: verified } = await updateCharacterById(
+                      activeCharacter.id,
+                      (latestChar) => ({
+                        ...latestChar,
+                        name: editedName.trim() || latestChar.name,
+                        wxid: editedWxid,
+                        relationship: editedRelationship,
+                        persona: editedPersona,
+                        personality: editedPersonality,
+                        modelConfig: editedModelName
+                          ? { ...latestChar.modelConfig, modelName: editedModelName }
+                          : latestChar.modelConfig,
+                        avatar: nextAvatar,
+                        notificationAvatar: avatarChanged ? undefined : latestChar.notificationAvatar,
+                        menstrualCare: {
+                          ...(latestChar.menstrualCare || {}),
+                          enabled: editedMenstrualCareEnabled,
+                        },
+                        romanticConfig: editedRomanticState
+                          ? {
+                              romanticTargetId: editedRomanticState.romanticTargetId,
+                              romanticTargetLocked: editedRomanticState.romanticTargetLocked,
+                              allowNaturalRomance: editedRomanticState.allowNaturalRomance,
+                              status: editedRomanticState.status,
+                            }
+                          : latestChar.romanticConfig,
+                      })
                     );
+                    onUpdateCharacters(verified);
+
+                    if (editedRomanticState) {
+                      void saveRomanticState({
+                        ...editedRomanticState,
+                        characterId: activeCharacter.id,
+                      }).catch(() => {});
+                    }
+                    if (avatarChanged || !savedTarget.notificationAvatar) {
+                      void ensureCharacterNotificationAvatar(savedTarget, { forceRegenerate: avatarChanged }).then(
+                        (enriched) => {
+                          if (enriched.notificationAvatar) {
+                            void updateCharacterByIdIfExists(enriched.id, (c) => ({
+                              ...c,
+                              notificationAvatar: enriched.notificationAvatar,
+                            })).catch((err) => {
+                              console.warn('[WeChatApp] Failed to persist updated notificationAvatar:', err);
+                            });
+                          }
+                        }
+                      );
+                    }
+                    if (draftFontResetPending) {
+                      setChatDisplayPrefs(resetChatDisplayPreference(activeCharacter.id));
+                    } else {
+                      setChatDisplayPrefs(
+                        saveChatDisplayPreference(
+                          activeCharacter.id,
+                          { messageFontSize: draftMessageFontSize },
+                          wechatTheme
+                        )
+                      );
+                    }
+                    setShowAiSettingsModal(false);
+                  } catch (err: any) {
+                    console.error('[WeChatApp] Save AI settings failed:', err);
+                    setAiSettingsError(err?.message || '角色配置保存失败，请重试');
+                  } finally {
+                    setIsSavingAiSettings(false);
                   }
-                  if (draftFontResetPending) {
-                    setChatDisplayPrefs(resetChatDisplayPreference(activeCharacter.id));
-                  } else {
-                    setChatDisplayPrefs(
-                      saveChatDisplayPreference(
-                        activeCharacter.id,
-                        { messageFontSize: draftMessageFontSize },
-                        wechatTheme
-                      )
-                    );
-                  }
-                  setShowAiSettingsModal(false);
                 }}
-                className="wx-btn-primary w-full py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 font-semibold text-xs text-white shadow-md transition active:scale-95 cursor-pointer"
+                className="wx-btn-primary w-full py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 font-semibold text-xs text-white shadow-md transition active:scale-95 cursor-pointer"
               >
-                保存所有配置
+                {isSavingAiSettings ? '正在保存...' : '保存所有配置'}
               </button>
             </div>
           </div>
@@ -4506,32 +4890,59 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
               </div>
             </label>
 
+            {deleteCharacterError && (
+              <div className="p-2.5 rounded-xl bg-rose-950/60 border border-rose-500/40 text-[11px] text-rose-200 leading-relaxed">
+                {deleteCharacterError}
+              </div>
+            )}
+
             <div className="wx-divider flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
               <button
-                onClick={() => setCharacterToDelete(null)}
-                className="wx-btn-secondary px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition cursor-pointer"
+                disabled={isDeletingCharacter}
+                onClick={() => {
+                  setDeleteCharacterError(null);
+                  setCharacterToDelete(null);
+                }}
+                className="wx-btn-secondary px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-300 text-xs font-medium transition cursor-pointer"
               >
                 取消
               </button>
               <button
+                disabled={isDeletingCharacter}
                 onClick={async () => {
                   const target = characterToDelete;
-                  if (!target) return;
+                  if (!target || isDeletingCharacter) return;
+                  setIsDeletingCharacter(true);
+                  setDeleteCharacterError(null);
                   try {
-                    await deleteAiMemoryVault(target.id, deleteMemoryVaultWithChar);
-                  } catch (e) {
-                    console.error('Delete memory vault failed:', e);
+                    const verified = await deleteCharacterById(target.id);
+                    onUpdateCharacters(verified);
+                    setUnreadAiCounts((prev) => {
+                      if (!(target.id in prev)) return prev;
+                      const next = { ...prev };
+                      delete next[target.id];
+                      return next;
+                    });
+                    if (activeChatId === target.id) {
+                      setActiveChatId(null);
+                    }
+                    setCharacterToDelete(null);
+                    setSwipedContactId(null);
+                    try {
+                      await deleteAiMemoryVault(target.id, deleteMemoryVaultWithChar);
+                    } catch (e) {
+                      console.error('Delete memory vault failed:', e);
+                    }
+                  } catch (e: any) {
+                    console.error('[WeChatApp] Delete character failed:', e);
+                    setDeleteCharacterError(e?.message || '删除角色失败，请重试');
+                  } finally {
+                    setIsDeletingCharacter(false);
                   }
-                  onUpdateCharacters(characters.filter((c) => c.id !== target.id));
-                  if (activeChatId === target.id) {
-                    setActiveChatId(null);
-                  }
-                  setCharacterToDelete(null);
-                  setSwipedContactId(null);
                 }}
-                className="wx-btn-danger px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition cursor-pointer"
+                className="wx-btn-danger px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-60 text-white text-xs font-bold transition cursor-pointer"
               >
-                确认删除
+                {isDeletingCharacter ? '正在删除...' : '确认删除'}
               </button>
             </div>
           </div>
@@ -4844,6 +5255,62 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
           </div>
         </div>
       )}
+
+      {/* Batch Delete Confirmation Modal */}
+      {showBatchDeleteConfirm && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => {
+            if (!isBatchDeleting) setShowBatchDeleteConfirm(false);
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="wx-modal-card w-full max-w-xs rounded-3xl bg-zinc-900 border border-zinc-750 p-4 text-white shadow-2xl space-y-3"
+          >
+            <h3 className="wx-primary-text text-sm font-bold">确认删除已选消息</h3>
+            <p className="wx-secondary-text text-xs text-zinc-300 leading-relaxed">
+              确定要删除所选的 {selectedMsgIds.length} 条聊天记录吗？删除仅移除原消息，已转发的聊天记录包不受影响，此操作不可撤销。
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={isBatchDeleting}
+                onClick={() => setShowBatchDeleteConfirm(false)}
+                className="wx-btn-secondary px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-200 cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={isBatchDeleting}
+                onClick={() => void handleConfirmBatchDelete()}
+                className="wx-btn-danger px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-xs font-semibold text-white cursor-pointer"
+              >
+                {isBatchDeleting ? '删除中...' : '确认删除'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Multi-Target Forward Modal (Private Chat) */}
+      <ForwardTargetModal
+        isOpen={Boolean(forwardTargetRequest)}
+        mode={forwardTargetRequest?.mode || 'merged'}
+        selectedMessageCount={forwardTargetRequest?.messages.length || 0}
+        characters={characters}
+        groupChats={groupChats}
+        userProfile={userProfile}
+        onClose={() => setForwardTargetRequest(null)}
+        onConfirm={handleConfirmPrivateForwardTargets}
+      />
+
+      {/* Forward Bundle Detail Modal */}
+      <ForwardBundleDetailModal
+        bundle={bundleDetailPayload}
+        onClose={() => setBundleDetailPayload(null)}
+      />
     </div>
   );
 };

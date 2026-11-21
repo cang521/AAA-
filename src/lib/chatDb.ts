@@ -520,6 +520,7 @@ export async function getRecentChatMessages(
           proactiveMeta: rawMsg.proactiveMeta,
           isSystemEvent: rawMsg.isSystemEvent,
           type: rawMsg.type,
+          forwardBundle: rawMsg.forwardBundle,
           offlineEventData: rawMsg.offlineEventData,
           offlineCardData: rawMsg.offlineCardData,
         };
@@ -609,6 +610,7 @@ export async function getMessagesByIds(
             proactiveMeta: rawMsg.proactiveMeta,
             isSystemEvent: rawMsg.isSystemEvent,
             type: rawMsg.type,
+            forwardBundle: rawMsg.forwardBundle,
             offlineEventData: rawMsg.offlineEventData,
             offlineCardData: rawMsg.offlineCardData,
           });
@@ -848,6 +850,32 @@ export async function deleteChatMessage(id: string, characterId: string): Promis
   clearChatIndexCache(characterId);
   await reloadMetaCache(db);
   notifyChange();
+}
+
+/**
+ * Atomically delete multiple selected messages for a character in a single IndexedDB transaction.
+ */
+export async function deleteChatMessagesBatch(ids: string[], characterId: string): Promise<number> {
+  const uniqueIds = Array.from(new Set((ids || []).filter(Boolean)));
+  if (!characterId || uniqueIds.length === 0) return 0;
+
+  const db = await getDb();
+  const tx = db.transaction([STORE_MESSAGES], 'readwrite');
+  const store = tx.objectStore(STORE_MESSAGES);
+  for (const id of uniqueIds) {
+    store.delete(id);
+  }
+
+  await new Promise<void>((res, rej) => {
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error || new Error('IndexedDB batch delete failed'));
+    tx.onabort = () => rej(tx.error || new Error('IndexedDB batch delete aborted'));
+  });
+
+  clearChatIndexCache(characterId);
+  await reloadMetaCache(db);
+  notifyChange();
+  return uniqueIds.length;
 }
 
 /**

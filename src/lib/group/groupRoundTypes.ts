@@ -41,9 +41,33 @@ export interface GroupVotePollTimelineEvent {
   delayMs: number;
 }
 
+export interface GroupJoinRelayTimelineEvent {
+  eventId: string;
+  type: 'join_relay';
+  actorId: string;
+  actorName?: string;
+  relayMessageId: string;
+  content: string;
+  delayMs: number;
+}
+
+export interface GroupContinueInPrivateTimelineEvent {
+  eventId: string;
+  type: 'continue_in_private';
+  actorId: string;
+  actorName?: string;
+  characterId: string;
+  reason: string;
+  triggerSummary?: string;
+  privateOpeningMessages: string[];
+  delayMs: number;
+}
+
 export type GroupTimelineEvent =
   | GroupMessageTimelineEvent
-  | GroupVotePollTimelineEvent;
+  | GroupVotePollTimelineEvent
+  | GroupJoinRelayTimelineEvent
+  | GroupContinueInPrivateTimelineEvent;
 
 export interface GroupRoundPlan {
   roundId: string;
@@ -58,7 +82,7 @@ export interface GroupActivePlaybackIndicator {
   targetAiId?: string;
   activeActorId?: string;
   activeActorName?: string;
-  activeActionType?: 'typing' | 'voting' | 'thinking';
+  activeActionType?: 'typing' | 'voting' | 'thinking' | 'relay';
   activePollId?: string;
   remainingEventCount?: number;
   totalEventCount?: number;

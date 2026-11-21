@@ -11,7 +11,7 @@
  */
 
 import { AiCharacter, ChatMessage } from '../../types';
-import { saveCharacters, loadCharacters } from '../storage';
+import { updateCharacterByIdIfExists } from '../characterPersistence';
 import { saveAiMemoryChunk, deleteAiMemoryChunk, getAiMemoryChunks } from '../aiMemoryVaultDb';
 import { hasChatMessage, saveChatMessage } from '../chatDb';
 import { OfflineSession, saveOfflineSession, getSavedSessionsForCharacter } from './OfflineSessionDb';
@@ -91,33 +91,30 @@ export class OfflineMemoryBridge {
     // 1. Save session record to OfflineSessionDb
     await saveOfflineSession(updatedSession);
 
-    // 2. Append candidate memories into character.memories list (deduplicated)
+    // 2. Append candidate memories into character.memories list (deduplicated & atomic)
     if (updatedSession.candidateMemories && updatedSession.candidateMemories.length > 0) {
-      const allChars = loadCharacters();
-      const latestChar = allChars.find((c) => c.id === character.id) || character;
-      const existingMemories = new Set((latestChar.memories || []).map((m) => m.trim()));
-      const nextList = [...(latestChar.memories || [])];
-      let added = false;
+      const nextChars = await updateCharacterByIdIfExists(character.id, (latestChar) => {
+        const existingMemories = new Set((latestChar.memories || []).map((m) => m.trim()));
+        const nextList = [...(latestChar.memories || [])];
+        let added = false;
 
-      for (const mem of updatedSession.candidateMemories) {
-        const trimmed = (mem || '').trim();
-        if (trimmed && !existingMemories.has(trimmed)) {
-          existingMemories.add(trimmed);
-          nextList.push(trimmed);
-          added = true;
+        for (const mem of updatedSession.candidateMemories || []) {
+          const trimmed = (mem || '').trim();
+          if (trimmed && !existingMemories.has(trimmed)) {
+            existingMemories.add(trimmed);
+            nextList.push(trimmed);
+            added = true;
+          }
         }
-      }
 
-      if (added) {
-        const updatedChar: AiCharacter = {
+        if (!added) return null;
+        return {
           ...latestChar,
           memories: nextList,
         };
-        const nextChars = allChars.map((c) => (c.id === character.id ? updatedChar : c));
-        saveCharacters(nextChars);
-        if (onUpdateCharacters) {
-          onUpdateCharacters(nextChars);
-        }
+      });
+      if (nextChars && onUpdateCharacters) {
+        onUpdateCharacters(nextChars);
       }
     }
 
@@ -216,18 +213,16 @@ export class OfflineMemoryBridge {
   ): Promise<void> {
     if (session.candidateMemories && session.candidateMemories.length > 0) {
       const candidates = new Set(session.candidateMemories.map((m) => m.trim()));
-      const allChars = loadCharacters();
-      const latestChar = allChars.find((c) => c.id === character.id) || character;
-      const updatedMemories = (latestChar.memories || []).filter((m) => !candidates.has(m.trim()));
-
-      const updatedChar: AiCharacter = {
-        ...latestChar,
-        memories: updatedMemories,
-      };
-
-      const nextChars = allChars.map((c) => (c.id === character.id ? updatedChar : c));
-      saveCharacters(nextChars);
-      if (onUpdateCharacters) {
+      const nextChars = await updateCharacterByIdIfExists(character.id, (latestChar) => {
+        const prevMems = latestChar.memories || [];
+        const updatedMemories = prevMems.filter((m) => !candidates.has(m.trim()));
+        if (updatedMemories.length === prevMems.length) return null;
+        return {
+          ...latestChar,
+          memories: updatedMemories,
+        };
+      });
+      if (nextChars && onUpdateCharacters) {
         onUpdateCharacters(nextChars);
       }
     }

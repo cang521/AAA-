@@ -1,4 +1,4 @@
-import { GroupChat, GroupChatMessage, GroupPollPayload } from '../../types';
+import { GroupChat, GroupChatMessage, GroupPollPayload, GroupRelayPayload } from '../../types';
 import {
   getCachedGroupChats,
   hydrateGroupChatsFromDb,
@@ -6,7 +6,7 @@ import {
   waitForGroupChatSave,
 } from '../groupChatDb';
 import { syncGroupToServer } from '../groupService';
-import { validateAndApplyAiPollVote } from '../groupTools';
+import { validateAndApplyAiPollVote, validateAndApplyAiRelayJoin } from '../groupTools';
 import { GroupReplyTask } from './groupRoundTypes';
 
 export const STORAGE_KEY_GROUP_TASKS = 'phone_group_reply_tasks_v1';
@@ -183,5 +183,78 @@ export async function applyAiPollVoteAndPersist(
     group: updatedGroup,
     actorName: validation.actorName,
     appliedOptionIds: validation.appliedOptionIds,
+  };
+}
+
+export async function applyAiRelayJoinAndPersist(
+  groupId: string,
+  params: {
+    relayMessageId: string;
+    actorId: string;
+    content: string;
+  }
+): Promise<{
+  applied: boolean;
+  group: GroupChat | null;
+  actorName?: string;
+  reason?: string;
+}> {
+  const { groups, group } = await loadLatestGroupFromStore(groupId);
+  if (!group) {
+    return { applied: false, group: null, reason: '群聊不存在' };
+  }
+
+  const targetMsgIdx = (group.messages || []).findIndex(
+    (m) => m.id === params.relayMessageId && m.messageType === 'relay' && Boolean(m.payload)
+  );
+  if (targetMsgIdx === -1) {
+    return { applied: false, group, reason: `接龙 ${params.relayMessageId} 不存在` };
+  }
+
+  const targetMsg = group.messages[targetMsgIdx];
+  const relayPayload = targetMsg.payload as GroupRelayPayload;
+
+  const validation = validateAndApplyAiRelayJoin({
+    payload: relayPayload,
+    actorId: params.actorId,
+    members: group.members || [],
+    content: params.content,
+  });
+
+  if (!validation.ok) {
+    return {
+      applied: false,
+      group,
+      reason: validation.reason || '接龙校验未通过',
+    };
+  }
+
+  const nextMessages = group.messages.map((m, idx) =>
+    idx === targetMsgIdx ? { ...m, payload: validation.payload } : m
+  );
+
+  const updatedGroup: GroupChat = {
+    ...group,
+    messages: nextMessages,
+    updatedAt: Date.now(),
+  };
+
+  const nextGroups = groups.map((g) => (g.id === groupId ? updatedGroup : g));
+  await saveGroupChatsToDb(nextGroups);
+  const saved = await waitForGroupChatSave();
+  if (!saved) {
+    throw new Error('群聊 AI 接龙写入本地数据库失败');
+  }
+
+  try {
+    void syncGroupToServer(updatedGroup);
+  } catch {
+    // non-fatal
+  }
+
+  return {
+    applied: true,
+    group: updatedGroup,
+    actorName: validation.actorName,
   };
 }

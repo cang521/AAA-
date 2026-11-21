@@ -148,7 +148,7 @@ export const OfflineSessionView: React.FC<OfflineSessionViewProps> = ({
   }, [session.id]);
 
   const loadMessages = async (offset = 0) => {
-    const { messages: fetched, totalCount: total } = await getPaginatedSessionMessages(session.id, offset, 80);
+    const { messages: fetched, totalCount: total } = await getPaginatedSessionMessages(session.id, offset, 100);
     setMessages(fetched);
     setTotalCount(total);
     setTimeout(() => scrollToBottom(), 100);

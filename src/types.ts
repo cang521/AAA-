@@ -252,7 +252,7 @@ export interface ChatMessage {
   characterId: string;
   sender: 'user' | 'ai';
   text: string;
-  messageType?: 'text' | 'image' | 'generated_image';
+  messageType?: 'text' | 'image' | 'generated_image' | 'forward_bundle';
   imageUrl?: string;
   imageAnalysis?: string;
   imageAnalysisStatus?: 'pending' | 'success' | 'failed' | 'none';
@@ -285,7 +285,8 @@ export interface ChatMessage {
   isProactive?: boolean;
   proactiveMeta?: ProactiveMessageMeta;
   isSystemEvent?: boolean;
-  type?: 'text' | 'image' | 'generated_image' | 'offline_share_card' | 'offline_session_event';
+  type?: 'text' | 'image' | 'generated_image' | 'offline_share_card' | 'offline_session_event' | 'forward_bundle';
+  forwardBundle?: ForwardBundlePayload;
   offlineCardData?: {
     sessionId: string;
     sceneName: string;
@@ -313,6 +314,48 @@ export interface ChatMessage {
   importance?: HistoryImportance;
 }
 
+export interface ForwardBundleItem {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar?: string;
+  timestamp: number;
+  messageType:
+    | 'text'
+    | 'image'
+    | 'generated_image'
+    | 'relay'
+    | 'poll'
+    | 'random_draw'
+    | 'forward_bundle'
+    | 'offline_share_card'
+    | 'offline_session_event'
+    | 'system';
+  text: string;
+  imageUrl?: string;
+  imageDescription?: string;
+  detectedText?: string;
+  cardSummary?: string;
+  structuredData?: Record<string, unknown>;
+  quoteSummary?: {
+    senderName: string;
+    text: string;
+  };
+  sourceType: 'private' | 'group';
+  sourceName: string;
+}
+
+export interface ForwardBundlePayload {
+  version: 1;
+  bundleId: string;
+  sourceType: 'private' | 'group';
+  sourceId: string;
+  sourceName: string;
+  title: string;
+  createdAt: number;
+  items: ForwardBundleItem[];
+}
+
 export type GroupMemberType = 'human' | 'ai' | 'npc';
 export type GroupMemberRole = 'owner' | 'admin' | 'member';
 
@@ -332,7 +375,7 @@ export interface GroupMember {
   isMuted?: boolean;
 }
 
-export type GroupMessageType = 'text' | 'image' | 'relay' | 'poll' | 'random_draw' | 'system';
+export type GroupMessageType = 'text' | 'image' | 'relay' | 'poll' | 'random_draw' | 'forward_bundle' | 'system';
 
 export interface GroupRelayEntry {
   id: string;
@@ -403,7 +446,8 @@ export interface GroupChatMessage {
   messageType?: GroupMessageType;
   imageUrl?: string;
   imageAnalysisText?: string;
-  payload?: GroupRelayPayload | GroupPollPayload | GroupRandomDrawPayload;
+  payload?: GroupRelayPayload | GroupPollPayload | GroupRandomDrawPayload | ForwardBundlePayload;
+  forwardBundle?: ForwardBundlePayload;
   isRecalled?: boolean;
   mentionedMemberIds?: string[]; // Member IDs or ['@all']
   quoteMessageId?: string;
@@ -530,6 +574,10 @@ export interface ApiLog {
   errorType?: string;
   errorMessage?: string;
   purpose: string;
+  contextRawCount?: number;
+  contextSummarizedCount?: number;
+  contextEstimatedTokens?: number;
+  contextCompressed?: boolean;
 }
 
 export interface AppUsageDetail {
