@@ -136,6 +136,7 @@ import {
   clearCharacterMessages,
   getRecentChatMessages,
 } from '../../lib/chatDb';
+import { recoverChatHistoryFromLocalSources } from '../../lib/chatRecovery';
 import { registerActivePrivateChatIdProvider } from '../../lib/crossChannel/crossChannelExecutor';
 import { ForwardBundleDetailModal } from '../wechat/ForwardBundleDetailModal';
 import { ForwardTargetModal } from '../wechat/ForwardTargetModal';
@@ -327,6 +328,10 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const [dbVersionKey, setDbVersionKey] = useState(0);
   const [chatDbStatus, setChatDbStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [chatDbError, setChatDbError] = useState('');
+  const [chatRecoveryNotice, setChatRecoveryNotice] = useState<{
+    type: 'success' | 'warning';
+    text: string;
+  } | null>(null);
 
   // Input & quote & image attachment states
   const [inputText, setInputText] = useState('');
@@ -627,6 +632,29 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     setChatDbStatus('loading');
     setChatDbError('');
     try {
+      const initialSnapshot = await initializeChatDbForDisplay();
+      // An empty/suspiciously small current store can be the result of a past
+      // migration or character-ID change. Search every known LOCAL source and
+      // merge recoverable records without deleting or replacing current data.
+      if (initialSnapshot.totalMessages < 20 && characters.length > 0) {
+        const recovery = await recoverChatHistoryFromLocalSources(characters);
+        if (recovery.restoredCount > 0) {
+          const orphanText = recovery.unresolvedOrphanCount > 0
+            ? `；另有 ${recovery.unresolvedOrphanCount} 条属于无法确认的旧角色编号，数据已保留但未强行错绑`
+            : '';
+          setChatRecoveryNotice({
+            type: 'success',
+            text: `已从本机旧存储/快照/归档中找回 ${recovery.restoredCount} 条聊天记录${
+              recovery.remappedCount > 0 ? `，其中 ${recovery.remappedCount} 条已重新绑定到同名角色` : ''
+            }${orphanText}。`,
+          });
+        } else if (initialSnapshot.totalMessages === 0) {
+          setChatRecoveryNotice({
+            type: 'warning',
+            text: `已完成本机深度扫描，但当前可访问的旧存储、快照和归档中没有找到聊天副本。请不要卸载应用或清除数据。`,
+          });
+        }
+      }
       await initializeChatDbForDisplay();
       // getCharacterMetaSync is backed by an in-memory cache. Force a render
       // only after that cache has been rebuilt from the persistent database.
@@ -637,7 +665,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       setChatDbError(error instanceof Error ? error.message : '聊天记录数据库读取失败');
       setChatDbStatus('error');
     }
-  }, []);
+  }, [characters]);
 
   useEffect(() => {
     void initializeChatHistoryDisplay();
@@ -2555,6 +2583,17 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                         >
                           重新读取
                         </button>
+                      </div>
+                    )}
+                    {chatRecoveryNotice && (
+                      <div
+                        className={`mx-3 mt-3 rounded-xl border px-3 py-2 text-xs ${
+                          chatRecoveryNotice.type === 'success'
+                            ? 'border-emerald-300/50 bg-emerald-50 text-emerald-700'
+                            : 'border-amber-300/60 bg-amber-50 text-amber-800'
+                        }`}
+                      >
+                        {chatRecoveryNotice.text}
                       </div>
                     )}
                     {wechatTheme === 'classic' && showChatListSearch && (
