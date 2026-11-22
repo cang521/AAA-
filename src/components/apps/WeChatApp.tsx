@@ -131,6 +131,7 @@ import {
   searchCharacterMessages,
   recallCharacterMemories,
   getCharacterMetaSync,
+  initializeChatDbForDisplay,
   subscribeChatDb,
   clearCharacterMessages,
   getRecentChatMessages,
@@ -324,6 +325,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   const [totalHistoryCount, setTotalHistoryCount] = useState(0);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [dbVersionKey, setDbVersionKey] = useState(0);
+  const [chatDbStatus, setChatDbStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [chatDbError, setChatDbError] = useState('');
 
   // Input & quote & image attachment states
   const [inputText, setInputText] = useState('');
@@ -619,6 +622,26 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         : null
     );
   }, []);
+
+  const initializeChatHistoryDisplay = useCallback(async () => {
+    setChatDbStatus('loading');
+    setChatDbError('');
+    try {
+      await initializeChatDbForDisplay();
+      // getCharacterMetaSync is backed by an in-memory cache. Force a render
+      // only after that cache has been rebuilt from the persistent database.
+      setDbVersionKey((key) => key + 1);
+      setChatDbStatus('ready');
+    } catch (error) {
+      console.error('[WeChatApp] Chat history initialization failed:', error);
+      setChatDbError(error instanceof Error ? error.message : '聊天记录数据库读取失败');
+      setChatDbStatus('error');
+    }
+  }, []);
+
+  useEffect(() => {
+    void initializeChatHistoryDisplay();
+  }, [initializeChatHistoryDisplay]);
 
   useEffect(() => {
     setUnreadAiCounts((prev) => {
@@ -2516,6 +2539,24 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                       wechatTheme === 'classic' ? '' : 'divide-y divide-zinc-800/80'
                     }`}
                   >
+                    {chatDbStatus === 'loading' && (
+                      <div className="mx-3 mt-3 rounded-xl border border-sky-300/40 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                        正在从本地数据库恢复聊天记录，请稍候…
+                      </div>
+                    )}
+                    {chatDbStatus === 'error' && (
+                      <div className="mx-3 mt-3 rounded-xl border border-rose-300/50 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                        <div className="font-semibold">聊天记录读取失败，原数据未被删除或覆盖。</div>
+                        <div className="mt-1 break-all opacity-80">{chatDbError}</div>
+                        <button
+                          type="button"
+                          onClick={() => void initializeChatHistoryDisplay()}
+                          className="mt-2 rounded-lg bg-rose-600 px-3 py-1 text-white"
+                        >
+                          重新读取
+                        </button>
+                      </div>
+                    )}
                     {wechatTheme === 'classic' && showChatListSearch && (
                       <div className="wx-search-bar-wrap px-3 py-2 flex items-center gap-2 shrink-0">
                         <div className="relative flex-1">
@@ -2638,12 +2679,14 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                                 </span>
                               </div>
                               <span className="wx-muted-text text-[10px] text-zinc-500 font-mono shrink-0 ml-1">
-                                {lastMsg
+                                {chatDbStatus === 'loading'
+                                  ? '读取中'
+                                  : lastMsg
                                   ? new Date(lastMsg.timestamp).toLocaleTimeString([], {
                                       hour: '2-digit',
                                       minute: '2-digit',
                                     })
-                                  : '刚刚'}
+                                  : ''}
                               </span>
                             </div>
                             <div className="flex items-center justify-between gap-2 mt-0.5">
@@ -2732,10 +2775,12 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                                     <span className="wx-green-dot w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
                                     正在输入中…
                                   </span>
+                                ) : chatDbStatus === 'loading' ? (
+                                  '正在恢复聊天记录…'
                                 ) : lastMsg ? (
                                   lastMsg.text
                                 ) : (
-                                  char.greeting
+                                  char.greeting || '暂无聊天记录'
                                 )}
                               </p>
                               {wechatTheme !== 'classic' && unreadCount > 0 && (
