@@ -6,7 +6,12 @@ import {
 } from './proactive/proactiveStore';
 
 const DB_NAME = 'PhoneSimChatDB_v2';
-const DB_VERSION = 3;
+// Version 4 is a non-destructive schema repair. Some installed builds can have
+// the messages store without every index required by the current UI. Opening a
+// missing index makes the conversation list look empty even though the records
+// are still present. The upgrade below only creates missing indexes; it never
+// clears or recreates an existing store.
+const DB_VERSION = 4;
 const STORE_MESSAGES = 'messages';
 const STORE_JOURNALS = 'import_journals';
 export const STORE_REPLY_TASKS = 'ai_reply_tasks';
@@ -97,6 +102,22 @@ export function subscribeChatDb(callback: ChatDbListener) {
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+export interface ChatDbInitializationSnapshot {
+  totalMessages: number;
+  characterCount: number;
+}
+
+function ensureIndex(
+  store: IDBObjectStore,
+  name: string,
+  keyPath: string | string[],
+  options: IDBIndexParameters = { unique: false }
+): void {
+  if (!store.indexNames.contains(name)) {
+    store.createIndex(name, keyPath, options);
+  }
+}
+
 export function getDb(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
 
@@ -108,23 +129,32 @@ export function getDb(): Promise<IDBDatabase> {
 
     const request = window.indexedDB.open(DB_NAME, DB_VERSION);
 
-    request.onupgradeneeded = (event) => {
+    request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_MESSAGES)) {
-        const store = db.createObjectStore(STORE_MESSAGES, { keyPath: 'id' });
-        store.createIndex('by_character', 'characterId', { unique: false });
-        store.createIndex('by_character_time', ['characterId', 'timestamp'], { unique: false });
-        store.createIndex('by_time', 'timestamp', { unique: false });
-      }
+      const upgradeTx = request.transaction;
+      const messageStore = db.objectStoreNames.contains(STORE_MESSAGES)
+        ? upgradeTx!.objectStore(STORE_MESSAGES)
+        : db.createObjectStore(STORE_MESSAGES, { keyPath: 'id' });
+      ensureIndex(messageStore, 'by_character', 'characterId');
+      ensureIndex(messageStore, 'by_character_time', ['characterId', 'timestamp']);
+      ensureIndex(messageStore, 'by_time', 'timestamp');
+
       if (!db.objectStoreNames.contains(STORE_JOURNALS)) {
         const journalStore = db.createObjectStore(STORE_JOURNALS, { keyPath: 'id', autoIncrement: true });
         journalStore.createIndex('by_session', 'sessionId', { unique: false });
+      } else {
+        ensureIndex(upgradeTx!.objectStore(STORE_JOURNALS), 'by_session', 'sessionId');
       }
       if (!db.objectStoreNames.contains(STORE_REPLY_TASKS)) {
         const taskStore = db.createObjectStore(STORE_REPLY_TASKS, { keyPath: 'id' });
         taskStore.createIndex('by_character', 'characterId', { unique: false });
         taskStore.createIndex('by_status', 'status', { unique: false });
         taskStore.createIndex('by_created', 'createdAt', { unique: false });
+      } else {
+        const taskStore = upgradeTx!.objectStore(STORE_REPLY_TASKS);
+        ensureIndex(taskStore, 'by_character', 'characterId');
+        ensureIndex(taskStore, 'by_status', 'status');
+        ensureIndex(taskStore, 'by_created', 'createdAt');
       }
     };
 
@@ -133,15 +163,23 @@ export function getDb(): Promise<IDBDatabase> {
       try {
         await checkAndMigrateLocalStorage(db);
         await reloadMetaCache(db);
+        resolve(db);
       } catch (e) {
-        console.warn('DB initialization post-processing warning:', e);
+        console.error('DB initialization failed without modifying chat records:', e);
+        db.close();
+        dbPromise = null;
+        reject(e);
       }
-      resolve(db);
     };
 
     request.onerror = () => {
       console.error('IndexedDB open error:', request.error);
+      dbPromise = null;
       reject(request.error);
+    };
+
+    request.onblocked = () => {
+      console.warn('IndexedDB schema repair is blocked by another open app window');
     };
   });
 
@@ -154,23 +192,9 @@ export function getDb(): Promise<IDBDatabase> {
 async function checkAndMigrateLocalStorage(db: IDBDatabase): Promise<void> {
   try {
     const raw = localStorage.getItem('phone_chat_messages');
-    if (!raw) {
-      // Check if DB is completely empty, insert initial default message if so
-      const count = await getDbCount(db);
-      if (count === 0) {
-        const defaultMsg: ChatMessage = {
-          id: 'msg_welcome_1',
-          characterId: 'char_1',
-          sender: 'ai',
-          text: '小清，今天工作学习辛苦啦！有没有按时吃晚饭？记得多喝热水哦~',
-          timestamp: Date.now() - 3600000,
-          thinkingProcess:
-            '用户系统数据显示此时为晚间。根据记忆条目“关注用户日常与情绪”，发出亲切问候，询问晚饭与喝水情况。',
-        };
-        await addMessageToStore(db, defaultMsg);
-      }
-      return;
-    }
+    // No legacy localStorage copy is a valid state. Never create a fake message
+    // here: initialization and recovery must remain non-destructive.
+    if (!raw) return;
 
     const legacyMessages: ChatMessage[] = JSON.parse(raw);
     if (Array.isArray(legacyMessages) && legacyMessages.length > 0) {
@@ -230,7 +254,7 @@ async function reloadMetaCache(db: IDBDatabase): Promise<void> {
   metaCache.clear();
 
   // Scan all records in timestamp order to compute per-character stats
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const req = index.openCursor();
     req.onsuccess = (e) => {
       const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
@@ -253,10 +277,30 @@ async function reloadMetaCache(db: IDBDatabase): Promise<void> {
       }
     };
     req.onerror = () => {
-      isMetaLoaded = true;
-      resolve();
+      isMetaLoaded = false;
+      reject(req.error || new Error('聊天记录索引读取失败'));
     };
   });
+}
+
+/**
+ * Read-only startup gate used by the conversation list. It waits until the
+ * metadata cache has actually been reconstructed from IndexedDB, then returns
+ * counts for diagnostics. It does not delete, clear, or replace any messages.
+ */
+export async function initializeChatDbForDisplay(): Promise<ChatDbInitializationSnapshot> {
+  const db = await getDb();
+  if (!isMetaLoaded) {
+    await reloadMetaCache(db);
+  }
+  let totalMessages = 0;
+  for (const meta of metaCache.values()) {
+    totalMessages += meta.totalCount;
+  }
+  return {
+    totalMessages,
+    characterCount: metaCache.size,
+  };
 }
 
 /**
