@@ -5774,6 +5774,51 @@ ${awarenessMemoryRule}
   }
 });
 
+// Theater Scenario & Chat Endpoints
+app.post('/api/gemini/theater-scenario', async (req, res) => {
+  try {
+    const { prompt, model, apiKey, baseUrl, provider } = req.body;
+    const selectedModel = model || 'gemini-4-hydrogen';
+    const responseText = await callAiService({
+      prompt,
+      systemInstruction: '你是一个专业的沉浸式角色扮演剧本大师与双盲秘密设计师。请严格按照JSON格式返回。',
+      model: selectedModel,
+      apiKey: apiKey || '',
+      baseUrl: baseUrl || '',
+      providerType: provider || '',
+      responseMimeType: 'application/json',
+      temperature: 0.7,
+      maxTokens: 2000,
+    });
+    const extracted = extractThinkingAndContent(responseText);
+    res.json({ ok: true, text: extracted.cleanText || responseText });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err?.message || 'Failed to generate theater scenario' });
+  }
+});
+
+app.post('/api/gemini/theater-chat', async (req, res) => {
+  try {
+    const { prompt, model, apiKey, baseUrl, provider } = req.body;
+    const selectedModel = model || 'gemini-4-hydrogen';
+    const responseText = await callAiService({
+      prompt,
+      systemInstruction: '你正在参与「小剧场」沉浸式角色扮演。请保持角色口吻，深度代入，输出符合剧情发展的对话与动作。严格按照JSON格式返回。',
+      model: selectedModel,
+      apiKey: apiKey || '',
+      baseUrl: baseUrl || '',
+      providerType: provider || '',
+      responseMimeType: 'application/json',
+      temperature: 0.8,
+      maxTokens: 1500,
+    });
+    const extracted = extractThinkingAndContent(responseText);
+    res.json({ ok: true, text: extracted.cleanText || responseText });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err?.message || 'Failed theater chat' });
+  }
+});
+
 // 7. Gomoku AI Commentary / Speech Generator Endpoint
 app.post('/api/gemini/gomoku-commentary', async (req, res) => {
   try {

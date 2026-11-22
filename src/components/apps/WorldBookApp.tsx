@@ -285,9 +285,9 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-zinc-950 text-white font-sans overflow-hidden select-none">
+    <div className="world-book-app w-full h-full flex flex-col bg-zinc-950 text-white font-sans overflow-hidden select-none">
       {/* Top Header */}
-      <div className="h-12 px-3 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between shrink-0 z-20">
+      <div className="world-book-header h-12 px-3 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between shrink-0 z-20">
         <button
           onClick={() => {
             if (activeBookId) {
@@ -296,13 +296,13 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
               onBackToLauncher();
             }
           }}
-          className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 font-medium px-2 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-750 transition"
+          className="world-book-back-btn flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 font-medium px-2.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 transition"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>{activeBookId ? '世界书库' : '桌面'}</span>
         </button>
 
-        <div className="flex items-center gap-1.5 font-semibold text-sm tracking-tight text-zinc-100">
+        <div className="world-book-header-title flex items-center gap-1.5 font-semibold text-sm tracking-tight text-zinc-100">
           <BookOpen className="w-4 h-4 text-indigo-400" />
           <span>{activeBook ? activeBook.title : '世界书设定库'}</span>
         </div>
@@ -318,7 +318,7 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
                 setEditingBook(null);
                 setIsCreatingNew(true);
               }}
-              className="px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium flex items-center gap-1 shadow-sm transition"
+              className="world-book-new-btn px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1 shadow-sm transition"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>新建世界书</span>
@@ -328,7 +328,7 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
           {activeBook && (
             <button
               onClick={() => setShowAssociateModal(activeBook)}
-              className="px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-indigo-300 text-xs font-medium flex items-center gap-1 border border-indigo-500/30 transition"
+              className="world-book-assoc-btn px-2.5 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-indigo-300 text-xs font-medium flex items-center gap-1 border border-indigo-500/30 transition"
               title="管理关联的 AI 角色"
             >
               <Users className="w-3.5 h-3.5" />
@@ -344,24 +344,26 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
         {!activeBookId && (
           <div className="space-y-3">
             {/* Search and Prompt Notice */}
-            <div className="relative">
-              <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-2.5" />
+            <div className="world-book-search-box relative">
+              <Search className="world-book-search-icon w-4 h-4 text-zinc-400 absolute left-3 top-2.5" />
               <StableTextInput
                 type="text"
                 placeholder="搜索世界书名称、标签或描述..."
                 value={searchQuery}
                 onValueChange={setSearchQuery}
-                className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-zinc-900 border border-zinc-800 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+                className="world-book-search-input w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-zinc-900 border border-zinc-800 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
               />
             </div>
 
             {/* Explanatory Banner */}
-            <div className="p-3 rounded-2xl bg-indigo-950/40 border border-indigo-500/20 text-xs text-indigo-200 leading-relaxed flex items-start gap-2.5">
-              <Sparkles className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+            <div className="world-book-info-banner p-3.5 rounded-2xl bg-indigo-950/40 border border-indigo-500/20 text-xs text-indigo-200 leading-relaxed flex items-start gap-3">
+              <div className="world-book-info-icon-box w-8 h-8 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 shrink-0 mt-0.5">
+                <Sparkles className="w-4 h-4" />
+              </div>
               <div>
-                <p className="font-semibold text-indigo-300">什么是世界书？</p>
-                <p className="text-[11px] text-zinc-400 mt-0.5">
-                  世界书用于定义宇宙法则、力量体系与专有名词。<strong>关联到 AI 角色后</strong>，AI 将自动基于该世界观设定进行沉浸式回复；未关联的 AI 则不受影响。
+                <p className="world-book-info-title font-semibold text-indigo-300">什么是世界书？</p>
+                <p className="world-book-info-desc text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
+                  世界书用于定义宇宙法则、力量体系与专有名词。<strong className="world-book-info-highlight font-semibold">关联到 AI 角色后</strong>，AI 将自动基于该世界观设定进行沉浸式回复；未关联的 AI 则不受影响。
                 </p>
               </div>
             </div>
@@ -369,8 +371,28 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
             {/* List of World Books */}
             <div className="space-y-2.5">
               {filteredBooks.length === 0 ? (
-                <div className="p-8 text-center text-zinc-500 text-xs bg-zinc-900/50 rounded-2xl border border-zinc-850">
-                  没有找到相关的世界书，点击右上角「新建世界书」开始创建
+                <div className="world-book-empty p-8 text-center rounded-2xl border flex flex-col items-center justify-center space-y-3 bg-zinc-900/50 border-zinc-850">
+                  <div className="world-book-empty-icon-box w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-400">
+                    <BookOpen className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <p className="world-book-empty-title font-semibold text-sm text-zinc-200">暂无相关世界书设定</p>
+                    <p className="world-book-empty-desc text-xs text-zinc-400 mt-1">创建专属世界观法则，让 AI 角色自动代入沉浸对话</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setFormTitle('');
+                      setFormDescription('');
+                      setFormWorldSetting('');
+                      setFormTags('');
+                      setEditingBook(null);
+                      setIsCreatingNew(true);
+                    }}
+                    className="world-book-empty-btn px-4 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-xs font-semibold border border-indigo-500/30 transition flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>立即新建世界书</span>
+                  </button>
                 </div>
               ) : (
                 filteredBooks.map((book) => {
@@ -382,7 +404,7 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
                     <div
                       key={book.id}
                       onClick={() => setActiveBookId(book.id)}
-                      className="p-3.5 rounded-2xl bg-zinc-900/90 hover:bg-zinc-850/90 border border-zinc-800 hover:border-indigo-500/40 transition cursor-pointer space-y-2 group"
+                      className="world-book-card p-3.5 rounded-2xl bg-zinc-900/90 hover:bg-zinc-850/90 border border-zinc-800 hover:border-indigo-500/40 transition cursor-pointer space-y-2 group"
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex items-center gap-2">
@@ -390,14 +412,14 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
                             <BookOpen className="w-4 h-4" />
                           </div>
                           <div>
-                            <h4 className="font-semibold text-sm text-zinc-100 group-hover:text-indigo-300 transition">
+                            <h4 className="world-book-card-title font-semibold text-sm text-zinc-100 group-hover:text-indigo-300 transition">
                               《{book.title}》
                             </h4>
                             <div className="flex items-center gap-1.5 mt-0.5">
                               {book.tags.map((tag, idx) => (
                                 <span
                                   key={idx}
-                                  className="text-[9px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400"
+                                  className="world-book-tag text-[9px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400"
                                 >
                                   #{tag}
                                 </span>
@@ -409,7 +431,7 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
                         <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                           <button
                             onClick={(e) => handleToggleBookEnabled(book.id, e)}
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition ${
+                            className={`world-book-status-pill px-2 py-0.5 rounded-full text-[10px] font-medium border transition ${
                               book.enabled !== false
                                 ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/25'
                                 : 'bg-zinc-800 text-zinc-500 border-zinc-700 hover:bg-zinc-750'
@@ -427,7 +449,7 @@ export const WorldBookApp: React.FC<WorldBookAppProps> = ({
                               setEditingBook(book);
                               setIsCreatingNew(true);
                             }}
-                            className="p-1.5 rounded-lg hover:bg-zinc-750 text-zinc-400 hover:text-zinc-200"
+                            className="world-book-action-btn p-1.5 rounded-lg hover:bg-zinc-750 text-zinc-400 hover:text-zinc-200"
                             title="编辑世界书"
                           >
                             <Edit3 className="w-3.5 h-3.5" />

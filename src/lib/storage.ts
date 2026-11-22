@@ -145,17 +145,18 @@ const INITIAL_WORLD_BOOKS: WorldBook[] = [];
 const INITIAL_ICONS: AppIconConfig[] = [
   { id: 'icon_wechat', name: '聊天', appId: 'wechat', pageIndex: 0, positionIndex: 0, builtInIcon: 'MessageCircle' },
   { id: 'icon_offline', name: '线下模式', appId: 'offline', pageIndex: 0, positionIndex: 1, builtInIcon: 'Heart' },
-  { id: 'icon_weather', name: '实时天气', appId: 'weather', pageIndex: 0, positionIndex: 2, builtInIcon: 'CloudSun' },
-  { id: 'icon_worldbook', name: '世界书', appId: 'worldbook', pageIndex: 0, positionIndex: 3, builtInIcon: 'BookOpen' },
-  { id: 'icon_gamecenter', name: '游戏中心', appId: 'gamecenter', pageIndex: 0, positionIndex: 4, builtInIcon: 'Gamepad2' },
-  { id: 'icon_menstrual', name: '经期健康', appId: 'menstrual', pageIndex: 0, positionIndex: 5, builtInIcon: 'HeartPulse' },
-  { id: 'icon_memo', name: '备忘录', appId: 'memo', pageIndex: 0, positionIndex: 6, builtInIcon: 'FileText' },
-  { id: 'icon_apimonitor', name: 'API 监控', appId: 'apimonitor', pageIndex: 0, positionIndex: 7, builtInIcon: 'Activity' },
-  { id: 'icon_beautification', name: '界面美化', appId: 'beautification', pageIndex: 0, positionIndex: 8, builtInIcon: 'Palette' },
-  { id: 'icon_settings', name: '系统设置', appId: 'settings', pageIndex: 0, positionIndex: 9, builtInIcon: 'Settings' },
-  { id: 'icon_connectivity', name: '外部设备', appId: 'connectivity', pageIndex: 0, positionIndex: 10, builtInIcon: 'Link' },
-  { id: 'icon_permissions', name: 'AI 权限', appId: 'permissions', pageIndex: 0, positionIndex: 11, builtInIcon: 'Shield' },
-  { id: 'icon_ai_activity_logs', name: 'AI 活动记录', appId: 'ai_activity_logs', pageIndex: 0, positionIndex: 12, builtInIcon: 'FileCheck' },
+  { id: 'icon_theater', name: '小剧场', appId: 'theater', pageIndex: 0, positionIndex: 2, builtInIcon: 'Drama' },
+  { id: 'icon_weather', name: '实时天气', appId: 'weather', pageIndex: 0, positionIndex: 3, builtInIcon: 'CloudSun' },
+  { id: 'icon_worldbook', name: '世界书', appId: 'worldbook', pageIndex: 0, positionIndex: 4, builtInIcon: 'BookOpen' },
+  { id: 'icon_gamecenter', name: '游戏中心', appId: 'gamecenter', pageIndex: 0, positionIndex: 5, builtInIcon: 'Gamepad2' },
+  { id: 'icon_menstrual', name: '经期健康', appId: 'menstrual', pageIndex: 0, positionIndex: 6, builtInIcon: 'HeartPulse' },
+  { id: 'icon_memo', name: '备忘录', appId: 'memo', pageIndex: 0, positionIndex: 7, builtInIcon: 'FileText' },
+  { id: 'icon_apimonitor', name: 'API 监控', appId: 'apimonitor', pageIndex: 0, positionIndex: 8, builtInIcon: 'Activity' },
+  { id: 'icon_beautification', name: '界面美化', appId: 'beautification', pageIndex: 0, positionIndex: 9, builtInIcon: 'Palette' },
+  { id: 'icon_settings', name: '系统设置', appId: 'settings', pageIndex: 0, positionIndex: 10, builtInIcon: 'Settings' },
+  { id: 'icon_connectivity', name: '外部设备', appId: 'connectivity', pageIndex: 0, positionIndex: 11, builtInIcon: 'Link' },
+  { id: 'icon_permissions', name: 'AI 权限', appId: 'permissions', pageIndex: 0, positionIndex: 12, builtInIcon: 'Shield' },
+  { id: 'icon_ai_activity_logs', name: 'AI 活动记录', appId: 'ai_activity_logs', pageIndex: 0, positionIndex: 13, builtInIcon: 'FileCheck' },
 ];
 
 const INITIAL_WIDGETS: WidgetConfig[] = [
@@ -347,6 +348,7 @@ export const saveLauncherCurrentPage = (page: number): void => {
 export const BUILTIN_APPS_REGISTRY: { appId: AppId; name: string; builtInIcon: string }[] = [
   { appId: 'wechat', name: '聊天', builtInIcon: 'MessageCircle' },
   { appId: 'offline', name: '线下模式', builtInIcon: 'Heart' },
+  { appId: 'theater', name: '小剧场', builtInIcon: 'Drama' },
   { appId: 'weather', name: '实时天气', builtInIcon: 'CloudSun' },
   { appId: 'worldbook', name: '世界书', builtInIcon: 'BookOpen' },
   { appId: 'gamecenter', name: '游戏中心', builtInIcon: 'Gamepad2' },

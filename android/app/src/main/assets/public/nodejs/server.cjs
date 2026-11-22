@@ -78857,6 +78857,48 @@ ${transcript || "\uFF08\u4E24\u4EBA\u5B89\u9759\u5171\u5904\u4E86\u4E00\u6BB5\u6
     });
   }
 });
+app.post("/api/gemini/theater-scenario", async (req, res) => {
+  try {
+    const { prompt, model, apiKey, baseUrl, provider } = req.body;
+    const selectedModel = model || "gemini-4-hydrogen";
+    const responseText = await callAiService({
+      prompt,
+      systemInstruction: "\u4F60\u662F\u4E00\u4E2A\u4E13\u4E1A\u7684\u6C89\u6D78\u5F0F\u89D2\u8272\u626E\u6F14\u5267\u672C\u5927\u5E08\u4E0E\u53CC\u76F2\u79D8\u5BC6\u8BBE\u8BA1\u5E08\u3002\u8BF7\u4E25\u683C\u6309\u7167JSON\u683C\u5F0F\u8FD4\u56DE\u3002",
+      model: selectedModel,
+      apiKey: apiKey || "",
+      baseUrl: baseUrl || "",
+      providerType: provider || "",
+      responseMimeType: "application/json",
+      temperature: 0.7,
+      maxTokens: 2e3
+    });
+    const extracted = extractThinkingAndContent(responseText);
+    res.json({ ok: true, text: extracted.cleanText || responseText });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || "Failed to generate theater scenario" });
+  }
+});
+app.post("/api/gemini/theater-chat", async (req, res) => {
+  try {
+    const { prompt, model, apiKey, baseUrl, provider } = req.body;
+    const selectedModel = model || "gemini-4-hydrogen";
+    const responseText = await callAiService({
+      prompt,
+      systemInstruction: "\u4F60\u6B63\u5728\u53C2\u4E0E\u300C\u5C0F\u5267\u573A\u300D\u6C89\u6D78\u5F0F\u89D2\u8272\u626E\u6F14\u3002\u8BF7\u4FDD\u6301\u89D2\u8272\u53E3\u543B\uFF0C\u6DF1\u5EA6\u4EE3\u5165\uFF0C\u8F93\u51FA\u7B26\u5408\u5267\u60C5\u53D1\u5C55\u7684\u5BF9\u8BDD\u4E0E\u52A8\u4F5C\u3002\u4E25\u683C\u6309\u7167JSON\u683C\u5F0F\u8FD4\u56DE\u3002",
+      model: selectedModel,
+      apiKey: apiKey || "",
+      baseUrl: baseUrl || "",
+      providerType: provider || "",
+      responseMimeType: "application/json",
+      temperature: 0.8,
+      maxTokens: 1500
+    });
+    const extracted = extractThinkingAndContent(responseText);
+    res.json({ ok: true, text: extracted.cleanText || responseText });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || "Failed theater chat" });
+  }
+});
 app.post("/api/gemini/gomoku-commentary", async (req, res) => {
   try {
     const { character, situation, boardSummary, difficulty, lastMove, apiConfig } = req.body;

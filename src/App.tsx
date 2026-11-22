@@ -68,6 +68,7 @@ import { WorldBookApp } from './components/apps/WorldBookApp';
 import { GameCenterApp } from './components/apps/GameCenterApp';
 import { WeatherApp } from './components/apps/WeatherApp';
 import { OfflineModeHome } from './components/offline/OfflineModeHome';
+import { TheaterApp } from './components/apps/theater/TheaterApp';
 import { CLOUD_MILK_DESKTOP_WALLPAPER, CLOUD_MILK_LOCK_WALLPAPER } from './lib/themeWallpapers';
 import { initAllAiMemoryVaults } from './lib/aiMemoryVaultDb';
 import { checkAndRunScheduledArchives } from './lib/chatArchiveDb';
@@ -774,6 +775,13 @@ export function App() {
               />
             )}
 
+            {activeAppId === 'theater' && (
+              <TheaterApp
+                onBack={() => setActiveAppId(null)}
+                userNickname={userProfile.name}
+              />
+            )}
+
             {/* Fallback for unhandled or custom app IDs */}
             {![
               'wechat',
@@ -789,6 +797,7 @@ export function App() {
               'ai_activity_logs',
               'apimonitor',
               'memo',
+              'theater',
             ].includes(activeAppId) && (
               <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center text-white bg-zinc-900">
                 <p className="text-sm font-semibold mb-2">应用加载完成</p>

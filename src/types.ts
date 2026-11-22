@@ -15,7 +15,8 @@ export type AppId =
   | 'gamecenter'
   | 'weather'
   | 'lock'
-  | 'offline';
+  | 'offline'
+  | 'theater';
 
 export interface WorldBookEntry {
   id: string;
@@ -73,6 +74,7 @@ export interface AiCharacter {
   id: string;
   name: string;
   avatar: string;
+  gender?: string;
   notificationAvatar?: string;
   wxid: string;
   persona: string;
@@ -1565,6 +1567,89 @@ export interface AiSocialMetaRecord {
   value: any;
   updatedAt: number;
 }
+
+export type TheaterGender = 'male' | 'female' | 'any';
+
+export interface TheaterRole {
+  id: string;
+  name: string;
+  avatar: string;
+  gender: 'male' | 'female' | 'other';
+  identity: string;
+  secret: string;
+  description: string;
+}
+
+export interface TheaterPreset {
+  id: string;
+  category: string;
+  categoryName: string;
+  title: string;
+  summary: string;
+  userRole: {
+    name: string;
+    identity: string;
+    gender: TheaterGender;
+    secretTemplate: string;
+  };
+  aiRole: {
+    identity: string;
+    gender: 'male' | 'female';
+    secretTemplate: string;
+  };
+  worldBackground: string;
+  initialScene: string;
+  initialTime: string;
+  initialLocation: string;
+  tags: string[];
+  isCustom?: boolean;
+}
+
+export interface TheaterMessage {
+  id: string;
+  sender: 'user' | 'ai' | 'system' | 'narrator';
+  text: string;
+  timestamp: number;
+  action?: string;
+  thoughts?: string;
+}
+
+export interface TheaterTask {
+  id: string;
+  text: string;
+  completed: boolean;
+}
+
+export interface TheaterItem {
+  id: string;
+  name: string;
+  count: number;
+  description: string;
+}
+
+export interface TheaterSession {
+  id: string;
+  characterId: string;
+  presetId?: string;
+  title: string;
+  category: string;
+  worldBackground: string;
+  initialScene: string;
+  currentTime: string;
+  currentLocation: string;
+  chapter: string;
+  userRole: TheaterRole;
+  aiRole: TheaterRole;
+  messages: TheaterMessage[];
+  tasks: TheaterTask[];
+  inventory: TheaterItem[];
+  intimacy: number;
+  status: 'playing' | 'paused' | 'ended';
+  memoirSummary?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 
 
 
