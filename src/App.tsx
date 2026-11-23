@@ -71,7 +71,7 @@ import { OfflineModeHome } from './components/offline/OfflineModeHome';
 import { TheaterApp } from './components/apps/theater/TheaterApp';
 import { CLOUD_MILK_DESKTOP_WALLPAPER, CLOUD_MILK_LOCK_WALLPAPER } from './lib/themeWallpapers';
 import { initAllAiMemoryVaults } from './lib/aiMemoryVaultDb';
-import { checkAndRunScheduledArchives } from './lib/chatArchiveDb';
+import { checkAndRunScheduledArchives, startContinuousArchiveProtection } from './lib/chatArchiveDb';
 import { InPhoneAskDialog } from './components/agent/InPhoneAskDialog';
 import { InPhoneNotificationBanner } from './components/agent/InPhoneNotificationBanner';
 import { agentOrchestrator } from './lib/agent/AgentOrchestrator';
@@ -82,7 +82,8 @@ import { initCrossChannelRecovery } from './lib/crossChannel/crossChannelExecuto
 import { setupLocalBackend } from './lib/localBackend';
 import { AgentAskPrompt, InPhoneNotification } from './lib/agent/types';
 import { getApiConfigForEngine } from './lib/apiConfigStore';
-import { clearAllChatMessages } from './lib/chatDb';
+import { clearAllChatMessages, getAllChatMessages } from './lib/chatDb';
+import { seedSafetyMirror } from './lib/chatSafetyBackup';
 import { autoPaginateLayout } from './lib/layoutPaginator';
 import { backfillAllCharactersNotificationAvatars } from './lib/notificationAvatar';
 import { loadWeChatTheme, subscribeWeChatTheme } from './components/apps/wechat/theme/wechatThemeStore';
@@ -463,6 +464,22 @@ export function App() {
       };
     }
   }, [characters]);
+
+  // Every newly committed message is mirrored into the searchable archive
+  // while automatic archiving is enabled; periodic checks remain as audits.
+  useEffect(() => startContinuousArchiveProtection(), []);
+
+  // One-time migration of every record that already existed before the
+  // write-through safety layer was introduced. New records are mirrored by
+  // chatDb at commit time.
+  useEffect(() => {
+    const seedKey = 'phone_chat_safety_seeded_v1';
+    if (localStorage.getItem(seedKey) === 'done') return;
+    void getAllChatMessages()
+      .then((records) => seedSafetyMirror(records))
+      .then(() => localStorage.setItem(seedKey, 'done'))
+      .catch((error) => console.error('[App] Initial chat safety seed failed:', error));
+  }, []);
 
   // Listen for system theme media query changes for 'system' mode
   const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() => {
