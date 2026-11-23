@@ -365,25 +365,31 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     }
   };
 
-  // Blank Long Press for Desktop Edit Mode
-  let pressTimer: any = null;
+  // Blank/Icon long press for desktop edit mode. Keep the timer outside the
+  // render cycle so a drag-induced render cannot orphan an old timeout.
+  const pressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleStartBlankPress = () => {
-    pressTimer = setTimeout(() => {
+    if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
+    pressTimerRef.current = setTimeout(() => {
+      pressTimerRef.current = null;
+      swipeHandledRef.current = true;
       setIsEditMode(true);
-    }, 600);
+    }, 2000);
   };
   const handleEndBlankPress = () => {
-    if (pressTimer) clearTimeout(pressTimer);
+    if (pressTimerRef.current) {
+      clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
+    }
   };
 
-  // Icon Long Press for Context Menu
-  const handleIconLongPress = (e: React.MouseEvent | React.TouchEvent, icon: AppIconConfig) => {
-    e.stopPropagation();
-    setActiveIconMenu(icon);
-    setEditedName(icon.name);
-  };
+  useEffect(() => () => handleEndBlankPress(), []);
 
   const handleIconClick = (icon: AppIconConfig) => {
+    if (swipeHandledRef.current) {
+      swipeHandledRef.current = false;
+      return;
+    }
     if (isEditMode) {
       setActiveIconMenu(icon);
       setEditedName(icon.name);
@@ -394,18 +400,51 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
 
   // Icon Drag & Drop State
   const [draggingIcon, setDraggingIcon] = useState<AppIconConfig | null>(null);
-  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
+  const [dragStartPos, setDragStartPos] = useState<{ x: number; y: number } | null>(null);
   const [dragTargetPosIndex, setDragTargetPosIndex] = useState<number | null>(null);
+  const [dragPreviewPage, setDragPreviewPage] = useState<number | null>(null);
   const dragOverPageRef = useRef<number>(currentPage);
+  const dragTargetPosIndexRef = useRef<number | null>(null);
   const edgeFlipLockedRef = useRef<boolean>(false);
+  const dragGhostRef = useRef<HTMLDivElement | null>(null);
+  const dragPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const dragFrameRef = useRef<number | null>(null);
+
+  const updateDragGhostPosition = (clientX: number, clientY: number) => {
+    dragPositionRef.current = { x: clientX, y: clientY };
+    if (dragFrameRef.current !== null) return;
+    dragFrameRef.current = requestAnimationFrame(() => {
+      dragFrameRef.current = null;
+      const next = dragPositionRef.current;
+      if (dragGhostRef.current && next) {
+        dragGhostRef.current.style.transform = `translate3d(${next.x}px, ${next.y}px, 0) translate(-50%, -50%)`;
+      }
+    });
+  };
+
+  const updateDragTarget = (pageIndex: number, positionIndex: number) => {
+    if (dragOverPageRef.current !== pageIndex) {
+      dragOverPageRef.current = pageIndex;
+      setDragPreviewPage(pageIndex);
+    }
+    if (dragTargetPosIndexRef.current !== positionIndex) {
+      dragTargetPosIndexRef.current = positionIndex;
+      setDragTargetPosIndex(positionIndex);
+    }
+  };
 
   const handleStartDragIcon = (e: React.PointerEvent | React.TouchEvent, icon: AppIconConfig) => {
     e.stopPropagation();
     const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.PointerEvent).clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.PointerEvent).clientY;
+    swipeHandledRef.current = true;
     setDraggingIcon(icon);
-    setDragPos({ x: clientX, y: clientY });
+    setDragStartPos({ x: clientX, y: clientY });
+    dragPositionRef.current = { x: clientX, y: clientY };
     dragOverPageRef.current = icon.pageIndex;
+    setDragPreviewPage(icon.pageIndex);
+    dragTargetPosIndexRef.current = icon.positionIndex;
+    setDragTargetPosIndex(icon.positionIndex);
     edgeFlipLockedRef.current = false;
   };
 
@@ -413,7 +452,19 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     if (!draggingIcon) return;
     const clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
-    setDragPos({ x: clientX, y: clientY });
+    updateDragGhostPosition(clientX, clientY);
+
+    // Touch devices do not emit mouseenter while dragging. Resolve the slot
+    // under the pointer so every displaced icon can preview its new position.
+    const elementBelow = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+    const slot = elementBelow?.closest<HTMLElement>('[data-launcher-slot-index]');
+    if (slot) {
+      const slotPage = Number(slot.dataset.launcherSlotPage);
+      const slotIndex = Number(slot.dataset.launcherSlotIndex);
+      if (Number.isFinite(slotPage) && Number.isFinite(slotIndex)) {
+        updateDragTarget(slotPage, slotIndex);
+      }
+    }
 
     // Edge swipe detection while dragging with strict edge flip lock
     const winWidth = window.innerWidth;
@@ -423,13 +474,17 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
       if (!edgeFlipLockedRef.current && currentPage > 0) {
         edgeFlipLockedRef.current = true;
         handleSetCurrentPage((prev) => Math.max(0, prev - 1));
-        dragOverPageRef.current = Math.max(0, dragOverPageRef.current - 1);
+        const nextPage = Math.max(0, dragOverPageRef.current - 1);
+        dragOverPageRef.current = nextPage;
+        setDragPreviewPage(nextPage);
       }
     } else if (clientX > winWidth - EDGE_THRESHOLD) {
       if (!edgeFlipLockedRef.current && currentPage < pagesCount - 1) {
         edgeFlipLockedRef.current = true;
         handleSetCurrentPage((prev) => Math.min(pagesCount - 1, prev + 1));
-        dragOverPageRef.current = Math.min(pagesCount - 1, dragOverPageRef.current + 1);
+        const nextPage = Math.min(pagesCount - 1, dragOverPageRef.current + 1);
+        dragOverPageRef.current = nextPage;
+        setDragPreviewPage(nextPage);
       }
     } else {
       edgeFlipLockedRef.current = false;
@@ -446,7 +501,11 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
       .sort((a, b) => a.positionIndex - b.positionIndex);
 
     // Calculate insertion index
-    const targetIdx = dragTargetPosIndex !== null ? dragTargetPosIndex : targetIcons.length;
+    const requestedIndex = dragTargetPosIndexRef.current;
+    const targetIdx = Math.max(
+      0,
+      Math.min(requestedIndex !== null ? requestedIndex : targetIcons.length, targetIcons.length)
+    );
 
     // Insert dragged icon
     targetIcons.splice(targetIdx, 0, {
@@ -481,8 +540,15 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     onUpdateIcons(newAllIcons);
 
     setDraggingIcon(null);
-    setDragPos(null);
+    setDragStartPos(null);
+    setDragPreviewPage(null);
+    dragPositionRef.current = null;
+    dragTargetPosIndexRef.current = null;
     setDragTargetPosIndex(null);
+    if (dragFrameRef.current !== null) {
+      cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = null;
+    }
   };
 
   useEffect(() => {
@@ -491,15 +557,27 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     const onUp = () => handleDragEnd();
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
-    window.addEventListener('touchmove', onMove);
-    window.addEventListener('touchend', onUp);
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('touchmove', onMove);
-      window.removeEventListener('touchend', onUp);
     };
-  }, [draggingIcon, currentPage, pagesCount]);
+  }, [draggingIcon, currentPage, pagesCount, icons]);
+
+  const getPreviewIconsForPage = (pageIndex: number) => {
+    const sorted = icons
+      .filter((icon) => icon.pageIndex === pageIndex && icon.id !== draggingIcon?.id)
+      .sort((a, b) => a.positionIndex - b.positionIndex);
+
+    if (!draggingIcon || dragPreviewPage !== pageIndex) return sorted;
+
+    const insertionIndex = Math.max(
+      0,
+      Math.min(dragTargetPosIndex ?? sorted.length, sorted.length)
+    );
+    const preview = [...sorted];
+    preview.splice(insertionIndex, 0, { ...draggingIcon, pageIndex });
+    return preview;
+  };
 
   // Actions
   const handleDeleteIcon = (iconId: string) => {
@@ -797,9 +875,10 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
         >
           {[...Array(pagesCount)].map((_, pageIdx) => {
             const pageWidgets = widgets.filter((w) => w.pageIndex === pageIdx);
-            const pageIcons = icons
-              .filter((i) => i.pageIndex === pageIdx)
-              .sort((a, b) => a.positionIndex - b.positionIndex);
+            // During a drag, render a live reordered preview. The actively
+            // dragged item is represented by a lightweight placeholder here;
+            // every other item receives its own spring-based layout movement.
+            const pageIcons = getPreviewIconsForPage(pageIdx);
 
             const widgetSlotsUsed = pageWidgets.reduce(
               (sum, w) => sum + getWidgetSlotCost(w),
@@ -1089,19 +1168,43 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                     if (icon) {
                       const isBeingDragged = draggingIcon?.id === icon.id;
                       return (
-                        <div
+                        <motion.div
                           key={icon.id}
+                          layout="position"
+                          transition={{
+                            layout: {
+                              type: 'spring',
+                              stiffness: 430,
+                              damping: 36,
+                              mass: 0.62,
+                            },
+                          }}
                           onClick={() => handleIconClick(icon)}
-                          onContextMenu={(e) => handleIconLongPress(e, icon)}
+                          // Android WebView normally emits contextmenu after a
+                          // much shorter native long press. Suppress it so the
+                          // only edit-mode entry is our explicit 2-second hold.
+                          onContextMenu={(e) => e.preventDefault()}
                           onPointerDown={(e) => {
                             if (isEditMode) {
                               handleStartDragIcon(e, icon);
                             }
                           }}
-                          onMouseEnter={() => setDragTargetPosIndex(slotIdx)}
-                          className={`group flex flex-col items-center cursor-pointer transition relative touch-none ${
-                            isBeingDragged ? 'opacity-30 scale-90' : ''
+                          onMouseEnter={() => {
+                            if (draggingIcon) updateDragTarget(pageIdx, slotIdx);
+                          }}
+                          data-launcher-slot-page={pageIdx}
+                          data-launcher-slot-index={slotIdx}
+                          className={`group flex flex-col items-center cursor-pointer relative touch-none ${
+                            isBeingDragged
+                              ? 'opacity-20 scale-[0.88]'
+                              : draggingIcon
+                              ? 'opacity-100'
+                              : 'transition'
                           }`}
+                          style={{
+                            zIndex: isBeingDragged ? 2 : 1,
+                            willChange: draggingIcon ? 'transform' : undefined,
+                          }}
                         >
                           {/* Custom Image or Cloud Milk Built-in Icon (Tap rebound isolated to visual icon box) */}
                           <DesktopIconPressLayer
@@ -1134,14 +1237,18 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
                           <span className="mt-1.5 text-[11px] font-semibold text-[#243040] dark:text-zinc-100 tracking-tight truncate max-w-[68px] text-center">
                             {icon.name}
                           </span>
-                        </div>
+                        </motion.div>
                       );
                     } else {
                       const isFirstEmptySlot = slotIdx === pageIcons.length;
                       return (
                         <div
                           key={`empty_slot_${slotIdx}`}
-                          onMouseEnter={() => setDragTargetPosIndex(slotIdx)}
+                          onMouseEnter={() => {
+                            if (draggingIcon) updateDragTarget(pageIdx, slotIdx);
+                          }}
+                          data-launcher-slot-page={pageIdx}
+                          data-launcher-slot-index={slotIdx}
                           className="flex flex-col items-center justify-center touch-none h-[76px]"
                         >
                           {isEditMode ? (
@@ -1171,20 +1278,33 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
       </div>
 
       {/* Floating Ghost Icon while Dragging */}
-      {draggingIcon && dragPos && (
+      {draggingIcon && dragStartPos && (
         <div
-          className="fixed z-50 pointer-events-none transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center opacity-90 scale-110 drop-shadow-2xl"
-          style={{ left: dragPos.x, top: dragPos.y }}
+          ref={dragGhostRef}
+          className="fixed left-0 top-0 z-50 pointer-events-none flex flex-col items-center"
+          style={{
+            transform: `translate3d(${dragStartPos.x}px, ${dragStartPos.y}px, 0) translate(-50%, -50%)`,
+            willChange: 'transform',
+          }}
         >
-          <CloudMilkIcon
-            appId={draggingIcon.appId}
-            customImage={draggingIcon.customImage}
-            name={draggingIcon.name}
-            size={56}
-          />
-          <span className="mt-1 text-[10px] font-bold text-white bg-black/60 px-1.5 py-0.5 rounded-full">
-            {draggingIcon.name}
-          </span>
+          <motion.div
+            initial={{ scale: 0.94, rotate: 0, opacity: 0.72 }}
+            animate={{ scale: 1.1, rotate: -1.5, opacity: 0.96 }}
+            transition={{ type: 'spring', stiffness: 520, damping: 30, mass: 0.55 }}
+            className="flex flex-col items-center drop-shadow-2xl"
+          >
+            <div className="rounded-[18px] ring-2 ring-white/75 shadow-[0_14px_32px_rgba(0,0,0,0.32)]">
+              <CloudMilkIcon
+                appId={draggingIcon.appId}
+                customImage={draggingIcon.customImage}
+                name={draggingIcon.name}
+                size={56}
+              />
+            </div>
+            <span className="mt-1.5 text-[10px] font-bold text-white bg-black/65 px-2 py-0.5 rounded-full shadow-md">
+              {draggingIcon.name}
+            </span>
+          </motion.div>
         </div>
       )}
 
