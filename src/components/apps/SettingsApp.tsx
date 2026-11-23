@@ -866,8 +866,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
             {/* 自动归档频率 */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs gap-2">
-                <span className="font-semibold text-zinc-200">自动归档周期</span>
-                <span className="text-[11px] text-zinc-500">定时增量归档到本地</span>
+                <span className="font-semibold text-zinc-200">自动归档完整性核验周期</span>
+                <span className="text-[11px] text-zinc-500">开启后每条消息实时双写，周期用于查漏补缺</span>
               </div>
               <div className="grid grid-cols-4 gap-1.5 pt-1">
                 {(
@@ -935,6 +935,10 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
                     ? new Date(archiveConfig.lastArchivedAt).toLocaleString()
                     : '从未归档'}
                 </span>
+              </div>
+
+              <div className="settings-feedback-success text-[11px] text-emerald-400 bg-emerald-950/20 border border-emerald-900/30 p-2 rounded-lg leading-relaxed">
+                🛡️ 安全保护：主聊天库 + 独立本地镜像 + Android 原生文件；自动归档开启时还会同步写入可检索归档库。覆盖安装不会清除原生安全文件。
               </div>
 
               <div className="flex items-center justify-between text-[11px] gap-2">
