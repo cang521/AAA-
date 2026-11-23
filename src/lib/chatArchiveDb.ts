@@ -1,5 +1,5 @@
 import { ChatMessage } from '../types';
-import { getDb } from './chatDb';
+import { getDb, subscribeChatDb } from './chatDb';
 
 export interface AiArchiveConfig {
   characterId: string;
@@ -38,6 +38,8 @@ const STORE_INDEXES = 'ai_history_indexes';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 const configListeners = new Set<() => void>();
+const continuousArchiveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+let stopContinuousArchive: (() => void) | null = null;
 
 export function subscribeArchiveDb(callback: () => void) {
   configListeners.add(callback);
@@ -226,24 +228,25 @@ export async function saveAiArchiveConfig(config: AiArchiveConfig): Promise<void
  */
 export async function getPendingMessageCount(
   characterId: string,
-  lastArchivedTimestamp = 0
+  _lastArchivedTimestamp = 0
 ): Promise<number> {
   try {
     const primaryDb = await getDb();
-    return new Promise((resolve) => {
+    const primaryIds = await new Promise<string[]>((resolve) => {
       const tx = primaryDb.transaction(['messages'], 'readonly');
       const store = tx.objectStore('messages');
-      const index = store.index('by_character_time');
-
-      const keyRange = IDBKeyRange.bound(
-        [characterId, lastArchivedTimestamp + 1],
-        [characterId, Number.MAX_SAFE_INTEGER]
-      );
-
-      const req = index.count(keyRange);
-      req.onsuccess = () => resolve(req.result || 0);
-      req.onerror = () => resolve(0);
+      const req = store.index('by_character').getAllKeys(characterId);
+      req.onsuccess = () => resolve((req.result || []).map(String));
+      req.onerror = () => resolve([]);
     });
+    const archiveDb = await getArchiveDb();
+    const archivedIds = await new Promise<Set<string>>((resolve) => {
+      const tx = archiveDb.transaction([STORE_ARCHIVES], 'readonly');
+      const req = tx.objectStore(STORE_ARCHIVES).index('by_character').getAllKeys(characterId);
+      req.onsuccess = () => resolve(new Set((req.result || []).map(String)));
+      req.onerror = () => resolve(new Set());
+    });
+    return primaryIds.reduce((count, id) => count + (archivedIds.has(id) ? 0 : 1), 0);
   } catch (e) {
     console.warn('Error counting pending messages:', e);
     return 0;
@@ -323,29 +326,32 @@ export async function performIncrementalArchive(
 
   try {
     const primaryDb = await getDb();
-    const lastTime = currentConfig.lastArchivedTimestamp || 0;
-
-    // Fetch unarchived messages from primary chat store
-    const newMessages: ChatMessage[] = await new Promise((resolve, reject) => {
+    // Read the character's primary messages. We intentionally do not rely only
+    // on a timestamp cursor: two bubbles can share the same millisecond and an
+    // interrupted previous run can advance a cursor past an unwritten record.
+    const primaryMessages: ChatMessage[] = await new Promise((resolve, reject) => {
       const tx = primaryDb.transaction(['messages'], 'readonly');
       const store = tx.objectStore('messages');
-      const index = store.index('by_character_time');
-
-      const keyRange = IDBKeyRange.bound(
-        [characterId, lastTime + 1],
-        [characterId, Number.MAX_SAFE_INTEGER]
-      );
-
-      const req = index.getAll(keyRange);
+      const req = store.index('by_character').getAll(characterId);
       req.onsuccess = () => resolve(req.result || []);
       req.onerror = () => reject(req.error);
     });
+
+    const archiveDb = await getArchiveDb();
+    const archivedIds = await new Promise<Set<string>>((resolve) => {
+      const tx = archiveDb.transaction([STORE_ARCHIVES], 'readonly');
+      const req = tx.objectStore(STORE_ARCHIVES).index('by_character').getAllKeys(characterId);
+      req.onsuccess = () => resolve(new Set((req.result || []).map(String)));
+      req.onerror = () => resolve(new Set());
+    });
+    const newMessages = primaryMessages.filter((message) => !archivedIds.has(message.id));
 
     if (newMessages.length === 0) {
       await saveAiArchiveConfig({
         ...currentConfig,
         archiveStatus: 'completed',
         pendingCount: 0,
+        archivedTotalCount: archivedIds.size,
         lastArchivedAt: Date.now(),
       });
       return { archivedCount: 0, status: 'completed' };
@@ -353,8 +359,6 @@ export async function performIncrementalArchive(
 
     // Sort chronologically ascending
     newMessages.sort((a, b) => a.timestamp - b.timestamp);
-
-    const archiveDb = await getArchiveDb();
 
     // 1. Write messages incrementally to STORE_ARCHIVES
     const archiveTx = archiveDb.transaction([STORE_ARCHIVES], 'readwrite');
@@ -403,7 +407,7 @@ export async function performIncrementalArchive(
       lastArchivedAt: Date.now(),
       archiveStatus: 'completed',
       pendingCount: 0,
-      archivedTotalCount: (currentConfig.archivedTotalCount || 0) + newMessages.length,
+      archivedTotalCount: archivedIds.size + newMessages.length,
       lastFailedError: undefined,
     };
 
@@ -458,6 +462,47 @@ export async function checkAndRunScheduledArchives(characterIds: string[]): Prom
       console.warn(`[ChatArchive] Scheduled archive check failed for ${charId}:`, e);
     }
   }
+}
+
+/**
+ * Real automatic archive: once a message is durably committed to ChatDB, queue
+ * a short debounced incremental archive for that character. The selected
+ * daily/weekly/monthly value remains a full integrity-audit interval; it is no
+ * longer the only moment when a safety copy is made.
+ */
+export function startContinuousArchiveProtection(): () => void {
+  if (stopContinuousArchive) return stopContinuousArchive;
+
+  const unsubscribe = subscribeChatDb((event) => {
+    if (!event || (event.type !== 'message_saved' && event.type !== 'message_updated' && event.type !== 'turn_replaced')) {
+      return;
+    }
+    const characterId = event.characterId;
+    const existing = continuousArchiveTimers.get(characterId);
+    if (existing) clearTimeout(existing);
+    continuousArchiveTimers.set(
+      characterId,
+      setTimeout(async () => {
+        continuousArchiveTimers.delete(characterId);
+        try {
+          const config = await getAiArchiveConfig(characterId);
+          if (config.autoArchiveFrequency !== 'off') {
+            await performIncrementalArchive(characterId, false);
+          }
+        } catch (error) {
+          console.error(`[ChatArchive] Continuous archive failed for ${characterId}:`, error);
+        }
+      }, 1500)
+    );
+  });
+
+  stopContinuousArchive = () => {
+    unsubscribe();
+    for (const timer of continuousArchiveTimers.values()) clearTimeout(timer);
+    continuousArchiveTimers.clear();
+    stopContinuousArchive = null;
+  };
+  return stopContinuousArchive;
 }
 
 /**

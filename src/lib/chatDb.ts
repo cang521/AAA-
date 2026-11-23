@@ -4,6 +4,7 @@ import {
   syncProactiveRuntimeOnMessageSaved,
   settleActiveEpisodeByUserMessage,
 } from './proactive/proactiveStore';
+import { markChatMessagesDeleted, mirrorChatMessagesToSafety, seedSafetyMirror } from './chatSafetyBackup';
 
 const DB_NAME = 'PhoneSimChatDB_v2';
 // Version 4 is a non-destructive schema repair. Some installed builds can have
@@ -400,6 +401,9 @@ export async function saveChatMessage(msg: ChatMessage): Promise<void> {
   const db = await getDb();
   const existedBefore = await hasChatMessage(msg.id).catch(() => false);
   await addMessageToStore(db, msg);
+  await mirrorChatMessagesToSafety([msg]).catch((error) => {
+    console.error('[chatDb] Message committed, but safety mirror failed:', error);
+  });
 
   // Incrementally update search index instead of clearing full cache
   appendChatMessageToIndexCache(msg);
@@ -735,6 +739,10 @@ export async function saveChatMessagesBulk(
     tx.onerror = () => rej(tx.error);
   });
 
+  await mirrorChatMessagesToSafety(msgs).catch((error) => {
+    console.error('[chatDb] Bulk messages committed, but safety mirror failed:', error);
+  });
+
   clearChatIndexCache();
 
   if (!options?.skipMetaReload) {
@@ -890,6 +898,7 @@ export async function deleteChatMessage(id: string, characterId: string): Promis
     tx.oncomplete = () => res();
     tx.onerror = () => rej(tx.error);
   });
+  await markChatMessagesDeleted([id]);
 
   clearChatIndexCache(characterId);
   await reloadMetaCache(db);
@@ -915,6 +924,7 @@ export async function deleteChatMessagesBatch(ids: string[], characterId: string
     tx.onerror = () => rej(tx.error || new Error('IndexedDB batch delete failed'));
     tx.onabort = () => rej(tx.error || new Error('IndexedDB batch delete aborted'));
   });
+  await markChatMessagesDeleted(uniqueIds);
 
   clearChatIndexCache(characterId);
   await reloadMetaCache(db);
@@ -928,6 +938,9 @@ export async function deleteChatMessagesBatch(ids: string[], characterId: string
 export async function updateChatMessage(msg: ChatMessage): Promise<void> {
   const db = await getDb();
   await addMessageToStore(db, msg);
+  await mirrorChatMessagesToSafety([msg]).catch((error) => {
+    console.error('[chatDb] Updated message safety mirror failed:', error);
+  });
   clearChatIndexCache(msg.characterId);
   await reloadMetaCache(db);
   notifyChange({
@@ -968,6 +981,12 @@ export async function replaceChatMessagesTurn(
   await new Promise<void>((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+  });
+
+  await markChatMessagesDeleted(oldMessageIds);
+
+  await mirrorChatMessagesToSafety(newMessages).catch((error) => {
+    console.error('[chatDb] Replacement turn safety mirror failed:', error);
   });
 
   clearChatIndexCache(characterId);
@@ -1476,6 +1495,10 @@ export async function getAllChatMessagesForCharacter(characterId: string): Promi
  */
 export async function clearAllChatMessages(): Promise<void> {
   const db = await getDb();
+  // A clear operation is allowed only after the current primary records have
+  // been copied to the independent/native safety layers.
+  const beforeClear = await getAllChatMessages();
+  await seedSafetyMirror(beforeClear);
   const tx = db.transaction([STORE_MESSAGES], 'readwrite');
   const store = tx.objectStore(STORE_MESSAGES);
   store.clear();
@@ -1483,6 +1506,7 @@ export async function clearAllChatMessages(): Promise<void> {
     tx.oncomplete = () => res();
     tx.onerror = () => rej(tx.error);
   });
+  await markChatMessagesDeleted(beforeClear.map((message) => message.id));
   metaCache.clear();
   notifyChange();
 }
@@ -1493,6 +1517,9 @@ export async function clearAllChatMessages(): Promise<void> {
 export async function restoreChatMessages(messages: ChatMessage[], clearFirst = true): Promise<void> {
   const db = await getDb();
   if (clearFirst) {
+    const beforeReplace = await getAllChatMessages();
+    await seedSafetyMirror(beforeReplace);
+    await markChatMessagesDeleted(beforeReplace.map((message) => message.id));
     const txClear = db.transaction([STORE_MESSAGES], 'readwrite');
     txClear.objectStore(STORE_MESSAGES).clear();
     await new Promise<void>((res, rej) => {
@@ -1517,6 +1544,7 @@ export async function restoreChatMessages(messages: ChatMessage[], clearFirst = 
         tx.onerror = () => rej(tx.error);
       });
     }
+    await seedSafetyMirror(messages);
   }
 
   await reloadMetaCache(db);

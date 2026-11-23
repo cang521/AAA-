@@ -1,5 +1,6 @@
 import { AiCharacter, ChatMessage } from '../types';
 import { getAllChatMessages, restoreChatMessages } from './chatDb';
+import { readIndependentSafetyMessages, readNativeSafetyMessages } from './chatSafetyBackup';
 
 const SNAPSHOTS_KEY = 'phone_data_snapshots_v1';
 const LEGACY_MESSAGES_KEY = 'phone_chat_messages';
@@ -228,6 +229,16 @@ async function performRecovery(characters: AiCharacter[]): Promise<ChatRecoveryR
     sourceMessageCounts,
     scannedSources
   );
+
+  const independentBefore = candidates.size;
+  collectMessages(await readIndependentSafetyMessages(), candidates);
+  sourceMessageCounts.independentSafetyMirror = candidates.size - independentBefore;
+  scannedSources.push('独立聊天安全镜像');
+
+  const nativeBefore = candidates.size;
+  collectMessages(await readNativeSafetyMessages(), candidates);
+  sourceMessageCounts.nativeAppendOnlyJournal = candidates.size - nativeBefore;
+  scannedSources.push('Android 原生聊天安全文件');
 
   const currentIds = new Set(characters.map((character) => character.id));
   const currentNameToIds = new Map<string, string[]>();
