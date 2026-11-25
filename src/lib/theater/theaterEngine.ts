@@ -1,14 +1,17 @@
 import { AiCharacter, TheaterPreset, TheaterRole, TheaterSession, TheaterMessage } from '../../types';
 import { BUILTIN_THEATER_PRESETS } from './theaterPresets';
-import { getRecentDrawIdsFromDb, addRecentDrawIdToDb, loadCustomPresetsFromDb } from './theaterDb';
+import { getRecentDrawIdsFromDb, addRecentDrawIdToDb } from './theaterDb';
 import { getApiConfigForEngine } from '../apiConfigStore';
 import { apiFetch, ensureBackendReady } from '../localBackend';
 import { loadWorldBooks } from '../storage';
 import { evaluateWorldBookContext } from '../aiReply/contextEvaluator';
 
+/**
+ * 官方抽签池只读取内置 70 条。
+ * 用户自定义预设由“自定义剧场”独立管理，绝不静默混入随机抽签。
+ */
 export async function getAllAvailablePresets(): Promise<TheaterPreset[]> {
-  const custom = await loadCustomPresetsFromDb();
-  return [...BUILTIN_THEATER_PRESETS, ...custom];
+  return [...BUILTIN_THEATER_PRESETS];
 }
 
 /**
@@ -510,3 +513,4 @@ ${session.messages.slice(-25).map(m => `${m.sender === 'user' ? session.userRole
 
   return `在这场名为《${session.title}》的旅程中，${session.userRole.name}与${session.aiRole.name}并肩经历了波折与考验，两人的故事在此刻定格，成为彼此心中最珍贵的记忆。`;
 }
+
