@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { AiCharacter, TheaterPreset } from '../../../types';
 import { BUILTIN_THEATER_PRESETS } from '../../../lib/theater/theaterPresets';
-import { loadCustomPresetsFromDb } from '../../../lib/theater/theaterDb';
 import { validateGenderCompatibility } from '../../../lib/theater/theaterEngine';
 import { Search, Sparkles, ShieldAlert, BookOpen, Users, Compass, ArrowRight, X } from 'lucide-react';
 
@@ -20,17 +19,12 @@ export const TheaterCustomSelectModal: React.FC<TheaterCustomSelectModalProps> =
 }) => {
   const [selectedCharId, setSelectedCharId] = useState<string>(characters[0]?.id || '');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [allPresets, setAllPresets] = useState<TheaterPreset[]>(BUILTIN_THEATER_PRESETS);
+  const allPresets = BUILTIN_THEATER_PRESETS;
   const [selectedPreset, setSelectedPreset] = useState<TheaterPreset | null>(null);
   const [genderWarning, setGenderWarning] = useState<string | null>(null);
 
   const activeCharacter = characters.find(c => c.id === selectedCharId) || characters[0];
 
-  useEffect(() => {
-    loadCustomPresetsFromDb().then(custom => {
-      setAllPresets([...BUILTIN_THEATER_PRESETS, ...custom]);
-    });
-  }, []);
 
   const filteredPresets = allPresets.filter(p => {
     if (searchQuery.trim()) {
@@ -257,3 +251,4 @@ export const TheaterCustomSelectModal: React.FC<TheaterCustomSelectModalProps> =
     </div>
   );
 };
+
