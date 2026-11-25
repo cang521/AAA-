@@ -5776,46 +5776,98 @@ ${awarenessMemoryRule}
 
 // Theater Scenario & Chat Endpoints
 app.post('/api/gemini/theater-scenario', async (req, res) => {
+  const startTime = Date.now();
   try {
-    const { prompt, model, apiKey, baseUrl, provider } = req.body;
-    const selectedModel = model || 'gemini-4-hydrogen';
-    const responseText = await callAiService({
+    const { prompt, model, apiKey, baseUrl, provider, apiProtocol, customHeaders, apiConfig, textApiConfig, theaterType } = req.body;
+    const cfg = textApiConfig || apiConfig || {};
+    const selectedModel = model || cfg.model || cfg.textModel || GEMINI_DEFAULT_TEXT_MODEL;
+    const selectedKey = apiKey || cfg.apiKey || cfg.textApiKey || '';
+    const selectedBaseUrl = baseUrl || cfg.baseUrl || cfg.textBaseUrl || '';
+    const selectedProvider = provider || cfg.provider || cfg.textProvider || '';
+    const selectedProtocol = apiProtocol || cfg.apiProtocol || cfg.textApiProtocol || '';
+    const selectedHeaders = customHeaders || cfg.customHeaders;
+
+    const detailedResult = await callAiServiceDetailed({
       prompt,
       systemInstruction: '你是一个专业的沉浸式角色扮演剧本大师与双盲秘密设计师。请严格按照JSON格式返回。',
       model: selectedModel,
-      apiKey: apiKey || '',
-      baseUrl: baseUrl || '',
-      providerType: provider || '',
+      apiKey: selectedKey,
+      baseUrl: selectedBaseUrl,
+      providerType: selectedProvider,
+      apiProtocol: selectedProtocol,
       responseMimeType: 'application/json',
       temperature: 0.7,
-      maxTokens: 2000,
+      maxTokens: 2500,
+      customHeaders: selectedHeaders,
     });
-    const extracted = extractThinkingAndContent(responseText);
-    res.json({ ok: true, text: extracted.cleanText || responseText });
+    const durationMs = Date.now() - startTime;
+    const extracted = extractThinkingAndContent(detailedResult.text);
+    res.json({
+      ok: true,
+      text: extracted.cleanText || detailedResult.text,
+      usage: detailedResult.usage,
+      apiLog: buildApiLogObject({
+        appName: '小剧场',
+        interfaceType: 'TheaterScenario',
+        category: 'text_generation',
+        status: 'success',
+        durationMs,
+        provider: selectedProvider,
+        modelName: selectedModel,
+        purpose: `小剧场 - ${theaterType || '剧本初始化'}`,
+        usage: detailedResult.usage,
+      }),
+    });
   } catch (err: any) {
-    res.status(500).json({ ok: false, error: err?.message || 'Failed to generate theater scenario' });
+    handleAiEndpointError(res, err, '小剧场-剧本初始化');
   }
 });
 
 app.post('/api/gemini/theater-chat', async (req, res) => {
+  const startTime = Date.now();
   try {
-    const { prompt, model, apiKey, baseUrl, provider } = req.body;
-    const selectedModel = model || 'gemini-4-hydrogen';
-    const responseText = await callAiService({
+    const { prompt, model, apiKey, baseUrl, provider, apiProtocol, customHeaders, apiConfig, textApiConfig, theaterType } = req.body;
+    const cfg = textApiConfig || apiConfig || {};
+    const selectedModel = model || cfg.model || cfg.textModel || GEMINI_DEFAULT_TEXT_MODEL;
+    const selectedKey = apiKey || cfg.apiKey || cfg.textApiKey || '';
+    const selectedBaseUrl = baseUrl || cfg.baseUrl || cfg.textBaseUrl || '';
+    const selectedProvider = provider || cfg.provider || cfg.textProvider || '';
+    const selectedProtocol = apiProtocol || cfg.apiProtocol || cfg.textApiProtocol || '';
+    const selectedHeaders = customHeaders || cfg.customHeaders;
+
+    const detailedResult = await callAiServiceDetailed({
       prompt,
       systemInstruction: '你正在参与「小剧场」沉浸式角色扮演。请保持角色口吻，深度代入，输出符合剧情发展的对话与动作。严格按照JSON格式返回。',
       model: selectedModel,
-      apiKey: apiKey || '',
-      baseUrl: baseUrl || '',
-      providerType: provider || '',
+      apiKey: selectedKey,
+      baseUrl: selectedBaseUrl,
+      providerType: selectedProvider,
+      apiProtocol: selectedProtocol,
       responseMimeType: 'application/json',
       temperature: 0.8,
-      maxTokens: 1500,
+      maxTokens: 1800,
+      customHeaders: selectedHeaders,
     });
-    const extracted = extractThinkingAndContent(responseText);
-    res.json({ ok: true, text: extracted.cleanText || responseText });
+    const durationMs = Date.now() - startTime;
+    const extracted = extractThinkingAndContent(detailedResult.text);
+    res.json({
+      ok: true,
+      text: extracted.cleanText || detailedResult.text,
+      usage: detailedResult.usage,
+      apiLog: buildApiLogObject({
+        appName: '小剧场',
+        interfaceType: 'TheaterChat',
+        category: 'text_generation',
+        status: 'success',
+        durationMs,
+        provider: selectedProvider,
+        modelName: selectedModel,
+        purpose: `小剧场 - ${theaterType || '剧情回复'}`,
+        usage: detailedResult.usage,
+      }),
+    });
   } catch (err: any) {
-    res.status(500).json({ ok: false, error: err?.message || 'Failed theater chat' });
+    handleAiEndpointError(res, err, '小剧场-剧情回复');
   }
 });
 

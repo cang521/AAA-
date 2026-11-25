@@ -48,6 +48,8 @@ import {
   CheckCircle,
   RotateCcw,
   Globe,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { ImagePickerModal } from './ImagePickerModal';
 import { motion, useReducedMotion } from 'motion/react';
@@ -238,6 +240,9 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     }
   }, [widgets, icons, pagesCount]);
 
+  // Synchronous lock to completely isolate icon dragging from desktop page sliding
+  const isDraggingIconRef = useRef<boolean>(false);
+
   // Touch & Mouse Swipe Page Navigation Setup with Real-time Follow-Finger Transform
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
@@ -247,6 +252,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   const isHorizontalDragRef = useRef<boolean | null>(null);
 
   const handlePageDragStart = (clientX: number, clientY: number) => {
+    if (isDraggingIconRef.current) return;
     touchStartX.current = clientX;
     touchStartY.current = clientY;
     touchStartTimeRef.current = Date.now();
@@ -256,6 +262,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   };
 
   const handlePageDragMove = (clientX: number, clientY: number) => {
+    if (isDraggingIconRef.current) return;
     if (!isSwiping.current || touchStartX.current === null || touchStartY.current === null) return;
 
     const deltaX = clientX - touchStartX.current;
@@ -289,6 +296,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   };
 
   const handlePageDragEnd = (clientX: number, clientY: number) => {
+    if (isDraggingIconRef.current) return;
     if (!isSwiping.current || touchStartX.current === null) {
       setIsPageDragging(false);
       setDragOffsetX(0);
@@ -325,6 +333,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
+    if (isDraggingIconRef.current) return;
     const touch = e.touches[0];
     if (touch) {
       handlePageDragStart(touch.clientX, touch.clientY);
@@ -332,6 +341,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
+    if (isDraggingIconRef.current) return;
     if (isSwiping.current && isHorizontalDragRef.current) {
       if (e.cancelable) e.preventDefault();
     }
@@ -342,6 +352,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
+    if (isDraggingIconRef.current) return;
     const touch = e.changedTouches[0] || e.touches[0];
     const clientX = touch ? touch.clientX : (touchStartX.current || 0);
     const clientY = touch ? touch.clientY : (touchStartY.current || 0);
@@ -349,17 +360,20 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (isDraggingIconRef.current) return;
     if (e.button !== 0) return;
     handlePageDragStart(e.clientX, e.clientY);
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDraggingIconRef.current) return;
     if (isSwiping.current) {
       handlePageDragMove(e.clientX, e.clientY);
     }
   };
 
   const handleMouseUp = (e: React.MouseEvent) => {
+    if (isDraggingIconRef.current) return;
     if (isSwiping.current) {
       handlePageDragEnd(e.clientX, e.clientY);
     }
@@ -369,6 +383,7 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   // render cycle so a drag-induced render cannot orphan an old timeout.
   const pressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleStartBlankPress = () => {
+    if (isDraggingIconRef.current) return;
     if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
     pressTimerRef.current = setTimeout(() => {
       pressTimerRef.current = null;
@@ -405,10 +420,50 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   const [dragPreviewPage, setDragPreviewPage] = useState<number | null>(null);
   const dragOverPageRef = useRef<number>(currentPage);
   const dragTargetPosIndexRef = useRef<number | null>(null);
-  const edgeFlipLockedRef = useRef<boolean>(false);
   const dragGhostRef = useRef<HTMLDivElement | null>(null);
   const dragPositionRef = useRef<{ x: number; y: number } | null>(null);
   const dragFrameRef = useRef<number | null>(null);
+
+  // Synchronous page tracking refs
+  const currentPageRef = useRef<number>(currentPage);
+  const pagesCountRef = useRef<number>(pagesCount);
+  useEffect(() => {
+    currentPageRef.current = currentPage;
+  }, [currentPage]);
+  useEffect(() => {
+    pagesCountRef.current = pagesCount;
+  }, [pagesCount]);
+
+  // Edge Dwell Page Flipping Controls
+  const EDGE_ZONE_WIDTH = 22; // 22px edge boundary sensing area
+  const edgeDwellTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentHoverSideRef = useRef<'left' | 'right' | null>(null);
+  const lockedEdgeSideRef = useRef<'left' | 'right' | null>(null);
+  const [edgeHighlightSide, setEdgeHighlightSide] = useState<'left' | 'right' | null>(null);
+
+  const clearEdgeDwellTimer = () => {
+    if (edgeDwellTimerRef.current) {
+      clearTimeout(edgeDwellTimerRef.current);
+      edgeDwellTimerRef.current = null;
+    }
+    currentHoverSideRef.current = null;
+    setEdgeHighlightSide(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      clearEdgeDwellTimer();
+      isDraggingIconRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isEditMode) {
+      clearEdgeDwellTimer();
+      lockedEdgeSideRef.current = null;
+      isDraggingIconRef.current = false;
+    }
+  }, [isEditMode]);
 
   const updateDragGhostPosition = (clientX: number, clientY: number) => {
     dragPositionRef.current = { x: clientX, y: clientY };
@@ -433,10 +488,83 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     }
   };
 
+  const getEdgeZone = (clientX: number, clientY: number): 'left' | 'right' | null => {
+    const container = pageContainerRef.current;
+    if (!container) return null;
+    const rect = container.getBoundingClientRect();
+
+    // Must be vertically within the desktop pages container
+    if (clientY < rect.top || clientY > rect.bottom) {
+      return null;
+    }
+
+    const curPage = currentPageRef.current;
+    const totalPages = pagesCountRef.current;
+
+    // Check left edge (disabled on page 0)
+    // Accept coordinates from rect.left - 40px (outer bezel) up to rect.left + EDGE_ZONE_WIDTH
+    if (clientX <= rect.left + EDGE_ZONE_WIDTH && clientX >= rect.left - 40) {
+      if (curPage > 0) {
+        return 'left';
+      }
+      return null;
+    }
+
+    // Check right edge (disabled on last page)
+    // Accept coordinates from rect.right - EDGE_ZONE_WIDTH up to rect.right + 40px
+    if (clientX >= rect.right - EDGE_ZONE_WIDTH && clientX <= rect.right + 40) {
+      if (curPage < totalPages - 1) {
+        return 'right';
+      }
+      return null;
+    }
+
+    return null;
+  };
+
+  const executeEdgeFlip = (side: 'left' | 'right') => {
+    const curPage = currentPageRef.current;
+    const totalPages = pagesCountRef.current;
+
+    // Immediately lock this side to prevent consecutive auto-flipping
+    lockedEdgeSideRef.current = side;
+    clearEdgeDwellTimer();
+
+    let targetPage = curPage;
+    if (side === 'left' && curPage > 0) {
+      targetPage = curPage - 1;
+    } else if (side === 'right' && curPage < totalPages - 1) {
+      targetPage = curPage + 1;
+    }
+
+    if (targetPage !== curPage) {
+      handleSetCurrentPage(targetPage);
+      dragOverPageRef.current = targetPage;
+      setDragPreviewPage(targetPage);
+    }
+  };
+
   const handleStartDragIcon = (e: React.PointerEvent | React.TouchEvent, icon: AppIconConfig) => {
     e.stopPropagation();
     const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.PointerEvent).clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.PointerEvent).clientY;
+
+    // Set synchronous icon dragging lock immediately
+    isDraggingIconRef.current = true;
+
+    // Completely reset and halt desktop page sliding gestures
+    handleEndBlankPress();
+    isSwiping.current = false;
+    isHorizontalDragRef.current = null;
+    touchStartX.current = null;
+    touchStartY.current = null;
+    setIsPageDragging(false);
+    setDragOffsetX(0);
+
+    // Reset edge dwell and locks
+    clearEdgeDwellTimer();
+    lockedEdgeSideRef.current = null;
+
     swipeHandledRef.current = true;
     setDraggingIcon(icon);
     setDragStartPos({ x: clientX, y: clientY });
@@ -445,7 +573,6 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     setDragPreviewPage(icon.pageIndex);
     dragTargetPosIndexRef.current = icon.positionIndex;
     setDragTargetPosIndex(icon.positionIndex);
-    edgeFlipLockedRef.current = false;
   };
 
   const handleDragMove = (e: PointerEvent | TouchEvent) => {
@@ -466,33 +593,43 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
       }
     }
 
-    // Edge swipe detection while dragging with strict edge flip lock
-    const winWidth = window.innerWidth;
-    const EDGE_THRESHOLD = 45;
+    // Edge flip detection with 1000ms dwell confirmation and edge lock
+    const detectedSide = getEdgeZone(clientX, clientY);
 
-    if (clientX < EDGE_THRESHOLD) {
-      if (!edgeFlipLockedRef.current && currentPage > 0) {
-        edgeFlipLockedRef.current = true;
-        handleSetCurrentPage((prev) => Math.max(0, prev - 1));
-        const nextPage = Math.max(0, dragOverPageRef.current - 1);
-        dragOverPageRef.current = nextPage;
-        setDragPreviewPage(nextPage);
-      }
-    } else if (clientX > winWidth - EDGE_THRESHOLD) {
-      if (!edgeFlipLockedRef.current && currentPage < pagesCount - 1) {
-        edgeFlipLockedRef.current = true;
-        handleSetCurrentPage((prev) => Math.min(pagesCount - 1, prev + 1));
-        const nextPage = Math.min(pagesCount - 1, dragOverPageRef.current + 1);
-        dragOverPageRef.current = nextPage;
-        setDragPreviewPage(nextPage);
+    if (!detectedSide) {
+      // Left edge zone: cancel dwell timer and release edge flip lock
+      clearEdgeDwellTimer();
+      lockedEdgeSideRef.current = null;
+    } else if (lockedEdgeSideRef.current === detectedSide) {
+      // Finger is still on the edge that just flipped: stay locked without re-triggering
+      if (currentHoverSideRef.current !== null) {
+        clearEdgeDwellTimer();
       }
     } else {
-      edgeFlipLockedRef.current = false;
+      // Entered an active unlocked edge zone or switched sides
+      if (currentHoverSideRef.current !== detectedSide) {
+        if (edgeDwellTimerRef.current) {
+          clearTimeout(edgeDwellTimerRef.current);
+          edgeDwellTimerRef.current = null;
+        }
+        currentHoverSideRef.current = detectedSide;
+        setEdgeHighlightSide(detectedSide);
+
+        // Require 1000ms continuous dwell before flipping
+        edgeDwellTimerRef.current = setTimeout(() => {
+          executeEdgeFlip(detectedSide);
+        }, 1000);
+      }
+      // If currentHoverSideRef.current === detectedSide, finger is still inside the zone;
+      // timer continues uninterrupted even if finger has minor movement.
     }
   };
 
   const handleDragEnd = () => {
-    edgeFlipLockedRef.current = false;
+    clearEdgeDwellTimer();
+    lockedEdgeSideRef.current = null;
+    isDraggingIconRef.current = false;
+
     if (!draggingIcon) return;
 
     const targetPage = dragOverPageRef.current;
@@ -557,9 +694,12 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
     const onUp = () => handleDragEnd();
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      clearEdgeDwellTimer();
     };
   }, [draggingIcon, currentPage, pagesCount, icons]);
 
@@ -750,24 +890,35 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
   return (
     <div
       onMouseDown={(e) => {
+        if (isDraggingIconRef.current) return;
         handleStartBlankPress();
         handleMouseDown(e);
       }}
-      onMouseMove={handleMouseMove}
+      onMouseMove={(e) => {
+        if (isDraggingIconRef.current) return;
+        handleMouseMove(e);
+      }}
       onMouseUp={(e) => {
+        if (isDraggingIconRef.current) return;
         handleEndBlankPress();
         handleMouseUp(e);
       }}
       onMouseLeave={(e) => {
         handleEndBlankPress();
+        if (isDraggingIconRef.current) return;
         if (isSwiping.current) handleMouseUp(e);
       }}
       onTouchStart={(e) => {
+        if (isDraggingIconRef.current) return;
         handleStartBlankPress();
         handleTouchStart(e);
       }}
-      onTouchMove={handleTouchMove}
+      onTouchMove={(e) => {
+        if (isDraggingIconRef.current) return;
+        handleTouchMove(e);
+      }}
       onTouchEnd={(e) => {
+        if (isDraggingIconRef.current) return;
         handleEndBlankPress();
         handleTouchEnd(e);
       }}
@@ -862,6 +1013,33 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
 
       {/* Main Horizontal Paging Container */}
       <div ref={pageContainerRef} className="relative z-10 flex-1 w-full h-full overflow-hidden my-2">
+        {/* Edge Dwell Flip Visual Feedback Overlays */}
+        {isEditMode && draggingIcon && edgeHighlightSide === 'left' && currentPage > 0 && (
+          <div
+            className="absolute left-0 top-0 bottom-0 w-6 z-40 pointer-events-none flex flex-col items-center justify-center overflow-hidden"
+            aria-hidden="true"
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/30 via-emerald-500/15 to-transparent border-l-2 border-emerald-400/80" />
+            <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-400 origin-top animate-edge-dwell" />
+            <div className="relative z-10 w-6 h-6 rounded-full bg-black/60 backdrop-blur-xs flex items-center justify-center text-emerald-300 shadow-md">
+              <ChevronLeft className="w-3.5 h-3.5 animate-pulse" />
+            </div>
+          </div>
+        )}
+
+        {isEditMode && draggingIcon && edgeHighlightSide === 'right' && currentPage < pagesCount - 1 && (
+          <div
+            className="absolute right-0 top-0 bottom-0 w-6 z-40 pointer-events-none flex flex-col items-center justify-center overflow-hidden"
+            aria-hidden="true"
+          >
+            <div className="absolute inset-0 bg-gradient-to-l from-emerald-500/30 via-emerald-500/15 to-transparent border-r-2 border-emerald-400/80" />
+            <div className="absolute right-0 top-0 bottom-0 w-1 bg-emerald-400 origin-top animate-edge-dwell" />
+            <div className="relative z-10 w-6 h-6 rounded-full bg-black/60 backdrop-blur-xs flex items-center justify-center text-emerald-300 shadow-md">
+              <ChevronRight className="w-3.5 h-3.5 animate-pulse" />
+            </div>
+          </div>
+        )}
+
         <div
           className={`w-full h-full flex ${
             isPageDragging

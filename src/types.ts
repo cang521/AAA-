@@ -1580,29 +1580,29 @@ export interface TheaterRole {
   description: string;
 }
 
+export interface TheaterPresetRoleConfig {
+  name?: string;
+  identity: string;
+  gender: TheaterGender;
+  secretTemplate: string;
+  roleType?: 'user' | 'ai' | 'both';
+}
+
 export interface TheaterPreset {
   id: string;
-  category: string;
-  categoryName: string;
+  index: number;
   title: string;
   summary: string;
-  userRole: {
-    name: string;
-    identity: string;
-    gender: TheaterGender;
-    secretTemplate: string;
-  };
-  aiRole: {
-    identity: string;
-    gender: 'male' | 'female';
-    secretTemplate: string;
-  };
+  userRole: TheaterPresetRoleConfig;
+  aiRole: TheaterPresetRoleConfig;
   worldBackground: string;
   initialScene: string;
   initialTime: string;
   initialLocation: string;
   tags: string[];
   isCustom?: boolean;
+  category?: string;
+  categoryName?: string;
 }
 
 export interface TheaterMessage {
@@ -1632,7 +1632,7 @@ export interface TheaterSession {
   characterId: string;
   presetId?: string;
   title: string;
-  category: string;
+  category?: string;
   worldBackground: string;
   initialScene: string;
   currentTime: string;
@@ -1646,6 +1646,10 @@ export interface TheaterSession {
   intimacy: number;
   status: 'playing' | 'paused' | 'ended';
   memoirSummary?: string;
+  lastError?: {
+    message: string;
+    userMessageId?: string;
+  };
   createdAt: number;
   updatedAt: number;
 }

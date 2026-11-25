@@ -1,34 +1,139 @@
 import { AiCharacter, TheaterPreset, TheaterRole, TheaterSession, TheaterMessage } from '../../types';
 import { BUILTIN_THEATER_PRESETS } from './theaterPresets';
 import { getRecentDrawIdsFromDb, addRecentDrawIdToDb, loadCustomPresetsFromDb } from './theaterDb';
+import { getApiConfigForEngine } from '../apiConfigStore';
+import { apiFetch, ensureBackendReady } from '../localBackend';
+import { loadWorldBooks } from '../storage';
+import { evaluateWorldBookContext } from '../aiReply/contextEvaluator';
 
 export async function getAllAvailablePresets(): Promise<TheaterPreset[]> {
   const custom = await loadCustomPresetsFromDb();
   return [...BUILTIN_THEATER_PRESETS, ...custom];
 }
 
+/**
+ * 严格检查 AI 角色与预设角色分配的性别兼容性
+ */
+export function validateGenderCompatibility(aiCharacter: AiCharacter, preset: TheaterPreset): boolean {
+  const aiGender = (aiCharacter?.gender || '').toLowerCase();
+  const aiIsFemale = aiGender === 'female' || aiGender === 'f' || aiGender === '女';
+  const aiIsMale = aiGender === 'male' || aiGender === 'm' || aiGender === '男';
+
+  const userRoleGender = preset.userRole?.gender?.toLowerCase() || 'any';
+  const aiRoleGender = preset.aiRole?.gender?.toLowerCase() || 'any';
+  const userRoleType = preset.userRole?.roleType || 'both';
+  const aiRoleType = preset.aiRole?.roleType || 'both';
+
+  // 1. 若双方角色均支持双向互换 (both)，只要有一个角色符合AI性别或为any即可
+  if (userRoleType === 'both' && aiRoleType === 'both') {
+    if (!aiIsFemale && !aiIsMale) return true; // 未知/其他性别皆可
+    if (aiIsFemale) {
+      return aiRoleGender === 'female' || userRoleGender === 'female' || aiRoleGender === 'any' || userRoleGender === 'any';
+    }
+    if (aiIsMale) {
+      return aiRoleGender === 'male' || userRoleGender === 'male' || aiRoleGender === 'any' || userRoleGender === 'any';
+    }
+  }
+
+  // 2. 若有明确固定的 aiRole (roleType === 'ai')
+  if (aiRoleType === 'ai') {
+    if (aiRoleGender === 'female') return aiIsFemale;
+    if (aiRoleGender === 'male') return aiIsMale;
+    return true;
+  }
+
+  return true;
+}
+
+/**
+ * 依据用户与AI角色属性自动双向匹配双方在小剧场中的具体身份与秘密
+ */
+export function resolveRoleAssignment(
+  aiCharacter: AiCharacter,
+  userNickname: string,
+  preset: TheaterPreset,
+  userGenderPreference?: string
+): {
+  userRole: TheaterRole;
+  aiRole: TheaterRole;
+} {
+  const aiGender = (aiCharacter?.gender || '').toLowerCase();
+  const aiIsFemale = aiGender === 'female' || aiGender === 'f' || aiGender === '女';
+  const aiIsMale = aiGender === 'male' || aiGender === 'm' || aiGender === '男';
+
+  const uRoleConfig = preset.userRole;
+  const aRoleConfig = preset.aiRole;
+
+  let assignedToAi = aRoleConfig;
+  let assignedToUser = uRoleConfig;
+
+  // 如果双方支持双向互换，且预设预设的 userRole 更契合 AI 性别，进行自动智能互换
+  if (uRoleConfig.roleType === 'both' && aRoleConfig.roleType === 'both') {
+    if (aiIsFemale && uRoleConfig.gender === 'female' && aRoleConfig.gender === 'male') {
+      assignedToAi = uRoleConfig;
+      assignedToUser = aRoleConfig;
+    } else if (aiIsMale && uRoleConfig.gender === 'male' && aRoleConfig.gender === 'female') {
+      assignedToAi = uRoleConfig;
+      assignedToUser = aRoleConfig;
+    }
+  } else if (aRoleConfig.roleType === 'user' || uRoleConfig.roleType === 'ai') {
+    // 明确颠倒
+    assignedToAi = uRoleConfig;
+    assignedToUser = aRoleConfig;
+  }
+
+  const userGender: 'male' | 'female' | 'other' =
+    assignedToUser.gender === 'female' ? 'female' : assignedToUser.gender === 'male' ? 'male' : (userGenderPreference as any) || 'other';
+
+  const aiGenderFinal: 'male' | 'female' | 'other' =
+    assignedToAi.gender === 'female' ? 'female' : assignedToAi.gender === 'male' ? 'male' : aiIsFemale ? 'female' : aiIsMale ? 'male' : 'other';
+
+  const userRole: TheaterRole = {
+    id: 'user_main',
+    name: assignedToUser.name || userNickname || '你',
+    avatar: '',
+    gender: userGender,
+    identity: assignedToUser.identity,
+    secret: assignedToUser.secretTemplate,
+    description: assignedToUser.identity,
+  };
+
+  const aiRole: TheaterRole = {
+    id: aiCharacter.id,
+    name: aiCharacter.name,
+    avatar: aiCharacter.avatar,
+    gender: aiGenderFinal,
+    identity: assignedToAi.identity,
+    secret: assignedToAi.secretTemplate,
+    description: aiCharacter.persona,
+  };
+
+  return { userRole, aiRole };
+}
+
+/**
+ * 随机抽取剧场预设（自动过滤并适配AI性别，避免近期重复）
+ */
 export async function getRandomTheaterPreset(
-  categoryId?: string,
-  worldFilter?: string
+  aiCharacter?: AiCharacter,
+  userGender?: string
 ): Promise<TheaterPreset> {
   const all = await getAllAvailablePresets();
   const recentIds = await getRecentDrawIdsFromDb();
 
-  let filtered = all;
-  if (categoryId && categoryId !== 'all') {
-    filtered = filtered.filter(p => p.category === categoryId);
-  }
-  if (worldFilter && worldFilter !== 'all') {
-    filtered = filtered.filter(p => p.worldBackground.includes(worldFilter) || p.title.includes(worldFilter));
+  // 若提供了 AI 角色，优先筛选性别兼容的预设
+  let candidates = aiCharacter ? all.filter(p => validateGenderCompatibility(aiCharacter, p)) : all;
+  if (candidates.length === 0) {
+    candidates = all; // 备用兜底
   }
 
-  // Deduplicate recent draws if possible
-  let pool = filtered.filter(p => !recentIds.includes(p.id));
+  // 优先排除近期已抽取的预设
+  let pool = candidates.filter(p => !recentIds.includes(p.id));
   if (pool.length === 0) {
-    pool = filtered; // fallback if all were drawn recently
+    pool = candidates;
   }
   if (pool.length === 0) {
-    pool = all; // absolute fallback
+    pool = all;
   }
 
   const selected = pool[Math.floor(Math.random() * pool.length)];
@@ -36,19 +141,50 @@ export async function getRandomTheaterPreset(
   return selected;
 }
 
-export function validateGenderCompatibility(aiCharacter: AiCharacter, preset: TheaterPreset): boolean {
-  const aiGender = (aiCharacter.gender || 'male').toLowerCase();
-  const requiredGender = preset.aiRole.gender.toLowerCase();
-  // Strict matching
-  if (requiredGender === 'male' && aiGender !== 'male' && aiGender !== 'm') return false;
-  if (requiredGender === 'female' && aiGender !== 'female' && aiGender !== 'f') return false;
-  return true;
+/**
+ * 辅助：健壮的 JSON 提取与解析
+ */
+function cleanAndParseJson<T = any>(rawText: string, contextDescription: string): T {
+  if (!rawText || !rawText.trim()) {
+    throw new Error(`${contextDescription}：模型返回内容为空`);
+  }
+
+  // 去除 markdown 标记
+  let cleaned = rawText
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  // 尝试直接解析
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    // 提取第一个 { 到最后一个 }
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+      // 去除尾部多余逗号 (e.g., , } or , ])
+      cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
+      try {
+        return JSON.parse(cleaned);
+      } catch (err2: any) {
+        throw new Error(`${contextDescription}：返回格式解析失败（${err2.message || 'JSON格式有误'}）`);
+      }
+    }
+    throw new Error(`${contextDescription}：未在模型返回中找到合法的JSON结构`);
+  }
 }
 
+/**
+ * 生成开局剧本与双盲秘密（接入系统统一配置与apiFetch，杜绝假回复）
+ */
 export async function generateInitialTheaterScenario(
   character: AiCharacter,
   preset: TheaterPreset,
-  userNickname: string
+  userNickname: string,
+  userGender?: string
 ): Promise<{
   title: string;
   worldBackground: string;
@@ -60,147 +196,141 @@ export async function generateInitialTheaterScenario(
   aiRole: TheaterRole;
   openingMessage: TheaterMessage;
 }> {
-  const textApiConfig = JSON.parse(localStorage.getItem('new_text_api_config') || '{}');
-  
-  const prompt = `请根据以下剧场预设与AI角色，为用户(${userNickname})与AI(${character.name})生成一段沉浸式角色扮演的开场剧本和双盲秘密。
-【预设标题】${preset.title}
-【预设分类】${preset.categoryName}
-【世界观背景】${preset.worldBackground}
-【初始场景】${preset.initialScene}
-【初始时间】${preset.initialTime}
-【初始地点】${preset.initialLocation}
-【用户角色】名字：${userNickname}，身份：${preset.userRole.identity}，性别倾向：${preset.userRole.gender}。秘密模板：${preset.userRole.secretTemplate}
-【AI角色】名字：${character.name}，人设：${character.persona}，剧场身份：${preset.aiRole.identity}，性别：${preset.aiRole.gender}。秘密模板：${preset.aiRole.secretTemplate}
+  const { textApiConfig } = getApiConfigForEngine();
+  if (!textApiConfig?.apiKey && !textApiConfig?.baseUrl) {
+    throw new Error('未配置语言模型API，请前往「系统设置 → API设置」配置文本生成API。');
+  }
 
-要求返回严格的 JSON 格式（不要包含 markdown 代码块包裹，或请确保可被 JSON.parse 解析）：
+  await ensureBackendReady('theater-initial-scenario');
+
+  // 计算角色双向分配
+  const { userRole, aiRole } = resolveRoleAssignment(character, userNickname, preset, userGender);
+
+  // 尝试注入该角色相关的世界书词条或性格设定
+  let worldBookPrompt = '';
+  try {
+    const worldBooks = loadWorldBooks();
+    const evalResult = evaluateWorldBookContext(character.id, preset.worldBackground + ' ' + preset.title, worldBooks);
+    if (evalResult && evalResult.promptText) {
+      worldBookPrompt = `\n【关联世界书背景】\n${evalResult.promptText}\n`;
+    }
+  } catch {}
+
+  const prompt = `你正在主持名为「小剧场」的沉浸式双人互动角色扮演游戏。
+请根据以下预设、双方角色分配与人设，生成专属开局剧本设定与双方秘密。
+
+【预设标题】${preset.title}
+【预设分类】${preset.categoryName || preset.tags?.join('、') || '角色扮演'}
+【预设世界背景】${preset.worldBackground}
+【初始场景】${preset.initialScene}
+【初始时间与地点】${preset.initialTime} · ${preset.initialLocation}
+
+【用户角色分配】
+- 名字：${userRole.name}
+- 身份：${userRole.identity}
+- 性别：${userRole.gender === 'female' ? '女' : userRole.gender === 'male' ? '男' : '自定义'}
+- 秘密模板：${userRole.secret}
+
+【AI角色分配与性格】
+- 名字：${character.name}
+- 剧场身份：${aiRole.identity}
+- 性别：${aiRole.gender === 'female' ? '女' : aiRole.gender === 'male' ? '男' : '自定义'}
+- 原生性格口吻：${character.persona || '生动沉浸、有独立主见'}
+- 秘密模板：${aiRole.secret}
+${worldBookPrompt}
+【生成任务】
+请生成具有文学质感、戏剧张力与互动的开场。要求返回严格的纯 JSON 格式：
 {
-  "title": "剧场标题",
-  "worldBackground": "完善后的世界观设定...",
-  "initialScene": "开场场景描述（支持动作、氛围、天气）...",
-  "currentTime": "${preset.initialTime}",
-  "currentLocation": "${preset.initialLocation}",
-  "chapter": "第一章：初见与命运的交织",
-  "userSecret": "为用户生成的具体秘密或隐藏动机...",
-  "aiSecret": "为AI生成的具体秘密或隐藏动机...",
+  "title": "完善后的剧场标题",
+  "worldBackground": "生动具体的世界观设定，展现时代氛围与双方所处的紧张局面（约100-200字）",
+  "initialScene": "开场场景细腻描写（声效、光影、微表情、天气）",
+  "currentTime": "${preset.initialTime || '暮色时分'}",
+  "currentLocation": "${preset.initialLocation || '隐秘之地'}",
+  "chapter": "第一章：命运的交汇",
+  "userSecret": "用户角色在此次剧情中的核心隐藏秘密或动机（50-100字）",
+  "aiSecret": "AI角色在此次剧情中的核心隐藏秘密或动机（50-100字）",
   "openingMessage": {
-    "text": "AI角色的开场白台词...",
-    "action": "AI角色的动作或神态描写（放在括号内）",
-    "thoughts": "AI角色内心的隐秘想法（仅自己可见）"
+    "text": "AI角色的第一句开场白台词（严格契合人设、身份与语气，避免机械套话）",
+    "action": "AI角色的神态、眼神、肢体动作描写",
+    "thoughts": "AI角色此时内心的隐秘思绪（对自己秘密的盘算或对用户的暗中观察）"
   }
 }`;
 
+  let res: Response;
   try {
-    const res = await fetch('/api/gemini/theater-scenario', {
+    res = await apiFetch('/api/gemini/theater-scenario', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         prompt,
-        model: textApiConfig.model,
-        apiKey: textApiConfig.apiKey,
-        baseUrl: textApiConfig.baseUrl,
-        provider: textApiConfig.provider,
+        textApiConfig,
+        theaterType: 'scenario',
       }),
     });
-
-    const data = await res.json();
-    if (!res.ok || !data.ok) {
-      throw new Error(data.error || 'Failed to generate scenario');
-    }
-
-    const rawText = data.text.trim();
-    const cleanJson = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/, '');
-    const parsed = JSON.parse(cleanJson);
-
-    const userRole: TheaterRole = {
-      id: 'user_main',
-      name: userNickname,
-      avatar: '',
-      gender: preset.userRole.gender === 'female' ? 'female' : preset.userRole.gender === 'male' ? 'male' : 'other',
-      identity: preset.userRole.identity,
-      secret: parsed.userSecret || preset.userRole.secretTemplate,
-      description: preset.userRole.identity,
-    };
-
-    const aiRole: TheaterRole = {
-      id: character.id,
-      name: character.name,
-      avatar: character.avatar,
-      gender: preset.aiRole.gender,
-      identity: preset.aiRole.identity,
-      secret: parsed.aiSecret || preset.aiRole.secretTemplate,
-      description: character.persona,
-    };
-
-    const openingMsg: TheaterMessage = {
-      id: 'msg_' + Date.now(),
-      sender: 'ai',
-      text: parsed.openingMessage?.text || preset.initialScene,
-      timestamp: Date.now(),
-      action: parsed.openingMessage?.action || '',
-      thoughts: parsed.openingMessage?.thoughts || '',
-    };
-
-    return {
-      title: parsed.title || preset.title,
-      worldBackground: parsed.worldBackground || preset.worldBackground,
-      initialScene: parsed.initialScene || preset.initialScene,
-      currentTime: parsed.currentTime || preset.initialTime,
-      currentLocation: parsed.currentLocation || preset.initialLocation,
-      chapter: parsed.chapter || '第一章',
-      userRole,
-      aiRole,
-      openingMessage: openingMsg,
-    };
-  } catch (e) {
-    console.error('Failed to generate initial scenario via API, falling back to local default', e);
-    // Fallback local construct
-    const userRole: TheaterRole = {
-      id: 'user_main',
-      name: userNickname,
-      avatar: '',
-      gender: 'other',
-      identity: preset.userRole.identity,
-      secret: preset.userRole.secretTemplate,
-      description: preset.userRole.identity,
-    };
-
-    const aiRole: TheaterRole = {
-      id: character.id,
-      name: character.name,
-      avatar: character.avatar,
-      gender: preset.aiRole.gender,
-      identity: preset.aiRole.identity,
-      secret: preset.aiRole.secretTemplate,
-      description: character.persona,
-    };
-
-    const openingMsg: TheaterMessage = {
-      id: 'msg_' + Date.now(),
-      sender: 'ai',
-      text: `（${preset.initialScene}）\n${character.name}抬起眼帘，目光落在你身上：“你来了。这里可不是什么安全的地方。”`,
-      timestamp: Date.now(),
-      action: preset.initialScene,
-      thoughts: '观察对方的反应，判断对方是否带着敌意。',
-    };
-
-    return {
-      title: preset.title,
-      worldBackground: preset.worldBackground,
-      initialScene: preset.initialScene,
-      currentTime: preset.initialTime,
-      currentLocation: preset.initialLocation,
-      chapter: '第一章：初见',
-      userRole,
-      aiRole,
-      openingMessage: openingMsg,
-    };
+  } catch (netErr: any) {
+    throw new Error(`网络连接失败或小剧场服务未响应：${netErr.message || '请检查网络连接'}`);
   }
+
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(`服务响应格式异常 (HTTP ${res.status})，请重试`);
+  }
+
+  if (!res.ok || !data.ok) {
+    const errorMsg = data?.error || `生成剧本失败 (HTTP ${res.status})`;
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(`API 鉴权失败：${errorMsg}。请检查API密钥。`);
+    }
+    if (res.status === 429) {
+      throw new Error(`API 额度超限或触发频率限制(429)：${errorMsg}。请稍后重试。`);
+    }
+    throw new Error(errorMsg);
+  }
+
+  const parsed = cleanAndParseJson(data.text, '开局剧本解析');
+
+  const finalUserRole: TheaterRole = {
+    ...userRole,
+    secret: parsed.userSecret || userRole.secret,
+  };
+
+  const finalAiRole: TheaterRole = {
+    ...aiRole,
+    secret: parsed.aiSecret || aiRole.secret,
+  };
+
+  const openingMsg: TheaterMessage = {
+    id: 'msg_' + Date.now(),
+    sender: 'ai',
+    text: parsed.openingMessage?.text || '（凝视着你，语气低沉）“既然来了，便不必多言。”',
+    timestamp: Date.now(),
+    action: parsed.openingMessage?.action || preset.initialScene || '',
+    thoughts: parsed.openingMessage?.thoughts || '',
+  };
+
+  return {
+    title: parsed.title || preset.title,
+    worldBackground: parsed.worldBackground || preset.worldBackground,
+    initialScene: parsed.initialScene || preset.initialScene,
+    currentTime: parsed.currentTime || preset.initialTime,
+    currentLocation: parsed.currentLocation || preset.initialLocation,
+    chapter: parsed.chapter || '第一章：命运的交汇',
+    userRole: finalUserRole,
+    aiRole: finalAiRole,
+    openingMessage: openingMsg,
+  };
 }
 
+/**
+ * 互动对话生成（保留最近60条消息上下文，保护最近30条原文，无假回复，分离台词与动作）
+ */
 export async function sendTheaterChatMessage(
   session: TheaterSession,
   userMessageText: string,
-  actionText?: string
+  actionText?: string,
+  character?: AiCharacter
 ): Promise<{
   replyMessage: TheaterMessage;
   updatedLocation?: string;
@@ -208,112 +338,168 @@ export async function sendTheaterChatMessage(
   updatedChapter?: string;
   intimacyDelta?: number;
 }> {
-  const textApiConfig = JSON.parse(localStorage.getItem('new_text_api_config') || '{}');
+  const { textApiConfig } = getApiConfigForEngine();
+  if (!textApiConfig?.apiKey && !textApiConfig?.baseUrl) {
+    throw new Error('未配置语言模型API，请前往「系统设置 → API设置」配置API密钥。');
+  }
 
-  const contextMessages = session.messages.slice(-15).map(m => {
-    const roleName = m.sender === 'user' ? session.userRole.name : m.sender === 'ai' ? session.aiRole.name : '旁白/系统';
-    return `${roleName}: ${m.action ? `[动作:${m.action}] ` : ''}${m.text}`;
+  await ensureBackendReady('theater-chat');
+
+  // 上下文扩展至当前会话最近 60 条消息，保留最近 30 条原文细节
+  const allHistory = session.messages || [];
+  const maxHistoryCount = 60;
+  const recentMessages = allHistory.slice(-maxHistoryCount);
+
+  const formattedHistory = recentMessages.map((m, idx) => {
+    const isAi = m.sender === 'ai';
+    const isUser = m.sender === 'user';
+    const roleName = isUser ? session.userRole.name : isAi ? session.aiRole.name : '【系统/命运】';
+    const actionPart = m.action ? ` [动作/神态: ${m.action}]` : '';
+    const thoughtsPart = isAi && m.thoughts ? ` [隐秘心声: ${m.thoughts}]` : '';
+    return `${idx + 1}. ${roleName}${actionPart}: ${m.text}${thoughtsPart}`;
   }).join('\n');
 
-  const prompt = `你正在参与名为「小剧场」的沉浸式角色扮演游戏。
+  // 检索世界书与记忆
+  let worldBookPrompt = '';
+  try {
+    const worldBooks = loadWorldBooks();
+    const evalResult = evaluateWorldBookContext(session.characterId, userMessageText + ' ' + (actionText || ''), worldBooks);
+    if (evalResult && evalResult.promptText) {
+      worldBookPrompt = `\n【当前场景关联世界书设定】\n${evalResult.promptText}\n`;
+    }
+  } catch {}
+
+  const characterPersona = character?.persona || session.aiRole.description || '沉浸式角色扮演';
+
+  const prompt = `你正在参与名为「小剧场」的沉浸式双人互动角色扮演游戏。请完全融入角色，做出深度、生动且具推进力的回应。
+
+【当前剧场标题】《${session.title}》
 【世界观设定】${session.worldBackground}
 【当前章节】${session.chapter}
 【当前时间与地点】${session.currentTime} · ${session.currentLocation}
-【AI角色身份与秘密】名字：${session.aiRole.name}，身份：${session.aiRole.identity}，秘密：${session.aiRole.secret}。
-【用户角色身份】名字：${session.userRole.name}，身份：${session.userRole.identity}。
-【历史对话记录】
-${contextMessages}
+【当前亲密度】${session.intimacy}/100
 
-【用户最新发言】
-用户(${session.userRole.name})${actionText ? `[动作/神态: ${actionText}]` : ''}: ${userMessageText}
+【AI扮演的角色】
+- 名字：${session.aiRole.name}
+- 身份：${session.aiRole.identity}
+- 性别：${session.aiRole.gender}
+- 你的专属隐秘秘密与动机：${session.aiRole.secret}
+- 性格人设与说话风格：${characterPersona}
 
-要求返回严格的 JSON 格式（不要包含 markdown 代码块包裹）：
+【用户扮演的角色】
+- 名字：${session.userRole.name}
+- 身份：${session.userRole.identity}
+- 性别：${session.userRole.gender}
+${worldBookPrompt}
+【对话历史记录（最近${recentMessages.length}条，请保持剧情与情感递进的连续性）】
+${formattedHistory}
+
+【用户最新行动与发言】
+用户(${session.userRole.name})${actionText ? ` [动作/神态: ${actionText}]` : ''}: ${userMessageText}
+
+【回复要求】
+1. 必须完全根据自身身份与秘密做出有张力的反应，不要迎合，要有角色自主性格。
+2. 将台词和动作神态分开：
+   - "text"：纯台词发言（不要在台词里重复包裹动作括号）。
+   - "action"：细腻的肢体动作、呼吸神态、眼神交互或环境互动。
+   - "thoughts"：此时此刻你心中的隐秘计算或内心真实独白。
+3. "intimacyDelta"：整数，范围 -3 到 +3（好感增加 +1~+3，冒犯/冷淡 -1~-3，普通平缓 0）。
+4. 若剧情发生地点移动、时间推移或进入新剧情高潮，更新相应字段，否则留空。
+5. 必须返回纯 JSON 格式：
 {
-  "text": "AI的对话台词（符合人设与语气）...",
-  "action": "AI的动作或神态描写（例如：微微挑眉，将茶杯放下）",
-  "thoughts": "AI内心的真实想法或对当前局势的盘算",
-  "updatedLocation": "如果地点发生变化填写新地点，否则留空",
-  "updatedTime": "如果时间发生推移填写新时间，否则留空",
-  "updatedChapter": "如果进入新章节填写新章节名，否则留空",
-  "intimacyDelta": 1或0或-1（根据互动亲密度增减，整数）
+  "text": "AI角色的对话台词",
+  "action": "AI角色的神态、动作、肢体交互描写",
+  "thoughts": "AI角色内心的真实独白与盘算",
+  "updatedLocation": "新地点（若无变更请留空字符串）",
+  "updatedTime": "新时间（若无变更请留空字符串）",
+  "updatedChapter": "新章节名（若无变更请留空字符串）",
+  "intimacyDelta": 1
 }`;
 
+  let res: Response;
   try {
-    const res = await fetch('/api/gemini/theater-chat', {
+    res = await apiFetch('/api/gemini/theater-chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         prompt,
-        model: textApiConfig.model,
-        apiKey: textApiConfig.apiKey,
-        baseUrl: textApiConfig.baseUrl,
-        provider: textApiConfig.provider,
+        textApiConfig,
+        theaterType: 'chat',
       }),
     });
-
-    const data = await res.json();
-    if (!res.ok || !data.ok) {
-      throw new Error(data.error || 'Failed to chat');
-    }
-
-    const rawText = data.text.trim();
-    const cleanJson = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/, '');
-    const parsed = JSON.parse(cleanJson);
-
-    const replyMsg: TheaterMessage = {
-      id: 'msg_' + Date.now(),
-      sender: 'ai',
-      text: parsed.text || '……',
-      timestamp: Date.now(),
-      action: parsed.action || '',
-      thoughts: parsed.thoughts || '',
-    };
-
-    return {
-      replyMessage: replyMsg,
-      updatedLocation: parsed.updatedLocation || undefined,
-      updatedTime: parsed.updatedTime || undefined,
-      updatedChapter: parsed.updatedChapter || undefined,
-      intimacyDelta: typeof parsed.intimacyDelta === 'number' ? parsed.intimacyDelta : 0,
-    };
-  } catch (e) {
-    console.error('Failed theater chat API, returning fallback', e);
-    const replyMsg: TheaterMessage = {
-      id: 'msg_' + Date.now(),
-      sender: 'ai',
-      text: `（微微颔首）“你的话我记下了，接下来我们得小心行事。”`,
-      timestamp: Date.now(),
-      action: '微微颔首',
-      thoughts: '观察对方的下一步行动。',
-    };
-    return {
-      replyMessage: replyMsg,
-      intimacyDelta: 1,
-    };
+  } catch (netErr: any) {
+    throw new Error(`网络连接失败：${netErr.message || '请检查网络连接'}`);
   }
+
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(`服务响应异常 (HTTP ${res.status})，无法读取回应`);
+  }
+
+  if (!res.ok || !data.ok) {
+    const errorMsg = data?.error || `对话生成失败 (HTTP ${res.status})`;
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(`API 鉴权失败：${errorMsg}。请检查API密钥配置。`);
+    }
+    if (res.status === 429) {
+      throw new Error(`请求超限或触发速率限制(429)：${errorMsg}。请稍后重试。`);
+    }
+    throw new Error(errorMsg);
+  }
+
+  const parsed = cleanAndParseJson(data.text, '剧场回应解析');
+
+  let intimacyDelta = 0;
+  if (typeof parsed.intimacyDelta === 'number') {
+    intimacyDelta = Math.max(-3, Math.min(3, Math.round(parsed.intimacyDelta)));
+  }
+
+  const replyMsg: TheaterMessage = {
+    id: 'msg_' + Date.now(),
+    sender: 'ai',
+    text: parsed.text || '……',
+    timestamp: Date.now(),
+    action: parsed.action || '',
+    thoughts: parsed.thoughts || '',
+  };
+
+  return {
+    replyMessage: replyMsg,
+    updatedLocation: parsed.updatedLocation?.trim() || undefined,
+    updatedTime: parsed.updatedTime?.trim() || undefined,
+    updatedChapter: parsed.updatedChapter?.trim() || undefined,
+    intimacyDelta,
+  };
 }
 
+/**
+ * 生成完结回忆录
+ */
 export async function generateTheaterMemoirSummary(session: TheaterSession): Promise<string> {
-  const textApiConfig = JSON.parse(localStorage.getItem('new_text_api_config') || '{}');
-  const summaryPrompt = `请为以下「小剧场」角色扮演游戏会话生成一段感人至深、文笔细腻的“回忆录/结局摘要”（约150-250字），记录用户(${session.userRole.name})与AI角色(${session.aiRole.name})在这场冒险中的点滴与情感羁绊：
+  const { textApiConfig } = getApiConfigForEngine();
+  if (!textApiConfig?.apiKey && !textApiConfig?.baseUrl) {
+    return `在这场名为《${session.title}》的旅程中，${session.userRole.name}与${session.aiRole.name}并肩经历了波澜壮阔的冒险，彼此的羁绊深入心底。`;
+  }
+
+  const summaryPrompt = `请为以下「小剧场」角色扮演游戏会话生成一段文笔优美、感情细腻真挚的“结局回忆录”（150-250字），回顾用户(${session.userRole.name})与AI角色(${session.aiRole.name})在这场冒险中的转折与最终羁绊：
 【剧场标题】${session.title}
 【世界观】${session.worldBackground}
 【最终亲密度】${session.intimacy}/100
-【核心对话片段摘要】
-${session.messages.slice(-20).map(m => `${m.sender === 'user' ? session.userRole.name : session.aiRole.name}: ${m.text}`).join('\n')}
+【核心剧情片段回顾】
+${session.messages.slice(-25).map(m => `${m.sender === 'user' ? session.userRole.name : session.aiRole.name}: ${m.text}`).join('\n')}
 
-请直接返回纯文本摘要，不需要额外的JSON包裹。`;
+请直接返回纯文本摘要，不需要JSON。`;
 
   try {
-    const res = await fetch('/api/gemini/theater-chat', {
+    const res = await apiFetch('/api/gemini/theater-chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         prompt: summaryPrompt,
-        model: textApiConfig.model,
-        apiKey: textApiConfig.apiKey,
-        baseUrl: textApiConfig.baseUrl,
-        provider: textApiConfig.provider,
+        textApiConfig,
+        theaterType: 'memoir',
       }),
     });
     const data = await res.json();
@@ -322,5 +508,5 @@ ${session.messages.slice(-20).map(m => `${m.sender === 'user' ? session.userRole
     }
   } catch {}
 
-  return `在这场名为《${session.title}》的旅程中，${session.userRole.name}与${session.aiRole.name}并肩经历了无数风雨与考验。从最初的戒备到后来的生死相托，这段共同的记忆将永远镌刻在彼此的心底。`;
+  return `在这场名为《${session.title}》的旅程中，${session.userRole.name}与${session.aiRole.name}并肩经历了波折与考验，两人的故事在此刻定格，成为彼此心中最珍贵的记忆。`;
 }

@@ -2343,106 +2343,25 @@ textarea,
   color: #667b8c !important;
 }
 
-/* Theater Mode 1 Card: Random Draw (Warm pastel peach/gold gradient, no dark gradient) */
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-draw-card,
-[data-theme="light"] .theater-app .theater-draw-card,
-[data-theme="cloud_milk"] .theater-app .theater-draw-card,
-[data-theme="default"] .theater-app .theater-draw-card,
-.theme-light .theater-app .theater-draw-card,
-.theme-cloud-milk .theater-app .theater-draw-card,
-.theme-default .theater-app .theater-draw-card {
-  background: linear-gradient(145deg, #fffdfa 0%, #fff7e8 100%) !important;
-  border: 1px solid #f6d8a8 !important;
-  border-radius: 24px !important;
-  box-shadow: 0 8px 24px rgba(246, 164, 0, 0.09) !important;
+/* Theater Unified 3 Main Entry Cards (Light blue-white theme) */
+:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-card-item,
+[data-theme="light"] .theater-app .theater-card-item,
+[data-theme="cloud_milk"] .theater-app .theater-card-item,
+[data-theme="default"] .theater-app .theater-card-item,
+.theme-light .theater-app .theater-card-item,
+.theme-cloud-milk .theater-app .theater-card-item,
+.theme-default .theater-app .theater-card-item {
+  background-color: #ffffff !important;
+  border: 1px solid #cfe8f7 !important;
+  border-radius: 26px !important;
+  box-shadow: 0 8px 24px rgba(99, 179, 237, 0.10) !important;
 }
 
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-draw-icon-box,
-[data-theme="light"] .theater-app .theater-draw-icon-box,
-[data-theme="cloud_milk"] .theater-app .theater-draw-icon-box,
-.theme-cloud-milk .theater-app .theater-draw-icon-box {
-  background-color: #fff1d6 !important;
-  color: #d97706 !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-draw-tag,
-[data-theme="light"] .theater-app .theater-draw-tag,
-[data-theme="cloud_milk"] .theater-app .theater-draw-tag,
-.theme-cloud-milk .theater-app .theater-draw-tag {
-  background-color: #f6a400 !important;
-  color: #ffffff !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-draw-title,
-[data-theme="light"] .theater-app .theater-draw-title,
-[data-theme="cloud_milk"] .theater-app .theater-draw-title,
-.theme-cloud-milk .theater-app .theater-draw-title {
-  color: #263747 !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-draw-desc,
-[data-theme="light"] .theater-app .theater-draw-desc,
-[data-theme="cloud_milk"] .theater-app .theater-draw-desc,
-.theme-cloud-milk .theater-app .theater-draw-desc {
-  color: #667b8c !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-draw-action,
-[data-theme="light"] .theater-app .theater-draw-action,
-[data-theme="cloud_milk"] .theater-app .theater-draw-action,
-.theme-cloud-milk .theater-app .theater-draw-action {
-  color: #d97706 !important;
-}
-
-/* Theater Mode 2 Card: Custom Selection (Light lavender/indigo gradient, no dark gradient) */
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-custom-card,
-[data-theme="light"] .theater-app .theater-custom-card,
-[data-theme="cloud_milk"] .theater-app .theater-custom-card,
-[data-theme="default"] .theater-app .theater-custom-card,
-.theme-light .theater-app .theater-custom-card,
-.theme-cloud-milk .theater-app .theater-custom-card,
-.theme-default .theater-app .theater-custom-card {
-  background: linear-gradient(145deg, #fdfcff 0%, #f3f1ff 100%) !important;
-  border: 1px solid #d5cffd !important;
-  border-radius: 24px !important;
-  box-shadow: 0 8px 24px rgba(118, 87, 246, 0.09) !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-custom-icon-box,
-[data-theme="light"] .theater-app .theater-custom-icon-box,
-[data-theme="cloud_milk"] .theater-app .theater-custom-icon-box,
-.theme-cloud-milk .theater-app .theater-custom-icon-box {
-  background-color: #ede9fe !important;
-  color: #7657f6 !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-custom-tag,
-[data-theme="light"] .theater-app .theater-custom-tag,
-[data-theme="cloud_milk"] .theater-app .theater-custom-tag,
-.theme-cloud-milk .theater-app .theater-custom-tag {
-  background-color: #7657f6 !important;
-  color: #ffffff !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-custom-title,
-[data-theme="light"] .theater-app .theater-custom-title,
-[data-theme="cloud_milk"] .theater-app .theater-custom-title,
-.theme-cloud-milk .theater-app .theater-custom-title {
-  color: #263747 !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-custom-desc,
-[data-theme="light"] .theater-app .theater-custom-desc,
-[data-theme="cloud_milk"] .theater-app .theater-custom-desc,
-.theme-cloud-milk .theater-app .theater-custom-desc {
-  color: #667b8c !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-custom-action,
-[data-theme="light"] .theater-app .theater-custom-action,
-[data-theme="cloud_milk"] .theater-app .theater-custom-action,
-.theme-cloud-milk .theater-app .theater-custom-action {
-  color: #7657f6 !important;
+:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-card-item:hover,
+[data-theme="light"] .theater-app .theater-card-item:hover,
+[data-theme="cloud_milk"] .theater-app .theater-card-item:hover {
+  border-color: #4299e1 !important;
+  box-shadow: 0 12px 30px rgba(99, 179, 237, 0.18) !important;
 }
 
 /* Theater Section Titles & Links */
@@ -2450,14 +2369,14 @@ textarea,
 [data-theme="light"] .theater-app .theater-section-title,
 [data-theme="cloud_milk"] .theater-app .theater-section-title,
 .theme-cloud-milk .theater-app .theater-section-title {
-  color: #263747 !important;
+  color: #24445c !important;
 }
 
 :root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-link,
 [data-theme="light"] .theater-app .theater-link,
 [data-theme="cloud_milk"] .theater-app .theater-link,
 .theme-cloud-milk .theater-app .theater-link {
-  color: #f6a400 !important;
+  color: #3182ce !important;
 }
 
 /* Theater Recent Sessions Cards */
@@ -2469,32 +2388,32 @@ textarea,
 .theme-cloud-milk .theater-app .theater-recent-card,
 .theme-default .theater-app .theater-recent-card {
   background-color: #ffffff !important;
-  border: 1px solid #d8e7f0 !important;
+  border: 1px solid #cfe8f7 !important;
   border-radius: 20px !important;
-  box-shadow: 0 4px 16px rgba(54, 91, 118, 0.06) !important;
+  box-shadow: 0 4px 16px rgba(99, 179, 237, 0.08) !important;
 }
 
 :root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-recent-tag,
 [data-theme="light"] .theater-app .theater-recent-tag,
 [data-theme="cloud_milk"] .theater-app .theater-recent-tag,
 .theme-cloud-milk .theater-app .theater-recent-tag {
-  background-color: #f4f9fd !important;
-  border: 1px solid #d8e7f0 !important;
-  color: #d97706 !important;
+  background-color: #eaf6ff !important;
+  border: 1px solid #cfe8f7 !important;
+  color: #2b6cb0 !important;
 }
 
 :root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-recent-ai,
 [data-theme="light"] .theater-app .theater-recent-ai,
 [data-theme="cloud_milk"] .theater-app .theater-recent-ai,
 .theme-cloud-milk .theater-app .theater-recent-ai {
-  color: #667b8c !important;
+  color: #6f8798 !important;
 }
 
 :root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-recent-title,
 [data-theme="light"] .theater-app .theater-recent-title,
 [data-theme="cloud_milk"] .theater-app .theater-recent-title,
 .theme-cloud-milk .theater-app .theater-recent-title {
-  color: #263747 !important;
+  color: #24445c !important;
 }
 
 :root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-recent-location,
@@ -2508,92 +2427,10 @@ textarea,
 [data-theme="light"] .theater-app .theater-recent-play-icon,
 [data-theme="cloud_milk"] .theater-app .theater-recent-play-icon,
 .theme-cloud-milk .theater-app .theater-recent-play-icon {
-  background-color: #ecfdf5 !important;
-  color: #059669 !important;
+  background-color: #eaf6ff !important;
+  color: #3182ce !important;
 }
 
-/* Theater Category Preview Cards (A-M Grid) */
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-category-card,
-[data-theme="light"] .theater-app .theater-category-card,
-[data-theme="cloud_milk"] .theater-app .theater-category-card,
-[data-theme="default"] .theater-app .theater-category-card,
-.theme-light .theater-app .theater-category-card,
-.theme-cloud-milk .theater-app .theater-category-card,
-.theme-default .theater-app .theater-category-card {
-  background-color: #ffffff !important;
-  border: 1px solid #d8e7f0 !important;
-  border-radius: 18px !important;
-  box-shadow: 0 4px 14px rgba(54, 91, 118, 0.05) !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-category-badge,
-[data-theme="light"] .theater-app .theater-category-badge,
-[data-theme="cloud_milk"] .theater-app .theater-category-badge,
-.theme-cloud-milk .theater-app .theater-category-badge {
-  background-color: #fff7ed !important;
-  border: 1px solid #ffedd5 !important;
-  color: #ea580c !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-category-count,
-[data-theme="light"] .theater-app .theater-category-count,
-[data-theme="cloud_milk"] .theater-app .theater-category-count,
-.theme-cloud-milk .theater-app .theater-category-count {
-  color: #8ca0ae !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-category-title,
-[data-theme="light"] .theater-app .theater-category-title,
-[data-theme="cloud_milk"] .theater-app .theater-category-title,
-.theme-cloud-milk .theater-app .theater-category-title {
-  color: #263747 !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-category-desc,
-[data-theme="light"] .theater-app .theater-category-desc,
-[data-theme="cloud_milk"] .theater-app .theater-category-desc,
-.theme-cloud-milk .theater-app .theater-category-desc {
-  color: #667b8c !important;
-}
-
-/* Theater Preset Pool Modal Dialog & Items */
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-pool-modal,
-[data-theme="light"] .theater-app .theater-pool-modal,
-[data-theme="cloud_milk"] .theater-app .theater-pool-modal,
-.theme-cloud-milk .theater-app .theater-pool-modal {
-  background-color: #ffffff !important;
-  border: 1px solid #d8e7f0 !important;
-  box-shadow: 0 16px 40px rgba(54, 91, 118, 0.12) !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-pool-title,
-[data-theme="light"] .theater-app .theater-pool-title,
-[data-theme="cloud_milk"] .theater-app .theater-pool-title,
-.theme-cloud-milk .theater-app .theater-pool-title {
-  color: #263747 !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-pool-item,
-[data-theme="light"] .theater-app .theater-pool-item,
-[data-theme="cloud_milk"] .theater-app .theater-pool-item,
-.theme-cloud-milk .theater-app .theater-pool-item {
-  background-color: #f8fafc !important;
-  border: 1px solid #d8e7f0 !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-pool-item-title,
-[data-theme="light"] .theater-app .theater-pool-item-title,
-[data-theme="cloud_milk"] .theater-app .theater-pool-item-title,
-.theme-cloud-milk .theater-app .theater-pool-item-title {
-  color: #263747 !important;
-}
-
-:root:not([data-theme="dark"]):not(.theme-dark) .theater-app .theater-pool-item-desc,
-[data-theme="light"] .theater-app .theater-pool-item-desc,
-[data-theme="cloud_milk"] .theater-app .theater-pool-item-desc,
-.theme-cloud-milk .theater-app .theater-pool-item-desc {
-  color: #667b8c !important;
-}
 
 /* Theater Generic Dark-Utility Fallbacks in Day Mode */
 :root:not([data-theme="dark"]):not(.theme-dark) .theater-app .bg-zinc-900,
@@ -2882,4 +2719,21 @@ textarea,
   color: #ffffff !important;
   box-shadow: 0 4px 12px rgba(25, 155, 211, 0.25) !important;
 }
+
+/* Desktop Icon Drag Edge Dwell Progress Animation */
+@keyframes edgeDwellProgress {
+  0% {
+    transform: scaleY(0);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+.animate-edge-dwell {
+  animation: edgeDwellProgress 1000ms cubic-bezier(0.2, 0, 0, 1) forwards;
+}
+
 

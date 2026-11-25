@@ -5187,45 +5187,95 @@ ${transcript || "\uFF08\u4E24\u4EBA\u5B89\u9759\u5171\u5904\u4E86\u4E00\u6BB5\u6
   }
 });
 app.post("/api/gemini/theater-scenario", async (req, res) => {
+  const startTime = Date.now();
   try {
-    const { prompt, model, apiKey, baseUrl, provider } = req.body;
-    const selectedModel = model || "gemini-4-hydrogen";
-    const responseText = await callAiService({
+    const { prompt, model, apiKey, baseUrl, provider, apiProtocol, customHeaders, apiConfig, textApiConfig, theaterType } = req.body;
+    const cfg = textApiConfig || apiConfig || {};
+    const selectedModel = model || cfg.model || cfg.textModel || GEMINI_DEFAULT_TEXT_MODEL;
+    const selectedKey = apiKey || cfg.apiKey || cfg.textApiKey || "";
+    const selectedBaseUrl = baseUrl || cfg.baseUrl || cfg.textBaseUrl || "";
+    const selectedProvider = provider || cfg.provider || cfg.textProvider || "";
+    const selectedProtocol = apiProtocol || cfg.apiProtocol || cfg.textApiProtocol || "";
+    const selectedHeaders = customHeaders || cfg.customHeaders;
+    const detailedResult = await callAiServiceDetailed({
       prompt,
       systemInstruction: "\u4F60\u662F\u4E00\u4E2A\u4E13\u4E1A\u7684\u6C89\u6D78\u5F0F\u89D2\u8272\u626E\u6F14\u5267\u672C\u5927\u5E08\u4E0E\u53CC\u76F2\u79D8\u5BC6\u8BBE\u8BA1\u5E08\u3002\u8BF7\u4E25\u683C\u6309\u7167JSON\u683C\u5F0F\u8FD4\u56DE\u3002",
       model: selectedModel,
-      apiKey: apiKey || "",
-      baseUrl: baseUrl || "",
-      providerType: provider || "",
+      apiKey: selectedKey,
+      baseUrl: selectedBaseUrl,
+      providerType: selectedProvider,
+      apiProtocol: selectedProtocol,
       responseMimeType: "application/json",
       temperature: 0.7,
-      maxTokens: 2e3
+      maxTokens: 2500,
+      customHeaders: selectedHeaders
     });
-    const extracted = extractThinkingAndContent(responseText);
-    res.json({ ok: true, text: extracted.cleanText || responseText });
+    const durationMs = Date.now() - startTime;
+    const extracted = extractThinkingAndContent(detailedResult.text);
+    res.json({
+      ok: true,
+      text: extracted.cleanText || detailedResult.text,
+      usage: detailedResult.usage,
+      apiLog: buildApiLogObject({
+        appName: "\u5C0F\u5267\u573A",
+        interfaceType: "TheaterScenario",
+        category: "text_generation",
+        status: "success",
+        durationMs,
+        provider: selectedProvider,
+        modelName: selectedModel,
+        purpose: `\u5C0F\u5267\u573A - ${theaterType || "\u5267\u672C\u521D\u59CB\u5316"}`,
+        usage: detailedResult.usage
+      })
+    });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err?.message || "Failed to generate theater scenario" });
+    handleAiEndpointError(res, err, "\u5C0F\u5267\u573A-\u5267\u672C\u521D\u59CB\u5316");
   }
 });
 app.post("/api/gemini/theater-chat", async (req, res) => {
+  const startTime = Date.now();
   try {
-    const { prompt, model, apiKey, baseUrl, provider } = req.body;
-    const selectedModel = model || "gemini-4-hydrogen";
-    const responseText = await callAiService({
+    const { prompt, model, apiKey, baseUrl, provider, apiProtocol, customHeaders, apiConfig, textApiConfig, theaterType } = req.body;
+    const cfg = textApiConfig || apiConfig || {};
+    const selectedModel = model || cfg.model || cfg.textModel || GEMINI_DEFAULT_TEXT_MODEL;
+    const selectedKey = apiKey || cfg.apiKey || cfg.textApiKey || "";
+    const selectedBaseUrl = baseUrl || cfg.baseUrl || cfg.textBaseUrl || "";
+    const selectedProvider = provider || cfg.provider || cfg.textProvider || "";
+    const selectedProtocol = apiProtocol || cfg.apiProtocol || cfg.textApiProtocol || "";
+    const selectedHeaders = customHeaders || cfg.customHeaders;
+    const detailedResult = await callAiServiceDetailed({
       prompt,
       systemInstruction: "\u4F60\u6B63\u5728\u53C2\u4E0E\u300C\u5C0F\u5267\u573A\u300D\u6C89\u6D78\u5F0F\u89D2\u8272\u626E\u6F14\u3002\u8BF7\u4FDD\u6301\u89D2\u8272\u53E3\u543B\uFF0C\u6DF1\u5EA6\u4EE3\u5165\uFF0C\u8F93\u51FA\u7B26\u5408\u5267\u60C5\u53D1\u5C55\u7684\u5BF9\u8BDD\u4E0E\u52A8\u4F5C\u3002\u4E25\u683C\u6309\u7167JSON\u683C\u5F0F\u8FD4\u56DE\u3002",
       model: selectedModel,
-      apiKey: apiKey || "",
-      baseUrl: baseUrl || "",
-      providerType: provider || "",
+      apiKey: selectedKey,
+      baseUrl: selectedBaseUrl,
+      providerType: selectedProvider,
+      apiProtocol: selectedProtocol,
       responseMimeType: "application/json",
       temperature: 0.8,
-      maxTokens: 1500
+      maxTokens: 1800,
+      customHeaders: selectedHeaders
     });
-    const extracted = extractThinkingAndContent(responseText);
-    res.json({ ok: true, text: extracted.cleanText || responseText });
+    const durationMs = Date.now() - startTime;
+    const extracted = extractThinkingAndContent(detailedResult.text);
+    res.json({
+      ok: true,
+      text: extracted.cleanText || detailedResult.text,
+      usage: detailedResult.usage,
+      apiLog: buildApiLogObject({
+        appName: "\u5C0F\u5267\u573A",
+        interfaceType: "TheaterChat",
+        category: "text_generation",
+        status: "success",
+        durationMs,
+        provider: selectedProvider,
+        modelName: selectedModel,
+        purpose: `\u5C0F\u5267\u573A - ${theaterType || "\u5267\u60C5\u56DE\u590D"}`,
+        usage: detailedResult.usage
+      })
+    });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err?.message || "Failed theater chat" });
+    handleAiEndpointError(res, err, "\u5C0F\u5267\u573A-\u5267\u60C5\u56DE\u590D");
   }
 });
 app.post("/api/gemini/gomoku-commentary", async (req, res) => {

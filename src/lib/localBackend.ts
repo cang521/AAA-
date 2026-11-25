@@ -802,6 +802,7 @@ export function createBackendUnavailableResponse(
 }
 
 function deriveAppName(path: string): string {
+  if (path.includes('theater')) return '小剧场';
   if (path.includes('group-chat')) return '微信群聊-AI';
   if (path.includes('offline-chat') || path.includes('offline-summary')) return '线下模式-AI';
   if (path.includes('chat')) return '微信-AI聊天';
@@ -821,6 +822,8 @@ function deriveAppName(path: string): string {
 }
 
 function deriveInterfaceType(path: string): string {
+  if (path.includes('theater-scenario')) return 'TheaterScenario';
+  if (path.includes('theater-chat')) return 'TheaterChat';
   if (path.includes('analyze-image')) return 'ImageRecognition';
   if (path.includes('generate-image')) return 'ImageGeneration';
   if (path.includes('generate-speech')) return 'SpeechGeneration';
@@ -855,7 +858,9 @@ function deriveRequestMeta(init?: RequestInit): {
     try {
       const parsed = JSON.parse(init.body);
       let purposeHint = '';
-      if (parsed.group?.name) purposeHint = `群聊 [${parsed.group.name}] AI 互动`;
+      if (parsed.theaterType) purposeHint = `小剧场 - ${parsed.theaterType}`;
+      else if (parsed.purpose) purposeHint = parsed.purpose;
+      else if (parsed.group?.name) purposeHint = `群聊 [${parsed.group.name}] AI 互动`;
       else if (parsed.character?.name) purposeHint = `与 ${parsed.character.name} 对话交互`;
       else if (parsed.source) purposeHint = `来源: ${String(parsed.source).slice(0, 40)}`;
       else if (parsed.prompt) purposeHint = `执行指令: ${String(parsed.prompt).slice(0, 40)}`;
