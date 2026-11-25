@@ -115,6 +115,7 @@ export interface AndroidPermissionBridgePlugin {
   setSystemBarAppearance(options: SystemBarAppearanceOptions): Promise<{ success: boolean }>;
   takeGroupPhotoWithCamera(): Promise<GroupPhotoPickResult>;
   pickGroupPhotoFromGallery(): Promise<GroupPhotoPickResult>;
+  vibrateDevice(options: { durationMs: number }): Promise<{ success: boolean; message?: string }>;
 }
 
 export interface GroupPhotoPickResult {
@@ -263,6 +264,14 @@ export class AndroidPermissionBridgeWeb extends WebPlugin implements AndroidPerm
       isWebPreview: true,
       message: '当前为 Web 预览环境，无法调用 Android 系统相册 Photo Picker，将改用浏览器本地文件选择。',
     };
+  }
+
+  async vibrateDevice(options: { durationMs: number }): Promise<{ success: boolean; message?: string }> {
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      const success = navigator.vibrate(options.durationMs);
+      return { success, message: success ? '浏览器振动测试已执行' : '浏览器拒绝振动请求' };
+    }
+    return { success: false, message: '当前环境不支持振动' };
   }
 }
 
@@ -643,6 +652,14 @@ export class AndroidPermissionBridgeClient {
         success: false,
         message: e?.message || '调起 Android 系统相册失败',
       };
+    }
+  }
+
+  public async vibrateDevice(durationMs = 120): Promise<{ success: boolean; message?: string }> {
+    try {
+      return await AndroidPermissionBridge.vibrateDevice({ durationMs });
+    } catch (e: any) {
+      return { success: false, message: e?.message || '振动桥调用失败' };
     }
   }
 

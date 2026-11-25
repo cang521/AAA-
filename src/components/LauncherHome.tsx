@@ -50,6 +50,7 @@ import {
   Globe,
   ChevronLeft,
   ChevronRight,
+  FlaskConical,
 } from 'lucide-react';
 import { ImagePickerModal } from './ImagePickerModal';
 import { motion, useReducedMotion } from 'motion/react';
@@ -849,6 +850,8 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
         return <CloudSun className="w-6 h-6 text-white" />;
       case 'FileCheck':
         return <FileCheck className="w-6 h-6 text-white" />;
+      case 'FlaskConical':
+        return <FlaskConical className="w-6 h-6 text-white" />;
       default:
         return <MessageCircle className="w-6 h-6 text-white" />;
     }
@@ -882,6 +885,8 @@ export const LauncherHome: React.FC<LauncherHomeProps> = ({
         return 'bg-gradient-to-tr from-indigo-600 to-blue-500 shadow-indigo-500/20';
       case 'ai_activity_logs':
         return 'bg-gradient-to-tr from-purple-600 to-pink-500 shadow-purple-500/20';
+      case 'testing':
+        return 'bg-gradient-to-tr from-sky-500 to-blue-500 shadow-sky-500/20';
       default:
         return 'bg-emerald-600';
     }

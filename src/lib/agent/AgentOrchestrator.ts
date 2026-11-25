@@ -16,6 +16,7 @@ import { chatMessageBridge } from './ChatMessageBridge';
 import { deviceContextManager } from './DeviceContextManager';
 import { proactiveGate } from '../proactive/ProactiveGate';
 import { loadCharacters } from '../storage';
+import { actionExecutor } from './ActionExecutor';
 
 type AskPromptListener = (prompt: AgentAskPrompt | null) => void;
 type NotificationListener = (notif: InPhoneNotification | null) => void;
@@ -353,26 +354,29 @@ class AgentOrchestrator {
             category: 'proactive_chat',
           });
         }
-      } else if (candidate.actionType === 'system_notification') {
-        this.showInPhoneNotification({
-          id: 'notif_' + Date.now(),
+      } else {
+        const execution = await actionExecutor.executeAction({
           aiId: candidate.targetAiId,
           aiName: candidate.targetAiName,
-          title: `系统关怀提醒`,
-          content: candidate.proposedMessageText || candidate.triggerReason,
-          timestamp: Date.now(),
-          category: 'system_alert',
+          actionId: candidate.actionType,
+          actionName: candidate.actionTitle,
+          trigger: event.summary,
+          payload: {
+            text: candidate.proposedMessageText || candidate.triggerReason,
+            appId: (candidate as any).targetAppId,
+          },
         });
-      } else if (candidate.actionType === 'floating_bubble') {
-        this.showInPhoneNotification({
-          id: 'notif_' + Date.now(),
-          aiId: candidate.targetAiId,
-          aiName: candidate.targetAiName,
-          title: `悬浮伴随气泡`,
-          content: candidate.proposedMessageText || `伴随中: ${candidate.actionTitle}`,
-          timestamp: Date.now(),
-          category: 'care',
-        });
+        if (!execution.success) {
+          return this.finalizeTrace(
+            traceId,
+            candidate,
+            stages,
+            'ALLOW',
+            'FAILED',
+            execution.message,
+            event.summary
+          );
+        }
       }
 
       localRuleEngine.recordActionExecuted(candidate.targetAiId, candidate.actionType);

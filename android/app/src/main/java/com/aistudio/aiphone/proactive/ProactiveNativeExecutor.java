@@ -577,6 +577,13 @@ public final class ProactiveNativeExecutor {
 
             String prompt = buildStructuredPrompt(snapshot, selectedChar, selectedEvent, now);
             ApiCallResult apiResult = callAiProviderDirectly(apiConfig, selectedChar, prompt);
+            enqueueBackgroundApiMonitorLog(
+                context,
+                apiResult,
+                charName,
+                triggerType,
+                eventId
+            );
 
             if (apiResult.httpStatus == 429) {
                 ProactiveBackgroundStore.markQuotaExhausted(context, 30 * 60_000L);
@@ -986,6 +993,47 @@ public final class ProactiveNativeExecutor {
         boolean success;
         int httpStatus;
         String rawText;
+        String provider;
+        String model;
+        String errorType;
+        long durationMs;
+    }
+
+    private static void enqueueBackgroundApiMonitorLog(
+        Context context,
+        ApiCallResult result,
+        String charName,
+        String triggerType,
+        String eventId
+    ) {
+        try {
+            long now = System.currentTimeMillis();
+            String requestId = "bg_" + (eventId != null && !eventId.isEmpty() ? eventId : "event") + "_" + now;
+            JSONObject log = new JSONObject();
+            log.put("id", "log_native_" + now + "_" + Math.abs(requestId.hashCode()));
+            log.put("appName", "后台主动消息");
+            log.put("timestamp", now);
+            log.put("provider", result.provider != null ? result.provider : "unknown");
+            log.put("modelName", result.model != null ? result.model : "unknown-model");
+            log.put("interfaceType", "NativeProactiveGenerate");
+            log.put("category", "text_generation");
+            log.put("status", result.success ? "success" : "failed");
+            log.put("httpStatus", result.httpStatus);
+            log.put("requestId", requestId);
+            log.put("durationMs", result.durationMs);
+            log.put("isRealTokens", false);
+            log.put("costDisplay", "未提供");
+            log.put("purpose", "后台主动消息：" + charName + "（" + triggerType + "）");
+            if (!result.success) {
+                log.put("errorType", result.errorType != null ? result.errorType : "NativeBackgroundApiError");
+                log.put("errorMessage", result.httpStatus > 0
+                    ? "后台模型请求失败，HTTP " + result.httpStatus
+                    : "后台模型请求未成功建立连接");
+            }
+            ProactiveBackgroundStore.enqueuePendingApiLog(context, log);
+        } catch (Throwable ignored) {
+            // Monitoring must never interrupt proactive delivery.
+        }
     }
 
     private static ApiCallResult callAiProviderDirectly(
@@ -995,6 +1043,7 @@ public final class ProactiveNativeExecutor {
     ) {
         ApiCallResult result = new ApiCallResult();
         HttpURLConnection conn = null;
+        long startedAt = System.currentTimeMillis();
         try {
             String apiKey = apiConfig.optString("textApiKey", "").trim();
             String baseUrl = apiConfig.optString("textBaseUrl", "").trim();
@@ -1003,8 +1052,11 @@ public final class ProactiveNativeExecutor {
             if (model.isEmpty()) {
                 model = apiConfig.optString("textModel", "gemini-2.5-flash").trim();
             }
+            result.provider = provider;
+            result.model = model;
             if (apiKey.isEmpty()) {
                 result.success = false;
+                result.errorType = "MISSING_API_KEY";
                 return result;
             }
 
@@ -1080,11 +1132,14 @@ public final class ProactiveNativeExecutor {
                 result.success = result.rawText != null && !result.rawText.trim().isEmpty();
             } else {
                 result.success = false;
+                result.errorType = "HTTP_" + result.httpStatus;
             }
         } catch (Throwable t) {
             Log.w(TAG, "Direct AI call failed: " + t.getClass().getSimpleName());
             result.success = false;
+            result.errorType = t.getClass().getSimpleName();
         } finally {
+            result.durationMs = System.currentTimeMillis() - startedAt;
             if (conn != null) {
                 conn.disconnect();
             }

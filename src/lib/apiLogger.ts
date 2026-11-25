@@ -1,6 +1,72 @@
 import { ApiLog, ApiLogCategory } from '../types';
 import { sanitizeSensitiveText } from './apiCapabilities';
 
+const API_LOG_STORAGE_KEY = 'phone_api_logs';
+const API_LOG_MAX_ENTRIES = 1000;
+
+function loadPersistedApiLogs(): ApiLog[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(API_LOG_STORAGE_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.filter((item) => item && item.id) : [];
+  } catch {
+    return [];
+  }
+}
+
+function isSameApiCall(a: ApiLog, b: ApiLog): boolean {
+  if (a.id === b.id) return true;
+  if (a.requestId && b.requestId) {
+    return a.requestId === b.requestId && a.interfaceType === b.interfaceType;
+  }
+  // Legacy endpoints do not always return requestId.  The old UI also manually
+  // recorded the same response that apiFetch already intercepted, usually within
+  // a few milliseconds.  Treat that pair as one call without merging genuinely
+  // separate sequential requests.
+  return (
+    Math.abs(a.timestamp - b.timestamp) <= 1500 &&
+    a.appName === b.appName &&
+    a.interfaceType === b.interfaceType &&
+    a.modelName === b.modelName &&
+    (a.status || 'success') === (b.status || 'success') &&
+    a.purpose === b.purpose
+  );
+}
+
+/**
+ * Single durable writer for every API monitor entry.
+ * It always reloads the latest storage snapshot before appending, so concurrent
+ * AI replies can no longer overwrite one another through stale React closures.
+ */
+export function persistApiLog(log: ApiLog): ApiLog {
+  if (typeof window === 'undefined') return log;
+  try {
+    const latest = loadPersistedApiLogs();
+    const duplicateIndex = latest.findIndex((item) => isSameApiCall(item, log));
+    const existing = duplicateIndex >= 0 ? latest[duplicateIndex] : null;
+    const merged = existing
+      ? {
+          ...existing,
+          ...log,
+          id: existing.id,
+          requestId: log.requestId || existing.requestId,
+          status: log.status || existing.status,
+          category: log.category || existing.category,
+          httpStatus: log.httpStatus ?? existing.httpStatus,
+          durationMs: log.durationMs ?? existing.durationMs,
+        }
+      : log;
+    const next = duplicateIndex >= 0
+      ? [merged, ...latest.filter((_, index) => index !== duplicateIndex)]
+      : [merged, ...latest];
+    localStorage.setItem(API_LOG_STORAGE_KEY, JSON.stringify(next.slice(0, API_LOG_MAX_ENTRIES)));
+    window.dispatchEvent(new CustomEvent('api_logs_changed', { detail: { id: log.id } }));
+  } catch (error) {
+    console.warn('[apiLogger] 持久化 API 日志失败:', error);
+  }
+  return log;
+}
+
 export interface ApiLogPayload {
   appName: string;
   provider?: string;
@@ -111,15 +177,7 @@ export function recordApiLog(
       contextCompressed: typeof payload.contextCompressed === 'boolean' ? payload.contextCompressed : undefined,
     };
 
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('record_api_log', {
-          detail: log,
-        })
-      );
-    }
-
-    return log;
+    return persistApiLog(log);
   } catch (err) {
     console.warn('[apiLogger] 记录 API 日志异常 (已被防崩溃拦截):', err);
     return null;

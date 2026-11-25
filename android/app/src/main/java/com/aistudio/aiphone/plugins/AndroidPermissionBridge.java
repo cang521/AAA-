@@ -28,6 +28,8 @@ import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.PowerManager;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.util.Base64;
@@ -156,6 +158,26 @@ public class AndroidPermissionBridge extends Plugin {
         ret.put("manufacturer", Build.MANUFACTURER);
         ret.put("packageName", getContext().getPackageName());
         call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void vibrateDevice(PluginCall call) {
+        try {
+            long durationMs = Math.max(20L, Math.min(2000L, call.getInt("durationMs", 120)));
+            Vibrator vibrator = (Vibrator) getContext().getSystemService(Context.VIBRATOR_SERVICE);
+            if (vibrator == null || !vibrator.hasVibrator()) {
+                call.resolve(createResult(false, "当前设备不支持振动"));
+                return;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE));
+            } else {
+                vibrator.vibrate(durationMs);
+            }
+            call.resolve(createResult(true, "振动已真实执行"));
+        } catch (Throwable t) {
+            call.reject("振动执行失败: " + t.getClass().getSimpleName());
+        }
     }
 
     /**

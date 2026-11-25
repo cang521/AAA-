@@ -16,7 +16,8 @@ export type AppId =
   | 'weather'
   | 'lock'
   | 'offline'
-  | 'theater';
+  | 'theater'
+  | 'testing';
 
 export interface WorldBookEntry {
   id: string;

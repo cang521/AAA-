@@ -14,6 +14,7 @@ import { permissionManager, AI_PERMISSION_ITEMS } from './PermissionManager';
 import { systemCapabilityManager } from './SystemCapabilityManager';
 import { activityLogger } from './ActivityLogger';
 import { nativeNotificationService } from '../NativeNotificationService';
+import { androidPermissionBridgeClient } from './AndroidPermissionBridgeClient';
 
 export interface ActionRequest {
   aiId: string;
@@ -177,10 +178,10 @@ class ActionExecutor {
 
     // 5. Execution
     try {
-      // Phase 1: Safe executions like notification or vibration
+      let executionMessage = '';
       if (actionId === 'system_notification' && typeof window !== 'undefined') {
         const ts = Date.now();
-        await nativeNotificationService.notifyAiMessage(
+        const result = await nativeNotificationService.notifyAiMessage(
           { id: aiId, name: aiName, avatar: payload?.avatar },
           payload?.text || '点击进入小手机查看详情',
           {
@@ -190,6 +191,31 @@ class ActionExecutor {
             triggerSource: 'action_executor',
           }
         );
+        if (!result.success) throw new Error(result.message || result.code || '系统通知发送失败');
+        executionMessage = '真实系统通知已发送';
+      } else if (actionId === 'haptic_vibration') {
+        const result = await androidPermissionBridgeClient.vibrateDevice(payload?.durationMs || 120);
+        if (!result.success) throw new Error(result.message || '设备振动执行失败');
+        executionMessage = result.message || '设备振动已执行';
+      } else if (actionId === 'applet_navigation' && typeof window !== 'undefined') {
+        const appId = String(payload?.appId || '').trim();
+        if (!appId) throw new Error('缺少需要打开的小手机应用ID');
+        window.dispatchEvent(new CustomEvent('ai_navigate_app', { detail: { appId, aiId } }));
+        executionMessage = `已打开小手机应用：${appId}`;
+      } else {
+        const notImplementedMessage = `动作【${actionName || actionId}】尚未接入真实执行器`;
+        activityLogger.log({
+          aiId,
+          aiName,
+          eventType: 'ACTION_REQUEST',
+          requestedAction: actionName,
+          trigger,
+          permissionResult: 'ALLOW',
+          executionResult: 'FAILED',
+          failureReason: notImplementedMessage,
+          metadata: { actionId, payload, code: 'NOT_IMPLEMENTED' },
+        });
+        return { success: false, message: notImplementedMessage };
       }
 
       activityLogger.log({
@@ -205,7 +231,7 @@ class ActionExecutor {
 
       return {
         success: true,
-        message: '执行成功',
+        message: executionMessage || '执行成功',
       };
     } catch (e: any) {
       activityLogger.log({

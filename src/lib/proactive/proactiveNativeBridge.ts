@@ -10,7 +10,7 @@
  */
 
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import { ChatMessage, ProactiveEpisode } from '../../types';
+import { ApiLog, ChatMessage, ProactiveEpisode } from '../../types';
 import {
   loadProactiveSettings,
   saveProactiveSettings,
@@ -30,6 +30,7 @@ import { permissionManager } from '../agent/PermissionManager';
 import { getLifeEventsSync } from '../lifeState/lifeStateStore';
 import { aiReplyTaskManager } from '../aiReply/AiReplyTaskManager';
 import { getAllOfflineAiIds } from '../offline/offlineInteractionState';
+import { persistApiLog } from '../apiLogger';
 
 interface ProactiveBackgroundPluginInterface {
   ensureHourlyWorkerRegistered(options: { enabled: boolean }): Promise<{
@@ -300,8 +301,16 @@ export async function drainAndMergeNativeInbox(): Promise<{
 
     const payload = JSON.parse(res.payloadJson);
     const inboxMessages: ChatMessage[] = Array.isArray(payload.messages) ? payload.messages : [];
+    const nativeApiLogs: ApiLog[] = Array.isArray(payload.apiLogs) ? payload.apiLogs : [];
     const unreadDeltaByChar = new Map<string, number>();
     let mergedCount = 0;
+
+    // Native WorkManager calls the provider while WebView is closed. Merge those
+    // durable records into the same monitor store before processing messages.
+    for (const nativeLog of nativeApiLogs) {
+      if (!nativeLog || !nativeLog.id || !nativeLog.appName) continue;
+      persistApiLog(nativeLog);
+    }
 
     // 1. Idempotently write background messages into ChatDB IndexedDB
     for (const rawMsg of inboxMessages) {

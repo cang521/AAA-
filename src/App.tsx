@@ -69,6 +69,7 @@ import { GameCenterApp } from './components/apps/GameCenterApp';
 import { WeatherApp } from './components/apps/WeatherApp';
 import { OfflineModeHome } from './components/offline/OfflineModeHome';
 import { TheaterApp } from './components/apps/theater/TheaterApp';
+import { TestingApp } from './components/apps/testing/TestingApp';
 import { CLOUD_MILK_DESKTOP_WALLPAPER, CLOUD_MILK_LOCK_WALLPAPER } from './lib/themeWallpapers';
 import { initAllAiMemoryVaults } from './lib/aiMemoryVaultDb';
 import { checkAndRunScheduledArchives, startContinuousArchiveProtection } from './lib/chatArchiveDb';
@@ -89,6 +90,7 @@ import { backfillAllCharactersNotificationAvatars } from './lib/notificationAvat
 import { loadWeChatTheme, subscribeWeChatTheme } from './components/apps/wechat/theme/wechatThemeStore';
 import { WeChatThemeId } from './components/apps/wechat/theme/types';
 import { applySystemBarAppearance, resolveSystemBarAppearance } from './lib/systemBarAppearance';
+import { persistApiLog } from './lib/apiLogger';
 
 export function App() {
   // Lock state re-hydrated from lockSecurityService (Re-entry maintains lock state)
@@ -169,6 +171,12 @@ export function App() {
     };
     window.addEventListener('open_ai_chat', handleOpenAiChat);
 
+    const handleAiNavigateApp = (e: Event) => {
+      const appId = String((e as CustomEvent<{ appId?: string }>).detail?.appId || '').trim();
+      if (appId) setActiveAppId(appId);
+    };
+    window.addEventListener('ai_navigate_app', handleAiNavigateApp);
+
     if (Capacitor.isPluginAvailable('App')) {
       CapacitorApp.addListener('appStateChange', (state: { isActive: boolean }) => {
         if (state.isActive) {
@@ -189,6 +197,7 @@ export function App() {
       isCancelled = true;
       window.removeEventListener('android_notification_tapped', handleAndroidTap);
       window.removeEventListener('open_ai_chat', handleOpenAiChat);
+      window.removeEventListener('ai_navigate_app', handleAiNavigateApp);
       if (appListenerHandle) {
         appListenerHandle.remove().catch(() => {});
       }
@@ -213,12 +222,10 @@ export function App() {
     };
     window.addEventListener('ai_proactive_message_received', handleProactiveMsg);
 
-    const handleRecordApiLog = (e: any) => {
-      if (e.detail) {
-        addApiLog(e.detail);
-      }
+    const handleApiLogsChanged = () => {
+      setApiLogsState(loadApiLogs());
     };
-    window.addEventListener('record_api_log', handleRecordApiLog);
+    window.addEventListener('api_logs_changed', handleApiLogsChanged);
 
     const unsubChars = subscribeCharactersChange((nextChars) => {
       setCharactersState(nextChars);
@@ -229,7 +236,7 @@ export function App() {
       unsubNotif();
       unsubChars();
       window.removeEventListener('ai_proactive_message_received', handleProactiveMsg);
-      window.removeEventListener('record_api_log', handleRecordApiLog);
+      window.removeEventListener('api_logs_changed', handleApiLogsChanged);
     };
   }, []);
 
@@ -333,9 +340,8 @@ export function App() {
   };
 
   const addApiLog = (log: ApiLog) => {
-    const updated = [log, ...apiLogs];
-    setApiLogsState(updated);
-    saveApiLogs(updated);
+    persistApiLog(log);
+    setApiLogsState(loadApiLogs());
   };
 
   const clearApiLogs = () => {
@@ -799,6 +805,10 @@ export function App() {
               />
             )}
 
+            {activeAppId === 'testing' && (
+              <TestingApp onBack={() => setActiveAppId(null)} />
+            )}
+
             {/* Fallback for unhandled or custom app IDs */}
             {![
               'wechat',
@@ -815,6 +825,7 @@ export function App() {
               'apimonitor',
               'memo',
               'theater',
+              'testing',
             ].includes(activeAppId) && (
               <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center text-white bg-zinc-900">
                 <p className="text-sm font-semibold mb-2">应用加载完成</p>

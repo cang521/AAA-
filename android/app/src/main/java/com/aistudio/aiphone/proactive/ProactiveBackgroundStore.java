@@ -24,6 +24,7 @@ public final class ProactiveBackgroundStore {
 
     private static final String KEY_STATE_SNAPSHOT = "state_snapshot_json";
     private static final String KEY_PENDING_INBOX = "pending_inbox_json";
+    private static final String KEY_PENDING_API_LOGS = "pending_api_logs_json";
     private static final String KEY_EXECUTED_MSG_IDS = "executed_message_ids_json";
     private static final String KEY_EXECUTED_STEP_IDS = "executed_step_ids_json";
     private static final String KEY_HANDLED_EVENT_IDS = "handled_event_ids_json";
@@ -43,6 +44,13 @@ public final class ProactiveBackgroundStore {
     private static final Object LOCK = new Object();
 
     private ProactiveBackgroundStore() {}
+
+    public static boolean hasStateSnapshot(Context context) {
+        synchronized (LOCK) {
+            String raw = prefs(context).getString(KEY_STATE_SNAPSHOT, "");
+            return raw != null && !raw.trim().isEmpty();
+        }
+    }
 
     private static SharedPreferences prefs(Context context) {
         return context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
@@ -325,6 +333,35 @@ public final class ProactiveBackgroundStore {
         }
     }
 
+    /** Store a privacy-safe API monitor entry created while the WebView is closed. */
+    public static boolean enqueuePendingApiLog(Context context, JSONObject logObj) {
+        if (context == null || logObj == null) return false;
+        String logId = logObj.optString("id", "");
+        if (logId.isEmpty()) return false;
+        synchronized (LOCK) {
+            try {
+                SharedPreferences sp = prefs(context);
+                JSONArray queue = new JSONArray(sp.getString(KEY_PENDING_API_LOGS, "[]"));
+                for (int i = 0; i < queue.length(); i++) {
+                    JSONObject existing = queue.optJSONObject(i);
+                    if (existing != null && logId.equals(existing.optString("id", ""))) return false;
+                }
+                queue.put(logObj);
+                JSONArray trimmed = queue;
+                if (queue.length() > 200) {
+                    trimmed = new JSONArray();
+                    for (int i = queue.length() - 200; i < queue.length(); i++) {
+                        trimmed.put(queue.optJSONObject(i));
+                    }
+                }
+                return sp.edit().putString(KEY_PENDING_API_LOGS, trimmed.toString()).commit();
+            } catch (Exception e) {
+                Log.w(TAG, "enqueuePendingApiLog failed: " + e.getClass().getSimpleName());
+                return false;
+            }
+        }
+    }
+
     /**
      * Drain all pending inbox messages and return full delta payload for WebView merge.
      */
@@ -335,6 +372,7 @@ public final class ProactiveBackgroundStore {
                 SharedPreferences sp = prefs(context);
                 JSONArray queue = new JSONArray(sp.getString(KEY_PENDING_INBOX, "[]"));
                 result.put("messages", queue);
+                result.put("apiLogs", new JSONArray(sp.getString(KEY_PENDING_API_LOGS, "[]")));
                 result.put("pausedUntil", sp.getLong(KEY_NATIVE_PAUSED_UNTIL, 0L));
                 result.put("pauseReason", sp.getString(KEY_NATIVE_PAUSE_REASON, ""));
                 result.put("episodes", new JSONArray(sp.getString(KEY_NATIVE_EPISODES, "[]")));
@@ -347,7 +385,10 @@ public final class ProactiveBackgroundStore {
                 result.put("handledEventIds", new JSONArray(sp.getString(KEY_HANDLED_EVENT_IDS, "[]")));
 
                 // Clear drained inbox queue only after reading
-                sp.edit().putString(KEY_PENDING_INBOX, "[]").commit();
+                sp.edit()
+                    .putString(KEY_PENDING_INBOX, "[]")
+                    .putString(KEY_PENDING_API_LOGS, "[]")
+                    .commit();
             } catch (Exception e) {
                 Log.w(TAG, "drainPendingInbox error: " + e.getClass().getSimpleName());
             }

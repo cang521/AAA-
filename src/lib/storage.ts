@@ -157,6 +157,7 @@ const INITIAL_ICONS: AppIconConfig[] = [
   { id: 'icon_connectivity', name: '外部设备', appId: 'connectivity', pageIndex: 0, positionIndex: 11, builtInIcon: 'Link' },
   { id: 'icon_permissions', name: 'AI 权限', appId: 'permissions', pageIndex: 0, positionIndex: 12, builtInIcon: 'Shield' },
   { id: 'icon_ai_activity_logs', name: 'AI 活动记录', appId: 'ai_activity_logs', pageIndex: 0, positionIndex: 13, builtInIcon: 'FileCheck' },
+  { id: 'icon_testing', name: '测试', appId: 'testing', pageIndex: 0, positionIndex: 14, builtInIcon: 'FlaskConical' },
 ];
 
 const INITIAL_WIDGETS: WidgetConfig[] = [
@@ -360,19 +361,26 @@ export const BUILTIN_APPS_REGISTRY: { appId: AppId; name: string; builtInIcon: s
   { appId: 'connectivity', name: '外部设备', builtInIcon: 'Link' },
   { appId: 'permissions', name: 'AI 权限', builtInIcon: 'Shield' },
   { appId: 'ai_activity_logs', name: 'AI 活动记录', builtInIcon: 'FileCheck' },
+  { appId: 'testing', name: '测试', builtInIcon: 'FlaskConical' },
 ];
 
 export const loadIcons = (): AppIconConfig[] => {
   const raw = localStorage.getItem(STORAGE_KEYS.LAUNCHER_ICONS);
   if (!raw) {
     saveToStorage(STORAGE_KEYS.LAUNCHER_ICONS, INITIAL_ICONS);
+    localStorage.setItem('phone_testing_app_seeded_v1', 'done');
     return INITIAL_ICONS;
   }
   try {
     const loaded = JSON.parse(raw);
     if (Array.isArray(loaded)) {
       const existingAppIds = new Set(loaded.map((icon: AppIconConfig) => icon.appId));
-      const missingIcons = INITIAL_ICONS.filter((icon) => !existingAppIds.has(icon.appId));
+      const testingSeedKey = 'phone_testing_app_seeded_v1';
+      const testingWasSeeded = localStorage.getItem(testingSeedKey) === 'done';
+      const missingIcons = INITIAL_ICONS.filter((icon) =>
+        !existingAppIds.has(icon.appId) && (icon.appId !== 'testing' || !testingWasSeeded)
+      );
+      if (!testingWasSeeded) localStorage.setItem(testingSeedKey, 'done');
       if (missingIcons.length > 0) {
         const merged = [...loaded, ...missingIcons];
         saveToStorage(STORAGE_KEYS.LAUNCHER_ICONS, merged);
