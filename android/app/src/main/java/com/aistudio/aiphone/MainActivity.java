@@ -19,6 +19,7 @@ import com.aistudio.aiphone.plugins.LauncherAppearanceManager;
 import com.aistudio.aiphone.plugins.NativeFileExportPlugin;
 import com.aistudio.aiphone.plugins.NativeChatSafetyPlugin;
 import com.aistudio.aiphone.plugins.ProactiveBackgroundPlugin;
+import com.aistudio.aiphone.plugins.DiagnosticsPlugin;
 
 public class MainActivity extends BridgeActivity {
     private int currentSystemBgColor = Color.parseColor("#FFFFFF");
@@ -29,6 +30,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(AndroidPermissionBridge.class);
         registerPlugin(ProactiveBackgroundPlugin.class);
+        registerPlugin(DiagnosticsPlugin.class);
         registerPlugin(NativeFileExportPlugin.class);
         registerPlugin(NativeChatSafetyPlugin.class);
         super.onCreate(savedInstanceState);
