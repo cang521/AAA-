@@ -17,6 +17,22 @@ interface Point {
   y: number;
 }
 
+// Fixed standard colors for gesture lock to guarantee visibility across Web & APK
+const GESTURE_COLORS = {
+  // Unselected node: soft light-blue fill & distinct border
+  nodeUnselectedBg: '#CFE8F6',
+  nodeUnselectedBorder: '#8FC4DF',
+  nodeUnselectedDot: '#8FC4DF',
+
+  // Selected node & active stroke: prominent blue with >= 0.65 opacity
+  nodeSelectedBorder: '#4FA9DC',
+  nodeSelectedBg: 'rgba(79, 169, 220, 0.28)',
+  nodeSelectedDot: '#4FA9DC',
+  lineStroke: '#4FA9DC',
+  lineOpacity: 0.85,
+  activeLineOpacity: 0.75,
+};
+
 export const GestureLock: React.FC<GestureLockProps> = ({
   mode,
   onUnlockSuccess,
@@ -209,13 +225,6 @@ export const GestureLock: React.FC<GestureLockProps> = ({
     }
   };
 
-  // Color mappings based on status
-  const getLineColor = () => {
-    if (status === 'error') return '#F43F5E'; // Rose red
-    if (status === 'success') return '#10B981'; // Emerald green
-    return isLightWallpaper ? '#38BDF8' : '#60A5FA'; // Sky blue
-  };
-
   return (
     <div className="w-full flex flex-col items-center select-none touch-none">
       {/* Header Prompt Message */}
@@ -267,10 +276,13 @@ export const GestureLock: React.FC<GestureLockProps> = ({
                 y1={prevPos.y}
                 x2={currPos.x}
                 y2={currPos.y}
-                stroke={getLineColor()}
+                stroke={GESTURE_COLORS.lineStroke}
+                strokeOpacity={GESTURE_COLORS.lineOpacity}
                 strokeWidth="5"
                 strokeLinecap="round"
-                style={{ filter: 'drop-shadow(0 0 6px currentColor)' }}
+                style={{
+                  filter: 'drop-shadow(0 0 6px rgba(79, 169, 220, 0.65))',
+                }}
               />
             );
           })}
@@ -282,11 +294,11 @@ export const GestureLock: React.FC<GestureLockProps> = ({
               y1={nodePositions[selectedPath[selectedPath.length - 1]].y}
               x2={currentPos.x}
               y2={currentPos.y}
-              stroke={getLineColor()}
+              stroke={GESTURE_COLORS.lineStroke}
+              strokeOpacity={GESTURE_COLORS.activeLineOpacity}
               strokeWidth="4"
               strokeDasharray="4 2"
               strokeLinecap="round"
-              className="opacity-80"
             />
           )}
         </svg>
@@ -304,31 +316,31 @@ export const GestureLock: React.FC<GestureLockProps> = ({
             >
               {/* Outer Ring */}
               <div
-                className={`w-12 h-12 rounded-full border-2 flex items-center justify-center transition-all duration-150 ${
-                  isSelected
-                    ? status === 'error'
-                      ? 'border-rose-500 bg-rose-500/20 scale-110 shadow-lg shadow-rose-500/40'
-                      : status === 'success'
-                      ? 'border-emerald-500 bg-emerald-500/20 scale-110 shadow-lg shadow-emerald-500/40'
-                      : 'border-sky-400 bg-sky-500/20 scale-110 shadow-lg shadow-sky-500/40'
-                    : isLightWallpaper
-                    ? 'border-sky-300/60 bg-white/40'
-                    : 'border-white/30 bg-white/10'
-                }`}
+                style={{
+                  borderColor: isSelected
+                    ? GESTURE_COLORS.nodeSelectedBorder
+                    : GESTURE_COLORS.nodeUnselectedBorder,
+                  backgroundColor: isSelected
+                    ? GESTURE_COLORS.nodeSelectedBg
+                    : GESTURE_COLORS.nodeUnselectedBg,
+                  boxShadow: isSelected
+                    ? '0 0 14px rgba(79, 169, 220, 0.55)'
+                    : '0 2px 8px rgba(143, 196, 223, 0.35)',
+                  transform: isSelected ? 'scale(1.12)' : 'scale(1)',
+                }}
+                className="w-12 h-12 rounded-full border-2 flex items-center justify-center transition-all duration-150"
               >
                 {/* Inner Dot Center */}
                 <div
-                  className={`w-3.5 h-3.5 rounded-full transition-all ${
-                    isSelected
-                      ? status === 'error'
-                        ? 'bg-rose-500 scale-125'
-                        : status === 'success'
-                        ? 'bg-emerald-500 scale-125'
-                        : 'bg-sky-400 scale-125'
-                      : isLightWallpaper
-                      ? 'bg-sky-600/70'
-                      : 'bg-white/80'
-                  } ${isLast && isDragging ? 'animate-ping' : ''}`}
+                  style={{
+                    backgroundColor: isSelected
+                      ? GESTURE_COLORS.nodeSelectedDot
+                      : GESTURE_COLORS.nodeUnselectedDot,
+                    transform: isSelected ? 'scale(1.25)' : 'scale(1)',
+                  }}
+                  className={`w-3.5 h-3.5 rounded-full transition-all duration-150 ${
+                    isLast && isDragging ? 'animate-ping' : ''
+                  }`}
                 />
               </div>
             </div>
@@ -340,7 +352,7 @@ export const GestureLock: React.FC<GestureLockProps> = ({
       {mode === 'setup' && onCancelSetup && (
         <button
           onClick={onCancelSetup}
-          className="mt-3 text-xs text-zinc-400 hover:text-white flex items-center gap-1 transition px-3 py-1 rounded-xl bg-zinc-800/60 border border-zinc-750"
+          className="mt-3 text-xs text-zinc-400 hover:text-white flex items-center gap-1 transition px-3 py-1.5 rounded-xl bg-zinc-800/80 border border-zinc-700"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>取消设置</span>

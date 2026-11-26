@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { androidPermissionBridgeClient } from './lib/agent/AndroidPermissionBridgeClient';
@@ -92,9 +92,15 @@ import { WeChatThemeId } from './components/apps/wechat/theme/types';
 import { applySystemBarAppearance, resolveSystemBarAppearance } from './lib/systemBarAppearance';
 import { persistApiLog } from './lib/apiLogger';
 
+export type SecurityBootStatus = 'LOADING_SECURITY' | 'LOCKED' | 'UNLOCKED';
+
 export function App() {
-  // Lock state re-hydrated from lockSecurityService (Re-entry maintains lock state)
-  const [isLocked, setIsLocked] = useState(() => lockSecurityService.getIsLocked());
+  // Security Boot State Machine: LOADING_SECURITY -> LOCKED -> UNLOCKED
+  const [securityStatus, setSecurityStatus] = useState<SecurityBootStatus>('LOADING_SECURITY');
+  const [pendingNavigation, setPendingNavigation] = useState<{ appId: string; characterId?: string } | null>(null);
+
+  const securityStatusRef = useRef<SecurityBootStatus>('LOADING_SECURITY');
+  securityStatusRef.current = securityStatus;
 
   // Settings & Beautification state
   const [settings, setSettingsState] = useState(loadSettings());
@@ -119,6 +125,137 @@ export function App() {
   const [pendingWechatChatId, setPendingWechatChatId] = useState<string | null>(null);
   const [wechatTheme, setWechatTheme] = useState<WeChatThemeId>(() => loadWeChatTheme());
 
+  const activeAppIdRef = useRef<string | null>(activeAppId);
+  activeAppIdRef.current = activeAppId;
+
+  // Startup Security State Machine Resolution
+  useEffect(() => {
+    let isMounted = true;
+    const initSecurity = async () => {
+      try {
+        await lockSecurityService.ensureInitialized();
+        if (isMounted) {
+          if (lockSecurityService.shouldBeLocked()) {
+            setSecurityStatus('LOCKED');
+          } else {
+            setSecurityStatus('UNLOCKED');
+          }
+        }
+      } catch (err) {
+        console.warn('[Security] init error:', err);
+        if (isMounted) {
+          setSecurityStatus(lockSecurityService.shouldBeLocked() ? 'LOCKED' : 'UNLOCKED');
+        }
+      }
+    };
+    initSecurity();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Global Lifecycle Listener: Background tracking & 5-minute auto-relock
+  useEffect(() => {
+    let appStateHandle: { remove: () => Promise<void> } | null = null;
+    let isCancelled = false;
+
+    // Web visibility change (browser preview & tab switching)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        lockSecurityService.recordBackground();
+      } else if (document.visibilityState === 'visible') {
+        if (lockSecurityService.checkResumeShouldLock()) {
+          setSecurityStatus('LOCKED');
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Capacitor App state change (native Android app background/foreground)
+    if (Capacitor.isPluginAvailable('App')) {
+      CapacitorApp.addListener('appStateChange', (state: { isActive: boolean }) => {
+        if (!state.isActive) {
+          lockSecurityService.recordBackground();
+        } else {
+          if (lockSecurityService.checkResumeShouldLock()) {
+            setSecurityStatus('LOCKED');
+          }
+        }
+      })
+        .then((handle) => {
+          if (isCancelled) {
+            handle.remove().catch(() => {});
+          } else {
+            appStateHandle = handle;
+          }
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      isCancelled = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (appStateHandle) {
+        appStateHandle.remove().catch(() => {});
+      }
+    };
+  }, []);
+
+  // Android Native Back Button Interception: strictly block when locked
+  useEffect(() => {
+    let backHandle: { remove: () => Promise<void> } | null = null;
+    let isCancelled = false;
+
+    if (Capacitor.isPluginAvailable('App')) {
+      CapacitorApp.addListener('backButton', () => {
+        if (securityStatusRef.current === 'LOCKED' || securityStatusRef.current === 'LOADING_SECURITY') {
+          // Lock screen intercepts back button; prohibit exiting lock screen to desktop
+          return;
+        }
+        if (activeAppIdRef.current) {
+          setActiveAppId(null);
+        }
+      })
+        .then((handle) => {
+          if (isCancelled) {
+            handle.remove().catch(() => {});
+          } else {
+            backHandle = handle;
+          }
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      isCancelled = true;
+      if (backHandle) {
+        backHandle.remove().catch(() => {});
+      }
+    };
+  }, []);
+
+  const handleUnlockSuccess = useCallback(() => {
+    lockSecurityService.markUnlocked();
+    setSecurityStatus('UNLOCKED');
+
+    setPendingNavigation((staged) => {
+      if (staged) {
+        if (staged.appId === 'wechat' && staged.characterId) {
+          setActiveAppId('wechat');
+          setPendingWechatChatId(staged.characterId);
+        } else if (staged.appId) {
+          setActiveAppId(staged.appId);
+        }
+      }
+      return null;
+    });
+  }, []);
+
+  const handleManualLock = useCallback(() => {
+    lockSecurityService.lockManually();
+    setSecurityStatus('LOCKED');
+  }, []);
+
   useEffect(() => {
     setWechatTheme(loadWeChatTheme());
     return subscribeWeChatTheme((nextTheme) => {
@@ -133,10 +270,14 @@ export function App() {
   const navigateToWechatChat = useCallback((aiId: string) => {
     const targetId = (aiId || '').trim();
     if (!targetId) return;
-    lockSecurityService.setLockedState(false);
-    setIsLocked(false);
-    setActiveAppId('wechat');
-    setPendingWechatChatId(targetId);
+
+    if (securityStatusRef.current === 'LOCKED' || securityStatusRef.current === 'LOADING_SECURITY') {
+      // Locked state: stage destination, strictly forbid bypassing lock screen
+      setPendingNavigation({ appId: 'wechat', characterId: targetId });
+    } else {
+      setActiveAppId('wechat');
+      setPendingWechatChatId(targetId);
+    }
   }, []);
 
   // Consume Android notification tap action on cold start, warm resume, or Web banner click
@@ -536,10 +677,10 @@ export function App() {
       resolveSystemBarAppearance({
         effectiveTheme,
         activeAppId,
-        isLocked,
+        isLocked: securityStatus === 'LOCKED',
         wechatTheme,
       }),
-    [effectiveTheme, activeAppId, isLocked, wechatTheme]
+    [effectiveTheme, activeAppId, securityStatus, wechatTheme]
   );
 
   useEffect(() => {
@@ -568,23 +709,22 @@ export function App() {
       effectiveTheme === 'light' ? 'bg-[#FFFFFF]' : 'bg-zinc-950'
     }`}>
       <PhoneContainer
-        onLockClick={() => {
-          lockSecurityService.setLockedState(true);
-          setIsLocked(true);
-        }}
+        onLockClick={handleManualLock}
         customCss={settings?.customCss}
         theme={effectiveTheme}
       >
-        {/* LOCK SCREEN LAYER */}
-        {isLocked ? (
+        {/* GLOBAL SECURITY GATEWAY */}
+        {securityStatus === 'LOADING_SECURITY' ? (
+          <div className="w-full h-full flex items-center justify-center">
+            <div className="w-7 h-7 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : securityStatus === 'LOCKED' ? (
+          /* GLOBAL INDEPENDENT LOCK SCREEN */
           <LockScreen
             wallpaperUrl={activeLockWallpaper}
             wallpaper={activeLockWallpaper}
             theme={effectiveTheme}
-            onUnlock={() => {
-              lockSecurityService.setLockedState(false);
-              setIsLocked(false);
-            }}
+            onUnlock={handleUnlockSuccess}
           />
         ) : activeAppId ? (
           /* SUB-APP ACTIVE VIEW LAYER */
@@ -669,10 +809,7 @@ export function App() {
             {activeAppId === 'beautification' && (
               <BeautificationApp
                 onBackToLauncher={() => setActiveAppId(null)}
-                onLockPhone={() => {
-                  lockSecurityService.setLockedState(true);
-                  setIsLocked(true);
-                }}
+                onLockPhone={handleManualLock}
                 desktopWallpaper={activeDesktopWallpaper}
                 lockWallpaper={activeLockWallpaper}
                 customCss={settings.customCss}
@@ -865,11 +1002,13 @@ export function App() {
           <InPhoneNotificationBanner
             notification={activeNotification}
             onOpenWechat={(characterId) => {
-              lockSecurityService.setLockedState(false);
-              setIsLocked(false);
-              setActiveAppId('wechat');
-              if (characterId) {
-                setPendingWechatChatId(characterId);
+              if (securityStatusRef.current === 'LOCKED' || securityStatusRef.current === 'LOADING_SECURITY') {
+                setPendingNavigation({ appId: 'wechat', characterId });
+              } else {
+                setActiveAppId('wechat');
+                if (characterId) {
+                  setPendingWechatChatId(characterId);
+                }
               }
             }}
             onDismiss={() => agentOrchestrator.dismissNotification()}

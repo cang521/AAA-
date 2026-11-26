@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, Unlock, Delete, Phone, Camera, ShieldCheck, Grid3X3, KeyRound, AlertTriangle } from 'lucide-react';
+import { Lock, Unlock, Delete, Phone, Camera, ShieldCheck, Grid3X3, KeyRound, AlertTriangle, AlertCircle } from 'lucide-react';
 import { ThemeId } from '../types';
 import { CLOUD_MILK_LOCK_WALLPAPER } from '../lib/themeWallpapers';
 import { lockSecurityService, LockType } from '../lib/lockScreenSecurity';
@@ -30,6 +30,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
   const [pinInput, setPinInput] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [cooldownSeconds, setCooldownSeconds] = useState(0);
+  const [migrationNotice, setMigrationNotice] = useState<string | null>(lockSecurityService.getMigrationNotice());
 
   const now = new Date();
   const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -59,11 +60,12 @@ export const LockScreen: React.FC<LockScreenProps> = ({
   useEffect(() => {
     setIsLockEnabled(lockSecurityService.getIsLockEnabled());
     setActiveLockType(lockSecurityService.getLockType());
+    setMigrationNotice(lockSecurityService.getMigrationNotice());
   }, []);
 
   const handleKeyPress = async (num: string) => {
     if (cooldownSeconds > 0) return;
-    if (pinInput.length < 6) {
+    if (pinInput.length < 4) {
       const updated = pinInput + num;
       setPinInput(updated);
       setErrorMsg('');
@@ -107,7 +109,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
 
   const handleDirectSlideUnlock = () => {
     if (!isLockEnabled) {
-      lockSecurityService.setLockedState(false);
+      lockSecurityService.markUnlocked();
       onUnlock();
     }
   };
@@ -126,9 +128,28 @@ export const LockScreen: React.FC<LockScreenProps> = ({
       />
       <div className={`absolute inset-0 pointer-events-none ${
         isLightWallpaper
-          ? 'bg-gradient-to-b from-sky-200/20 via-transparent to-sky-300/30'
+          ? 'bg-gradient-to-b from-sky-200/25 via-transparent to-sky-300/35'
           : 'bg-gradient-to-b from-black/40 via-transparent to-black/80'
       }`} />
+
+      {/* Migration Notice Banner if legacy password was invalid */}
+      {migrationNotice && (
+        <div className="relative z-30 mx-4 mt-3 p-3 rounded-2xl bg-amber-500/90 text-white text-xs flex items-center justify-between shadow-lg backdrop-blur-md">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{migrationNotice}</span>
+          </div>
+          <button
+            onClick={() => {
+              lockSecurityService.clearMigrationNotice();
+              setMigrationNotice(null);
+            }}
+            className="px-2 py-0.5 rounded-lg bg-white/20 hover:bg-white/30 text-[10px] font-bold"
+          >
+            知道了
+          </button>
+        </div>
+      )}
 
       {/* Top Header Time & Date */}
       <div
@@ -143,7 +164,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
           <Lock className="w-3.5 h-3.5" />
           <span>
             {!isLockEnabled
-              ? '上滑解锁手机'
+              ? '点击解锁手机'
               : activeLockType === 'pattern'
               ? '绘制手势密码解锁'
               : '输入数字密码解锁'}
@@ -191,9 +212,9 @@ export const LockScreen: React.FC<LockScreenProps> = ({
             {/* Switch to PIN unlock option if pattern fails or preferred */}
             <button
               onClick={() => setActiveLockType('pin')}
-              className={`mt-4 text-xs font-medium px-3 py-1.5 rounded-full backdrop-blur-md transition flex items-center gap-1.5 ${
+              className={`mt-4 text-xs font-medium px-3.5 py-1.5 rounded-full backdrop-blur-md transition flex items-center gap-1.5 ${
                 isLightWallpaper
-                  ? 'bg-white/70 hover:bg-white/90 text-sky-700 border border-sky-300'
+                  ? 'bg-white/80 hover:bg-white text-sky-800 border border-sky-200 shadow-sm'
                   : 'bg-white/15 hover:bg-white/25 text-white/90 border border-white/20'
               }`}
             >
@@ -213,7 +234,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                     isLightWallpaper ? 'border-[#8DCCF4]' : 'border-white/80'
                   } ${
                     idx < pinInput.length
-                      ? 'bg-[#67B7EA] border-[#67B7EA] scale-110 shadow-sm'
+                      ? 'bg-[#4FA9DC] border-[#4FA9DC] scale-110 shadow-sm'
                       : 'bg-transparent'
                   }`}
                 />
@@ -251,11 +272,11 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                   if (lockSecurityService.hasPatternSet()) {
                     setActiveLockType('pattern');
                   } else {
-                    alert('未设置手势密码，请在 [界面美化与主题] 中设置手势密码');
+                    alert('尚未设置手势密码，请先在 [界面美化与主题] 中设置九宫格手势。');
                   }
                 }}
                 className={`h-12 sm:h-13 rounded-full flex items-center justify-center text-[10px] sm:text-xs font-medium ${
-                  isLightWallpaper ? 'bg-white/40 text-[#7890A3]' : 'bg-white/10 text-white/70'
+                  isLightWallpaper ? 'bg-white/50 text-[#7890A3]' : 'bg-white/10 text-white/70'
                 }`}
                 title="切换手势密码"
               >
@@ -301,7 +322,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
             <Phone className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
           <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] font-medium">
-            <ShieldCheck className="w-3.5 h-3.5 text-[#67B7EA]" />
+            <ShieldCheck className="w-3.5 h-3.5 text-[#4FA9DC]" />
             <span>AI 安全守护已启动</span>
           </div>
           <button className={`p-2.5 rounded-full backdrop-blur-md transition ${

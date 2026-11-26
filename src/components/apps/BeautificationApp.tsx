@@ -736,6 +736,11 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
                         return;
                       }
                       await lockSecurityService.setPinCode(newPinInput);
+                      lockSecurityService.setLockType('pin');
+                      setLockType('pin');
+                      lockSecurityService.setLockEnabled(true);
+                      setIsLockEnabled(true);
+                      onUpdatePinEnabled(true);
                       onUpdatePinCode(newPinInput);
                       setNewPinInput('');
                       setConfirmPinInput('');
@@ -1223,6 +1228,9 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
                 await lockSecurityService.setPattern(patternPath);
                 lockSecurityService.setLockType('pattern');
                 setLockType('pattern');
+                lockSecurityService.setLockEnabled(true);
+                setIsLockEnabled(true);
+                onUpdatePinEnabled(true);
                 setShowGestureSetupModal(false);
                 setSuccessMsg('🎉 九宫格手势密码已成功设置并安全保存！');
                 setTimeout(() => setSuccessMsg(''), 3000);
@@ -1254,52 +1262,72 @@ export const BeautificationApp: React.FC<BeautificationAppProps> = ({
             </div>
 
             <p className="text-xs text-zinc-300 leading-relaxed">
-              为了您的数据安全，关闭锁屏密码保护前请先验证当前数字密码：
+              为了您的数据安全，关闭锁屏密码保护前请先验证当前{lockType === 'pattern' ? '九宫格手势密码' : '数字密码'}：
             </p>
 
-            <div className="space-y-3">
-              <input
-                type="password"
-                maxLength={4}
-                placeholder="输入当前 4 位 PIN"
-                value={verifyInput}
-                onChange={(e) => setVerifyInput(e.target.value.replace(/\D/g, ''))}
-                className="w-full px-3 py-2.5 rounded-xl bg-zinc-800 border border-zinc-700 text-center font-mono text-base tracking-widest text-white focus:outline-none focus:border-rose-500"
-              />
-
-              <div className="flex gap-2">
-                <PressableButton
-                  onClick={() => {
-                    setShowVerifyCurrentModal(false);
-                    setVerifyInput('');
+            {lockType === 'pattern' ? (
+              <div className="py-2 flex flex-col items-center">
+                <GestureLock
+                  mode="unlock"
+                  onVerifyPattern={async (path) => {
+                    return await lockSecurityService.verifyPattern(path);
                   }}
-                  className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-300 font-semibold text-xs transition cursor-pointer"
-                >
-                  取消
-                </PressableButton>
-                <PressableButton
-                  withRipple
-                  rippleTone="rose"
-                  onClick={async () => {
-                    const isValid = await lockSecurityService.verifyPin(verifyInput);
-                    if (isValid) {
-                      lockSecurityService.setLockEnabled(false);
-                      setIsLockEnabled(false);
-                      onUpdatePinEnabled(false);
+                  onUnlockSuccess={() => {
+                    lockSecurityService.setLockEnabled(false);
+                    setIsLockEnabled(false);
+                    onUpdatePinEnabled(false);
+                    setShowVerifyCurrentModal(false);
+                    setSuccessMsg('已安全关闭锁屏密码保护！');
+                    setTimeout(() => setSuccessMsg(''), 2500);
+                  }}
+                  onCancelSetup={() => setShowVerifyCurrentModal(false)}
+                />
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <input
+                  type="password"
+                  maxLength={4}
+                  placeholder="输入当前 4 位 PIN"
+                  value={verifyInput}
+                  onChange={(e) => setVerifyInput(e.target.value.replace(/\D/g, ''))}
+                  className="w-full px-3 py-2.5 rounded-xl bg-zinc-800 border border-zinc-700 text-center font-mono text-base tracking-widest text-white focus:outline-none focus:border-rose-500"
+                />
+
+                <div className="flex gap-2">
+                  <PressableButton
+                    onClick={() => {
                       setShowVerifyCurrentModal(false);
                       setVerifyInput('');
-                      setSuccessMsg('已安全关闭锁屏密码保护！');
-                      setTimeout(() => setSuccessMsg(''), 2500);
-                    } else {
-                      alert('当前密码验证错误！无法关闭锁屏保护。');
-                    }
-                  }}
-                  className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md transition cursor-pointer"
-                >
-                  确认关闭
-                </PressableButton>
+                    }}
+                    className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-300 font-semibold text-xs transition cursor-pointer"
+                  >
+                    取消
+                  </PressableButton>
+                  <PressableButton
+                    withRipple
+                    rippleTone="rose"
+                    onClick={async () => {
+                      const isValid = await lockSecurityService.verifyPin(verifyInput);
+                      if (isValid) {
+                        lockSecurityService.setLockEnabled(false);
+                        setIsLockEnabled(false);
+                        onUpdatePinEnabled(false);
+                        setShowVerifyCurrentModal(false);
+                        setVerifyInput('');
+                        setSuccessMsg('已安全关闭锁屏密码保护！');
+                        setTimeout(() => setSuccessMsg(''), 2500);
+                      } else {
+                        alert('当前密码验证错误！无法关闭锁屏保护。');
+                      }
+                    }}
+                    className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md transition cursor-pointer"
+                  >
+                    确认关闭
+                  </PressableButton>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}
