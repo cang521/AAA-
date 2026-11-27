@@ -235,13 +235,20 @@ export const WeatherApp: React.FC<WeatherAppProps> = ({
 
       const data = await res.json();
       if (data.success && data.text) {
+        const realThinking =
+          typeof data.thinkingProcess === 'string' && data.thinkingProcess.trim()
+            ? data.thinkingProcess.trim()
+            : undefined;
         const careMsg = {
           id: 'msg_weather_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
           characterId: targetChar.id,
           sender: 'ai' as const,
           text: data.text,
           timestamp: Date.now(),
-          thinkingProcess: data.thinkingProcess || `感知天气事件 [${mockEvent.title}]，生成针对用户的温暖提醒。`,
+          thinkingProcess: realThinking,
+          reasoningAvailable: Boolean(realThinking),
+          reasoningSource: data.reasoningSource || (realThinking ? 'think_tag' : 'none'),
+          reasoningStatus: realThinking ? ('available' as const) : ('empty' as const),
         };
 
         await saveChatMessage(careMsg);

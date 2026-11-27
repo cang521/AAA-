@@ -449,6 +449,21 @@ export const ApiMonitorApp: React.FC<ApiMonitorAppProps> = ({
                       )}
                     </div>
                   )}
+
+                  {cat === 'text_generation' && log.status !== 'failed' && typeof log.reasoningAvailable === 'boolean' && (
+                    <div className="col-span-2 flex items-center justify-between text-[10px] bg-zinc-950/40 px-2 py-1 rounded-lg border border-zinc-850/80 text-zinc-400">
+                      <span>
+                        API 思考输出:{' '}
+                        {log.reasoningAvailable ? (
+                          <strong className="text-amber-300 font-mono">
+                            已返回 ({log.reasoningSource || 'api'} · {log.reasoningCharCount ?? 0} 字)
+                          </strong>
+                        ) : (
+                          <span className="text-zinc-500">未返回思考字段</span>
+                        )}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             );

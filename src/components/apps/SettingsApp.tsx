@@ -16,6 +16,7 @@ import {
   ConnectionTestResult,
   ModelFetchResult,
   ModelTestResult,
+  ThinkingDiagnosticResult,
 } from '../../types';
 import {
   ArrowLeft,
@@ -342,6 +343,10 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   const [isTestingModel, setIsTestingModel] = useState(false);
   const [modelTestResult, setModelTestResult] = useState<ModelTestResult | null>(null);
 
+  // Thinking Output Diagnostic States
+  const [isTestingThinking, setIsTestingThinking] = useState(false);
+  const [thinkingDiagnostic, setThinkingDiagnostic] = useState<ThinkingDiagnosticResult | null>(null);
+
   // JSON Format Adapter tool states
   const [rawJsonInput, setRawJsonInput] = useState('');
   const [adaptedJsonOutput, setAdaptedJsonOutput] = useState('');
@@ -388,6 +393,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
   useEffect(() => {
     setConnectionResult(null);
     setModelFetchResult(null);
+    setThinkingDiagnostic(null);
   }, [activeCategory, recognitionSubTab]);
 
   const handleSaveGlobalFontScale = () => {
@@ -694,6 +700,90 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
     }
   };
 
+  // 4. Test Connection & Detect Thinking Output (for text_generation)
+  const handleTestThinking = async () => {
+    if (isTestingThinking) return;
+    setIsTestingThinking(true);
+    setThinkingDiagnostic(null);
+
+    const activeConfig = readSlotConfig(settings, 'text_generation');
+    const providerType = activeConfig.provider || 'google_gemini';
+    const baseUrl = activeConfig.baseUrl || '';
+    const apiKey = activeConfig.apiKey || '';
+    const model = activeConfig.model || '';
+    const apiProtocol = activeConfig.apiProtocol || '';
+
+    try {
+      await ensureBackendReady('settings_test_thinking');
+      const res = await apiFetch('/api/provider/test-thinking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          providerType: providerType || 'custom',
+          baseUrl,
+          apiKey,
+          model,
+          apiProtocol,
+          customHeaders: activeConfig.customHeaders,
+          thinkingConfig: activeConfig.thinkingConfig,
+        }),
+      });
+
+      const text = await res.text();
+      let data: ThinkingDiagnosticResult;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = {
+          success: false,
+          connectionOk: false,
+          answerOk: false,
+          reasoningAvailable: false,
+          reasoningSource: 'none',
+          detectedFields: [],
+          streamingSupported: false,
+          nonStreamingSupported: false,
+          streamingReasoningAvailable: false,
+          likelyUpstreamStripped: false,
+          latencyMs: 0,
+          model,
+          apiProtocol,
+          error: '后端响应异常或尚未启动，请确认应用完全初始化。',
+        };
+      }
+
+      if (res.status === 503 || data.error === 'Android 内置后端未启动') {
+        data.error = 'Android 内置后端未启动';
+      }
+
+      setThinkingDiagnostic(data);
+    } catch (e: any) {
+      const isOffline =
+        (e?.message || '').includes('Android 内置后端未启动') ||
+        (e?.message || '').includes('Failed to fetch');
+      setThinkingDiagnostic({
+        success: false,
+        connectionOk: false,
+        answerOk: false,
+        reasoningAvailable: false,
+        reasoningSource: 'none',
+        detectedFields: [],
+        streamingSupported: false,
+        nonStreamingSupported: false,
+        streamingReasoningAvailable: false,
+        likelyUpstreamStripped: false,
+        latencyMs: 0,
+        model,
+        apiProtocol,
+        error: isOffline
+          ? 'Android 内置后端未启动'
+          : sanitizeSensitiveText(e?.message || '思考输出检测请求失败'),
+      });
+    } finally {
+      setIsTestingThinking(false);
+    }
+  };
+
   // JSON Format Adapter
   const handleAdaptJsonConfig = async () => {
     if (!rawJsonInput.trim()) return;
@@ -785,6 +875,9 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
             isTestingModel={isTestingModel}
             modelTestResult={modelTestResult}
             handleTestSelectedModel={handleTestSelectedModel}
+            isTestingThinking={isTestingThinking}
+            thinkingDiagnostic={thinkingDiagnostic}
+            handleTestThinking={handleTestThinking}
             handleGlobalSave={handleGlobalSave}
           />
         </section>

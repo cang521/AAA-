@@ -58,6 +58,8 @@ export interface ProactiveDispatchParams extends GateCheckParams {
   deterministicMessageIds?: string[];
   contextSummary?: string;
   thinkingProcess?: string;
+  reasoningAvailable?: boolean;
+  reasoningSource?: import('../../types').ReasoningSource;
   episodeId?: string;
   stepId?: string;
   intent?: string;
@@ -423,6 +425,9 @@ class ProactiveGateService {
           explicitMessages: params.explicitMessages,
           deterministicMessageIds: params.deterministicMessageIds,
           skipTypingDelay: params.skipTypingDelay,
+          thinkingProcess: params.thinkingProcess,
+          reasoningAvailable: params.reasoningAvailable,
+          reasoningSource: params.reasoningSource,
         }
       );
 

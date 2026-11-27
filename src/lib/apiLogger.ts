@@ -1,4 +1,4 @@
-import { ApiLog, ApiLogCategory } from '../types';
+import { ApiLog, ApiLogCategory, ReasoningSource } from '../types';
 import { sanitizeSensitiveText } from './apiCapabilities';
 
 const API_LOG_STORAGE_KEY = 'phone_api_logs';
@@ -100,6 +100,9 @@ export interface ApiLogPayload {
   contextSummarizedCount?: number;
   contextEstimatedTokens?: number;
   contextCompressed?: boolean;
+  reasoningAvailable?: boolean;
+  reasoningSource?: ReasoningSource;
+  reasoningCharCount?: number;
 }
 
 export function normalizeApiLogCategory(
@@ -195,6 +198,9 @@ export function recordApiLog(
       contextEstimatedTokens:
         typeof payload.contextEstimatedTokens === 'number' ? payload.contextEstimatedTokens : undefined,
       contextCompressed: typeof payload.contextCompressed === 'boolean' ? payload.contextCompressed : undefined,
+      reasoningAvailable: typeof payload.reasoningAvailable === 'boolean' ? payload.reasoningAvailable : undefined,
+      reasoningSource: payload.reasoningSource,
+      reasoningCharCount: typeof payload.reasoningCharCount === 'number' ? payload.reasoningCharCount : undefined,
     };
 
     return persistApiLog(log);

@@ -3,11 +3,19 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { extractThinkingAndContent, sanitizeReplyText } from './src/lib/thinkCleaner';
 import {
+  extractApiReasoning,
+  sanitizeResponseStructure,
+  StreamingReasoningAccumulator,
+  type ReasoningSource,
+} from './src/lib/reasoningExtractor';
+import {
   classifyModelCapabilities,
+  parseCustomThinkingParamsJson,
   resolveEffectiveProtocol,
   resolveTextGenerationConfig,
   sanitizeSensitiveText,
 } from './src/lib/apiCapabilities';
+import type { ThinkingOutputSettings } from './src/types';
 import { applyOverlengthContextProtection, STANDARD_CONTEXT_LIMIT } from './src/lib/contextWindow';
 import { serializeForwardBundleForAi } from './src/lib/forward/forwardBundleService';
 
@@ -69,6 +77,10 @@ interface AiCallParams {
   maxTokens?: number;
   timeoutMs?: number;
   customHeaders?: Record<string, string>;
+  thinkingConfig?: ThinkingOutputSettings;
+  stream?: boolean;
+  allowStreamFallback?: boolean;
+  includeSanitizedStructure?: boolean;
 }
 
 /**
@@ -77,10 +89,18 @@ interface AiCallParams {
  * 1. Google Gemini (Official / Custom Reverse Proxy / Custom Base URL)
  * 2. OpenAI Compatible APIs (OpenAI, DeepSeek, OpenRouter, Groq, SiliconFlow, OneAPI, NewAPI, Cloudflare, Local Ollama, etc.)
  * 3. Anthropic Messages API compatible endpoints
- * 4. Full Timeout, Error Extraction, and HTTP status diagnostics
+ * 4. Full Timeout, Error Extraction, SSE Streaming, Reasoning Extraction, and HTTP status diagnostics
  */
 export interface AiCallDetailedResult {
   text: string;
+  thinkingProcess: string;
+  reasoningAvailable: boolean;
+  reasoningSource: ReasoningSource;
+  detectedFields?: string[];
+  streamingSupported?: boolean;
+  streamingUsed?: boolean;
+  hasThoughtSignatureOnly?: boolean;
+  rawStructureSanitized?: any;
   usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
   isRealTokens?: boolean;
   modelUsed: string;
@@ -124,6 +144,9 @@ function buildApiLogObject(params: {
   contextSummarizedCount?: number;
   contextEstimatedTokens?: number;
   contextCompressed?: boolean;
+  reasoningAvailable?: boolean;
+  reasoningSource?: ReasoningSource;
+  reasoningCharCount?: number;
 }) {
   const isFailed = params.status === 'failed' || Boolean(params.error);
   const isOfficial =
@@ -186,6 +209,9 @@ function buildApiLogObject(params: {
       ? { contextEstimatedTokens: params.contextEstimatedTokens }
       : {}),
     ...(typeof params.contextCompressed === 'boolean' ? { contextCompressed: params.contextCompressed } : {}),
+    ...(typeof params.reasoningAvailable === 'boolean' ? { reasoningAvailable: params.reasoningAvailable } : {}),
+    ...(params.reasoningSource ? { reasoningSource: params.reasoningSource } : {}),
+    ...(typeof params.reasoningCharCount === 'number' ? { reasoningCharCount: params.reasoningCharCount } : {}),
   };
 }
 
@@ -300,21 +326,212 @@ function parseRetryCooldownMs(msg: string): number {
   return 15 * 60_000;
 }
 
-function buildGeminiConfigForModel(modelName: string, params: AiCallParams): Record<string, any> | undefined {
+function isKnownGeminiThinkingModel(modelName: string): boolean {
+  const lower = String(modelName || '').toLowerCase();
+  return (
+    lower.startsWith('gemini-4-') ||
+    lower.includes('gemini-3') ||
+    lower.includes('gemini-2.5') ||
+    lower.includes('thinking') ||
+    lower.includes('pro-latest')
+  );
+}
+
+function mapEffortToGeminiLevel(effort: string | undefined, ThinkingLevelEnum?: any): any {
+  const normalized = String(effort || 'medium').toLowerCase();
+  if (ThinkingLevelEnum) {
+    if (normalized === 'low') return ThinkingLevelEnum.LOW || 'LOW';
+    if (normalized === 'high') return ThinkingLevelEnum.HIGH || 'HIGH';
+    return ThinkingLevelEnum.MEDIUM || 'MEDIUM';
+  }
+  if (normalized === 'low') return 'LOW';
+  if (normalized === 'high') return 'HIGH';
+  return 'MEDIUM';
+}
+
+function mapEffortToGeminiBudget(effort: string | undefined, explicitBudget?: number): number | undefined {
+  if (typeof explicitBudget === 'number' && Number.isFinite(explicitBudget) && explicitBudget > 0) {
+    return Math.round(explicitBudget);
+  }
+  if (effort === 'low') return 1024;
+  if (effort === 'medium') return 4096;
+  if (effort === 'high') return 8192;
+  return undefined;
+}
+
+function buildGeminiConfigForModel(
+  modelName: string,
+  params: AiCallParams,
+  options?: {
+    ThinkingLevelEnum?: any;
+    customParams?: Record<string, any>;
+    omitThinkingConfig?: boolean;
+  }
+): Record<string, any> | undefined {
   const config: Record<string, any> = {};
+  const isG4 = isGemini4Model(modelName);
   if (params.systemInstruction) {
     config.systemInstruction = params.systemInstruction;
   }
   if (params.responseMimeType) {
     config.responseMimeType = params.responseMimeType;
   }
-  if (!isGemini4Model(modelName) && params.temperature !== undefined) {
+  if (!isG4 && params.temperature !== undefined) {
     config.temperature = params.temperature;
   }
   if (params.maxTokens !== undefined) {
     config.maxOutputTokens = params.maxTokens;
   }
+
+  const tc = params.thinkingConfig;
+  if (!options?.omitThinkingConfig && tc) {
+    if (tc.mode === 'off') {
+      config.thinkingConfig = { includeThoughts: false };
+    } else if (tc.mode === 'on') {
+      if (isG4) {
+        config.thinkingConfig = {
+          includeThoughts: true,
+          thinkingLevel: mapEffortToGeminiLevel(tc.reasoningEffort, options?.ThinkingLevelEnum),
+        };
+      } else {
+        const budget = mapEffortToGeminiBudget(tc.reasoningEffort, tc.thinkingBudget);
+        config.thinkingConfig = {
+          includeThoughts: true,
+          ...(budget ? { thinkingBudget: budget } : {}),
+        };
+      }
+    } else if (tc.mode === 'custom' && options?.customParams) {
+      const custom = options.customParams;
+      const customThinkingBlock =
+        custom.thinkingConfig && typeof custom.thinkingConfig === 'object'
+          ? { ...custom.thinkingConfig }
+          : custom.generationConfig?.thinkingConfig && typeof custom.generationConfig.thinkingConfig === 'object'
+          ? { ...custom.generationConfig.thinkingConfig }
+          : null;
+
+      const flatThinking: Record<string, any> = {};
+      if (typeof custom.includeThoughts === 'boolean') flatThinking.includeThoughts = custom.includeThoughts;
+      if (custom.thinkingLevel !== undefined) flatThinking.thinkingLevel = custom.thinkingLevel;
+      if (!isG4 && custom.thinkingBudget !== undefined) flatThinking.thinkingBudget = custom.thinkingBudget;
+
+      const mergedThinking = {
+        ...(customThinkingBlock || {}),
+        ...flatThinking,
+      };
+      if (isG4 && 'thinkingBudget' in mergedThinking) {
+        delete mergedThinking.thinkingBudget;
+      }
+      if (Object.keys(mergedThinking).length > 0) {
+        config.thinkingConfig = mergedThinking;
+      }
+      for (const [k, v] of Object.entries(custom)) {
+        if (
+          k === 'thinkingConfig' ||
+          k === 'generationConfig' ||
+          k === 'includeThoughts' ||
+          k === 'thinkingLevel' ||
+          k === 'thinkingBudget' ||
+          k === 'contents' ||
+          k === 'model'
+        ) {
+          continue;
+        }
+        if (isG4 && (k === 'temperature' || k === 'topP' || k === 'topK')) {
+          continue;
+        }
+        config[k] = v;
+      }
+    } else if (tc.mode === 'auto' && isKnownGeminiThinkingModel(modelName)) {
+      config.thinkingConfig = { includeThoughts: true };
+    }
+  } else if (!options?.omitThinkingConfig && isKnownGeminiThinkingModel(modelName)) {
+    config.thinkingConfig = { includeThoughts: true };
+  }
+
   return Object.keys(config).length > 0 ? config : undefined;
+}
+
+function isThinkingParamRejectionError(errMsg: string): boolean {
+  const lower = String(errMsg || '').toLowerCase();
+  return (
+    (lower.includes('400') || lower.includes('invalid_argument') || lower.includes('unknown')) &&
+    (lower.includes('thinking') ||
+      lower.includes('includethoughts') ||
+      lower.includes('thinking_config') ||
+      lower.includes('thinkinglevel') ||
+      lower.includes('thinkingbudget') ||
+      lower.includes('reasoning_effort'))
+  );
+}
+
+async function consumeSseResponse(
+  response: Response,
+  protocol: 'openai_compatible' | 'anthropic',
+  includeSanitizedStructure?: boolean
+): Promise<{
+  accumulator: StreamingReasoningAccumulator;
+  lastChunkSanitized?: any;
+}> {
+  if (!response.body) {
+    throw new Error('上游流式响应体为空');
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  const accumulator = new StreamingReasoningAccumulator();
+  let buffer = '';
+  let lastChunkSanitized: any = undefined;
+
+  const processLine = (rawLine: string) => {
+    const line = rawLine.trim();
+    if (!line || line.startsWith(':')) return;
+    if (!line.startsWith('data:')) return;
+    const dataStr = line.slice(5).trim();
+    if (!dataStr || dataStr === '[DONE]') return;
+    try {
+      const parsed = JSON.parse(dataStr);
+      if (includeSanitizedStructure) {
+        lastChunkSanitized = sanitizeResponseStructure(parsed);
+      }
+      if (protocol === 'openai_compatible') {
+        accumulator.pushOpenAiChunk(parsed);
+      } else {
+        accumulator.pushAnthropicEvent(parsed);
+      }
+    } catch {
+      // Ignore malformed/keepalive fragment
+    }
+  };
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (value) {
+        buffer += decoder.decode(value, { stream: !done });
+        let newlineIdx = buffer.indexOf('\n');
+        while (newlineIdx !== -1) {
+          const line = buffer.slice(0, newlineIdx);
+          buffer = buffer.slice(newlineIdx + 1);
+          processLine(line);
+          newlineIdx = buffer.indexOf('\n');
+        }
+      }
+      if (done) {
+        buffer += decoder.decode();
+        if (buffer.trim()) {
+          for (const remLine of buffer.split('\n')) {
+            processLine(remLine);
+          }
+        }
+        break;
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {}
+  }
+
+  return { accumulator, lastChunkSanitized };
 }
 
 async function callAiServiceDetailed(params: AiCallParams): Promise<AiCallDetailedResult> {
@@ -327,14 +544,27 @@ async function callAiServiceDetailed(params: AiCallParams): Promise<AiCallDetail
       : '');
   const targetModel = params.model?.trim() || GEMINI_DEFAULT_TEXT_MODEL;
 
+  const parsedCustom =
+    params.thinkingConfig?.mode === 'custom'
+      ? parseCustomThinkingParamsJson(params.thinkingConfig.customParamsJson)
+      : { ok: true, params: {} as Record<string, any> };
+  if (!parsedCustom.ok) {
+    const cfgErr: any = new Error(parsedCustom.error || '自定义思考参数 JSON 语法无效');
+    cfgErr.statusCode = 400;
+    cfgErr.errorType = 'INVALID_THINKING_PARAMS';
+    cfgErr.upstreamRequestSent = false;
+    cfgErr.mayHaveBeenCharged = false;
+    throw cfgErr;
+  }
+
   const effectiveProtocol = resolveEffectiveProtocol({
     apiProtocol: params.apiProtocol,
     provider: params.providerType,
     baseUrl: cleanBaseUrl,
   });
 
+  const wantStream = Boolean(params.stream ?? params.thinkingConfig?.useStreaming);
   const startTime = Date.now();
-  let headersReceived = false;
   let readBodyFailed = false;
 
   if (effectiveProtocol === 'openai_compatible') {
@@ -359,167 +589,385 @@ async function callAiServiceDetailed(params: AiCallParams): Promise<AiCallDetail
     }
     messages.push({ role: 'user', content: params.prompt });
 
-    const payload: any = {
-      model: targetModel,
-      messages,
-      temperature: params.temperature ?? 0.7,
+    const buildOpenAiPayload = (useStream: boolean, includeStreamOptions: boolean) => {
+      const payload: Record<string, any> = {
+        model: targetModel,
+        messages,
+        temperature: params.temperature ?? 0.7,
+      };
+      if (params.maxTokens) {
+        payload.max_tokens = params.maxTokens;
+      }
+      if (params.responseMimeType === 'application/json') {
+        payload.response_format = { type: 'json_object' };
+      }
+
+      const tc = params.thinkingConfig;
+      if (tc?.mode === 'on') {
+        payload.reasoning_effort = tc.reasoningEffort || 'medium';
+      } else if (tc?.mode === 'custom' && parsedCustom.params) {
+        for (const [k, v] of Object.entries(parsedCustom.params)) {
+          if (k === 'model' || k === 'messages') continue;
+          payload[k] = v;
+        }
+      }
+
+      if (useStream) {
+        payload.stream = true;
+        if (includeStreamOptions && payload.stream_options === undefined) {
+          payload.stream_options = { include_usage: true };
+        }
+      } else {
+        payload.stream = false;
+      }
+      return payload;
     };
 
-    if (params.maxTokens) {
-      payload.max_tokens = params.maxTokens;
+    const executeOpenAiHttp = async (useStream: boolean, includeStreamOptions: boolean) => {
+      const payload = buildOpenAiPayload(useStream, includeStreamOptions);
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Accept': useStream ? 'text/event-stream, application/json' : 'application/json',
+        'Connection': 'close',
+        ...(params.customHeaders || {}),
+      };
+
+      if (activeKey) {
+        headers['Authorization'] = `Bearer ${activeKey}`;
+      }
+
+      if (endpoint.includes('openrouter.ai')) {
+        headers['HTTP-Referer'] = 'https://ai.studio.simulated.phone';
+        headers['X-Title'] = 'Simulated Android Phone';
+      }
+
+      const timeoutMs = params.timeoutMs || 45000;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      let response: Response;
+      try {
+        response = await fetch(endpoint, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+      } catch (fetchErr: any) {
+        clearTimeout(timer);
+        const durationMs = Date.now() - startTime;
+        const isAbort = fetchErr.name === 'AbortError';
+        const causeCode = fetchErr.cause?.code || fetchErr.code;
+        const causeErrno = fetchErr.cause?.errno;
+        const causeSyscall = fetchErr.cause?.syscall;
+        const isNetworkDrop =
+          causeCode === 'ECONNRESET' ||
+          causeCode === 'UND_ERR_SOCKET' ||
+          fetchErr.message?.includes('fetch failed');
+
+        const enhancedErr: any = new Error(
+          isAbort
+            ? `请求超时 (${timeoutMs / 1000}秒)，上游 API 未能在限定时间内返回完整回复。`
+            : `连接上游接口失败 (${fetchErr.message || 'fetch failed'})`
+        );
+        enhancedErr.name = fetchErr.name;
+        enhancedErr.cause = fetchErr.cause;
+        enhancedErr.protocol = 'openai_compatible';
+        enhancedErr.endpoint = endpoint;
+        enhancedErr.headersReceived = false;
+        enhancedErr.readBodyFailed = false;
+        enhancedErr.durationMs = durationMs;
+        enhancedErr.upstreamRequestSent = true;
+        enhancedErr.mayHaveBeenCharged = isAbort || isNetworkDrop || durationMs > 12000;
+        enhancedErr.causeCode = causeCode;
+        enhancedErr.causeErrno = causeErrno;
+        enhancedErr.causeSyscall = causeSyscall;
+        throw enhancedErr;
+      }
+
+      if (!response.ok) {
+        clearTimeout(timer);
+        let errorText = '';
+        try {
+          errorText = await response.text();
+        } catch {
+          readBodyFailed = true;
+        }
+        let parsedErrorMsg = errorText;
+        try {
+          const parsed = JSON.parse(errorText);
+          parsedErrorMsg = parsed.error?.message || parsed.message || errorText;
+        } catch {}
+
+        const durationMs = Date.now() - startTime;
+        let err: any;
+        if (response.status === 401) {
+          err = new Error(`[401 鉴权失败] API Key 无效或未授权: ${parsedErrorMsg}`);
+        } else if (response.status === 404) {
+          err = new Error(`[404 路由或模型不存在] 请求端点 ${endpoint} 或模型 ${targetModel} 不存在: ${parsedErrorMsg}`);
+        } else if (response.status === 429) {
+          err = new Error(`[429 配额或限流] 账户配额不足或触发请求频率限制: ${parsedErrorMsg}`);
+          err.isQuotaExceeded = true;
+        } else if (response.status >= 500) {
+          err = new Error(`[${response.status} 服务端错误] API Provider 上游异常: ${parsedErrorMsg}`);
+        } else {
+          err = new Error(`[${response.status} API 错误] ${parsedErrorMsg}`);
+        }
+        err.statusCode = response.status;
+        err.protocol = 'openai_compatible';
+        err.endpoint = endpoint;
+        err.headersReceived = true;
+        err.readBodyFailed = readBodyFailed;
+        err.durationMs = durationMs;
+        err.upstreamRequestSent = true;
+        err.mayHaveBeenCharged = true;
+        throw err;
+      }
+
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      if (useStream && contentType.includes('text/event-stream')) {
+        try {
+          const { accumulator, lastChunkSanitized } = await consumeSseResponse(
+            response,
+            'openai_compatible',
+            params.includeSanitizedStructure
+          );
+          clearTimeout(timer);
+          const extracted = accumulator.finalize();
+          return {
+            text: extracted.text,
+            thinkingProcess: extracted.thinkingProcess,
+            reasoningAvailable: extracted.reasoningAvailable,
+            reasoningSource: extracted.reasoningSource,
+            detectedFields: extracted.detectedFields,
+            streamingSupported: true,
+            streamingUsed: true,
+            hasThoughtSignatureOnly: extracted.hasThoughtSignatureOnly,
+            rawStructureSanitized: lastChunkSanitized,
+            usage: accumulator.usage,
+            isRealTokens: accumulator.isRealTokens,
+            modelUsed: targetModel,
+          } satisfies AiCallDetailedResult;
+        } catch (streamErr: any) {
+          clearTimeout(timer);
+          const err: any = new Error(`流式响应读取中断: ${streamErr?.message || 'stream interrupted'}`);
+          err.name = streamErr?.name || 'StreamError';
+          err.protocol = 'openai_compatible';
+          err.endpoint = endpoint;
+          err.headersReceived = true;
+          err.readBodyFailed = true;
+          err.durationMs = Date.now() - startTime;
+          err.upstreamRequestSent = true;
+          err.mayHaveBeenCharged = true;
+          throw err;
+        }
+      }
+
+      clearTimeout(timer);
+      let resJson: any;
+      try {
+        resJson = await response.json();
+      } catch (jsonErr: any) {
+        readBodyFailed = true;
+        const durationMs = Date.now() - startTime;
+        const err: any = new Error(`上游响应数据解析失败: ${jsonErr.message}`);
+        err.name = jsonErr.name;
+        err.cause = jsonErr.cause;
+        err.statusCode = response.status;
+        err.protocol = 'openai_compatible';
+        err.endpoint = endpoint;
+        err.headersReceived = true;
+        err.readBodyFailed = true;
+        err.durationMs = durationMs;
+        err.upstreamRequestSent = true;
+        err.mayHaveBeenCharged = true;
+        throw err;
+      }
+
+      const extracted = extractApiReasoning(resJson, 'openai_compatible');
+      const usageMeta = resJson.usage;
+      let usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined = undefined;
+      let isRealTokens = false;
+      if (usageMeta && typeof usageMeta === 'object') {
+        isRealTokens = true;
+        usage = {
+          promptTokens: typeof usageMeta.prompt_tokens === 'number' ? usageMeta.prompt_tokens : undefined,
+          completionTokens: typeof usageMeta.completion_tokens === 'number' ? usageMeta.completion_tokens : undefined,
+          totalTokens: typeof usageMeta.total_tokens === 'number' ? usageMeta.total_tokens : undefined,
+        };
+      }
+
+      return {
+        text: extracted.text,
+        thinkingProcess: extracted.thinkingProcess,
+        reasoningAvailable: extracted.reasoningAvailable,
+        reasoningSource: extracted.reasoningSource,
+        detectedFields: extracted.detectedFields,
+        streamingSupported: false,
+        streamingUsed: false,
+        hasThoughtSignatureOnly: extracted.hasThoughtSignatureOnly,
+        rawStructureSanitized: params.includeSanitizedStructure ? sanitizeResponseStructure(resJson) : undefined,
+        usage,
+        isRealTokens,
+        modelUsed: targetModel,
+      } satisfies AiCallDetailedResult;
+    };
+
+    try {
+      return await executeOpenAiHttp(wantStream, wantStream);
+    } catch (firstErr: any) {
+      const msg = String(firstErr?.message || '').toLowerCase();
+      if (wantStream && firstErr?.statusCode === 400) {
+        if (msg.includes('stream_options')) {
+          return await executeOpenAiHttp(true, false);
+        }
+        if (params.allowStreamFallback !== false && msg.includes('stream')) {
+          return await executeOpenAiHttp(false, false);
+        }
+      }
+      throw firstErr;
     }
-    if (params.responseMimeType === 'application/json') {
-      payload.response_format = { type: 'json_object' };
+  }
+
+  // Anthropic Messages API Execution
+  if (effectiveProtocol === 'anthropic') {
+    if (!activeKey) {
+      const err: any = new Error('未配置 Anthropic API Key。请在系统设置中配置 API Provider。');
+      err.statusCode = 400;
+      err.errorType = 'CONFIG_MISSING';
+      err.upstreamRequestSent = false;
+      err.mayHaveBeenCharged = false;
+      throw err;
+    }
+
+    let endpoint = cleanBaseUrl || 'https://api.anthropic.com';
+    if (!endpoint.endsWith('/messages')) {
+      endpoint = endpoint.endsWith('/v1') ? `${endpoint}/messages` : `${endpoint}/v1/messages`;
+    }
+
+    const baseMaxTokens = params.maxTokens && params.maxTokens > 0 ? params.maxTokens : 2048;
+    const payload: Record<string, any> = {
+      model: targetModel,
+      max_tokens: baseMaxTokens,
+      messages: [{ role: 'user', content: params.prompt }],
+      stream: wantStream,
+    };
+    if (params.systemInstruction) {
+      payload.system = params.systemInstruction;
+    }
+
+    const tc = params.thinkingConfig;
+    if (tc?.mode === 'on') {
+      const budget =
+        typeof tc.thinkingBudget === 'number' && tc.thinkingBudget >= 1024
+          ? Math.round(tc.thinkingBudget)
+          : tc.reasoningEffort === 'high'
+          ? 8192
+          : tc.reasoningEffort === 'low'
+          ? 1024
+          : 4096;
+      payload.thinking = { type: 'enabled', budget_tokens: budget };
+      if (payload.max_tokens <= budget) {
+        payload.max_tokens = budget + 1024;
+      }
+    } else if (tc?.mode === 'custom' && parsedCustom.params) {
+      for (const [k, v] of Object.entries(parsedCustom.params)) {
+        if (k === 'model' || k === 'messages') continue;
+        payload[k] = v;
+      }
     }
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Accept': 'application/json',
+      'x-api-key': activeKey,
+      'anthropic-version': '2023-06-01',
       'Connection': 'close',
       ...(params.customHeaders || {}),
     };
-
-    if (activeKey) {
-      headers['Authorization'] = `Bearer ${activeKey}`;
-    }
-
-    if (endpoint.includes('openrouter.ai')) {
-      headers['HTTP-Referer'] = 'https://ai.studio.simulated.phone';
-      headers['X-Title'] = 'Simulated Android Phone';
-    }
 
     const timeoutMs = params.timeoutMs || 45000;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    let response: Response;
     try {
-      response = await fetch(endpoint, {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
-      headersReceived = true;
-    } catch (fetchErr: any) {
+
+      if (!response.ok) {
+        clearTimeout(timer);
+        const errText = await response.text().catch(() => '');
+        const err: any = new Error(`[${response.status} Anthropic API 错误] ${errText}`);
+        err.statusCode = response.status;
+        err.protocol = 'anthropic';
+        err.endpoint = endpoint;
+        err.headersReceived = true;
+        err.durationMs = Date.now() - startTime;
+        err.upstreamRequestSent = true;
+        err.mayHaveBeenCharged = true;
+        throw err;
+      }
+
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      if (wantStream && contentType.includes('text/event-stream')) {
+        const { accumulator, lastChunkSanitized } = await consumeSseResponse(
+          response,
+          'anthropic',
+          params.includeSanitizedStructure
+        );
+        clearTimeout(timer);
+        const extracted = accumulator.finalize();
+        return {
+          text: extracted.text,
+          thinkingProcess: extracted.thinkingProcess,
+          reasoningAvailable: extracted.reasoningAvailable,
+          reasoningSource: extracted.reasoningSource,
+          detectedFields: extracted.detectedFields,
+          streamingSupported: true,
+          streamingUsed: true,
+          rawStructureSanitized: lastChunkSanitized,
+          usage: accumulator.usage,
+          isRealTokens: accumulator.isRealTokens,
+          modelUsed: targetModel,
+        };
+      }
+
       clearTimeout(timer);
-      const durationMs = Date.now() - startTime;
-      const isAbort = fetchErr.name === 'AbortError';
-      const causeCode = fetchErr.cause?.code || fetchErr.code;
-      const causeErrno = fetchErr.cause?.errno;
-      const causeSyscall = fetchErr.cause?.syscall;
-      const isNetworkDrop =
-        causeCode === 'ECONNRESET' ||
-        causeCode === 'UND_ERR_SOCKET' ||
-        fetchErr.message?.includes('fetch failed');
-
-      const enhancedErr: any = new Error(
-        isAbort
-          ? `请求超时 (${timeoutMs / 1000}秒)，上游 API 未能在限定时间内返回完整回复。`
-          : `连接上游接口失败 (${fetchErr.message || 'fetch failed'})`
-      );
-      enhancedErr.name = fetchErr.name;
-      enhancedErr.cause = fetchErr.cause;
-      enhancedErr.protocol = 'openai_compatible';
-      enhancedErr.endpoint = endpoint;
-      enhancedErr.headersReceived = false;
-      enhancedErr.readBodyFailed = false;
-      enhancedErr.durationMs = durationMs;
-      enhancedErr.upstreamRequestSent = true;
-      enhancedErr.mayHaveBeenCharged = isAbort || isNetworkDrop || durationMs > 12000;
-      enhancedErr.causeCode = causeCode;
-      enhancedErr.causeErrno = causeErrno;
-      enhancedErr.causeSyscall = causeSyscall;
-      throw enhancedErr;
-    }
-
-    clearTimeout(timer);
-
-    if (!response.ok) {
-      let errorText = '';
-      try {
-        errorText = await response.text();
-      } catch {
-        readBodyFailed = true;
-      }
-      let parsedErrorMsg = errorText;
-      try {
-        const parsed = JSON.parse(errorText);
-        parsedErrorMsg = parsed.error?.message || parsed.message || errorText;
-      } catch {}
-
-      const durationMs = Date.now() - startTime;
-      let err: any;
-      if (response.status === 401) {
-        err = new Error(`[401 鉴权失败] API Key 无效或未授权: ${parsedErrorMsg}`);
-      } else if (response.status === 404) {
-        err = new Error(`[404 路由或模型不存在] 请求端点 ${endpoint} 或模型 ${targetModel} 不存在: ${parsedErrorMsg}`);
-      } else if (response.status === 429) {
-        err = new Error(`[429 配额或限流] 账户配额不足或触发请求频率限制: ${parsedErrorMsg}`);
-        err.isQuotaExceeded = true;
-      } else if (response.status >= 500) {
-        err = new Error(`[${response.status} 服务端错误] API Provider 上游异常: ${parsedErrorMsg}`);
-      } else {
-        err = new Error(`[${response.status} API 错误] ${parsedErrorMsg}`);
-      }
-      err.statusCode = response.status;
-      err.protocol = 'openai_compatible';
-      err.endpoint = endpoint;
-      err.headersReceived = true;
-      err.readBodyFailed = readBodyFailed;
-      err.durationMs = durationMs;
-      err.upstreamRequestSent = true;
-      err.mayHaveBeenCharged = true;
-      throw err;
-    }
-
-    let resJson: any;
-    try {
-      resJson = await response.json();
-    } catch (jsonErr: any) {
-      readBodyFailed = true;
-      const durationMs = Date.now() - startTime;
-      const err: any = new Error(`上游响应数据解析失败: ${jsonErr.message}`);
-      err.name = jsonErr.name;
-      err.cause = jsonErr.cause;
-      err.statusCode = response.status;
-      err.protocol = 'openai_compatible';
-      err.endpoint = endpoint;
-      err.headersReceived = true;
-      err.readBodyFailed = true;
-      err.durationMs = durationMs;
-      err.upstreamRequestSent = true;
-      err.mayHaveBeenCharged = true;
-      throw err;
-    }
-
-    const choice = resJson.choices?.[0];
-    const messageObj = choice?.message;
-    const reasoning = messageObj?.reasoning_content || messageObj?.reasoning || messageObj?.thinking;
-    const content = typeof messageObj?.content === 'string' ? messageObj.content : '';
-    const fullText =
-      reasoning && typeof reasoning === 'string' && reasoning.trim()
-        ? `<think>${reasoning.trim()}</think>${content}`
-        : content;
-
-    const usageMeta = resJson.usage;
-    let usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined = undefined;
-    let isRealTokens = false;
-    if (usageMeta && typeof usageMeta === 'object') {
-      isRealTokens = true;
-      usage = {
-        promptTokens: typeof usageMeta.prompt_tokens === 'number' ? usageMeta.prompt_tokens : undefined,
-        completionTokens: typeof usageMeta.completion_tokens === 'number' ? usageMeta.completion_tokens : undefined,
-        totalTokens: typeof usageMeta.total_tokens === 'number' ? usageMeta.total_tokens : undefined,
+      const resJson = await response.json();
+      const extracted = extractApiReasoning(resJson, 'anthropic');
+      const usageMeta = resJson?.usage;
+      const usage =
+        usageMeta && typeof usageMeta === 'object'
+          ? {
+              promptTokens: typeof usageMeta.input_tokens === 'number' ? usageMeta.input_tokens : undefined,
+              completionTokens: typeof usageMeta.output_tokens === 'number' ? usageMeta.output_tokens : undefined,
+            }
+          : undefined;
+      return {
+        text: extracted.text,
+        thinkingProcess: extracted.thinkingProcess,
+        reasoningAvailable: extracted.reasoningAvailable,
+        reasoningSource: extracted.reasoningSource,
+        detectedFields: extracted.detectedFields,
+        streamingSupported: false,
+        streamingUsed: false,
+        rawStructureSanitized: params.includeSanitizedStructure ? sanitizeResponseStructure(resJson) : undefined,
+        usage,
+        isRealTokens: Boolean(usage),
+        modelUsed: targetModel,
       };
+    } catch (err: any) {
+      clearTimeout(timer);
+      if (!err.protocol) {
+        err.protocol = 'anthropic';
+        err.endpoint = endpoint;
+        err.durationMs = Date.now() - startTime;
+      }
+      throw err;
     }
-
-    return {
-      text: fullText,
-      usage,
-      isRealTokens,
-      modelUsed: targetModel,
-    };
   }
 
   // Google Gemini Native Execution
@@ -553,10 +1001,93 @@ async function callAiServiceDetailed(params: AiCallParams): Promise<AiCallDetail
     const primaryModel = isOfficialGeminiEndpoint ? normalizeOfficialGeminiModel(targetModel) : targetModel;
 
     try {
-      const { GoogleGenAI } = await loadGoogleGenAi();
+      const genAiModule = await loadGoogleGenAi();
+      const { GoogleGenAI, ThinkingLevel } = genAiModule as any;
       const aiClient = new GoogleGenAI(clientOptions);
-      let result: any;
-      let usedModel = primaryModel;
+
+      const runGeminiAttempt = async (modelToRun: string, omitThinkingConfig: boolean): Promise<AiCallDetailedResult> => {
+        const generateOptions: any = {
+          model: modelToRun,
+          contents: params.prompt,
+        };
+        const modelConfig = buildGeminiConfigForModel(modelToRun, params, {
+          ThinkingLevelEnum: ThinkingLevel,
+          customParams: parsedCustom.params,
+          omitThinkingConfig,
+        });
+        if (modelConfig) {
+          generateOptions.config = modelConfig;
+        }
+
+        if (wantStream && typeof aiClient.models.generateContentStream === 'function') {
+          const stream = await aiClient.models.generateContentStream(generateOptions);
+          const accumulator = new StreamingReasoningAccumulator();
+          let lastChunkSanitized: any = undefined;
+          for await (const chunk of stream) {
+            accumulator.pushGeminiChunk(chunk);
+            if (params.includeSanitizedStructure) {
+              lastChunkSanitized = sanitizeResponseStructure(chunk);
+            }
+          }
+          const extracted = accumulator.finalize();
+          return {
+            text: extracted.text,
+            thinkingProcess: extracted.thinkingProcess,
+            reasoningAvailable: extracted.reasoningAvailable,
+            reasoningSource: extracted.reasoningSource,
+            detectedFields: extracted.detectedFields,
+            streamingSupported: true,
+            streamingUsed: true,
+            hasThoughtSignatureOnly: extracted.hasThoughtSignatureOnly,
+            rawStructureSanitized: lastChunkSanitized,
+            usage: accumulator.usage,
+            isRealTokens: accumulator.isRealTokens,
+            modelUsed: modelToRun,
+          };
+        }
+
+        const result = await aiClient.models.generateContent(generateOptions);
+        const extracted = extractApiReasoning(result, 'google_native');
+        const usageMeta = result?.usageMetadata;
+        let usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined = undefined;
+        let isRealTokens = false;
+        if (usageMeta && typeof usageMeta === 'object') {
+          isRealTokens = true;
+          usage = {
+            promptTokens: typeof usageMeta.promptTokenCount === 'number' ? usageMeta.promptTokenCount : undefined,
+            completionTokens: typeof usageMeta.candidatesTokenCount === 'number' ? usageMeta.candidatesTokenCount : undefined,
+            totalTokens: typeof usageMeta.totalTokenCount === 'number' ? usageMeta.totalTokenCount : undefined,
+          };
+        }
+
+        return {
+          text: extracted.text,
+          thinkingProcess: extracted.thinkingProcess,
+          reasoningAvailable: extracted.reasoningAvailable,
+          reasoningSource: extracted.reasoningSource,
+          detectedFields: extracted.detectedFields,
+          streamingSupported: false,
+          streamingUsed: false,
+          hasThoughtSignatureOnly: extracted.hasThoughtSignatureOnly,
+          rawStructureSanitized: params.includeSanitizedStructure ? sanitizeResponseStructure(result) : undefined,
+          usage,
+          isRealTokens,
+          modelUsed: modelToRun,
+        };
+      };
+
+      const runWithAutoThinkingFallback = async (modelToRun: string): Promise<AiCallDetailedResult> => {
+        try {
+          return await runGeminiAttempt(modelToRun, false);
+        } catch (attemptErr: any) {
+          const msg = String(attemptErr?.message || attemptErr || '');
+          const isAutoMode = !params.thinkingConfig || params.thinkingConfig.mode === 'auto';
+          if (isAutoMode && isThinkingParamRejectionError(msg)) {
+            return await runGeminiAttempt(modelToRun, true);
+          }
+          throw attemptErr;
+        }
+      };
 
       if (isOfficialGeminiEndpoint) {
         const now = Date.now();
@@ -575,27 +1106,14 @@ async function callAiServiceDetailed(params: AiCallParams): Promise<AiCallDetail
         }
 
         let lastErr: any = null;
-        let recovered = false;
-
         for (let idx = 0; idx < activeCandidates.length; idx++) {
           const candidateModel = activeCandidates[idx];
-          const generateOptions: any = {
-            model: candidateModel,
-            contents: params.prompt,
-          };
-          const modelConfig = buildGeminiConfigForModel(candidateModel, params);
-          if (modelConfig) {
-            generateOptions.config = modelConfig;
-          }
-
           try {
-            result = await aiClient.models.generateContent(generateOptions);
-            usedModel = candidateModel;
-            recovered = true;
+            const out = await runWithAutoThinkingFallback(candidateModel);
             if (idx > 0) {
               console.info(`[Gemini Fallback] ${primaryModel} 受限，已自动切换至 ${candidateModel}`);
             }
-            break;
+            return out;
           } catch (candidateErr: any) {
             lastErr = candidateErr;
             const msg = String(candidateErr?.message || candidateErr || '');
@@ -611,39 +1129,10 @@ async function callAiServiceDetailed(params: AiCallParams): Promise<AiCallDetail
           }
         }
 
-        if (!recovered) {
-          throw lastErr || new Error('Gemini API 配额已用尽 (429 RESOURCE_EXHAUSTED)');
-        }
+        throw lastErr || new Error('Gemini API 配额已用尽 (429 RESOURCE_EXHAUSTED)');
       } else {
-        const generateOptions: any = {
-          model: primaryModel,
-          contents: params.prompt,
-        };
-        const modelConfig = buildGeminiConfigForModel(primaryModel, params);
-        if (modelConfig) {
-          generateOptions.config = modelConfig;
-        }
-        result = await aiClient.models.generateContent(generateOptions);
+        return await runWithAutoThinkingFallback(primaryModel);
       }
-
-      const usageMeta = result?.usageMetadata;
-      let usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined = undefined;
-      let isRealTokens = false;
-      if (usageMeta && typeof usageMeta === 'object') {
-        isRealTokens = true;
-        usage = {
-          promptTokens: typeof usageMeta.promptTokenCount === 'number' ? usageMeta.promptTokenCount : undefined,
-          completionTokens: typeof usageMeta.candidatesTokenCount === 'number' ? usageMeta.candidatesTokenCount : undefined,
-          totalTokens: typeof usageMeta.totalTokenCount === 'number' ? usageMeta.totalTokenCount : undefined,
-        };
-      }
-
-      return {
-        text: result?.text || '',
-        usage,
-        isRealTokens,
-        modelUsed: usedModel,
-      };
     } catch (geminiErr: any) {
       const errMsg = geminiErr.message || '';
       const durationMs = Date.now() - startTime;
@@ -1574,6 +2063,171 @@ app.post('/api/provider/test-model', async (req, res) => {
       error: err.message || '模型执行测试失败',
     });
   }
+});
+
+// =========================================================================
+// 0.35 核心 Provider 系统端点：测试连接并检测思考输出 (Test Thinking Output)
+// =========================================================================
+app.post('/api/provider/test-thinking', async (req, res) => {
+  const {
+    providerType,
+    baseUrl,
+    apiKey,
+    model,
+    apiProtocol,
+    customHeaders,
+    thinkingConfig,
+  } = req.body || {};
+
+  const startTime = Date.now();
+  const resolvedCfg = resolveTextGenerationConfig({
+    apiKey,
+    baseUrl,
+    model,
+    providerType,
+    apiProtocol,
+    customHeaders,
+    thinkingConfig,
+    timeoutMs: 30000,
+  });
+
+  if (resolvedCfg.thinkingConfig?.mode === 'custom') {
+    const check = parseCustomThinkingParamsJson(resolvedCfg.thinkingConfig.customParamsJson);
+    if (!check.ok) {
+      return res.status(400).json({
+        success: false,
+        connectionOk: false,
+        answerOk: false,
+        reasoningAvailable: false,
+        reasoningSource: 'none',
+        detectedFields: [],
+        streamingSupported: false,
+        nonStreamingSupported: false,
+        reasoningCharCount: 0,
+        answerCharCount: 0,
+        latencyMs: Date.now() - startTime,
+        model: resolvedCfg.model,
+        apiProtocol: resolvedCfg.apiProtocol,
+        error: check.error || '自定义思考参数 JSON 格式无效',
+      });
+    }
+  }
+
+  const probePrompt = '请直接计算并简洁回答：17 × 23 等于多少？';
+  let nonStreamRes: AiCallDetailedResult | null = null;
+  let streamRes: AiCallDetailedResult | null = null;
+  let nonStreamErr: string | undefined;
+  let streamErr: string | undefined;
+
+  try {
+    nonStreamRes = await callAiServiceDetailed({
+      prompt: probePrompt,
+      model: resolvedCfg.model,
+      apiKey: resolvedCfg.apiKey,
+      baseUrl: resolvedCfg.baseUrl,
+      providerType: resolvedCfg.providerType,
+      apiProtocol: resolvedCfg.apiProtocol,
+      customHeaders: resolvedCfg.customHeaders,
+      thinkingConfig: resolvedCfg.thinkingConfig,
+      stream: false,
+      allowStreamFallback: false,
+      includeSanitizedStructure: true,
+      timeoutMs: 25000,
+    });
+  } catch (err: any) {
+    nonStreamErr = err?.message || '非流式请求失败';
+  }
+
+  // Only probe streaming if non-streaming didn't fail on missing config / 401 auth
+  const authOrConfigBlocked =
+    nonStreamErr && (nonStreamErr.includes('CONFIG_MISSING') || nonStreamErr.includes('401') || nonStreamErr.includes('无效') || nonStreamErr.includes('未配置'));
+
+  if (!authOrConfigBlocked) {
+    try {
+      streamRes = await callAiServiceDetailed({
+        prompt: probePrompt,
+        model: resolvedCfg.model,
+        apiKey: resolvedCfg.apiKey,
+        baseUrl: resolvedCfg.baseUrl,
+        providerType: resolvedCfg.providerType,
+        apiProtocol: resolvedCfg.apiProtocol,
+        customHeaders: resolvedCfg.customHeaders,
+        thinkingConfig: resolvedCfg.thinkingConfig,
+        stream: true,
+        allowStreamFallback: false,
+        includeSanitizedStructure: true,
+        timeoutMs: 25000,
+      });
+    } catch (err: any) {
+      streamErr = err?.message || '流式请求失败';
+    }
+  }
+
+  const latencyMs = Date.now() - startTime;
+  const nonStreamingSupported = Boolean(nonStreamRes && (nonStreamRes.text.trim() || nonStreamRes.reasoningAvailable));
+  const streamingSupported = Boolean(streamRes && streamRes.streamingUsed && (streamRes.text.trim() || streamRes.reasoningAvailable));
+
+  if (!nonStreamRes && !streamRes) {
+    return res.status(502).json({
+      success: false,
+      connectionOk: false,
+      answerOk: false,
+      reasoningAvailable: false,
+      reasoningSource: 'none',
+      detectedFields: [],
+      streamingSupported: false,
+      nonStreamingSupported: false,
+      reasoningCharCount: 0,
+      answerCharCount: 0,
+      latencyMs,
+      model: resolvedCfg.model,
+      apiProtocol: resolvedCfg.apiProtocol,
+      error: nonStreamErr || streamErr || '连接测试失败',
+    });
+  }
+
+  const preferred =
+    resolvedCfg.thinkingConfig?.useStreaming && streamRes
+      ? streamRes
+      : (streamRes?.reasoningAvailable && !nonStreamRes?.reasoningAvailable ? streamRes : nonStreamRes || streamRes)!;
+
+  const combinedFields = Array.from(
+    new Set([
+      ...(nonStreamRes?.detectedFields || []),
+      ...(streamRes?.detectedFields || []),
+    ])
+  );
+
+  const answerText = (preferred.text || nonStreamRes?.text || streamRes?.text || '').trim();
+  const reasoningText = (preferred.thinkingProcess || streamRes?.thinkingProcess || nonStreamRes?.thinkingProcess || '').trim();
+  const reasoningAvailable = reasoningText.length > 0;
+  const likelyUpstreamStripped = !reasoningAvailable && answerText.length > 0;
+
+  return res.json({
+    success: true,
+    connectionOk: true,
+    answerOk: answerText.length > 0,
+    reasoningAvailable,
+    reasoningSource: preferred.reasoningSource || 'none',
+    detectedFields: combinedFields,
+    streamingSupported,
+    nonStreamingSupported,
+    streamingReasoningAvailable: Boolean(streamRes?.reasoningAvailable),
+    nonStreamingReasoningAvailable: Boolean(nonStreamRes?.reasoningAvailable),
+    reasoningCharCount: reasoningText.length,
+    answerCharCount: answerText.length,
+    reasoningPreview: reasoningAvailable ? reasoningText.slice(0, 400) : '',
+    answerPreview: answerText.slice(0, 200),
+    latencyMs,
+    model: preferred.modelUsed || resolvedCfg.model,
+    apiProtocol: resolvedCfg.apiProtocol,
+    hasThoughtSignatureOnly: Boolean(preferred.hasThoughtSignatureOnly),
+    likelyUpstreamStripped,
+    noticeMessage: likelyUpstreamStripped
+      ? '当前接口只返回最终答案，小手机无法恢复被上游删除的思考内容。请更换支持reasoning透传的模型或API站，或查询站点所需的思考参数。'
+      : undefined,
+    sanitizedResponseStructure: preferred.rawStructureSanitized || nonStreamRes?.rawStructureSanitized || streamRes?.rawStructureSanitized,
+  });
 });
 
 // 兼容老版本的 /api/test-api 接口
@@ -2739,7 +3393,8 @@ app.post('/api/gemini/weather-proactive-care', async (req, res) => {
   } = req.body;
 
   const startTime = Date.now();
-  const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
+  const weatherCfg = resolveTextGenerationConfig(apiConfig, character?.modelConfig);
+  const selectedModel = weatherCfg.model;
 
   try {
     const prompt = `你正在扮演微信好友【${character.name}】(微信号: ${character.wxid})。
@@ -2769,51 +3424,31 @@ ${memosSummary}
 【核心生成要求】：
 1. 必须完全符合【${character.name}】独特的人设性格（如学霸顾言的冷静内敛但细节入微、总裁陆沉的沉稳霸道与细致呵护、小葵的活泼元气与贴心闺蜜感），用微信真实聊天的口吻主动发来关怀。
 2. 绝对不能像机械机器人播报天气预报数据！要像真实生活中的微信好友一样自然、体贴、有温度地关心用户（例如：“山雨，下午可能要下雨，出门记得带伞哦。”或“看你备忘录里写着下午要去跑步，傍晚有大雨，记得改在室内哦”）。
-3. 输出格式要求：
-在回答最开头用 <think>...</think> 标签写明你的思考链，分析当前天气事件、结合用户日程（若有）与角色人设的切入点；
-在 </think> 标签之后直接输出你要发送给用户的微信消息文本（1~3句话，符合微信日常打字习惯）。
+3. 直接输出你要发送给用户的微信消息文本（1~3句话，符合微信日常打字习惯），不要附加额外解释或标签。
 `;
 
-    let responseText = '';
-    let thinkingProcess = `分析天气事件 [${weatherEvent.title}]，结合 ${character.name} 的人设口吻生成微信关怀。`;
-    let replyContent = '';
-    let detailedRes: AiCallDetailedResult | null = null;
+    const detailedRes = await callAiServiceDetailed({
+      prompt,
+      model: weatherCfg.model,
+      apiKey: weatherCfg.apiKey,
+      baseUrl: weatherCfg.baseUrl,
+      providerType: weatherCfg.providerType,
+      apiProtocol: weatherCfg.apiProtocol,
+      customHeaders: weatherCfg.customHeaders,
+      thinkingConfig: weatherCfg.thinkingConfig,
+      stream: Boolean(weatherCfg.thinkingConfig?.useStreaming),
+      timeoutMs: weatherCfg.timeoutMs,
+    });
 
-    try {
-      detailedRes = await callAiServiceDetailed({
-        prompt,
-        model: selectedModel,
-        apiKey: apiConfig?.textApiKey,
-        baseUrl: apiConfig?.textBaseUrl,
-      });
-      responseText = detailedRes.text;
-    } catch (e: any) {
-      console.warn('Weather care AI call failed, using fallback:', e.message);
-    }
-
-    if (!responseText) {
-      const isRain = weatherEvent.type.includes('rain') || weatherEvent.type === 'severe_weather';
-      const isHeat = weatherEvent.type === 'high_temp';
-      const isCold = weatherEvent.type === 'low_temp' || weatherEvent.type === 'temp_drop';
-
-      if (isRain) {
-        responseText = `<think>感知到即将降雨（降雨概率较高），根据${character.name}人设提醒带伞与避雨。</think>${userProfile?.name || '小清'}，看天气等下可能要下雨呢，出门记得带把伞哦，别淋湿啦！🌧️`;
-      } else if (isHeat) {
-        responseText = `<think>感知到高温预警，提醒防暑降温与补充水分。</think>今天外面气温好高呀，尽量少在太阳底下晒着，多喝点水注意防暑哦！☀️`;
-      } else if (isCold) {
-        responseText = `<think>感知到气温骤降，提醒增添衣物保暖。</think>今天降温明显，外面风大挺冷的，出门多穿件外套，千万别着凉了哦！🧣`;
-      } else {
-        responseText = `<think>感知到突发天气变化，生成暖心问候。</think>注意看天气变化哦，外出照顾好自己！✨`;
-      }
-    }
-
-    const thinkMatch = responseText.match(/<think>([\s\S]*?)<\/think>/i);
-    if (thinkMatch) {
-      thinkingProcess = thinkMatch[1].trim();
-      replyContent = responseText.replace(/<think>[\s\S]*?<\/think>/i, '').trim();
-    } else {
-      replyContent = responseText.trim();
-    }
+    const tagCleanup = extractThinkingAndContent(detailedRes.text);
+    const replyContent = sanitizeReplyText(tagCleanup.cleanText || detailedRes.text);
+    const thinkingProcess = (detailedRes.thinkingProcess || tagCleanup.thinkingProcess || '').trim();
+    const reasoningAvailable = thinkingProcess.length > 0;
+    const reasoningSource: ReasoningSource = reasoningAvailable
+      ? detailedRes.reasoningSource !== 'none'
+        ? detailedRes.reasoningSource
+        : 'think_tag'
+      : 'none';
 
     const duration = Date.now() - startTime;
 
@@ -2821,14 +3456,21 @@ ${memosSummary}
       success: true,
       text: replyContent,
       thinkingProcess,
+      reasoningAvailable,
+      reasoningSource,
       apiLog: buildApiLogObject({
         appName: '天气-AI主动关怀',
+        provider: weatherCfg.providerType,
         modelName: detailedRes?.modelUsed || selectedModel,
         interfaceType: 'ProactiveWeatherCare',
-        category: 'text',
+        category: 'text_generation',
         durationMs: duration,
         usage: detailedRes?.usage,
         isRealTokens: detailedRes?.isRealTokens,
+        protocol: weatherCfg.apiProtocol,
+        reasoningAvailable,
+        reasoningSource,
+        reasoningCharCount: thinkingProcess.length,
         purpose: `AI [${character.name}] 针对 [${weatherEvent.title}] 发送微信天气关怀 (耗时 ${duration}ms)`,
       }),
     });
@@ -3641,8 +4283,7 @@ ${devicesSummary}
 请在输出回复时，自然地使用换行（每行一两句话）分隔，让每条消息都简短精炼、生动日常，避免书面化大段独白。
 
 【核心输出格式要求】：
-请在回答的最前面用 <think>...</think> 标签输出你本次回答的思考链 (Thinking Process / Chain of Thought)，说明你是如何结合角色人设、记忆、世界书背景（若有关联）以及用户上下文做出回应的。
-在 </think> 标签之后，直接输出你给用户的微信回复文本（保持微信口语化、亲切自如，适合微信聊天，多句话之间换行隔开）；若需要触发画图，请在回复末尾紧跟 <image_action>{...}</image_action>。
+请直接输出你给用户的微信回复文本（保持微信口语化、亲切自如，适合微信聊天，多句话之间换行隔开，不要输出多余的推理说明或格式化前缀）；若需要触发画图，请在回复末尾紧跟 <image_action>{...}</image_action>。
 `;
 
     // Defensive ID-based filtering: Ensure conversationHistory contains ONLY prior history messages and excludes current turn pending messages strictly by ID
@@ -3825,7 +4466,10 @@ ${devicesSummary}
     const promptText = contextPrompt + summaryBlock + '\n对话历史：\n' + contents.join('\n');
 
     let responseText = '';
-    let thinkingProcess = '分析用户意图，匹配人设特征，形成微信口语化回复。';
+    let thinkingProcess = '';
+    let reasoningAvailable = false;
+    let reasoningSource: ReasoningSource = 'none';
+    let reasoningFieldPaths: string[] = [];
     let replyContent = '';
     const extractedDeviceActions: any[] = [];
 
@@ -3839,6 +4483,8 @@ ${devicesSummary}
         providerType: textGenConfig.providerType,
         apiProtocol: textGenConfig.apiProtocol,
         customHeaders: textGenConfig.customHeaders,
+        thinkingConfig: textGenConfig.thinkingConfig,
+        stream: Boolean(textGenConfig.thinkingConfig?.useStreaming),
         timeoutMs: textGenConfig.timeoutMs,
       });
       if (!aiDetailedResult.text || !aiDetailedResult.text.trim()) {
@@ -3853,6 +4499,10 @@ ${devicesSummary}
         throw emptyErr;
       }
       responseText = aiDetailedResult.text;
+      thinkingProcess = (aiDetailedResult.thinkingProcess || '').trim();
+      reasoningAvailable = Boolean(aiDetailedResult.reasoningAvailable && thinkingProcess.length > 0);
+      reasoningSource = reasoningAvailable ? aiDetailedResult.reasoningSource : 'none';
+      reasoningFieldPaths = Array.isArray(aiDetailedResult.detectedFields) ? aiDetailedResult.detectedFields : [];
     } catch (e: any) {
       const duration = e?.durationMs || Date.now() - startTime;
       const aiErrorMessage = e?.message || 'API 调用异常';
@@ -3921,9 +4571,15 @@ ${devicesSummary}
       });
     }
 
-    // Robustly extract thinking process and clean reply content
+    // Secondary cleanup for any <think> tags that might remain in text
     const extracted = extractThinkingAndContent(responseText);
-    thinkingProcess = extracted.thinkingProcess;
+    if (!thinkingProcess && extracted.thinkingProcess) {
+      thinkingProcess = extracted.thinkingProcess;
+      reasoningAvailable = thinkingProcess.length > 0;
+      if (reasoningAvailable && reasoningSource === 'none') {
+        reasoningSource = 'think_tag';
+      }
+    }
     replyContent = extracted.cleanText;
 
     // Extract <device_action> tags if present
@@ -4027,6 +4683,10 @@ ${devicesSummary}
       success: true,
       text: replyContent,
       thinkingProcess,
+      reasoningAvailable,
+      reasoningSource,
+      reasoningFieldPaths,
+      streamingUsed: Boolean(aiDetailedResult?.streamingUsed),
       deviceActions: extractedDeviceActions,
       actions: extractedActions,
       requestId,
@@ -4053,6 +4713,9 @@ ${devicesSummary}
         contextSummarizedCount: effectiveChatMetrics.summarizedCount,
         contextEstimatedTokens: effectiveChatMetrics.estimatedTokens,
         contextCompressed: effectiveChatMetrics.didCompress,
+        reasoningAvailable,
+        reasoningSource,
+        reasoningCharCount: thinkingProcess.length,
       }),
     });
   } catch (error: any) {
@@ -4404,8 +5067,7 @@ ${triggerDirective}
       "senderName": "发言AI名称",
       "bubbles": ["第一条自然短气泡", "可选的第二条气泡"],
       "delayMs": 850,
-      "mentionedMemberIds": [],
-      "thinkingProcess": "该AI此刻的内心想法（简短）"
+      "mentionedMemberIds": []
     },
     {
       "eventId": "ev_2",
@@ -4439,11 +5101,16 @@ ${triggerDirective}
       providerType: groupTextCfg.providerType,
       apiProtocol: groupTextCfg.apiProtocol,
       customHeaders: groupTextCfg.customHeaders,
+      thinkingConfig: groupTextCfg.thinkingConfig,
+      stream: Boolean(groupTextCfg.thinkingConfig?.useStreaming),
       responseMimeType: 'application/json',
       temperature: 0.78,
       timeoutMs: groupTextCfg.timeoutMs || 42000,
     });
     const rawResponse = detailed.text;
+    const realGroupThinking = (detailed.thinkingProcess || '').trim();
+    const groupReasoningAvailable = Boolean(detailed.reasoningAvailable && realGroupThinking.length > 0);
+    const groupReasoningSource: ReasoningSource = groupReasoningAvailable ? detailed.reasoningSource : 'none';
 
     let parsed: any;
     try {
@@ -4603,16 +5270,34 @@ ${triggerDirective}
     }
 
     // Derive backward-compatible replies/text fields from message events
+    // Strictly preserve only real API reasoning (never fabricate via thinkingSummary)
     const normalizedReplies = normalizedEvents
       .filter((ev) => ev.type === 'message')
-      .map((ev) => ({
+      .map((ev, idx) => ({
         responderId: ev.senderId,
         responderName: ev.senderName,
         text: ev.bubbles.join('\n'),
         bubbles: ev.bubbles,
-        thinkingProcess: ev.thinkingProcess || parsed?.thinkingSummary || '',
+        thinkingProcess: idx === 0 ? realGroupThinking : '',
         mentionedMemberIds: ev.mentionedMemberIds || [],
       }));
+
+    // Ensure message events carry only real API reasoning on first message event (and omit fabricated inner thought)
+    let attachedRoundThinking = false;
+    for (const ev of normalizedEvents) {
+      if (ev.type === 'message') {
+        if (!attachedRoundThinking && realGroupThinking) {
+          ev.thinkingProcess = realGroupThinking;
+          ev.reasoningAvailable = true;
+          ev.reasoningSource = groupReasoningSource;
+          attachedRoundThinking = true;
+        } else {
+          ev.thinkingProcess = '';
+          ev.reasoningAvailable = false;
+          ev.reasoningSource = 'none';
+        }
+      }
+    }
 
     const firstReply = normalizedReplies[0];
     const participantNames = Array.from(
@@ -4635,11 +5320,14 @@ ${triggerDirective}
       thinkingSummary: typeof parsed?.thinkingSummary === 'string' ? parsed.thinkingSummary.trim() : '',
       events: normalizedEvents,
       contextMetrics: effectiveGroupMetrics,
+      // Real API reasoning fields
+      thinkingProcess: realGroupThinking,
+      reasoningAvailable: groupReasoningAvailable,
+      reasoningSource: groupReasoningSource,
       // Backward-compatible legacy fields
       responderId: firstReply?.responderId || parsed?.responderId || aiCandidates[0]?.id,
       responderName: firstReply?.responderName || parsed?.responderName || aiCandidates[0]?.name,
       text: firstReply?.text || parsed?.text || '',
-      thinkingProcess: firstReply?.thinkingProcess || parsed?.thinkingSummary || parsed?.thinkingProcess || '',
       mentionedMemberIds: firstReply?.mentionedMemberIds || parsed?.mentionedMemberIds || [],
       replies: normalizedReplies,
       log: buildApiLogObject({
@@ -4654,6 +5342,9 @@ ${triggerDirective}
         endpointType: groupTextCfg.apiProtocol === 'openai_compatible' ? 'chat_completions' : 'generate_content',
         headersReceived: true,
         upstreamRequestSent: true,
+        reasoningAvailable: groupReasoningAvailable,
+        reasoningSource: groupReasoningSource,
+        reasoningCharCount: realGroupThinking.length,
         purpose: `群聊统一编排(${preset.label}): ${participantNames.join('、') || 'AI'} · ${totalBubblesCount}气泡${
           totalVotesCount > 0 ? `/${totalVotesCount}投票` : ''
         }${totalRelaysCount > 0 ? `/${totalRelaysCount}接龙` : ''} (耗时 ${duration}ms)`,
@@ -5820,12 +6511,21 @@ ${prevIntimateLine}`);
       const firstAction = segments.find((s) => s.type === 'action')?.text || '';
       const offlineDuration = Date.now() - offlineStart;
 
+      const offlineThinking = (detailedOffline.thinkingProcess || '').trim();
+      const offlineReasoningAvailable = Boolean(detailedOffline.reasoningAvailable && offlineThinking.length > 0);
+      const offlineReasoningSource: ReasoningSource = offlineReasoningAvailable
+        ? detailedOffline.reasoningSource
+        : 'none';
+
       return {
         success: true,
         segments,
         reply: plainReply,
         action: firstAction,
         state: parsedState,
+        thinkingProcess: offlineThinking,
+        reasoningAvailable: offlineReasoningAvailable,
+        reasoningSource: offlineReasoningSource,
         contextSummaryUpdate: contextSummaryUpdate || undefined,
         contextMetrics: effectiveOfflineMetrics,
         apiLog: buildApiLogObject({
@@ -5839,6 +6539,9 @@ ${prevIntimateLine}`);
           durationMs: offlineDuration,
           usage: detailedOffline.usage,
           isRealTokens: detailedOffline.isRealTokens,
+          reasoningAvailable: offlineReasoningAvailable,
+          reasoningSource: offlineReasoningSource,
+          reasoningCharCount: offlineThinking.length,
           purpose: `与 ${character?.name || 'AI'} 线下互动 (耗时 ${offlineDuration}ms)`,
           contextRawCount: effectiveOfflineMetrics.rawCount,
           contextSummarizedCount: effectiveOfflineMetrics.summarizedCount,
@@ -6031,13 +6734,24 @@ app.post('/api/gemini/theater-scenario', async (req, res) => {
       temperature: 0.7,
       maxTokens: 2500,
       customHeaders: resolvedTheaterCfg.customHeaders,
+      thinkingConfig: resolvedTheaterCfg.thinkingConfig,
       timeoutMs: resolvedTheaterCfg.timeoutMs,
     });
     const durationMs = Date.now() - startTime;
     const extracted = extractThinkingAndContent(detailedResult.text);
+    const theaterScenarioThinking = (detailedResult.thinkingProcess || extracted.thinkingProcess || '').trim();
+    const theaterScenarioReasoningAvailable = theaterScenarioThinking.length > 0;
+    const theaterScenarioReasoningSource: ReasoningSource = theaterScenarioReasoningAvailable
+      ? detailedResult.reasoningSource !== 'none'
+        ? detailedResult.reasoningSource
+        : 'think_tag'
+      : 'none';
     res.json({
       ok: true,
       text: extracted.cleanText || detailedResult.text,
+      thinkingProcess: theaterScenarioThinking,
+      reasoningAvailable: theaterScenarioReasoningAvailable,
+      reasoningSource: theaterScenarioReasoningSource,
       usage: detailedResult.usage,
       apiLog: buildApiLogObject({
         appName: '小剧场',
@@ -6050,6 +6764,9 @@ app.post('/api/gemini/theater-scenario', async (req, res) => {
         purpose: `小剧场 - ${theaterType || '剧本初始化'}`,
         usage: detailedResult.usage,
         protocol: resolvedTheaterCfg.apiProtocol,
+        reasoningAvailable: theaterScenarioReasoningAvailable,
+        reasoningSource: theaterScenarioReasoningSource,
+        reasoningCharCount: theaterScenarioThinking.length,
       }),
     });
   } catch (err: any) {
@@ -6089,13 +6806,24 @@ app.post('/api/gemini/theater-chat', async (req, res) => {
       temperature: 0.8,
       maxTokens: 1800,
       customHeaders: resolvedTheaterCfg.customHeaders,
+      thinkingConfig: resolvedTheaterCfg.thinkingConfig,
       timeoutMs: resolvedTheaterCfg.timeoutMs,
     });
     const durationMs = Date.now() - startTime;
     const extracted = extractThinkingAndContent(detailedResult.text);
+    const theaterChatThinking = (detailedResult.thinkingProcess || extracted.thinkingProcess || '').trim();
+    const theaterChatReasoningAvailable = theaterChatThinking.length > 0;
+    const theaterChatReasoningSource: ReasoningSource = theaterChatReasoningAvailable
+      ? detailedResult.reasoningSource !== 'none'
+        ? detailedResult.reasoningSource
+        : 'think_tag'
+      : 'none';
     res.json({
       ok: true,
       text: extracted.cleanText || detailedResult.text,
+      thinkingProcess: theaterChatThinking,
+      reasoningAvailable: theaterChatReasoningAvailable,
+      reasoningSource: theaterChatReasoningSource,
       usage: detailedResult.usage,
       apiLog: buildApiLogObject({
         appName: '小剧场',
@@ -6108,6 +6836,9 @@ app.post('/api/gemini/theater-chat', async (req, res) => {
         purpose: `小剧场 - ${theaterType || '剧情回复'}`,
         usage: detailedResult.usage,
         protocol: resolvedTheaterCfg.apiProtocol,
+        reasoningAvailable: theaterChatReasoningAvailable,
+        reasoningSource: theaterChatReasoningSource,
+        reasoningCharCount: theaterChatThinking.length,
       }),
     });
   } catch (err: any) {
@@ -6615,8 +7346,7 @@ ${historyLines.length > 0 ? historyLines.join('\n') : '(近期暂无聊天记录
 5. 严格基于真实事件与上下文，严禁编造不存在的聊天内容、时间或天气数据。
 
 【输出格式要求 — 严格结构化 JSON】：
-1. 如需推理，先用 <think>...</think> 输出简短分析（评估当前时间、用户状态、是否适合联系以及是否应开启临时免打扰）。
-2. 在 </think> 之后，只输出一个严格合法的 JSON 对象（不要加多余解释或前后缀文本），字段如下：
+请只输出一个严格合法的 JSON 对象（不要加多余解释或前后缀文本），字段如下：
 {
   "action": "send" | "defer" | "cancel" | "close",
   "messages": ["首条自然短消息", "可选第二条短消息"],
@@ -6647,7 +7377,7 @@ ${historyLines.length > 0 ? historyLines.join('\n') : '(近期暂无聊天记录
 - 若判断用户正在上班/睡觉/很忙，或发完这条后暂不宜再打扰，请设置 pauseProactiveMinutes（范围 15~1440 分钟；不需要临时免打扰则填 0）。
 - action 为 defer / cancel / close 时，messages 必须为空数组 []，followUpPlan 为空数组 []；若 defer 且有明确延后时间，可在 followUpAt 填 ISO 时间字符串。`;
 
-    const responseText = await callAiService({
+    const detailedProactive = await callAiServiceDetailed({
       prompt: systemPrompt,
       model: proactiveCfg.model,
       apiKey: proactiveCfg.apiKey,
@@ -6655,11 +7385,20 @@ ${historyLines.length > 0 ? historyLines.join('\n') : '(近期暂无聊天记录
       providerType: proactiveCfg.providerType,
       apiProtocol: proactiveCfg.apiProtocol,
       customHeaders: proactiveCfg.customHeaders,
+      thinkingConfig: proactiveCfg.thinkingConfig,
+      stream: Boolean(proactiveCfg.thinkingConfig?.useStreaming),
       timeoutMs: proactiveCfg.timeoutMs || 35000,
     });
 
-    const extracted = extractThinkingAndContent(responseText);
-    const rawClean = (extracted.cleanText || '').trim();
+    const extracted = extractThinkingAndContent(detailedProactive.text);
+    const proactiveThinking = (detailedProactive.thinkingProcess || extracted.thinkingProcess || '').trim();
+    const proactiveReasoningAvailable = proactiveThinking.length > 0;
+    const proactiveReasoningSource: ReasoningSource = proactiveReasoningAvailable
+      ? detailedProactive.reasoningSource !== 'none'
+        ? detailedProactive.reasoningSource
+        : 'think_tag'
+      : 'none';
+    const rawClean = (extracted.cleanText || detailedProactive.text || '').trim();
 
     let parsedJson: any = null;
     try {
@@ -6681,7 +7420,9 @@ ${historyLines.length > 0 ? historyLines.join('\n') : '(近期暂无聊天记录
         success: false,
         schemaError: true,
         error: '模型返回非合法 JSON 结构，已安全拦截，禁止发送原始文本',
-        thinkingProcess: extracted.thinkingProcess,
+        thinkingProcess: proactiveThinking,
+        reasoningAvailable: proactiveReasoningAvailable,
+        reasoningSource: proactiveReasoningSource,
         triggerType,
       });
     }
@@ -6730,7 +7471,9 @@ ${historyLines.length > 0 ? historyLines.join('\n') : '(近期暂无聊天记录
         success: false,
         schemaError: true,
         error: '模型返回 send 但缺少有效消息正文，已安全跳过',
-        thinkingProcess: extracted.thinkingProcess,
+        thinkingProcess: proactiveThinking,
+        reasoningAvailable: proactiveReasoningAvailable,
+        reasoningSource: proactiveReasoningSource,
         triggerType,
       });
     }
@@ -6821,7 +7564,9 @@ ${historyLines.length > 0 ? historyLines.join('\n') : '(近期暂无聊天记录
       decisionSummary,
       suggestedNextAction,
       nextCheckDelayMinutes: pauseProactiveMinutes > 0 ? pauseProactiveMinutes : 90,
-      thinkingProcess: extracted.thinkingProcess,
+      thinkingProcess: proactiveThinking,
+      reasoningAvailable: proactiveReasoningAvailable,
+      reasoningSource: proactiveReasoningSource,
       triggerType,
     });
   } catch (error: any) {
@@ -7110,7 +7855,8 @@ ${userMessage}
 app.post('/api/gemini/proactive-period', async (req, res) => {
   try {
     const { character, userProfile, menstrualInfo, targetStage, apiConfig } = req.body;
-    const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || 'gemini-4-hydrogen';
+    const periodCfg = resolveTextGenerationConfig(apiConfig, character?.modelConfig);
+    const selectedModel = periodCfg.model;
     const startTime = Date.now();
 
     const stage = targetStage || (
@@ -7160,65 +7906,56 @@ ${character.relationship ? `与用户的关系：${character.relationship}\n` : 
 
 ${stageInstruction}
 
-输出要求：
-在回答最开头用 <think>...</think> 标签写明你的思考过程（如何根据角色人设切入关怀）；
-在 </think> 标签之后直接输出微信消息文本。`;
+直接输出微信消息文本，不要附加额外解释或标签。`;
 
-    let responseText = '';
-    let thinkingProcess = `根据 ${character.name} 人设口吻分析生理周期阶段 [${stage}] 生成微信主动关怀。`;
-    let replyContent = '';
+    const detailedPeriod = await callAiServiceDetailed({
+      prompt: `请主动向【${userProfile?.name || '小清'}】发送一条符合你人设口吻的微信关怀消息。`,
+      systemInstruction: systemPrompt,
+      model: periodCfg.model,
+      apiKey: periodCfg.apiKey,
+      baseUrl: periodCfg.baseUrl,
+      providerType: periodCfg.providerType,
+      apiProtocol: periodCfg.apiProtocol,
+      customHeaders: periodCfg.customHeaders,
+      thinkingConfig: periodCfg.thinkingConfig,
+      stream: Boolean(periodCfg.thinkingConfig?.useStreaming),
+      timeoutMs: periodCfg.timeoutMs,
+    });
 
-    try {
-      responseText = await callAiService({
-        prompt: `请主动向【${userProfile?.name || '小清'}】发送一条符合你人设口吻的微信关怀消息。`,
-        systemInstruction: systemPrompt,
-        model: selectedModel,
-        apiKey: apiConfig?.textApiKey,
-        baseUrl: apiConfig?.textBaseUrl,
-        providerType: apiConfig?.textProvider,
-      });
-    } catch (e: any) {
-      console.warn('Period care AI call failed, using fallback:', e.message);
-    }
-
-    if (!responseText) {
-      if (stage === 'pre_period_3d') {
-        responseText = `<think>感知到经期即将到来（还有3天），以${character.name}口吻提醒温水与备物。</think>${userProfile?.name || '小清'}，算算日子这几天差不多要来例假了哦。提前备好暖宝宝和温水，今天别喝冰的，早点休息呀~`;
-      } else if (stage === 'period_end_1d') {
-        responseText = `<think>感知到经期进入尾声，送上慰问与调养提示。</think>${userProfile?.name || '小清'}，感觉这两天身体好些了吗？经期快要结束啦，这几天也记得喝点热乎的，好好犒劳一下自己哦。`;
-      } else {
-        responseText = `<think>感知到处于生理期中，主动关照腹痛与情绪。</think>${userProfile?.name || '小清'}，今天肚子会不会隐隐难受呀？要是累了就多歇一会儿，热水随时泡上，有我在呢~`;
-      }
-    }
-
-    const thinkMatch = responseText.match(/<think>([\s\S]*?)<\/think>/i);
-    if (thinkMatch) {
-      thinkingProcess = thinkMatch[1].trim();
-      replyContent = responseText.replace(/<think>[\s\S]*?<\/think>/i, '').trim();
-    } else {
-      replyContent = responseText.trim();
-    }
+    const tagCleanup = extractThinkingAndContent(detailedPeriod.text);
+    const replyContent = sanitizeReplyText(tagCleanup.cleanText || detailedPeriod.text);
+    const thinkingProcess = (detailedPeriod.thinkingProcess || tagCleanup.thinkingProcess || '').trim();
+    const reasoningAvailable = thinkingProcess.length > 0;
+    const reasoningSource: ReasoningSource = reasoningAvailable
+      ? detailedPeriod.reasoningSource !== 'none'
+        ? detailedPeriod.reasoningSource
+        : 'think_tag'
+      : 'none';
 
     const duration = Date.now() - startTime;
-    const promptTokens = Math.round(systemPrompt.length / 2);
-    const completionTokens = Math.round(responseText.length / 2);
 
     res.json({
       success: true,
       text: replyContent,
       thinkingProcess,
+      reasoningAvailable,
+      reasoningSource,
       stage,
-      apiLog: {
-        id: 'log_' + Date.now(),
+      apiLog: buildApiLogObject({
         appName: '女性健康-经期AI关怀',
-        timestamp: Date.now(),
-        modelName: selectedModel,
+        provider: periodCfg.providerType,
+        modelName: detailedPeriod.modelUsed || selectedModel,
         interfaceType: 'ProactivePeriodCare',
-        promptTokens,
-        completionTokens,
-        estimatedCost: Number(((promptTokens + completionTokens) * 0.0000005).toFixed(5)),
+        category: 'text_generation',
+        durationMs: duration,
+        usage: detailedPeriod.usage,
+        isRealTokens: detailedPeriod.isRealTokens,
+        protocol: periodCfg.apiProtocol,
+        reasoningAvailable,
+        reasoningSource,
+        reasoningCharCount: thinkingProcess.length,
         purpose: `AI [${character.name}] 发送 [${stage}] 生理周期专属关怀 (耗时 ${duration}ms)`,
-      },
+      }),
     });
   } catch (error: any) {
     return handleAiEndpointError(res, error, 'Proactive period care');

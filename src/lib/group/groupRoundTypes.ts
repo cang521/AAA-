@@ -1,4 +1,4 @@
-import { GroupActivityLevel } from '../../types';
+import { GroupActivityLevel, ReasoningSource } from '../../types';
 
 export type GroupRoundTriggerType =
   | 'user_double_click'
@@ -28,6 +28,8 @@ export interface GroupMessageTimelineEvent {
   delayMs: number;
   mentionedMemberIds?: string[];
   thinkingProcess?: string;
+  reasoningAvailable?: boolean;
+  reasoningSource?: ReasoningSource;
 }
 
 export interface GroupVotePollTimelineEvent {
@@ -73,6 +75,9 @@ export interface GroupRoundPlan {
   roundId: string;
   shouldRespond: boolean;
   thinkingSummary?: string;
+  thinkingProcess?: string;
+  reasoningAvailable?: boolean;
+  reasoningSource?: ReasoningSource;
   events: GroupTimelineEvent[];
 }
 

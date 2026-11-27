@@ -27,6 +27,9 @@ export interface ProactiveBridgeOptions {
   explicitMessages?: string[];
   deterministicMessageIds?: string[];
   skipTypingDelay?: boolean;
+  thinkingProcess?: string;
+  reasoningAvailable?: boolean;
+  reasoningSource?: import('../../types').ReasoningSource;
 }
 
 const SINGLE_BUBBLE_EVENT_TRIGGERS = new Set([
@@ -143,6 +146,13 @@ class ChatMessageBridge {
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
 
+      const rawThinking =
+        typeof options?.thinkingProcess === 'string' ? options.thinkingProcess.trim() : '';
+      const hasRealThinking = rawThinking.length > 0;
+      const realReasoningSource = hasRealThinking
+        ? options?.reasoningSource || 'think_tag'
+        : 'none';
+
       const newMessage: ChatMessage = {
         id: messageId,
         characterId: character.id,
@@ -166,10 +176,10 @@ class ChatMessageBridge {
           totalBubbles: bubbles.length,
           repliedByUser: false,
         },
-        thinkingProcess:
-          i === 0
-            ? `【AI主动消息决策链】\n• 会话ID：${options?.episodeId || 'standalone'}\n• 步骤：${stepTag}\n• 触发类型：${triggerType}\n• 意图：${options?.intent || '主动关怀'}\n• 触发上下文：${contextSummary}\n• 输出气泡数：${bubbles.length} 条`
-            : `${contextSummary}\n\n[主动连发第 ${i + 1}/${bubbles.length} 条气泡]`,
+        thinkingProcess: i === 0 && hasRealThinking ? rawThinking : undefined,
+        reasoningAvailable: hasRealThinking,
+        reasoningSource: realReasoningSource,
+        reasoningStatus: hasRealThinking ? 'available' : 'empty',
       };
 
       // 1. Save to Messages store FIRST (Authoritative IndexedDB) and confirm write succeeded

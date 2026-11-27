@@ -18,6 +18,7 @@
  */
 
 import { resolveEffectiveProtocol } from './apiCapabilities';
+import { ThinkingOutputSettings } from '../types';
 
 export interface ApiConnectionConfig {
   provider: string;
@@ -26,6 +27,8 @@ export interface ApiConnectionConfig {
   model: string;
   apiProtocol: string;
   presetId?: string;
+  thinkingConfig?: ThinkingOutputSettings;
+  customHeaders?: Record<string, string>;
 }
 
 export interface RecognitionApiSettings {
@@ -98,6 +101,27 @@ export const DEFAULT_TEXT_CONNECTION = DEFAULT_TEXT_GENERATION_CONNECTION;
 export const DEFAULT_IMAGE_CONNECTION = DEFAULT_IMAGE_GENERATION_CONNECTION;
 export const DEFAULT_VOICE_CONNECTION = DEFAULT_SPEECH_GENERATION_CONNECTION;
 
+function sanitizeThinkingConfig(raw: any): ThinkingOutputSettings | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const mode = ['auto', 'on', 'off', 'custom'].includes(raw.mode) ? raw.mode : 'auto';
+  const out: ThinkingOutputSettings = {
+    mode,
+  };
+  if (['minimal', 'low', 'medium', 'high'].includes(raw.reasoningEffort)) {
+    out.reasoningEffort = raw.reasoningEffort;
+  }
+  if (typeof raw.thinkingBudget === 'number' && Number.isFinite(raw.thinkingBudget)) {
+    out.thinkingBudget = Math.max(0, Math.round(raw.thinkingBudget));
+  }
+  if (typeof raw.customParamsJson === 'string') {
+    out.customParamsJson = raw.customParamsJson;
+  }
+  if (typeof raw.useStreaming === 'boolean') {
+    out.useStreaming = raw.useStreaming;
+  }
+  return out;
+}
+
 function cloneConn(c: ApiConnectionConfig): ApiConnectionConfig {
   return {
     provider: c.provider,
@@ -106,6 +130,8 @@ function cloneConn(c: ApiConnectionConfig): ApiConnectionConfig {
     model: c.model,
     apiProtocol: c.apiProtocol,
     ...(c.presetId ? { presetId: c.presetId } : {}),
+    ...(c.thinkingConfig ? { thinkingConfig: { ...c.thinkingConfig } } : {}),
+    ...(c.customHeaders ? { customHeaders: { ...c.customHeaders } } : {}),
   };
 }
 
@@ -183,6 +209,18 @@ function sanitizeConnection(
     }
   }
 
+  const thinkingConfig =
+    sanitizeThinkingConfig(src?.thinkingConfig) ??
+    sanitizeThinkingConfig(leg?.thinkingConfig) ??
+    (defaultConn.thinkingConfig ? { ...defaultConn.thinkingConfig } : undefined);
+
+  const customHeaders =
+    src?.customHeaders && typeof src.customHeaders === 'object' && !Array.isArray(src.customHeaders)
+      ? { ...src.customHeaders }
+      : leg?.customHeaders && typeof leg.customHeaders === 'object' && !Array.isArray(leg.customHeaders)
+      ? { ...leg.customHeaders }
+      : undefined;
+
   return {
     provider,
     baseUrl,
@@ -190,6 +228,8 @@ function sanitizeConnection(
     model,
     apiProtocol,
     ...(presetId ? { presetId } : {}),
+    ...(thinkingConfig ? { thinkingConfig } : {}),
+    ...(customHeaders ? { customHeaders } : {}),
   };
 }
 
@@ -388,6 +428,14 @@ export function mergeImportedApiSettings(imported: any): ApiSettings {
       model: nextModel,
       apiProtocol: nextProtocol,
       presetId: typeof src.presetId === 'string' ? src.presetId : current.presetId,
+      ...(sanitizeThinkingConfig(src.thinkingConfig) || current.thinkingConfig
+        ? { thinkingConfig: sanitizeThinkingConfig(src.thinkingConfig) || current.thinkingConfig }
+        : {}),
+      ...(src.customHeaders && typeof src.customHeaders === 'object'
+        ? { customHeaders: { ...src.customHeaders } }
+        : current.customHeaders
+        ? { customHeaders: { ...current.customHeaders } }
+        : {}),
     };
   };
 

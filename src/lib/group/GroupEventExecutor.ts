@@ -129,18 +129,26 @@ export async function executeGroupTimelinePlan(params: {
           return 'cancelled';
         }
 
-        // Attach thinking process on the first bubble of the round (or event-specific thinking)
+        // Attach ONLY real API reasoning on the first bubble of the round (never fabricated thinkingSummary)
         let bubbleThinking = '';
-        if (bIdx === 0) {
-          if (ev.thinkingProcess) {
-            bubbleThinking = ev.thinkingProcess;
-          } else if (!thinkingAttachedForRound && plan.thinkingSummary) {
-            bubbleThinking = plan.thinkingSummary;
+        if (bIdx === 0 && !thinkingAttachedForRound) {
+          if (ev.thinkingProcess && ev.thinkingProcess.trim()) {
+            bubbleThinking = ev.thinkingProcess.trim();
+          } else if (plan.thinkingProcess && plan.thinkingProcess.trim()) {
+            bubbleThinking = plan.thinkingProcess.trim();
           }
           if (bubbleThinking) {
             thinkingAttachedForRound = true;
           }
         }
+        const roundHasReasoning = Boolean(
+          plan.reasoningAvailable ||
+            (plan.thinkingProcess && plan.thinkingProcess.trim()) ||
+            bubbleThinking
+        );
+        const roundReasoningSource = roundHasReasoning
+          ? plan.reasoningSource || ev.reasoningSource || 'think_tag'
+          : 'none';
 
         // Deterministic message ID guarantees zero duplicate writes across restarts/retries
         const msgId = `gmsg_${plan.roundId}_${ev.eventId}_b${bIdx}`;
@@ -154,6 +162,9 @@ export async function executeGroupTimelinePlan(params: {
           text: bubbleText,
           timestamp: Date.now(),
           thinkingProcess: bubbleThinking || undefined,
+          reasoningAvailable: roundHasReasoning,
+          reasoningSource: roundReasoningSource,
+          reasoningStatus: roundHasReasoning ? 'available' : 'empty',
           mentionedMemberIds: bIdx === 0 && Array.isArray(ev.mentionedMemberIds) ? ev.mentionedMemberIds : [],
           roundId: plan.roundId,
           eventId: ev.eventId,

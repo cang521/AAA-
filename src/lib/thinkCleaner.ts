@@ -1,8 +1,10 @@
 /**
  * High-Reliability Thinking & Reply Sanitizer
  * Ensures NO <think>, </think>, "思考过程：", "Thinking Process", "reasoning_content"
- * ever leaks into standard chat bubbles.
+ * ever leaks into standard chat bubbles, and NEVER fabricates fake thinking templates.
  */
+
+import { extractApiReasoning } from './reasoningExtractor';
 
 export interface ThinkingCleanResult {
   thinkingProcess: string;
@@ -13,60 +15,23 @@ export function extractThinkingAndContent(
   rawText: string,
   extraReasoning?: string
 ): ThinkingCleanResult {
-  const thinkingParts: string[] = [];
+  const fromText = extractApiReasoning(rawText || '');
+  const parts: string[] = [];
 
   if (extraReasoning && extraReasoning.trim()) {
-    thinkingParts.push(extraReasoning.trim());
+    parts.push(extraReasoning.trim());
   }
-
-  let text = rawText || '';
-
-  // 1. Extract complete <think>...</think> blocks
-  const completeThinkRegex = /<think>([\s\S]*?)<\/think>/gi;
-  let match: RegExpExecArray | null;
-  while ((match = completeThinkRegex.exec(text)) !== null) {
-    const thinkContent = match[1].trim();
-    if (thinkContent) {
-      thinkingParts.push(thinkContent);
+  if (fromText.thinkingProcess && fromText.thinkingProcess.trim()) {
+    const trimmedFromText = fromText.thinkingProcess.trim();
+    if (!parts.includes(trimmedFromText)) {
+      parts.push(trimmedFromText);
     }
   }
-  text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
 
-  // 2. Handle unclosed <think>... blocks (e.g., model output stopped mid-think)
-  if (text.toLowerCase().includes('<think>')) {
-    const thinkIndex = text.toLowerCase().indexOf('<think>');
-    const unclosedContent = text.slice(thinkIndex + 7).trim();
-    if (unclosedContent) {
-      thinkingParts.push(unclosedContent);
-    }
-    text = text.slice(0, thinkIndex);
-  }
-
-  // 3. Remove leftover </think> if any
-  text = text.replace(/<\/think>/gi, '');
-
-  // 4. Handle prefix "思考过程：" / "Thinking Process:" / "Reasoning:" at start of text
-  const prefixMatch = text.match(/^(?:思考过程|Thinking Process|Reasoning)[:：]?\s*([\s\S]*?)(?:\n\n|\r\n\r\n|$)/i);
-  if (prefixMatch) {
-    if (prefixMatch[1].trim()) {
-      thinkingParts.push(prefixMatch[1].trim());
-    }
-    text = text.replace(/^(?:思考过程|Thinking Process|Reasoning)[:：]?\s*[\s\S]*?(?:\n\n|\r\n\r\n|$)/i, '');
-  }
-
-  // 5. Clean residual tags or headers from reply text
-  let cleanText = text
-    .replace(/<think>/gi, '')
-    .replace(/<\/think>/gi, '')
-    .replace(/^(?:思考过程|Thinking Process|Reasoning)[:：]?\s*/gi, '')
-    .replace(/reasoning_content[:：]?/gi, '')
-    .trim();
-
-  const thinkingProcess =
-    thinkingParts.filter(Boolean).join('\n\n') ||
-    '结合角色人设、个人回忆与历史对话，形成微信聊天的即时思考过程。';
-
-  return { thinkingProcess, cleanText };
+  return {
+    thinkingProcess: parts.filter(Boolean).join('\n\n'),
+    cleanText: fromText.text,
+  };
 }
 
 export function sanitizeReplyText(text: string): string {
@@ -74,17 +39,17 @@ export function sanitizeReplyText(text: string): string {
 
   let clean = text;
 
-  // Remove full <think>...</think>
-  clean = clean.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  // Remove full <think>...</think> and <thinking>...</thinking>
+  clean = clean.replace(/<(think|thinking)>[\s\S]*?<\/\1>/gi, '');
 
-  // Remove unclosed <think>... to end
-  clean = clean.replace(/<think>[\s\S]*/gi, '');
+  // Remove unclosed <think>... or <thinking>... to end
+  clean = clean.replace(/<(think|thinking)>[\s\S]*/gi, '');
 
   // Remove residual tags & headers
   clean = clean
-    .replace(/<\/think>/gi, '')
-    .replace(/^(?:思考过程|Thinking Process|Reasoning)[:：]?\s*/gi, '')
-    .replace(/reasoning_content[:：]?/gi, '')
+    .replace(/<\/(?:think|thinking)>/gi, '')
+    .replace(/^(?:思考过程|Thinking Process|Reasoning)\s*[:：]\s*/gi, '')
+    .replace(/reasoning_content\s*[:：]?/gi, '')
     .trim();
 
   return clean;

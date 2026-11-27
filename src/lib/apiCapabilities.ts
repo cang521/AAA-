@@ -4,6 +4,8 @@
  * model capability classifier, and sensitive log sanitizer.
  */
 
+import { ThinkingOutputSettings } from '../types';
+
 export type ApiCapabilityCategory =
   | 'text_generation'
   | 'image_generation'
@@ -468,6 +470,32 @@ export interface ResolvedTextGenerationConfig {
   apiProtocol: ApiProtocolType;
   customHeaders?: Record<string, string>;
   timeoutMs: number;
+  thinkingConfig?: ThinkingOutputSettings;
+}
+
+export function parseCustomThinkingParamsJson(raw?: string): {
+  ok: boolean;
+  params?: Record<string, any>;
+  error?: string;
+} {
+  if (!raw || !raw.trim()) {
+    return { ok: true, params: {} };
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {
+        ok: false,
+        error: '自定义思考参数必须是 JSON 对象格式（例如 {"reasoning_effort": "high"}）',
+      };
+    }
+    return { ok: true, params: parsed as Record<string, any> };
+  } catch (e: any) {
+    return {
+      ok: false,
+      error: `自定义思考参数 JSON 语法无效: ${e?.message || '解析失败'}`,
+    };
+  }
 }
 
 /**
@@ -559,6 +587,13 @@ export function resolveTextGenerationConfig(
       ? Number(nestedText.timeoutMs)
       : 45000;
 
+  const thinkingConfig =
+    nestedText?.thinkingConfig && typeof nestedText.thinkingConfig === 'object'
+      ? nestedText.thinkingConfig
+      : apiConfig?.thinkingConfig && typeof apiConfig.thinkingConfig === 'object'
+      ? apiConfig.thinkingConfig
+      : undefined;
+
   return {
     apiKey,
     baseUrl,
@@ -567,5 +602,6 @@ export function resolveTextGenerationConfig(
     apiProtocol,
     customHeaders,
     timeoutMs,
+    thinkingConfig,
   };
 }

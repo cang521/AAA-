@@ -520,11 +520,13 @@ export function normalizeGroupRoundPlan(params: {
       ? data.roundId.trim()
       : fallbackRoundId;
   const thinkingSummary =
-    typeof data?.thinkingSummary === 'string'
-      ? data.thinkingSummary.trim()
-      : typeof data?.thinkingProcess === 'string'
-        ? data.thinkingProcess.trim()
-        : '';
+    typeof data?.thinkingSummary === 'string' ? data.thinkingSummary.trim() : '';
+  const realThinkingProcess =
+    typeof data?.thinkingProcess === 'string' && data.thinkingProcess.trim()
+      ? data.thinkingProcess.trim()
+      : undefined;
+  const reasoningAvailable = Boolean(data?.reasoningAvailable && realThinkingProcess) || Boolean(realThinkingProcess);
+  const reasoningSource = reasoningAvailable ? data?.reasoningSource || 'think_tag' : 'none';
 
   const rawEvents: any[] = [];
 
@@ -542,7 +544,9 @@ export function normalizeGroupRoundPlan(params: {
         text: r.text,
         delayMs: idx === 0 ? 700 : 950,
         mentionedMemberIds: Array.isArray(r.mentionedMemberIds) ? r.mentionedMemberIds : [],
-        thinkingProcess: r.thinkingProcess || '',
+        thinkingProcess: idx === 0 ? realThinkingProcess || '' : '',
+        reasoningAvailable: idx === 0 ? reasoningAvailable : false,
+        reasoningSource: idx === 0 ? reasoningSource : 'none',
       });
     });
   } else if (data?.shouldRespond !== false && typeof data?.text === 'string' && data.text.trim()) {
@@ -555,7 +559,9 @@ export function normalizeGroupRoundPlan(params: {
       text: data.text,
       delayMs: 750,
       mentionedMemberIds: Array.isArray(data.mentionedMemberIds) ? data.mentionedMemberIds : [],
-      thinkingProcess: data.thinkingProcess || '',
+      thinkingProcess: realThinkingProcess || '',
+      reasoningAvailable,
+      reasoningSource,
     });
   }
 
@@ -614,6 +620,8 @@ export function normalizeGroupRoundPlan(params: {
           typeof raw.thinkingProcess === 'string' && raw.thinkingProcess.trim()
             ? raw.thinkingProcess.trim()
             : undefined,
+        reasoningAvailable: Boolean(raw.reasoningAvailable),
+        reasoningSource: raw.reasoningSource,
       };
       events.push(msgEvent);
     } else if (rawType === 'vote_poll') {
@@ -722,6 +730,9 @@ export function normalizeGroupRoundPlan(params: {
     roundId,
     shouldRespond: data?.shouldRespond !== false && events.length > 0,
     thinkingSummary: thinkingSummary || undefined,
+    thinkingProcess: realThinkingProcess,
+    reasoningAvailable,
+    reasoningSource,
     events,
   };
 }

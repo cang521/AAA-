@@ -481,6 +481,9 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(
       prev.msg.generationError === next.msg.generationError &&
       prev.msg.revisedPrompt === next.msg.revisedPrompt &&
       prev.msg.thinkingProcess === next.msg.thinkingProcess &&
+      prev.msg.reasoningStatus === next.msg.reasoningStatus &&
+      prev.msg.reasoningAvailable === next.msg.reasoningAvailable &&
+      prev.msg.reasoningSource === next.msg.reasoningSource &&
       prev.msg.isRefreshed === next.msg.isRefreshed &&
       prev.msg.turnId === next.msg.turnId &&
       prev.quoteText === next.quoteText &&

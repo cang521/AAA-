@@ -237,7 +237,8 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
 
       const res = await proactiveEngine.generateProactiveMessage(targetChar, candidate, userProfile, apiConfig);
       setTestResultText(res.text);
-      setTestThinking(res.thinkingProcess || '结合角色人设生成试发主动消息。');
+      const realThinking = typeof res.thinkingProcess === 'string' ? res.thinkingProcess.trim() : '';
+      setTestThinking(realThinking);
 
       if (testModeSendToChat && res.text) {
         // Direct test send without re-evaluating real triggers or modifying event states
@@ -1303,9 +1304,11 @@ export const ProactiveSettingsPanel: React.FC<ProactiveSettingsPanelProps> = ({ 
                   <span className="text-[10px] text-zinc-400 font-mono">Status: 200 OK</span>
                 </div>
 
-                {testThinking && (
+                {testThinking !== null && (
                   <div className="p-2 rounded-lg bg-black/40 text-[10px] text-amber-200/80 font-mono whitespace-pre-wrap leading-relaxed">
-                    💡 思考链: {testThinking}
+                    {testThinking
+                      ? `💡 原始思考内容:\n${testThinking}`
+                      : '当前模型或中转站未返回思考内容。这不代表模型没有进行内部推理，可能是该模型不开放，或中转站未透传相关字段。'}
                   </div>
                 )}
 

@@ -99,6 +99,7 @@ import {
   GroupJoinRequest,
   AiRomanticState,
   ForwardBundlePayload,
+  ReasoningSource,
 } from '../../types';
 import { ImagePickerModal } from '../ImagePickerModal';
 import { CustomAiCreatorModal } from './CustomAiCreatorModal';
@@ -1154,6 +1155,8 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
     character: AiCharacter,
     options?: {
       vibrationPattern?: number[];
+      reasoningSource?: ReasoningSource;
+      turnId?: string;
     }
   ) => {
     const cleanRawText = sanitizeReplyText(rawText);
@@ -1166,6 +1169,14 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
 
     if (!bubbles || bubbles.length === 0) return;
 
+    const trimmedThinking = typeof thinkingProcess === 'string' ? thinkingProcess.trim() : '';
+    const reasoningAvailable = trimmedThinking.length > 0;
+    const reasoningSource: ReasoningSource = reasoningAvailable
+      ? options?.reasoningSource || 'think_tag'
+      : 'none';
+    const reasoningStatus: ChatMessage['reasoningStatus'] = reasoningAvailable ? 'available' : 'empty';
+    const turnId = options?.turnId || `turn_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
     if (bubbles.length === 1) {
       const aiMsg: ChatMessage = {
         id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
@@ -1173,7 +1184,13 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         sender: 'ai',
         text: bubbles[0],
         timestamp: Date.now(),
-        thinkingProcess,
+        thinkingProcess: reasoningAvailable ? trimmedThinking : undefined,
+        reasoningAvailable,
+        reasoningSource,
+        reasoningStatus,
+        turnId,
+        turnBubbleIndex: 0,
+        turnTotalBubbles: 1,
       };
       setDisplayedMessages((prev) => [...prev, aiMsg]);
       setTotalHistoryCount((c) => c + 1);
@@ -1217,10 +1234,13 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         sender: 'ai',
         text: bubbleText,
         timestamp: Date.now() + i * 15,
-        thinkingProcess:
-          i === 0
-            ? thinkingProcess
-            : `${thinkingProcess}\n\n[连发第 ${i + 1}/${bubbles.length} 条消息]`,
+        thinkingProcess: i === 0 && reasoningAvailable ? trimmedThinking : undefined,
+        reasoningAvailable,
+        reasoningSource,
+        reasoningStatus,
+        turnId,
+        turnBubbleIndex: i,
+        turnTotalBubbles: bubbles.length,
       };
 
       setDisplayedMessages((prev) => [...prev, bubbleMsg]);
@@ -1280,11 +1300,11 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
       const data = await res.json();
       if (data.success && data.text) {
         const thinkingProcess =
-          data.thinkingProcess ||
-          `【生理周期关怀思考】:\n1. 感知用户生理阶段：${cycleStats.phaseTitle}\n2. 阶段关怀建议：${cycleStats.phaseAdvice}\n3. 结合【${activeCharacter.name}】人设严防OOC输出。`;
+          typeof data.thinkingProcess === 'string' ? data.thinkingProcess.trim() : '';
 
         await deliverAiMessagesInSequence(data.text, thinkingProcess, activeCharacter, {
           vibrationPattern: [80, 50, 80],
+          reasoningSource: data.reasoningSource,
         });
 
         if (data.apiLog) onAddApiLog(data.apiLog);
@@ -1295,8 +1315,7 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         cycleStats.currentPeriodDay !== null
           ? `${activeCharacter.name}: 看到你今天在经期第 ${cycleStats.currentPeriodDay} 天，肚子会不会不舒服？一定要多喝温水、注意保暖，别太累了哦，有任何事随时跟我说。🌸`
           : `${activeCharacter.name}: 提醒你一下哦，还有 ${cycleStats.daysUntilNextPeriod} 天就要来例假了，提前备好温水和保暖物品，这几天别贪凉啦！❤️`;
-      const fallbackThinking = `【本地经期关怀引擎】:\n1. 捕获经期数据\n2. 触发人设主动问候。`;
-      await deliverAiMessagesInSequence(fallbackText, fallbackThinking, activeCharacter);
+      await deliverAiMessagesInSequence(fallbackText, '', activeCharacter);
     } finally {
       setIsLoading(false);
     }
@@ -1658,13 +1677,50 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
   };
 
   const handleOpenCoT = (msgId: string) => {
-    const targetMsg = (latestMessagesRef.current || displayedMessages).find((m) => m.id === msgId);
-    if (!targetMsg || !targetMsg.thinkingProcess) {
-      setMultiBubbleToast('该条消息暂无思考记录');
-      setTimeout(() => setMultiBubbleToast(null), 2000);
-      return;
-    }
     setShowCoTModal(msgId);
+  };
+
+  const resolveTurnThinkingForMessage = (msgId: string): {
+    status: 'available' | 'empty' | 'failed';
+    text: string;
+    source?: ReasoningSource;
+  } => {
+    if (msgId === '__failed__') {
+      return { status: 'failed', text: '' };
+    }
+    const pool = latestMessagesRef.current?.length ? latestMessagesRef.current : displayedMessages;
+    const targetMsg = pool.find((m) => m.id === msgId) || displayedMessages.find((m) => m.id === msgId);
+    if (!targetMsg) {
+      return { status: 'empty', text: '' };
+    }
+
+    const directThinking = typeof targetMsg.thinkingProcess === 'string' ? targetMsg.thinkingProcess.trim() : '';
+    if (directThinking) {
+      return {
+        status: 'available',
+        text: directThinking,
+        source: targetMsg.reasoningSource,
+      };
+    }
+
+    if (targetMsg.turnId) {
+      const siblingWithThinking = pool.find(
+        (m) => m.turnId === targetMsg.turnId && typeof m.thinkingProcess === 'string' && m.thinkingProcess.trim().length > 0
+      );
+      if (siblingWithThinking?.thinkingProcess) {
+        return {
+          status: 'available',
+          text: siblingWithThinking.thinkingProcess.trim(),
+          source: siblingWithThinking.reasoningSource || targetMsg.reasoningSource,
+        };
+      }
+    }
+
+    if (targetMsg.reasoningStatus === 'failed') {
+      return { status: 'failed', text: '' };
+    }
+
+    return { status: 'empty', text: '' };
   };
 
   // Add custom AI character (Requirement 11) — atomic verified persistence
@@ -2339,6 +2395,13 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setShowCoTModal('__failed__')}
+                              className="wx-secondary-text px-2 py-1 rounded-lg text-[11px] text-rose-300/90 hover:text-rose-100 transition cursor-pointer"
+                            >
+                              思考状态
+                            </button>
                             <button
                               type="button"
                               onClick={() => {
@@ -3837,40 +3900,61 @@ export const WeChatApp: React.FC<WeChatAppProps> = ({
         </div>
       )}
 
-      {/* Thinking Process / Chain-of-Thought (CoT) Modal */}
-      {showCoTModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="wx-modal-card w-full max-w-sm rounded-3xl bg-zinc-900 border border-amber-500/40 p-4 text-white shadow-2xl space-y-3">
-            <div className="wx-divider flex items-center justify-between border-b border-zinc-800 pb-2">
-              <div className="flex items-center gap-2">
-                <Brain className="w-5 h-5 text-amber-500" />
-                <h3 className="wx-primary-text font-semibold text-sm text-amber-300">AI 思考与推理链路 (CoT)</h3>
+      {/* Thinking Process / Chain-of-Thought Modal */}
+      {showCoTModal && (() => {
+        const resolved = resolveTurnThinkingForMessage(showCoTModal);
+        const sourceLabel =
+          resolved.status === 'available'
+            ? resolved.source && resolved.source !== 'none'
+              ? `来源字段: ${resolved.source}`
+              : 'API 原始返回'
+            : resolved.status === 'failed'
+            ? '请求未完成'
+            : '接口未返回思考字段';
+
+        return (
+          <div
+            onClick={() => setShowCoTModal(null)}
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="wx-modal-card w-full max-w-sm rounded-3xl bg-zinc-900 border border-amber-500/40 p-4 text-white shadow-2xl space-y-3"
+            >
+              <div className="wx-divider flex items-center justify-between border-b border-zinc-800 pb-2">
+                <div className="flex items-center gap-2">
+                  <Brain className="w-5 h-5 text-amber-500" />
+                  <h3 className="wx-primary-text font-semibold text-sm text-amber-300">AI 思考与推理</h3>
+                </div>
+                <button
+                  onClick={() => setShowCoTModal(null)}
+                  className="wx-muted-text text-zinc-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-              <button
-                onClick={() => setShowCoTModal(null)}
-                className="wx-muted-text text-zinc-400 hover:text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            <div className="wx-sub-card wx-primary-text max-h-72 overflow-y-auto bg-zinc-950 p-3 rounded-2xl border border-zinc-800 text-xs font-mono leading-relaxed text-zinc-300 whitespace-pre-wrap">
-              {displayedMessages.find((m) => m.id === showCoTModal)?.thinkingProcess ||
-                '该条消息生成时暂未附带详细思考链数据。'}
-            </div>
+              <div className="wx-sub-card wx-primary-text max-h-72 overflow-y-auto bg-zinc-950 p-3 rounded-2xl border border-zinc-800 text-xs font-mono leading-relaxed text-zinc-300 whitespace-pre-wrap">
+                {resolved.status === 'available'
+                  ? resolved.text
+                  : resolved.status === 'failed'
+                  ? '本次请求未成功完成，无法获取思考内容。'
+                  : '当前模型或中转站未返回思考内容。这不代表模型没有进行内部推理，可能是该模型不开放，或中转站未透传相关字段。'}
+              </div>
 
-            <div className="wx-divider pt-2 border-t border-zinc-800 flex justify-between items-center text-[10px] text-zinc-500">
-              <span className="wx-muted-text">基于 Gemini 深度推理引擎分析</span>
-              <button
-                onClick={() => setShowCoTModal(null)}
-                className="wx-btn-secondary px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs cursor-pointer"
-              >
-                关闭
-              </button>
+              <div className="wx-divider pt-2 border-t border-zinc-800 flex justify-between items-center text-[10px] text-zinc-500">
+                <span className="wx-muted-text">{sourceLabel}</span>
+                <button
+                  onClick={() => setShowCoTModal(null)}
+                  className="wx-btn-secondary px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs cursor-pointer"
+                >
+                  关闭
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Message Long Press Menu */}
       {msgLongPressMenu && (

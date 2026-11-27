@@ -44,6 +44,7 @@ import {
   UserProfile,
   ApiConfig,
   ApiLog,
+  ReasoningSource,
 } from '../../../types';
 import { GroupSettingsModal } from './GroupSettingsModal';
 import { GroupAvatar } from './GroupAvatar';
@@ -101,7 +102,12 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
   const [showMentionPicker, setShowMentionPicker] = useState(false);
   const [taskStatusInfo, setTaskStatusInfo] = useState<GroupActivePlaybackIndicator | null>(null);
   const [activeLongPressMsg, setActiveLongPressMsg] = useState<GroupChatMessage | null>(null);
-  const [showCoTModal, setShowCoTModal] = useState<string | null>(null);
+  const [showCoTModal, setShowCoTModal] = useState<{
+    status: 'available' | 'empty' | 'failed';
+    text: string;
+    source?: ReasoningSource;
+    senderName?: string;
+  } | null>(null);
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [showRelayModal, setShowRelayModal] = useState(false);
   const [showPollModal, setShowPollModal] = useState(false);
@@ -983,13 +989,60 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
                     e.stopPropagation();
                     if (isMe) return;
                     if (msg.senderType === 'ai' || msg.thinkingProcess) {
-                      setShowCoTModal(msg.thinkingProcess || '该条消息生成时暂未附带详细思考链数据。');
+                      const pool = messagesRef.current?.length ? messagesRef.current : messages;
+                      const directThinking =
+                        typeof msg.thinkingProcess === 'string' ? msg.thinkingProcess.trim() : '';
+                      let resolvedText = directThinking;
+                      let resolvedSource = msg.reasoningSource;
+
+                      if (!resolvedText && msg.roundId) {
+                        const siblingSameSender = pool.find(
+                          (m) =>
+                            m.roundId === msg.roundId &&
+                            m.senderId === msg.senderId &&
+                            typeof m.thinkingProcess === 'string' &&
+                            m.thinkingProcess.trim().length > 0
+                        );
+                        const siblingAny =
+                          siblingSameSender ||
+                          pool.find(
+                            (m) =>
+                              m.roundId === msg.roundId &&
+                              typeof m.thinkingProcess === 'string' &&
+                              m.thinkingProcess.trim().length > 0
+                          );
+                        if (siblingAny?.thinkingProcess) {
+                          resolvedText = siblingAny.thinkingProcess.trim();
+                          resolvedSource = siblingAny.reasoningSource || resolvedSource;
+                        }
+                      }
+
+                      if (resolvedText) {
+                        setShowCoTModal({
+                          status: 'available',
+                          text: resolvedText,
+                          source: resolvedSource,
+                          senderName: msg.senderName,
+                        });
+                      } else if (msg.reasoningStatus === 'failed') {
+                        setShowCoTModal({
+                          status: 'failed',
+                          text: '',
+                          senderName: msg.senderName,
+                        });
+                      } else {
+                        setShowCoTModal({
+                          status: 'empty',
+                          text: '',
+                          senderName: msg.senderName,
+                        });
+                      }
                     } else {
                       appendMentionText(`@${msg.senderName} `);
                     }
                   }}
                   className="relative cursor-pointer shrink-0"
-                  title={msg.senderType === 'ai' || msg.thinkingProcess ? '点击查看 AI 思考链 (CoT)' : `点击快捷@${msg.senderName}`}
+                  title={msg.senderType === 'ai' || msg.thinkingProcess ? '点击查看 AI 思考与推理' : `点击快捷@${msg.senderName}`}
                 >
                   <img
                     src={
@@ -1178,14 +1231,23 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               {failedTaskError && (
-                <button
-                  type="button"
-                  onClick={() => void groupReplyTaskManager.retryFailedTask(group.id)}
-                  className="px-2.5 py-1 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] transition flex items-center gap-1 active:scale-95 cursor-pointer shadow-xs"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  <span>重试</span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowCoTModal({ status: 'failed', text: '' })}
+                    className="px-2 py-1 rounded-xl text-rose-600 dark:text-rose-300 hover:bg-rose-500/10 font-medium text-[11px] transition cursor-pointer"
+                  >
+                    思考状态
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void groupReplyTaskManager.retryFailedTask(group.id)}
+                    className="px-2.5 py-1 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] transition flex items-center gap-1 active:scale-95 cursor-pointer shadow-xs"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>重试</span>
+                  </button>
+                </>
               )}
               <button
                 type="button"
@@ -1451,22 +1513,52 @@ export const GroupChatView: React.FC<GroupChatViewProps> = ({
 
       {/* Thinking Process Modal */}
       {showCoTModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="wx-modal-card w-full max-w-xs bg-white dark:bg-zinc-900 rounded-3xl p-4 shadow-2xl border border-purple-500/30 space-y-3">
+        <div
+          onClick={() => setShowCoTModal(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="wx-modal-card w-full max-w-sm bg-white dark:bg-zinc-900 rounded-3xl p-4 shadow-2xl border border-purple-500/30 space-y-3"
+          >
             <div className="wx-primary-text flex items-center justify-between font-bold text-xs text-purple-600 dark:text-purple-400">
               <div className="flex items-center gap-1.5">
                 <Brain className="w-4 h-4" />
-                <span>AI 心理活动与推理决策</span>
+                <span>
+                  AI 思考与推理{showCoTModal.senderName ? ` · ${showCoTModal.senderName}` : ''}
+                </span>
               </div>
               <button
                 onClick={() => setShowCoTModal(null)}
-                className="wx-muted-text text-zinc-400 hover:text-zinc-600"
+                className="wx-muted-text text-zinc-400 hover:text-zinc-600 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="wx-sub-card wx-primary-text p-3 rounded-2xl bg-purple-500/10 text-xs text-zinc-700 dark:text-zinc-300 leading-relaxed max-h-60 overflow-y-auto whitespace-pre-wrap">
-              {showCoTModal}
+            <div className="wx-sub-card wx-primary-text p-3 rounded-2xl bg-purple-500/10 text-xs text-zinc-700 dark:text-zinc-300 leading-relaxed max-h-64 overflow-y-auto whitespace-pre-wrap font-mono">
+              {showCoTModal.status === 'available'
+                ? showCoTModal.text
+                : showCoTModal.status === 'failed'
+                ? '本次请求未成功完成，无法获取思考内容。'
+                : '当前模型或中转站未返回思考内容。这不代表模型没有进行内部推理，可能是该模型不开放，或中转站未透传相关字段。'}
+            </div>
+            <div className="flex items-center justify-between pt-1 text-[10px] text-zinc-500">
+              <span className="wx-muted-text">
+                {showCoTModal.status === 'available'
+                  ? showCoTModal.source && showCoTModal.source !== 'none'
+                    ? `来源字段: ${showCoTModal.source}`
+                    : 'API 原始返回'
+                  : showCoTModal.status === 'failed'
+                  ? '请求未完成'
+                  : '接口未返回思考字段'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowCoTModal(null)}
+                className="wx-btn-secondary px-3 py-1 rounded-xl bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 text-xs cursor-pointer"
+              >
+                关闭
+              </button>
             </div>
           </div>
         </div>

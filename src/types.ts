@@ -280,6 +280,9 @@ export interface ChatMessage {
   model?: string;
   timestamp: number;
   thinkingProcess?: string;
+  reasoningAvailable?: boolean;
+  reasoningSource?: ReasoningSource;
+  reasoningStatus?: 'available' | 'empty' | 'failed';
   quoteMessageId?: string;
   isRefreshed?: boolean;
   turnId?: string;
@@ -460,6 +463,9 @@ export interface GroupChatMessage {
     text: string;
   };
   thinkingProcess?: string;
+  reasoningAvailable?: boolean;
+  reasoningSource?: ReasoningSource;
+  reasoningStatus?: 'available' | 'empty' | 'failed';
   roundId?: string;
   eventId?: string;
   bubbleIndex?: number;
@@ -591,6 +597,9 @@ export interface ApiLog {
   contextSummarizedCount?: number;
   contextEstimatedTokens?: number;
   contextCompressed?: boolean;
+  reasoningAvailable?: boolean;
+  reasoningSource?: ReasoningSource;
+  reasoningCharCount?: number;
 }
 
 export interface AppUsageDetail {
@@ -716,6 +725,59 @@ export interface ModelTestResult {
   errorType?: string;
 }
 
+export type ReasoningSource =
+  | 'reasoning_content'
+  | 'reasoning'
+  | 'thinking'
+  | 'gemini_thought_part'
+  | 'think_tag'
+  | 'none';
+
+export type ThinkingOutputMode = 'auto' | 'on' | 'off' | 'custom';
+export type ReasoningEffortLevel = 'minimal' | 'low' | 'medium' | 'high';
+
+export interface ThinkingOutputSettings {
+  mode: ThinkingOutputMode;
+  reasoningEffort?: ReasoningEffortLevel;
+  thinkingBudget?: number;
+  customParamsJson?: string;
+  useStreaming?: boolean;
+}
+
+export interface ThinkingDiagnosticResult {
+  success: boolean;
+  connectionOk?: boolean;
+  answerOk?: boolean;
+  answerReturned?: boolean;
+  latencyMs: number;
+  httpStatus?: number;
+  model: string;
+  apiProtocol: string;
+  answerPreview?: string;
+  reasoningAvailable: boolean;
+  reasoningSource: ReasoningSource;
+  detectedFields: string[];
+  reasoningPreview?: string;
+  thinkingPreview?: string;
+  reasoningCharCount?: number;
+  thinkingCharCount?: number;
+  answerCharCount?: number;
+  streamingSupported: boolean;
+  nonStreamingSupported?: boolean;
+  streamingReasoningAvailable: boolean;
+  nonStreamingReasoningAvailable?: boolean;
+  streamingReasoningSource?: ReasoningSource;
+  streamingDetectedFields?: string[];
+  streamingThinkingPreview?: string;
+  hasThoughtSignatureOnly?: boolean;
+  likelyUpstreamStripped: boolean;
+  noticeMessage?: string;
+  diagnosticMessage?: string;
+  sanitizedResponseStructure?: any;
+  error?: string;
+  errorType?: string;
+}
+
 export interface SingleApiConfig {
   provider: string;
   baseUrl: string;
@@ -723,6 +785,8 @@ export interface SingleApiConfig {
   model: string;
   apiProtocol?: string;
   presetId?: string;
+  thinkingConfig?: ThinkingOutputSettings;
+  customHeaders?: Record<string, string>;
 }
 
 export interface ApiConfig {

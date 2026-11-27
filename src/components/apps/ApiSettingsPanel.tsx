@@ -7,6 +7,10 @@ import {
   ConnectionTestResult,
   ModelFetchResult,
   ModelTestResult,
+  ThinkingDiagnosticResult,
+  ThinkingOutputMode,
+  ReasoningEffortLevel,
+  ThinkingOutputSettings,
 } from '../../types';
 import {
   ApiSettings,
@@ -19,6 +23,7 @@ import {
   getPresetsByCategory,
   maskApiKey,
   sanitizeSensitiveText,
+  parseCustomThinkingParamsJson,
 } from '../../lib/apiCapabilities';
 import {
   testImageGenerationConnection,
@@ -45,6 +50,10 @@ import {
   Loader2,
   Sparkles,
   Info,
+  Brain,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
 } from 'lucide-react';
 import { StableTextInput } from '../common/StableTextInput';
 
@@ -206,6 +215,10 @@ export interface ApiSettingsPanelProps {
   modelTestResult: ModelTestResult | null;
   handleTestSelectedModel: () => Promise<void>;
 
+  isTestingThinking?: boolean;
+  thinkingDiagnostic?: ThinkingDiagnosticResult | null;
+  handleTestThinking?: () => Promise<void>;
+
   handleGlobalSave: () => void;
 }
 
@@ -223,6 +236,9 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   isFetchingModels,
   modelFetchResult,
   handleFetchModels,
+  isTestingThinking = false,
+  thinkingDiagnostic = null,
+  handleTestThinking,
   handleGlobalSave,
 }) => {
   const activeSlot = resolveActiveSlot(activeCategory, recognitionSubTab);
@@ -259,6 +275,7 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   const [testRecFileName, setTestRecFileName] = useState<string>('');
   const [isTestingImageRec, setIsTestingImageRec] = useState(false);
   const [imageRecTestResult, setImageRecTestResult] = useState<ImageRecognitionTestResult | null>(null);
+  const [showRawSchemaJson, setShowRawSchemaJson] = useState(false);
 
   useEffect(() => {
     persistCustomPresets(customPresets);
@@ -466,6 +483,24 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   const activeBaseUrl = currentConfig.baseUrl || '';
   const activeModel = currentConfig.model || '';
   const activeProtocol = currentConfig.apiProtocol || 'google_native';
+
+  const thinkingCfg: ThinkingOutputSettings = currentConfig.thinkingConfig || {
+    mode: 'auto',
+    useStreaming: false,
+  };
+  const customJsonValidation =
+    thinkingCfg.mode === 'custom'
+      ? parseCustomThinkingParamsJson(thinkingCfg.customParamsJson)
+      : { ok: true };
+
+  const patchThinkingConfig = (patch: Partial<ThinkingOutputSettings>) => {
+    patchCurrent({
+      thinkingConfig: {
+        ...thinkingCfg,
+        ...patch,
+      },
+    });
+  };
 
   return (
     <div className="api-settings-panel-root settings-section-card rounded-2xl bg-zinc-950 border border-zinc-850 p-4 sm:p-5 space-y-4 text-zinc-200">
@@ -766,6 +801,168 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
           </div>
         </div>
 
+        {/* ================= 6. 思考输出设置 (仅 text_generation) ================= */}
+        {activeSlot === 'text_generation' && (
+          <div className="settings-sub-card p-3.5 rounded-xl bg-zinc-900/75 border border-zinc-800 space-y-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-100">
+                  <Brain className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>6. 思考输出设置</span>
+                </div>
+                <p className="text-[10px] text-zinc-400 mt-0.5 leading-relaxed">
+                  可选请求参数控制，默认“自动检测”仅接收上游原生返回，不会强行注入厂商私有字段。
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 gap-1.5">
+              {(
+                [
+                  { id: 'auto', label: '自动检测' },
+                  { id: 'on', label: '开启' },
+                  { id: 'off', label: '关闭' },
+                  { id: 'custom', label: '自定义JSON' },
+                ] as Array<{ id: ThinkingOutputMode; label: string }>
+              ).map((opt) => {
+                const selected = thinkingCfg.mode === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => patchThinkingConfig({ mode: opt.id })}
+                    className={`settings-option-btn py-1.5 px-2 rounded-lg border text-[11px] font-medium transition cursor-pointer ${
+                      selected
+                        ? 'settings-option-btn--active bg-zinc-800 border-amber-500/60 text-amber-300'
+                        : 'bg-zinc-950/60 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {thinkingCfg.mode === 'on' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                <div className="space-y-1">
+                  <label className="text-[11px] text-zinc-400 block">推理强度 (Effort / Level)</label>
+                  <select
+                    value={thinkingCfg.reasoningEffort || 'medium'}
+                    onChange={(e) =>
+                      patchThinkingConfig({
+                        reasoningEffort: e.target.value as ReasoningEffortLevel,
+                      })
+                    }
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs focus:outline-none focus:border-zinc-500"
+                  >
+                    <option value="minimal">Minimal (极简)</option>
+                    <option value="low">Low (低)</option>
+                    <option value="medium">Medium (中)</option>
+                    <option value="high">High (高)</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] text-zinc-400 block">
+                    思考预算 Tokens (可选，Gemini 4 自动使用 ThinkingLevel)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={65536}
+                    step={256}
+                    placeholder="如 4096（留空由模型决定）"
+                    value={
+                      typeof thinkingCfg.thinkingBudget === 'number'
+                        ? String(thinkingCfg.thinkingBudget)
+                        : ''
+                    }
+                    onChange={(e) => {
+                      const raw = e.target.value.trim();
+                      if (!raw) {
+                        patchThinkingConfig({ thinkingBudget: undefined });
+                      } else {
+                        const num = parseInt(raw, 10);
+                        if (Number.isFinite(num) && num >= 0) {
+                          patchThinkingConfig({ thinkingBudget: num });
+                        }
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs font-mono focus:outline-none focus:border-zinc-500"
+                  />
+                </div>
+              </div>
+            )}
+
+            {thinkingCfg.mode === 'custom' && (
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-[11px] text-zinc-400">
+                    自定义思考参数 (仅发送合法 JSON 对象键值)
+                  </label>
+                  <span
+                    className={`text-[10px] ${
+                      customJsonValidation.ok ? 'settings-status-ok text-emerald-400' : 'settings-status-err text-rose-400'
+                    }`}
+                  >
+                    {customJsonValidation.ok ? 'JSON 格式有效' : '格式错误'}
+                  </span>
+                </div>
+
+                <textarea
+                  rows={3}
+                  value={thinkingCfg.customParamsJson || ''}
+                  onChange={(e) => patchThinkingConfig({ customParamsJson: e.target.value })}
+                  placeholder='例如: {"reasoning_effort": "high"} 或 {"enable_thinking": true}'
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:border-zinc-500 select-text"
+                />
+
+                {!customJsonValidation.ok && customJsonValidation.error && (
+                  <p className="text-[10px] text-rose-400">{customJsonValidation.error}</p>
+                )}
+
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { label: 'reasoning_effort', json: '{"reasoning_effort": "high"}' },
+                    { label: 'enable_thinking', json: '{"enable_thinking": true}' },
+                    {
+                      label: 'Gemini includeThoughts',
+                      json: '{"thinkingConfig": {"includeThoughts": true, "thinkingBudget": 4096}}',
+                    },
+                  ].map((chip) => (
+                    <button
+                      key={chip.label}
+                      type="button"
+                      onClick={() => patchThinkingConfig({ customParamsJson: chip.json })}
+                      className="settings-option-btn px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-[10px] font-mono text-zinc-300 transition cursor-pointer"
+                    >
+                      + {chip.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <label className="flex items-center justify-between gap-2 pt-1.5 border-t border-zinc-800/80 settings-card-divider cursor-pointer">
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium text-zinc-200">
+                  优先使用流式 (SSE) 接收思考过程
+                </div>
+                <div className="text-[10px] text-zinc-500">
+                  部分中转站或推理模型仅在 stream=true 时透传 delta 思考字段
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={Boolean(thinkingCfg.useStreaming)}
+                onChange={(e) => patchThinkingConfig({ useStreaming: e.target.checked })}
+                className="w-4 h-4 rounded accent-sky-500 shrink-0"
+              />
+            </label>
+          </div>
+        )}
+
         {/* ================= Real Image Recognition Test Picker (Only in recognition.image) ================= */}
         {activeSlot === 'image_recognition' && (
           <div className="p-3.5 rounded-xl bg-zinc-900/75 border border-indigo-500/25 space-y-3">
@@ -990,6 +1187,25 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             </button>
           </div>
 
+          {activeSlot === 'text_generation' && handleTestThinking && (
+            <button
+              type="button"
+              onClick={() => {
+                setShowRawSchemaJson(false);
+                void handleTestThinking();
+              }}
+              disabled={isTestingThinking}
+              className="settings-option-btn w-full py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-amber-500/35 text-amber-300 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+            >
+              {isTestingThinking ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Brain className="w-3.5 h-3.5" />
+              )}
+              <span>{isTestingThinking ? '正在检测流式与非流式思考输出...' : '测试连接并检测思考输出'}</span>
+            </button>
+          )}
+
           {/* Real Image Generation Test Result Card (with real <img> decode verification!) */}
           {activeSlot === 'image_generation' && imageGenTestResult && (
             <div
@@ -1081,6 +1297,148 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               <span className="api-diag-muted font-mono text-[11px] text-zinc-400 shrink-0 ml-2">
                 {connectionResult.latencyMs}ms
               </span>
+            </div>
+          )}
+
+          {/* Thinking Output Diagnostic Panel */}
+          {activeSlot === 'text_generation' && thinkingDiagnostic && (
+            <div className="api-diagnostic-panel p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800 space-y-3 text-xs">
+              <div className="api-diagnostic-header flex items-center justify-between gap-2 pb-2 border-b border-zinc-800">
+                <div className="flex items-center gap-1.5 font-semibold">
+                  <Brain className="api-diagnostic-title w-4 h-4 text-amber-400 shrink-0" />
+                  <span>思考输出诊断结果</span>
+                </div>
+                <span className="text-[10px] font-mono text-zinc-400">
+                  {thinkingDiagnostic.latencyMs}ms · {thinkingDiagnostic.apiProtocol || activeProtocol}
+                </span>
+              </div>
+
+              {!thinkingDiagnostic.success ? (
+                <div className="api-diag-status-box api-diag-status-box--err p-2.5 rounded-lg bg-rose-950/30 border border-rose-500/35 text-rose-200 text-[11px] flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <span className="break-words">
+                    {sanitizeSensitiveText(thinkingDiagnostic.error || '连接或思考输出探测失败')}
+                  </span>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div className="api-diagnostic-card p-2 rounded-lg bg-zinc-950/70 border border-zinc-800 flex items-center justify-between">
+                      <span className="text-zinc-400">最终回答</span>
+                      <span
+                        className={
+                          thinkingDiagnostic.answerOk ?? thinkingDiagnostic.answerReturned
+                            ? 'settings-status-ok text-emerald-400 font-semibold'
+                            : 'settings-status-err text-rose-400 font-semibold'
+                        }
+                      >
+                        {thinkingDiagnostic.answerOk ?? thinkingDiagnostic.answerReturned ? '已返回' : '未返回'}
+                      </span>
+                    </div>
+                    <div className="api-diagnostic-card p-2 rounded-lg bg-zinc-950/70 border border-zinc-800 flex items-center justify-between">
+                      <span className="text-zinc-400">思考输出</span>
+                      <span
+                        className={
+                          thinkingDiagnostic.reasoningAvailable
+                            ? 'settings-status-ok text-emerald-400 font-semibold'
+                            : 'settings-status-warn text-amber-400 font-semibold'
+                        }
+                      >
+                        {thinkingDiagnostic.reasoningAvailable
+                          ? `已返回 (${thinkingDiagnostic.reasoningCharCount ?? thinkingDiagnostic.thinkingCharCount ?? 0} 字)`
+                          : '未返回'}
+                      </span>
+                    </div>
+                    <div className="api-diagnostic-card p-2 rounded-lg bg-zinc-950/70 border border-zinc-800 flex items-center justify-between">
+                      <span className="text-zinc-400">非流式</span>
+                      <span className="font-mono text-zinc-200">
+                        {thinkingDiagnostic.nonStreamingSupported ? '支持' : '未通过'}
+                        {thinkingDiagnostic.nonStreamingReasoningAvailable ? ' · 含思考' : ''}
+                      </span>
+                    </div>
+                    <div className="api-diagnostic-card p-2 rounded-lg bg-zinc-950/70 border border-zinc-800 flex items-center justify-between">
+                      <span className="text-zinc-400">流式 SSE</span>
+                      <span className="font-mono text-zinc-200">
+                        {thinkingDiagnostic.streamingSupported ? '支持' : '未通过'}
+                        {thinkingDiagnostic.streamingReasoningAvailable ? ' · 含思考' : ''}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="api-diagnostic-card p-2.5 rounded-lg bg-zinc-950/70 border border-zinc-800 text-[11px] space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-zinc-400">识别来源:</span>
+                      <span className="font-mono text-zinc-200">
+                        {thinkingDiagnostic.reasoningSource || 'none'}
+                      </span>
+                    </div>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-zinc-400 shrink-0">命中字段:</span>
+                      <span className="font-mono text-zinc-300 text-right break-all">
+                        {thinkingDiagnostic.detectedFields?.length
+                          ? thinkingDiagnostic.detectedFields.join(', ')
+                          : '无'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {thinkingDiagnostic.hasThoughtSignatureOnly && !thinkingDiagnostic.reasoningAvailable && (
+                    <div className="api-diag-status-box api-diag-status-box--warn p-2.5 rounded-lg bg-amber-950/25 border border-amber-500/30 text-amber-200 text-[11px] leading-relaxed">
+                      检测到上游仅返回了加密的 thoughtSignature 元数据，未返回可读明文思考内容。
+                    </div>
+                  )}
+
+                  {(thinkingDiagnostic.likelyUpstreamStripped || thinkingDiagnostic.noticeMessage) && (
+                    <div className="api-diag-status-box api-diag-status-box--warn p-2.5 rounded-lg bg-amber-950/25 border border-amber-500/35 text-amber-200 text-[11px] flex items-start gap-2 leading-relaxed">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <span>
+                        {thinkingDiagnostic.noticeMessage ||
+                          '当前接口只返回最终答案，小手机无法恢复被上游删除的思考内容。请更换支持reasoning透传的模型或API站，或查询站点所需的思考参数。'}
+                      </span>
+                    </div>
+                  )}
+
+                  {(thinkingDiagnostic.reasoningPreview || thinkingDiagnostic.thinkingPreview) && (
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-zinc-400 block">思考内容预览 (已截断):</span>
+                      <div className="settings-code-block p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-amber-200/90 whitespace-pre-wrap max-h-32 overflow-y-auto">
+                        {thinkingDiagnostic.reasoningPreview || thinkingDiagnostic.thinkingPreview}
+                      </div>
+                    </div>
+                  )}
+
+                  {thinkingDiagnostic.answerPreview && (
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-zinc-400 block">最终回答预览:</span>
+                      <div className="api-diagnostic-card p-2 rounded-lg bg-zinc-950/70 border border-zinc-800 text-[11px] text-zinc-200 whitespace-pre-wrap">
+                        {thinkingDiagnostic.answerPreview}
+                      </div>
+                    </div>
+                  )}
+
+                  {thinkingDiagnostic.sanitizedResponseStructure && (
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowRawSchemaJson((v) => !v)}
+                        className="text-[11px] text-zinc-400 hover:text-zinc-200 flex items-center gap-1 cursor-pointer"
+                      >
+                        {showRawSchemaJson ? (
+                          <ChevronUp className="w-3.5 h-3.5" />
+                        ) : (
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        )}
+                        <span>{showRawSchemaJson ? '收起脱敏响应结构 (JSON)' : '查看脱敏响应结构 (JSON)'}</span>
+                      </button>
+                      {showRawSchemaJson && (
+                        <pre className="settings-code-block mt-1.5 p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-[10px] font-mono text-zinc-300 overflow-x-auto max-h-48 overflow-y-auto">
+                          {JSON.stringify(thinkingDiagnostic.sanitizedResponseStructure, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

@@ -904,11 +904,32 @@ async function logModelApiResponse(
       const data = await clone.json().catch(() => null);
       if (data) {
         const respCm = data.contextMetrics;
+        const reasoningMeta = {
+          reasoningAvailable:
+            typeof data.apiLog?.reasoningAvailable === 'boolean'
+              ? data.apiLog.reasoningAvailable
+              : typeof data.log?.reasoningAvailable === 'boolean'
+              ? data.log.reasoningAvailable
+              : typeof data.reasoningAvailable === 'boolean'
+              ? data.reasoningAvailable
+              : undefined,
+          reasoningSource:
+            data.apiLog?.reasoningSource ?? data.log?.reasoningSource ?? data.reasoningSource,
+          reasoningCharCount:
+            typeof data.apiLog?.reasoningCharCount === 'number'
+              ? data.apiLog.reasoningCharCount
+              : typeof data.log?.reasoningCharCount === 'number'
+              ? data.log.reasoningCharCount
+              : typeof data.thinkingProcess === 'string' && data.thinkingProcess.trim()
+              ? data.thinkingProcess.trim().length
+              : undefined,
+        };
         const contextExtras = {
           contextRawCount: data.apiLog?.contextRawCount ?? data.log?.contextRawCount ?? respCm?.rawCount ?? meta.contextRawCount,
           contextSummarizedCount: data.apiLog?.contextSummarizedCount ?? data.log?.contextSummarizedCount ?? respCm?.summarizedCount ?? meta.contextSummarizedCount,
           contextEstimatedTokens: data.apiLog?.contextEstimatedTokens ?? data.log?.contextEstimatedTokens ?? respCm?.estimatedTokens ?? meta.contextEstimatedTokens,
           contextCompressed: data.apiLog?.contextCompressed ?? data.log?.contextCompressed ?? respCm?.didCompress ?? meta.contextCompressed,
+          ...reasoningMeta,
         };
         if (data.apiLog) {
           recordApiLog({

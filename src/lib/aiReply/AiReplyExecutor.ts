@@ -331,18 +331,11 @@ export async function executeAiReplyTask(
     }
   }
 
-  const memoryRecallNote =
-    vaultRecall.matchedChunks.length > 0
-      ? `调阅专属记忆空间 (${vaultRecall.matchedChunks.length} 处匹配片段，来源: ${vaultRecall.matchedFileNames.join('、')})`
-      : `检索长期记忆 [${activeCharacter.memories?.slice(0, 3).join('; ') || '日常记忆'}]`;
-
-  const thinkingProcess =
-    data.thinkingProcess ||
-    `【推理分析】:\n1. 结合角色人设 [${activeCharacter.persona}]\n2. ${
-      worldBookEval
-        ? `融入世界书合集 [${worldBookEval.summaryTitle}，包含 ${worldBookEval.associatedBooksCount} 本世界书，激活 ${worldBookEval.matchedEntries.length} 条词条]`
-        : '无关联世界书，按日常设定回复'
-    }\n3. ${memoryRecallNote}\n4. 形成专属口吻回复。`;
+  const rawThinking =
+    typeof data.thinkingProcess === 'string' ? data.thinkingProcess.trim() : '';
+  const reasoningAvailable = Boolean(data.reasoningAvailable && rawThinking.length > 0) || rawThinking.length > 0;
+  const reasoningSource = reasoningAvailable ? data.reasoningSource || 'think_tag' : 'none';
+  const reasoningStatus: ChatMessage['reasoningStatus'] = reasoningAvailable ? 'available' : 'empty';
 
   // Multi-bubble delivery & save to IndexedDB (including optional generate_image actions in same turn)
   const multiBubbleConfig = getMultiBubbleConfig();
@@ -388,6 +381,7 @@ export async function executeAiReplyTask(
   ): ChatMessage => {
     const bubbleIndex = bubbles.length + idx;
     const msgId = `msg_img_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`;
+    const attachThinkingHere = bubbles.length === 0 && idx === 0 && reasoningAvailable;
     return {
       id: msgId,
       characterId: activeCharacter.id,
@@ -406,7 +400,10 @@ export async function executeAiReplyTask(
       turnBubbleIndex: bubbleIndex,
       turnTotalBubbles: totalTurnBubbles,
       isRefreshed,
-      thinkingProcess: `${thinkingProcess}\n\n[AI 触发画图动作: ${act.prompt.trim()}]`,
+      thinkingProcess: attachThinkingHere ? rawThinking : undefined,
+      reasoningAvailable,
+      reasoningSource,
+      reasoningStatus,
     };
   };
 
@@ -425,10 +422,10 @@ export async function executeAiReplyTask(
       turnBubbleIndex: i,
       turnTotalBubbles: totalTurnBubbles,
       isRefreshed: true,
-      thinkingProcess:
-        i === 0
-          ? thinkingProcess
-          : `${thinkingProcess}\n\n[连发第 ${i + 1}/${totalTurnBubbles} 条消息]`,
+      thinkingProcess: i === 0 && reasoningAvailable ? rawThinking : undefined,
+      reasoningAvailable,
+      reasoningSource,
+      reasoningStatus,
     }));
 
     const newImageMessages: ChatMessage[] = generateImageActions.map((act, idx) =>
@@ -480,10 +477,10 @@ export async function executeAiReplyTask(
         turnId: assignedTurnId,
         turnBubbleIndex: i,
         turnTotalBubbles: totalTurnBubbles,
-        thinkingProcess:
-          i === 0
-            ? thinkingProcess
-            : `${thinkingProcess}\n\n[连发第 ${i + 1}/${totalTurnBubbles} 条消息]`,
+        thinkingProcess: i === 0 && reasoningAvailable ? rawThinking : undefined,
+        reasoningAvailable,
+        reasoningSource,
+        reasoningStatus,
       };
 
       await saveChatMessage(bubbleMsg);

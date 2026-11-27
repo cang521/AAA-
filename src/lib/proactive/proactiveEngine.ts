@@ -949,8 +949,10 @@ class ProactiveEngine {
             explicitMessages,
             deterministicMessageIds,
             contextSummary:
-              approvedDecision.thinkingProcess ||
               `【主动会话 ${currentEp.episodeId} | ${approvedDecision.action}】${approvedDecision.decisionSummary || selected.triggerType}`,
+            thinkingProcess: approvedDecision.thinkingProcess || undefined,
+            reasoningAvailable: Boolean(approvedDecision.thinkingProcess?.trim()),
+            reasoningSource: (approvedDecision as any).reasoningSource,
             episodeId: currentEp.episodeId,
             stepId: 'initial',
             intent: approvedDecision.intent,
@@ -1261,12 +1263,15 @@ class ProactiveEngine {
           normalized.action === 'defer'
             ? (typeof normalized.followUpAt === 'number' ? normalized.followUpAt : Date.now() + delayMins * 60000)
             : undefined,
-        thinkingProcess: data.thinkingProcess,
+        thinkingProcess: data.thinkingProcess || undefined,
       };
+      if (data.reasoningSource) {
+        (decision as any).reasoningSource = data.reasoningSource;
+      }
 
       return {
         text: candidateText,
-        thinkingProcess: data.thinkingProcess,
+        thinkingProcess: data.thinkingProcess || undefined,
         decision,
         episodeId: episode?.episodeId,
       };
