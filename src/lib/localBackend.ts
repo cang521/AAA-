@@ -964,12 +964,18 @@ async function logModelApiResponse(
       let parsedModel = meta.model;
       let parsedRequestId = meta.requestId;
       let parsedApiLog: any = null;
+      let parsedProtocol: string | undefined;
+      let parsedCauseCode: string | undefined;
+      let parsedMayHaveBeenCharged: boolean | undefined;
       try {
         const j = JSON.parse(text);
-        errorMsg = j.error || j.message || errorMsg;
+        errorMsg = j.errorMessage || j.error || j.message || errorMsg;
         parsedProvider = j.provider || parsedProvider;
         parsedModel = j.model || parsedModel;
         parsedRequestId = j.requestId || parsedRequestId;
+        parsedProtocol = j.protocol || j.apiProtocol;
+        parsedCauseCode = j.causeCode;
+        parsedMayHaveBeenCharged = typeof j.mayHaveBeenCharged === 'boolean' ? j.mayHaveBeenCharged : undefined;
         parsedApiLog = j.apiLog || null;
       } catch {}
 
@@ -993,6 +999,9 @@ async function logModelApiResponse(
           durationMs,
           errorType: `HTTP ${resp.status}`,
           errorMessage: errorMsg,
+          protocol: parsedProtocol,
+          causeCode: parsedCauseCode,
+          mayHaveBeenCharged: parsedMayHaveBeenCharged,
           purpose: `${derivePurpose(apiPath, init)} (请求异常 ${resp.status})`,
         });
       }

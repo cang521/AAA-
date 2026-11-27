@@ -459,3 +459,113 @@ export function resolveEffectiveProtocol(config: {
   }
   return 'openai_compatible';
 }
+
+export interface ResolvedTextGenerationConfig {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  providerType: string;
+  apiProtocol: ApiProtocolType;
+  customHeaders?: Record<string, string>;
+  timeoutMs: number;
+}
+
+/**
+ * Unified text generation configuration resolution.
+ * Prioritizes canonical textApiConfig / textGeneration object while falling back to legacy flat fields.
+ * Respects character model override if specified.
+ */
+export function resolveTextGenerationConfig(
+  apiConfig?: any,
+  characterModelConfig?: any
+): ResolvedTextGenerationConfig {
+  const nestedText =
+    apiConfig?.textApiConfig ||
+    apiConfig?.textGeneration ||
+    apiConfig?.apiSettings?.textGeneration;
+
+  const pickField = (...candidates: any[]): string => {
+    for (const val of candidates) {
+      if (typeof val === 'string' && val.trim().length > 0) {
+        return val.trim();
+      }
+    }
+    for (const val of candidates) {
+      if (typeof val === 'string') {
+        return val.trim();
+      }
+    }
+    return '';
+  };
+
+  const apiKey = pickField(
+    nestedText?.apiKey,
+    apiConfig?.textApiKey,
+    apiConfig?.apiKey
+  );
+
+  const baseUrl = pickField(
+    nestedText?.baseUrl,
+    apiConfig?.textBaseUrl,
+    apiConfig?.baseUrl
+  );
+
+  const providerType = pickField(
+    nestedText?.provider,
+    apiConfig?.textProvider,
+    apiConfig?.providerType,
+    apiConfig?.provider,
+    'google_gemini'
+  );
+
+  const charModel = pickField(
+    characterModelConfig?.modelName,
+    characterModelConfig?.model
+  );
+
+  const model =
+    charModel ||
+    pickField(
+      nestedText?.model,
+      apiConfig?.textModel,
+      apiConfig?.model,
+      'gemini-4-hydrogen'
+    );
+
+  const rawProtocol = pickField(
+    nestedText?.apiProtocol,
+    apiConfig?.textApiProtocol,
+    apiConfig?.apiProtocol
+  );
+
+  const apiProtocol = resolveEffectiveProtocol({
+    apiProtocol: rawProtocol,
+    provider: providerType,
+    baseUrl,
+  });
+
+  const customHeaders =
+    (nestedText?.customHeaders && typeof nestedText.customHeaders === 'object'
+      ? nestedText.customHeaders
+      : undefined) ||
+    (apiConfig?.customHeaders && typeof apiConfig.customHeaders === 'object'
+      ? apiConfig.customHeaders
+      : undefined);
+
+  const timeoutMs =
+    Number(apiConfig?.timeoutMs) > 0
+      ? Number(apiConfig.timeoutMs)
+      : Number(nestedText?.timeoutMs) > 0
+      ? Number(nestedText.timeoutMs)
+      : 45000;
+
+  return {
+    apiKey,
+    baseUrl,
+    model,
+    providerType,
+    apiProtocol,
+    customHeaders,
+    timeoutMs,
+  };
+}

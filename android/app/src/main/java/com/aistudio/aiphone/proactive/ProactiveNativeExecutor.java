@@ -1045,10 +1045,24 @@ public final class ProactiveNativeExecutor {
         HttpURLConnection conn = null;
         long startedAt = System.currentTimeMillis();
         try {
-            String apiKey = apiConfig.optString("textApiKey", "").trim();
-            String baseUrl = apiConfig.optString("textBaseUrl", "").trim();
-            String provider = apiConfig.optString("textProvider", "gemini").trim().toLowerCase(Locale.US);
+            JSONObject textApiCfg = apiConfig.optJSONObject("textApiConfig");
+            String apiKey = textApiCfg != null ? textApiCfg.optString("apiKey", "").trim() : "";
+            if (apiKey.isEmpty()) apiKey = apiConfig.optString("textApiKey", "").trim();
+
+            String baseUrl = textApiCfg != null ? textApiCfg.optString("baseUrl", "").trim() : "";
+            if (baseUrl.isEmpty()) baseUrl = apiConfig.optString("textBaseUrl", "").trim();
+
+            String provider = textApiCfg != null ? textApiCfg.optString("provider", "").trim().toLowerCase(Locale.US) : "";
+            if (provider.isEmpty()) provider = apiConfig.optString("textProvider", "gemini").trim().toLowerCase(Locale.US);
+
+            String apiProtocol = textApiCfg != null ? textApiCfg.optString("apiProtocol", "").trim().toLowerCase(Locale.US) : "";
+            if (apiProtocol.isEmpty()) apiProtocol = apiConfig.optString("textApiProtocol", "").trim().toLowerCase(Locale.US);
+            if (apiProtocol.isEmpty()) apiProtocol = apiConfig.optString("apiProtocol", "").trim().toLowerCase(Locale.US);
+
             String model = character.optString("modelName", "").trim();
+            if (model.isEmpty() && textApiCfg != null) {
+                model = textApiCfg.optString("model", "").trim();
+            }
             if (model.isEmpty()) {
                 model = apiConfig.optString("textModel", "gemini-2.5-flash").trim();
             }
@@ -1060,15 +1074,24 @@ public final class ProactiveNativeExecutor {
                 return result;
             }
 
-            boolean isGeminiNative = provider.contains("gemini")
-                && !provider.contains("openai")
-                && (baseUrl.isEmpty() || baseUrl.contains("generativelanguage.googleapis.com"));
+            boolean isGeminiNative;
+            if ("google_native".equals(apiProtocol) || "gemini_native".equals(apiProtocol) || "google".equals(apiProtocol)) {
+                isGeminiNative = true;
+            } else if ("openai_compatible".equals(apiProtocol) || "openai".equals(apiProtocol)) {
+                isGeminiNative = false;
+            } else {
+                isGeminiNative = (provider.contains("gemini") || provider.contains("google"))
+                    && !provider.contains("openai")
+                    && !provider.contains("custom")
+                    && (baseUrl.isEmpty() || baseUrl.contains("generativelanguage.googleapis.com"));
+            }
 
             URL url;
             String requestBody;
 
             if (isGeminiNative) {
                 String root = baseUrl.isEmpty() ? "https://generativelanguage.googleapis.com" : baseUrl.replaceAll("/+$", "");
+                root = root.replaceAll("(?i)/v1(beta|alpha)?$", "");
                 String endpoint = root + "/v1beta/models/" + model + ":generateContent";
                 url = new URL(endpoint);
 
@@ -1081,7 +1104,14 @@ public final class ProactiveNativeExecutor {
                 requestBody = body.toString();
             } else {
                 String root = baseUrl.isEmpty() ? "https://api.openai.com/v1" : baseUrl.replaceAll("/+$", "");
-                String endpoint = root.endsWith("/chat/completions") ? root : (root + "/chat/completions");
+                String endpoint;
+                if (root.endsWith("/chat/completions")) {
+                    endpoint = root;
+                } else if (root.endsWith("/v1")) {
+                    endpoint = root + "/chat/completions";
+                } else {
+                    endpoint = root + "/v1/chat/completions";
+                }
                 url = new URL(endpoint);
 
                 JSONObject msg = new JSONObject().put("role", "user").put("content", prompt);
@@ -1098,6 +1128,7 @@ public final class ProactiveNativeExecutor {
             conn.setReadTimeout(35_000);
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            conn.setRequestProperty("Connection", "close");
 
             if (isGeminiNative) {
                 conn.setRequestProperty("x-goog-api-key", apiKey);

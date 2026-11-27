@@ -310,19 +310,42 @@ export class AiReplyTaskManager {
           error: errMessage,
         });
       } else {
+        const lowerMsg = String(errMessage || '').toLowerCase();
+        const causeCode = String(err?.causeCode || err?.cause?.code || '').toUpperCase();
+        const preventAutoRetry =
+          Boolean(err?.mayHaveBeenCharged) ||
+          err?.statusCode === 401 ||
+          err?.statusCode === 403 ||
+          err?.statusCode === 404 ||
+          err?.statusCode === 429 ||
+          causeCode === 'ECONNRESET' ||
+          causeCode === 'UND_ERR_SOCKET' ||
+          causeCode === 'UND_ERR_BODY_TIMEOUT' ||
+          causeCode === 'ETIMEDOUT' ||
+          lowerMsg.includes('fetch failed') ||
+          lowerMsg.includes('econnreset') ||
+          lowerMsg.includes('und_err_socket') ||
+          lowerMsg.includes('请求超时') ||
+          lowerMsg.includes('已产生扣费');
+
         const currentRetry = task.retryCount || 0;
 
-        if (currentRetry < task.maxRetries) {
+        if (!preventAutoRetry && currentRetry < task.maxRetries) {
           const nextRetry = currentRetry + 1;
           console.warn(`[AiReplyTaskManager] Retrying task ${taskId} (attempt ${nextRetry}/${task.maxRetries})...`);
           this.characterTaskStates.set(characterId, 'queued');
           await updateTaskStatus(taskId, 'queued', { retryCount: nextRetry, error: errMessage });
           setTimeout(() => this.processQueue(), 2000);
         } else {
+          if (preventAutoRetry) {
+            console.warn(
+              `[AiReplyTaskManager] Skipping auto-retry for task ${taskId} to avoid duplicate billing (mayHaveBeenCharged=${Boolean(err?.mayHaveBeenCharged)}, causeCode=${causeCode || 'none'}).`
+            );
+          }
           this.characterTaskStates.set(characterId, 'failed');
           await updateTaskStatus(taskId, 'failed', { error: errMessage });
 
-          // Record failed task so UI can show real error and allow user to retry.
+          // Record failed task so UI can show real error and allow user to retry manually.
           // DO NOT write a fake warm message pretending the model succeeded!
           // The original user message is already securely saved in IndexedDB.
           this.failedTasks.set(characterId, {

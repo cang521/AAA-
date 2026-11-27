@@ -577,6 +577,16 @@ export interface ApiLog {
   errorType?: string;
   errorMessage?: string;
   purpose: string;
+  protocol?: string;
+  endpointType?: string;
+  errorName?: string;
+  causeCode?: string;
+  causeErrno?: number;
+  causeSyscall?: string;
+  headersReceived?: boolean;
+  readBodyFailed?: boolean;
+  mayHaveBeenCharged?: boolean;
+  upstreamRequestSent?: boolean;
   contextRawCount?: number;
   contextSummarizedCount?: number;
   contextEstimatedTokens?: number;

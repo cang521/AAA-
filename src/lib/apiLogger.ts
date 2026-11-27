@@ -86,6 +86,16 @@ export interface ApiLogPayload {
   errorType?: string;
   errorMessage?: string;
   purpose: string;
+  protocol?: string;
+  endpointType?: string;
+  errorName?: string;
+  causeCode?: string;
+  causeErrno?: number;
+  causeSyscall?: string;
+  headersReceived?: boolean;
+  readBodyFailed?: boolean;
+  mayHaveBeenCharged?: boolean;
+  upstreamRequestSent?: boolean;
   contextRawCount?: number;
   contextSummarizedCount?: number;
   contextEstimatedTokens?: number;
@@ -169,6 +179,16 @@ export function recordApiLog(
         payload.purpose || (isFailed ? 'API 请求失败' : '模型接口调用'),
         160
       ),
+      protocol: payload.protocol ? sanitizeSensitiveText(payload.protocol, 40) : undefined,
+      endpointType: payload.endpointType ? sanitizeSensitiveText(payload.endpointType, 40) : undefined,
+      errorName: payload.errorName ? sanitizeSensitiveText(payload.errorName, 60) : undefined,
+      causeCode: payload.causeCode ? sanitizeSensitiveText(payload.causeCode, 40) : undefined,
+      causeErrno: typeof payload.causeErrno === 'number' ? payload.causeErrno : undefined,
+      causeSyscall: payload.causeSyscall ? sanitizeSensitiveText(payload.causeSyscall, 40) : undefined,
+      headersReceived: typeof payload.headersReceived === 'boolean' ? payload.headersReceived : undefined,
+      readBodyFailed: typeof payload.readBodyFailed === 'boolean' ? payload.readBodyFailed : undefined,
+      mayHaveBeenCharged: typeof payload.mayHaveBeenCharged === 'boolean' ? payload.mayHaveBeenCharged : undefined,
+      upstreamRequestSent: typeof payload.upstreamRequestSent === 'boolean' ? payload.upstreamRequestSent : undefined,
       contextRawCount: typeof payload.contextRawCount === 'number' ? payload.contextRawCount : undefined,
       contextSummarizedCount:
         typeof payload.contextSummarizedCount === 'number' ? payload.contextSummarizedCount : undefined,

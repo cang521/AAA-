@@ -337,10 +337,29 @@ export const ApiMonitorApp: React.FC<ApiMonitorAppProps> = ({
 
                 {/* Error message box if failed */}
                 {isFailed && log.errorMessage && (
-                  <div className="p-2 rounded-xl bg-rose-950/40 border border-rose-800/60 text-[11px] text-rose-300 space-y-0.5">
-                    <div className="font-semibold flex items-center gap-1 text-rose-400">
-                      <AlertTriangle className="w-3 h-3 shrink-0" />
-                      <span>{log.errorType || '异常原因'}:</span>
+                  <div className="p-2 rounded-xl bg-rose-950/40 border border-rose-800/60 text-[11px] text-rose-300 space-y-1">
+                    <div className="font-semibold flex items-center justify-between gap-1 text-rose-400 flex-wrap">
+                      <span className="flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                        <span>{log.errorType || '异常原因'}:</span>
+                      </span>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {log.protocol && (
+                          <span className="px-1.5 py-0.2 rounded bg-zinc-900/80 text-sky-300 border border-sky-500/30 text-[9px] font-mono">
+                            {log.protocol}
+                          </span>
+                        )}
+                        {log.causeCode && (
+                          <span className="px-1.5 py-0.2 rounded bg-zinc-900/80 text-amber-300 border border-amber-500/30 text-[9px] font-mono">
+                            {log.causeCode}
+                          </span>
+                        )}
+                        {log.mayHaveBeenCharged && (
+                          <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-200 border border-amber-500/40 text-[9px]">
+                            上游可能已扣费（未自动重试）
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div className="break-all font-mono text-[10px] text-rose-200/90 leading-normal">
                       {sanitizeSensitiveText(log.errorMessage, 240)}

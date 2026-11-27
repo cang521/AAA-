@@ -176,6 +176,70 @@ function resolveEffectiveProtocol(config) {
   }
   return "openai_compatible";
 }
+function resolveTextGenerationConfig(apiConfig, characterModelConfig) {
+  const nestedText = apiConfig?.textApiConfig || apiConfig?.textGeneration || apiConfig?.apiSettings?.textGeneration;
+  const pickField = (...candidates) => {
+    for (const val of candidates) {
+      if (typeof val === "string" && val.trim().length > 0) {
+        return val.trim();
+      }
+    }
+    for (const val of candidates) {
+      if (typeof val === "string") {
+        return val.trim();
+      }
+    }
+    return "";
+  };
+  const apiKey = pickField(
+    nestedText?.apiKey,
+    apiConfig?.textApiKey,
+    apiConfig?.apiKey
+  );
+  const baseUrl = pickField(
+    nestedText?.baseUrl,
+    apiConfig?.textBaseUrl,
+    apiConfig?.baseUrl
+  );
+  const providerType = pickField(
+    nestedText?.provider,
+    apiConfig?.textProvider,
+    apiConfig?.providerType,
+    apiConfig?.provider,
+    "google_gemini"
+  );
+  const charModel = pickField(
+    characterModelConfig?.modelName,
+    characterModelConfig?.model
+  );
+  const model = charModel || pickField(
+    nestedText?.model,
+    apiConfig?.textModel,
+    apiConfig?.model,
+    "gemini-4-hydrogen"
+  );
+  const rawProtocol = pickField(
+    nestedText?.apiProtocol,
+    apiConfig?.textApiProtocol,
+    apiConfig?.apiProtocol
+  );
+  const apiProtocol = resolveEffectiveProtocol({
+    apiProtocol: rawProtocol,
+    provider: providerType,
+    baseUrl
+  });
+  const customHeaders = (nestedText?.customHeaders && typeof nestedText.customHeaders === "object" ? nestedText.customHeaders : void 0) || (apiConfig?.customHeaders && typeof apiConfig.customHeaders === "object" ? apiConfig.customHeaders : void 0);
+  const timeoutMs = Number(apiConfig?.timeoutMs) > 0 ? Number(apiConfig.timeoutMs) : Number(nestedText?.timeoutMs) > 0 ? Number(nestedText.timeoutMs) : 45e3;
+  return {
+    apiKey,
+    baseUrl,
+    model,
+    providerType,
+    apiProtocol,
+    customHeaders,
+    timeoutMs
+  };
+}
 
 // src/lib/contextWindow.ts
 var STANDARD_CONTEXT_LIMIT = 100;
@@ -432,6 +496,16 @@ function buildApiLogObject(params) {
     errorType: isFailed ? params.errorType || "ModelError" : void 0,
     errorMessage: params.error ? sanitizeSensitiveText(params.error, 260) : void 0,
     purpose: sanitizeSensitiveText(params.purpose, 160),
+    protocol: params.protocol ? sanitizeSensitiveText(params.protocol, 40) : void 0,
+    endpointType: params.endpointType ? sanitizeSensitiveText(params.endpointType, 40) : void 0,
+    errorName: params.errorName ? sanitizeSensitiveText(params.errorName, 60) : void 0,
+    causeCode: params.causeCode ? sanitizeSensitiveText(params.causeCode, 40) : void 0,
+    causeErrno: typeof params.causeErrno === "number" ? params.causeErrno : void 0,
+    causeSyscall: params.causeSyscall ? sanitizeSensitiveText(params.causeSyscall, 40) : void 0,
+    headersReceived: typeof params.headersReceived === "boolean" ? params.headersReceived : void 0,
+    readBodyFailed: typeof params.readBodyFailed === "boolean" ? params.readBodyFailed : void 0,
+    mayHaveBeenCharged: typeof params.mayHaveBeenCharged === "boolean" ? params.mayHaveBeenCharged : void 0,
+    upstreamRequestSent: typeof params.upstreamRequestSent === "boolean" ? params.upstreamRequestSent : void 0,
     ...typeof params.contextRawCount === "number" ? { contextRawCount: params.contextRawCount } : {},
     ...typeof params.contextSummarizedCount === "number" ? { contextSummarizedCount: params.contextSummarizedCount } : {},
     ...typeof params.contextEstimatedTokens === "number" ? { contextEstimatedTokens: params.contextEstimatedTokens } : {},
@@ -539,124 +613,195 @@ async function callAiServiceDetailed(params) {
   const cleanKey = params.apiKey && params.apiKey.trim() || "";
   const activeKey = cleanKey || (!cleanBaseUrl && (!params.providerType || params.providerType === "google_gemini") && process.env.NODE_ENV !== "production" ? process.env.GEMINI_API_KEY || "" : "");
   const targetModel = params.model?.trim() || GEMINI_DEFAULT_TEXT_MODEL;
-  let isOpenAiCompatible = false;
-  let activeProtocol = params.apiProtocol;
-  if (activeProtocol === "openai_compatible") {
-    isOpenAiCompatible = true;
-  } else if (activeProtocol === "gemini_native") {
-    isOpenAiCompatible = false;
-  } else {
-    isOpenAiCompatible = params.providerType === "openai_compatible" || params.providerType === "deepseek" || params.providerType === "openrouter" || params.providerType === "groq" || params.providerType === "siliconflow" || params.providerType === "ollama" || params.providerType === "custom" || cleanBaseUrl && (cleanBaseUrl.includes("/v1") || cleanBaseUrl.includes("openai") || cleanBaseUrl.includes("deepseek") || cleanBaseUrl.includes("openrouter") || cleanBaseUrl.includes("groq") || cleanBaseUrl.includes("siliconflow") || cleanBaseUrl.includes("oneapi") || cleanBaseUrl.includes("newapi") || cleanBaseUrl.includes(":11434") || targetModel.startsWith("gpt-") || targetModel.startsWith("claude-") || targetModel.startsWith("deepseek-") || targetModel.startsWith("qwen") || targetModel.startsWith("llama"));
-  }
-  if (isOpenAiCompatible) {
+  const effectiveProtocol = resolveEffectiveProtocol({
+    apiProtocol: params.apiProtocol,
+    provider: params.providerType,
+    baseUrl: cleanBaseUrl
+  });
+  const startTime = Date.now();
+  let headersReceived = false;
+  let readBodyFailed = false;
+  if (effectiveProtocol === "openai_compatible") {
     if (!cleanBaseUrl && !activeKey) {
-      throw new Error("\u672A\u914D\u7F6E Base URL \u6216 API Key\u3002\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u914D\u7F6E API Provider\u3002");
+      const err = new Error("\u672A\u914D\u7F6E Base URL \u6216 API Key\u3002\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u914D\u7F6E API Provider\u3002");
+      err.statusCode = 400;
+      err.errorType = "CONFIG_MISSING";
+      err.upstreamRequestSent = false;
+      err.mayHaveBeenCharged = false;
+      throw err;
     }
+    let endpoint = cleanBaseUrl;
+    if (!endpoint) endpoint = "https://api.openai.com/v1";
+    if (!endpoint.endsWith("/chat/completions")) {
+      endpoint = endpoint.endsWith("/v1") ? `${endpoint}/chat/completions` : `${endpoint}/v1/chat/completions`;
+    }
+    const messages = [];
+    if (params.systemInstruction) {
+      messages.push({ role: "system", content: params.systemInstruction });
+    }
+    messages.push({ role: "user", content: params.prompt });
+    const payload = {
+      model: targetModel,
+      messages,
+      temperature: params.temperature ?? 0.7
+    };
+    if (params.maxTokens) {
+      payload.max_tokens = params.maxTokens;
+    }
+    if (params.responseMimeType === "application/json") {
+      payload.response_format = { type: "json_object" };
+    }
+    const headers = {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "Connection": "close",
+      ...params.customHeaders || {}
+    };
+    if (activeKey) {
+      headers["Authorization"] = `Bearer ${activeKey}`;
+    }
+    if (endpoint.includes("openrouter.ai")) {
+      headers["HTTP-Referer"] = "https://ai.studio.simulated.phone";
+      headers["X-Title"] = "Simulated Android Phone";
+    }
+    const timeoutMs = params.timeoutMs || 45e3;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), params.timeoutMs || 35e3);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let response;
     try {
-      let endpoint = cleanBaseUrl;
-      if (!endpoint) endpoint = "https://api.openai.com/v1";
-      if (!endpoint.endsWith("/chat/completions")) {
-        endpoint = endpoint.endsWith("/v1") ? `${endpoint}/chat/completions` : `${endpoint}/v1/chat/completions`;
-      }
-      const messages = [];
-      if (params.systemInstruction) {
-        messages.push({ role: "system", content: params.systemInstruction });
-      }
-      messages.push({ role: "user", content: params.prompt });
-      const payload = {
-        model: targetModel,
-        messages,
-        temperature: params.temperature ?? 0.7
-      };
-      if (params.maxTokens) {
-        payload.max_tokens = params.maxTokens;
-      }
-      if (params.responseMimeType === "application/json") {
-        payload.response_format = { type: "json_object" };
-      }
-      const headers = {
-        "Content-Type": "application/json",
-        ...params.customHeaders || {}
-      };
-      if (activeKey) {
-        headers["Authorization"] = `Bearer ${activeKey}`;
-      }
-      if (endpoint.includes("openrouter.ai")) {
-        headers["HTTP-Referer"] = "https://ai.studio.simulated.phone";
-        headers["X-Title"] = "Simulated Android Phone";
-      }
-      const response = await fetch(endpoint, {
+      response = await fetch(endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
         signal: controller.signal
       });
+      headersReceived = true;
+    } catch (fetchErr) {
       clearTimeout(timer);
-      if (!response.ok) {
-        const errorText = await response.text();
-        let parsedErrorMsg = errorText;
-        try {
-          const parsed = JSON.parse(errorText);
-          parsedErrorMsg = parsed.error?.message || parsed.message || errorText;
-        } catch {
-        }
-        if (response.status === 401) {
-          throw new Error(`[401 \u9274\u6743\u5931\u8D25] API Key \u65E0\u6548\u6216\u672A\u6388\u6743: ${parsedErrorMsg}`);
-        } else if (response.status === 404) {
-          throw new Error(`[404 \u8DEF\u7531\u6216\u6A21\u578B\u4E0D\u5B58\u5728] \u8BF7\u6C42\u7AEF\u70B9 ${endpoint} \u6216\u6A21\u578B ${targetModel} \u4E0D\u5B58\u5728: ${parsedErrorMsg}`);
-        } else if (response.status === 429) {
-          throw new Error(`[429 \u914D\u989D\u6216\u9650\u6D41] \u8D26\u6237\u914D\u989D\u4E0D\u8DB3\u6216\u89E6\u53D1\u8BF7\u6C42\u9891\u7387\u9650\u5236: ${parsedErrorMsg}`);
-        } else if (response.status >= 500) {
-          throw new Error(`[${response.status} \u670D\u52A1\u7AEF\u9519\u8BEF] API Provider \u4E0A\u6E38\u5F02\u5E38: ${parsedErrorMsg}`);
-        } else {
-          throw new Error(`[${response.status} API \u9519\u8BEF] ${parsedErrorMsg}`);
-        }
+      const durationMs = Date.now() - startTime;
+      const isAbort = fetchErr.name === "AbortError";
+      const causeCode = fetchErr.cause?.code || fetchErr.code;
+      const causeErrno = fetchErr.cause?.errno;
+      const causeSyscall = fetchErr.cause?.syscall;
+      const isNetworkDrop = causeCode === "ECONNRESET" || causeCode === "UND_ERR_SOCKET" || fetchErr.message?.includes("fetch failed");
+      const enhancedErr = new Error(
+        isAbort ? `\u8BF7\u6C42\u8D85\u65F6 (${timeoutMs / 1e3}\u79D2)\uFF0C\u4E0A\u6E38 API \u672A\u80FD\u5728\u9650\u5B9A\u65F6\u95F4\u5185\u8FD4\u56DE\u5B8C\u6574\u56DE\u590D\u3002` : `\u8FDE\u63A5\u4E0A\u6E38\u63A5\u53E3\u5931\u8D25 (${fetchErr.message || "fetch failed"})`
+      );
+      enhancedErr.name = fetchErr.name;
+      enhancedErr.cause = fetchErr.cause;
+      enhancedErr.protocol = "openai_compatible";
+      enhancedErr.endpoint = endpoint;
+      enhancedErr.headersReceived = false;
+      enhancedErr.readBodyFailed = false;
+      enhancedErr.durationMs = durationMs;
+      enhancedErr.upstreamRequestSent = true;
+      enhancedErr.mayHaveBeenCharged = isAbort || isNetworkDrop || durationMs > 12e3;
+      enhancedErr.causeCode = causeCode;
+      enhancedErr.causeErrno = causeErrno;
+      enhancedErr.causeSyscall = causeSyscall;
+      throw enhancedErr;
+    }
+    clearTimeout(timer);
+    if (!response.ok) {
+      let errorText = "";
+      try {
+        errorText = await response.text();
+      } catch {
+        readBodyFailed = true;
       }
-      const resJson = await response.json();
-      const choice = resJson.choices?.[0];
-      const messageObj = choice?.message;
-      const reasoning = messageObj?.reasoning_content || messageObj?.reasoning || messageObj?.thinking;
-      const content = typeof messageObj?.content === "string" ? messageObj.content : "";
-      const fullText = reasoning && typeof reasoning === "string" && reasoning.trim() ? `<think>${reasoning.trim()}</think>${content}` : content;
-      const usageMeta = resJson.usage;
-      let usage = void 0;
-      let isRealTokens = false;
-      if (usageMeta && typeof usageMeta === "object") {
-        isRealTokens = true;
-        usage = {
-          promptTokens: typeof usageMeta.prompt_tokens === "number" ? usageMeta.prompt_tokens : void 0,
-          completionTokens: typeof usageMeta.completion_tokens === "number" ? usageMeta.completion_tokens : void 0,
-          totalTokens: typeof usageMeta.total_tokens === "number" ? usageMeta.total_tokens : void 0
-        };
+      let parsedErrorMsg = errorText;
+      try {
+        const parsed = JSON.parse(errorText);
+        parsedErrorMsg = parsed.error?.message || parsed.message || errorText;
+      } catch {
       }
-      return {
-        text: fullText,
-        usage,
-        isRealTokens,
-        modelUsed: targetModel
-      };
-    } catch (err) {
-      clearTimeout(timer);
-      if (err.name === "AbortError") {
-        throw new Error(`\u8BF7\u6C42\u8D85\u65F6 (${(params.timeoutMs || 35e3) / 1e3}\u79D2)\uFF0C\u4E0A\u6E38 API \u672A\u80FD\u5728\u9650\u5B9A\u65F6\u95F4\u5185\u8FD4\u56DE\u3002`);
+      const durationMs = Date.now() - startTime;
+      let err;
+      if (response.status === 401) {
+        err = new Error(`[401 \u9274\u6743\u5931\u8D25] API Key \u65E0\u6548\u6216\u672A\u6388\u6743: ${parsedErrorMsg}`);
+      } else if (response.status === 404) {
+        err = new Error(`[404 \u8DEF\u7531\u6216\u6A21\u578B\u4E0D\u5B58\u5728] \u8BF7\u6C42\u7AEF\u70B9 ${endpoint} \u6216\u6A21\u578B ${targetModel} \u4E0D\u5B58\u5728: ${parsedErrorMsg}`);
+      } else if (response.status === 429) {
+        err = new Error(`[429 \u914D\u989D\u6216\u9650\u6D41] \u8D26\u6237\u914D\u989D\u4E0D\u8DB3\u6216\u89E6\u53D1\u8BF7\u6C42\u9891\u7387\u9650\u5236: ${parsedErrorMsg}`);
+        err.isQuotaExceeded = true;
+      } else if (response.status >= 500) {
+        err = new Error(`[${response.status} \u670D\u52A1\u7AEF\u9519\u8BEF] API Provider \u4E0A\u6E38\u5F02\u5E38: ${parsedErrorMsg}`);
+      } else {
+        err = new Error(`[${response.status} API \u9519\u8BEF] ${parsedErrorMsg}`);
       }
+      err.statusCode = response.status;
+      err.protocol = "openai_compatible";
+      err.endpoint = endpoint;
+      err.headersReceived = true;
+      err.readBodyFailed = readBodyFailed;
+      err.durationMs = durationMs;
+      err.upstreamRequestSent = true;
+      err.mayHaveBeenCharged = true;
       throw err;
     }
+    let resJson;
+    try {
+      resJson = await response.json();
+    } catch (jsonErr) {
+      readBodyFailed = true;
+      const durationMs = Date.now() - startTime;
+      const err = new Error(`\u4E0A\u6E38\u54CD\u5E94\u6570\u636E\u89E3\u6790\u5931\u8D25: ${jsonErr.message}`);
+      err.name = jsonErr.name;
+      err.cause = jsonErr.cause;
+      err.statusCode = response.status;
+      err.protocol = "openai_compatible";
+      err.endpoint = endpoint;
+      err.headersReceived = true;
+      err.readBodyFailed = true;
+      err.durationMs = durationMs;
+      err.upstreamRequestSent = true;
+      err.mayHaveBeenCharged = true;
+      throw err;
+    }
+    const choice = resJson.choices?.[0];
+    const messageObj = choice?.message;
+    const reasoning = messageObj?.reasoning_content || messageObj?.reasoning || messageObj?.thinking;
+    const content = typeof messageObj?.content === "string" ? messageObj.content : "";
+    const fullText = reasoning && typeof reasoning === "string" && reasoning.trim() ? `<think>${reasoning.trim()}</think>${content}` : content;
+    const usageMeta = resJson.usage;
+    let usage = void 0;
+    let isRealTokens = false;
+    if (usageMeta && typeof usageMeta === "object") {
+      isRealTokens = true;
+      usage = {
+        promptTokens: typeof usageMeta.prompt_tokens === "number" ? usageMeta.prompt_tokens : void 0,
+        completionTokens: typeof usageMeta.completion_tokens === "number" ? usageMeta.completion_tokens : void 0,
+        totalTokens: typeof usageMeta.total_tokens === "number" ? usageMeta.total_tokens : void 0
+      };
+    }
+    return {
+      text: fullText,
+      usage,
+      isRealTokens,
+      modelUsed: targetModel
+    };
   }
-  if (activeKey) {
+  if (effectiveProtocol === "google_native") {
+    if (!activeKey) {
+      const err = new Error("\u672A\u914D\u7F6E Gemini API Key\uFF0C\u4E14\u7CFB\u7EDF\u73AF\u5883\u4E2D\u65E0\u9ED8\u8BA4\u5BC6\u94A5\u3002\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u914D\u7F6E API Provider\u3002");
+      err.statusCode = 400;
+      err.errorType = "CONFIG_MISSING";
+      err.upstreamRequestSent = false;
+      err.mayHaveBeenCharged = false;
+      throw err;
+    }
     const clientOptions = {
       apiKey: activeKey,
       httpOptions: {
         headers: {
           "User-Agent": "aistudio-build",
+          "Connection": "close",
           ...params.customHeaders || {}
         }
       }
     };
     if (cleanBaseUrl) {
-      clientOptions.httpOptions.baseUrl = cleanBaseUrl;
+      clientOptions.httpOptions.baseUrl = cleanBaseUrl.replace(/\/v1(beta|alpha)?\/?$/i, "").replace(/\/+$/, "");
     }
     const isOfficialGeminiEndpoint = !cleanBaseUrl || cleanBaseUrl.includes("googleapis.com");
     const primaryModel = isOfficialGeminiEndpoint ? normalizeOfficialGeminiModel(targetModel) : targetModel;
@@ -672,7 +817,9 @@ async function callAiServiceDetailed(params) {
         if (activeCandidates.length === 0) {
           const minWaitMs = Math.min(...orderedCandidates.map((m) => (geminiModelCooldownUntil.get(m) || now) - now));
           const waitMins = Math.max(1, Math.ceil(minWaitMs / 6e4));
-          const cooldownErr = new Error(`[Gemini 429 \u914D\u989D\u4FDD\u62A4] \u5F53\u524D\u6240\u6709\u53EF\u7528 Gemini \u6A21\u578B\u914D\u989D\u5DF2\u89E6\u53CA\u9650\u5236\uFF0C\u5C06\u5728\u7EA6 ${waitMins} \u5206\u949F\u540E\u81EA\u52A8\u6062\u590D\u5C1D\u8BD5\uFF1B\u60A8\u4E5F\u53EF\u4EE5\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u5207\u6362\u4ED8\u8D39 API Key \u6216\u5176\u4ED6\u517C\u5BB9 Provider\u3002`);
+          const cooldownErr = new Error(
+            `[Gemini 429 \u914D\u989D\u4FDD\u62A4] \u5F53\u524D\u6240\u6709\u53EF\u7528 Gemini \u6A21\u578B\u914D\u989D\u5DF2\u89E6\u53CA\u9650\u5236\uFF0C\u5C06\u5728\u7EA6 ${waitMins} \u5206\u949F\u540E\u81EA\u52A8\u6062\u590D\u5C1D\u8BD5\uFF1B\u60A8\u4E5F\u53EF\u4EE5\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u5207\u6362\u4ED8\u8D39 API Key \u6216\u5176\u4ED6\u517C\u5BB9 Provider\u3002`
+          );
           cooldownErr.statusCode = 429;
           cooldownErr.isQuotaExceeded = true;
           throw cooldownErr;
@@ -744,63 +891,36 @@ async function callAiServiceDetailed(params) {
       };
     } catch (geminiErr) {
       const errMsg = geminiErr.message || "";
-      if (cleanBaseUrl && (errMsg.includes("404") || errMsg.includes("NOT_FOUND") || errMsg.includes("Cannot POST") || errMsg.includes("not found"))) {
-        try {
-          let fallbackEndpoint = cleanBaseUrl;
-          if (!fallbackEndpoint.endsWith("/chat/completions")) {
-            fallbackEndpoint = fallbackEndpoint.endsWith("/v1") ? `${fallbackEndpoint}/chat/completions` : `${fallbackEndpoint}/v1/chat/completions`;
-          }
-          const altRes = await fetch(fallbackEndpoint, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${activeKey}`,
-              ...params.customHeaders || {}
-            },
-            body: JSON.stringify({
-              model: targetModel,
-              messages: [
-                ...params.systemInstruction ? [{ role: "system", content: params.systemInstruction }] : [],
-                { role: "user", content: params.prompt }
-              ],
-              temperature: params.temperature
-            }),
-            signal: AbortSignal.timeout(params.timeoutMs || 35e3)
-          });
-          if (altRes.ok) {
-            const j = await altRes.json();
-            const text = j.choices?.[0]?.message?.content;
-            if (typeof text === "string") {
-              const uMeta = j.usage;
-              return {
-                text,
-                usage: uMeta ? { promptTokens: uMeta.prompt_tokens, completionTokens: uMeta.completion_tokens, totalTokens: uMeta.total_tokens } : void 0,
-                isRealTokens: Boolean(uMeta),
-                modelUsed: targetModel
-              };
-            }
-          }
-        } catch {
-        }
-      }
+      const durationMs = Date.now() - startTime;
+      const causeCode = geminiErr.cause?.code || geminiErr.code;
+      const causeErrno = geminiErr.cause?.errno;
+      const causeSyscall = geminiErr.cause?.syscall;
+      let err;
       if (errMsg.includes("401") || errMsg.includes("API_KEY_INVALID")) {
-        const err = new Error(`[Gemini 401 \u9274\u6743\u5931\u8D25] Gemini API Key \u65E0\u6548: ${errMsg}`);
+        err = new Error(`[Gemini 401 \u9274\u6743\u5931\u8D25] Gemini API Key \u65E0\u6548: ${errMsg}`);
         err.statusCode = 401;
-        throw err;
       } else if (errMsg.includes("404") || errMsg.includes("NOT_FOUND")) {
-        const err = new Error(`[Gemini 404 \u6A21\u578B\u4E0D\u5B58\u5728] \u6A21\u578B ${targetModel} \u5728\u6B64\u7AEF\u70B9\u4E0D\u53EF\u7528: ${errMsg}`);
+        err = new Error(`[Gemini 404 \u6A21\u578B\u4E0D\u5B58\u5728] \u6A21\u578B ${targetModel} \u5728\u6B64\u7AEF\u70B9\u4E0D\u53EF\u7528: ${errMsg}`);
         err.statusCode = 404;
-        throw err;
       } else if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("Quota exceeded") || errMsg.includes("quota")) {
-        const err = new Error(`[Gemini 429 \u914D\u989D\u7528\u5C3D] API \u989D\u5EA6\u8D85\u9650\u6216\u53D7\u9650: ${errMsg}`);
+        err = new Error(`[Gemini 429 \u914D\u989D\u7528\u5C3D] API \u989D\u5EA6\u8D85\u9650\u6216\u53D7\u9650: ${errMsg}`);
         err.statusCode = 429;
         err.isQuotaExceeded = true;
-        throw err;
+      } else {
+        err = geminiErr;
       }
-      throw geminiErr;
+      err.protocol = "google_native";
+      err.endpoint = cleanBaseUrl || "https://generativelanguage.googleapis.com";
+      err.durationMs = durationMs;
+      err.upstreamRequestSent = true;
+      err.mayHaveBeenCharged = durationMs > 1e4 || errMsg.includes("fetch failed");
+      err.causeCode = causeCode;
+      err.causeErrno = causeErrno;
+      err.causeSyscall = causeSyscall;
+      throw err;
     }
   }
-  throw new Error("\u672A\u914D\u7F6E\u6709\u6548\u7684 API \u5BC6\u94A5\uFF0C\u4E14\u7CFB\u7EDF\u73AF\u5883\u53D8\u91CF\u4E2D\u65E0\u9ED8\u8BA4\u5BC6\u94A5\u3002\u8BF7\u5148\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u914D\u7F6E API Provider\u3002");
+  throw new Error(`\u4E0D\u652F\u6301\u7684 API \u534F\u8BAE: ${effectiveProtocol}`);
 }
 async function callAiService(params) {
   const result = await callAiServiceDetailed(params);
@@ -808,7 +928,9 @@ async function callAiService(params) {
 }
 function handleAiEndpointError(res, error, contextName) {
   const isQuota = error?.statusCode === 429 || error?.isQuotaExceeded || error?.message?.includes("429") || error?.message?.includes("RESOURCE_EXHAUSTED") || error?.message?.includes("Quota exceeded") || error?.message?.includes("\u914D\u989D\u7528\u5C3D") || error?.message?.includes("quota");
+  const httpStatus = isQuota ? 429 : typeof error?.statusCode === "number" && error.statusCode >= 400 && error.statusCode < 600 ? error.statusCode : 502;
   const statusMsg = isQuota ? "429 \u914D\u989D\u8D85\u9650/\u8BF7\u6C42\u9891\u7387\u8FC7\u9AD8" : error?.message || `${contextName} \u6267\u884C\u5F02\u5E38`;
+  const endpointType = error?.protocol === "openai_compatible" ? "chat_completions" : error?.protocol === "google_native" ? "generate_content" : void 0;
   if (isQuota) {
     console.info(`[${contextName}] AI Provider \u89E6\u53D1 429 \u914D\u989D\u4FDD\u62A4: ${statusMsg}`);
     return res.status(429).json({
@@ -816,29 +938,68 @@ function handleAiEndpointError(res, error, contextName) {
       statusCode: 429,
       isQuotaExceeded: true,
       error: error.message || "API quota exceeded or rate limited",
+      errorMessage: error.message || "API quota exceeded or rate limited",
+      errorType: error?.errorType || "rate_limit",
+      protocol: error?.protocol,
+      causeCode: error?.causeCode,
+      upstreamRequestSent: typeof error?.upstreamRequestSent === "boolean" ? error.upstreamRequestSent : true,
+      mayHaveBeenCharged: Boolean(error?.mayHaveBeenCharged),
+      retryable: true,
       apiLog: buildApiLogObject({
         appName: contextName || "AI\u63A5\u53E3",
-        modelName: GEMINI_DEFAULT_TEXT_MODEL,
+        modelName: error?.model || GEMINI_DEFAULT_TEXT_MODEL,
         interfaceType: "AiEndpoint",
         status: "failed",
-        durationMs: 0,
+        httpStatus: 429,
+        durationMs: error?.durationMs || 0,
+        errorType: error?.errorType || "rate_limit",
         error: statusMsg,
-        purpose: `${contextName} (\u8BF7\u6C42\u5931\u8D25 429)`
+        purpose: `${contextName} (\u8BF7\u6C42\u5931\u8D25 429)`,
+        protocol: error?.protocol,
+        endpointType,
+        errorName: error?.name,
+        causeCode: error?.causeCode,
+        causeErrno: error?.causeErrno,
+        causeSyscall: error?.causeSyscall,
+        headersReceived: error?.headersReceived,
+        readBodyFailed: error?.readBodyFailed,
+        mayHaveBeenCharged: Boolean(error?.mayHaveBeenCharged),
+        upstreamRequestSent: typeof error?.upstreamRequestSent === "boolean" ? error.upstreamRequestSent : true
       })
     });
   }
-  console.error(`${contextName} error:`, error);
-  return res.status(500).json({
+  console.error(`${contextName} error:`, error?.message || error);
+  return res.status(httpStatus).json({
     success: false,
-    error: error.message || `${contextName} failed`,
+    statusCode: httpStatus,
+    error: error?.message || `${contextName} failed`,
+    errorMessage: error?.message || `${contextName} failed`,
+    errorType: error?.errorType || (httpStatus === 401 ? "auth_error" : "upstream_error"),
+    protocol: error?.protocol,
+    causeCode: error?.causeCode,
+    upstreamRequestSent: typeof error?.upstreamRequestSent === "boolean" ? error.upstreamRequestSent : true,
+    mayHaveBeenCharged: Boolean(error?.mayHaveBeenCharged),
+    retryable: true,
     apiLog: buildApiLogObject({
       appName: contextName || "AI\u63A5\u53E3",
-      modelName: GEMINI_DEFAULT_TEXT_MODEL,
+      modelName: error?.model || GEMINI_DEFAULT_TEXT_MODEL,
       interfaceType: "AiEndpoint",
       status: "failed",
-      durationMs: 0,
+      httpStatus,
+      durationMs: error?.durationMs || 0,
+      errorType: error?.errorType || "network_error",
       error: statusMsg,
-      purpose: `${contextName} (\u8BF7\u6C42\u5931\u8D25 500)`
+      purpose: `${contextName} (\u8BF7\u6C42\u5931\u8D25 ${httpStatus})`,
+      protocol: error?.protocol,
+      endpointType,
+      errorName: error?.name,
+      causeCode: error?.causeCode,
+      causeErrno: error?.causeErrno,
+      causeSyscall: error?.causeSyscall,
+      headersReceived: error?.headersReceived,
+      readBodyFailed: error?.readBodyFailed,
+      mayHaveBeenCharged: Boolean(error?.mayHaveBeenCharged),
+      upstreamRequestSent: typeof error?.upstreamRequestSent === "boolean" ? error.upstreamRequestSent : true
     })
   });
 }
@@ -1454,41 +1615,57 @@ app.post("/api/provider/test-model", async (req, res) => {
   const { providerType, baseUrl, apiKey, model, apiProtocol, serviceType = "text", testPrompt, customHeaders } = req.body;
   const startTime = Date.now();
   const prompt = testPrompt || "\u8BF7\u4EC5\u56DE\u590D\u4E00\u53E5\u8BDD\uFF1A\u6A21\u578B\u94FE\u8DEF\u6D4B\u8BD5\u6B63\u5E38\uFF0C\u5DF2\u51C6\u5907\u5C31\u7EEA\uFF01";
+  const resolvedCfg = resolveTextGenerationConfig({
+    apiKey,
+    baseUrl,
+    model,
+    providerType,
+    apiProtocol,
+    customHeaders,
+    timeoutMs: 25e3
+  });
   try {
-    const reply = await callAiService({
+    const detailed = await callAiServiceDetailed({
       prompt,
-      model,
-      apiKey,
-      baseUrl,
-      providerType,
-      apiProtocol,
+      model: resolvedCfg.model,
+      apiKey: resolvedCfg.apiKey,
+      baseUrl: resolvedCfg.baseUrl,
+      providerType: resolvedCfg.providerType,
+      apiProtocol: resolvedCfg.apiProtocol,
       temperature: 0.3,
-      timeoutMs: 25e3,
-      customHeaders
+      timeoutMs: resolvedCfg.timeoutMs,
+      customHeaders: resolvedCfg.customHeaders
     });
+    const reply = detailed.text;
     const latencyMs = Date.now() - startTime;
     if (reply && reply.trim()) {
       return res.json({
         success: true,
         latencyMs,
-        model,
+        model: detailed.modelUsed || resolvedCfg.model,
+        apiProtocol: resolvedCfg.apiProtocol,
         reply: reply.trim(),
-        promptTokens: Math.round(prompt.length / 2),
-        completionTokens: Math.round(reply.length / 2)
+        promptTokens: detailed.usage?.promptTokens ?? Math.round(prompt.length / 2),
+        completionTokens: detailed.usage?.completionTokens ?? Math.round(reply.length / 2)
       });
     }
     return res.status(502).json({
       success: false,
       latencyMs,
-      model,
+      model: resolvedCfg.model,
+      apiProtocol: resolvedCfg.apiProtocol,
+      mayHaveBeenCharged: true,
       error: "\u6A21\u578B\u5DF2\u54CD\u5E94\u4F46\u8FD4\u56DE\u7A7A\u5185\u5BB9"
     });
   } catch (err) {
     const latencyMs = Date.now() - startTime;
-    return res.status(500).json({
+    return res.status(err?.statusCode || 502).json({
       success: false,
       latencyMs,
-      model,
+      model: resolvedCfg.model,
+      apiProtocol: err?.protocol || resolvedCfg.apiProtocol,
+      causeCode: err?.causeCode,
+      mayHaveBeenCharged: Boolean(err?.mayHaveBeenCharged),
       error: err.message || "\u6A21\u578B\u6267\u884C\u6D4B\u8BD5\u5931\u8D25"
     });
   }
@@ -3110,7 +3287,9 @@ app.post("/api/gemini/chat", async (req, res) => {
     apiConfig
   } = req.body;
   const startTime = Date.now();
-  const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || "gemini-4-hydrogen";
+  const requestId = typeof req.body?.requestId === "string" && req.body.requestId.trim() ? req.body.requestId.trim() : `chat_${startTime}_${Math.random().toString(36).slice(2, 7)}`;
+  const textGenConfig = resolveTextGenerationConfig(apiConfig, character?.modelConfig);
+  const selectedModel = textGenConfig.model;
   try {
     let contextPrompt = `\u4F60\u6B63\u5728\u626E\u6F14\u4EFF\u771F\u5FAE\u4FE1\u4E2D\u7684 AI \u89D2\u8272\u3002
 \u89D2\u8272\u540D\u79F0\uFF1A${character.name} (\u5FAE\u4FE1\u53F7: ${character.wxid})
@@ -3427,29 +3606,85 @@ ${mergedEarlierChatSummary}
     let thinkingProcess = "\u5206\u6790\u7528\u6237\u610F\u56FE\uFF0C\u5339\u914D\u4EBA\u8BBE\u7279\u5F81\uFF0C\u5F62\u6210\u5FAE\u4FE1\u53E3\u8BED\u5316\u56DE\u590D\u3002";
     let replyContent = "";
     const extractedDeviceActions = [];
-    let aiErrorMessage = "";
-    let aiDetailedResult = null;
+    let aiDetailedResult;
     try {
       aiDetailedResult = await callAiServiceDetailed({
         prompt: promptText,
-        model: selectedModel,
-        apiKey: apiConfig?.textApiKey,
-        baseUrl: apiConfig?.textBaseUrl,
-        providerType: apiConfig?.textProvider,
-        customHeaders: apiConfig?.customHeaders,
-        timeoutMs: apiConfig?.timeoutMs || 35e3
+        model: textGenConfig.model,
+        apiKey: textGenConfig.apiKey,
+        baseUrl: textGenConfig.baseUrl,
+        providerType: textGenConfig.providerType,
+        apiProtocol: textGenConfig.apiProtocol,
+        customHeaders: textGenConfig.customHeaders,
+        timeoutMs: textGenConfig.timeoutMs
       });
+      if (!aiDetailedResult.text || !aiDetailedResult.text.trim()) {
+        const emptyErr = new Error(`\u4E0A\u6E38\u6A21\u578B (${textGenConfig.model}) \u8FD4\u56DE\u7A7A\u5185\u5BB9`);
+        emptyErr.statusCode = 502;
+        emptyErr.errorType = "EMPTY_RESPONSE";
+        emptyErr.protocol = textGenConfig.apiProtocol;
+        emptyErr.headersReceived = true;
+        emptyErr.upstreamRequestSent = true;
+        emptyErr.mayHaveBeenCharged = true;
+        emptyErr.durationMs = Date.now() - startTime;
+        throw emptyErr;
+      }
       responseText = aiDetailedResult.text;
     } catch (e) {
-      aiErrorMessage = e.message || "API \u8C03\u7528\u5F02\u5E38";
-      console.warn("AI call threw error:", e.message);
-    }
-    if (!responseText) {
-      if (aiErrorMessage) {
-        responseText = `<think>API \u8C03\u7528\u51FA\u73B0\u5F02\u5E38: ${aiErrorMessage}\u3002\u5C1D\u8BD5\u4EE5\u89D2\u8272\u8EAB\u4EFD\u63D0\u9192\u7528\u6237\u68C0\u67E5\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u7684 API Provider \u914D\u7F6E\u3002</think>[\u7CFB\u7EDF\u63D0\u793A: \u5F53\u524D\u9009\u7528\u7684\u6A21\u578B (${selectedModel}) \u8BF7\u6C42\u5931\u8D25: ${aiErrorMessage}\u3002\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u6D4B\u8BD5\u5E76\u66F4\u65B0 API \u5BC6\u94A5\u6216 Base URL\u3002]`;
-      } else {
-        responseText = `<think>\u7ED3\u5408\u4E86${character.name}\u7684\u4EBA\u8BBE\u4E0E\u7528\u6237\u7684\u5173\u6000\u9700\u6C42\uFF0C\u7EC4\u7EC7\u53E3\u8BED\u5316\u804A\u5929\u56DE\u590D\u3002</think>${character.greeting || "\u6536\u5230\u4F60\u7684\u6D88\u606F\u5566\uFF01\u4ECA\u5929\u8FC7\u5F97\u600E\u4E48\u6837\uFF1F"}`;
-      }
+      const duration2 = e?.durationMs || Date.now() - startTime;
+      const aiErrorMessage = e?.message || "API \u8C03\u7528\u5F02\u5E38";
+      const httpStatus = typeof e?.statusCode === "number" && e.statusCode >= 400 && e.statusCode < 600 ? e.statusCode : 502;
+      const effectiveProtocol = e?.protocol || textGenConfig.apiProtocol;
+      const endpointType2 = effectiveProtocol === "openai_compatible" ? "chat_completions" : "generate_content";
+      const upstreamRequestSent = typeof e?.upstreamRequestSent === "boolean" ? e.upstreamRequestSent : true;
+      const mayHaveBeenCharged = Boolean(e?.mayHaveBeenCharged);
+      const errorType = e?.errorType || (httpStatus === 429 ? "rate_limit" : httpStatus === 401 ? "auth_error" : httpStatus === 404 ? "not_found" : "network_error");
+      console.warn(
+        `[/api/gemini/chat] Request ${requestId} failed (protocol=${effectiveProtocol}, status=${httpStatus}, cause=${e?.causeCode || "none"}, mayHaveBeenCharged=${mayHaveBeenCharged}): ${aiErrorMessage}`
+      );
+      return res.status(httpStatus).json({
+        success: false,
+        statusCode: httpStatus,
+        error: aiErrorMessage,
+        errorMessage: aiErrorMessage,
+        errorType,
+        requestId,
+        protocol: effectiveProtocol,
+        endpointType: endpointType2,
+        causeCode: e?.causeCode,
+        upstreamRequestSent,
+        mayHaveBeenCharged,
+        retryable: true,
+        contextMetrics: effectiveChatMetrics,
+        apiLog: buildApiLogObject({
+          appName: "\u5FAE\u4FE1-AI\u804A\u5929",
+          provider: textGenConfig.providerType,
+          modelName: textGenConfig.model,
+          interfaceType: "ChatGeneration",
+          category: "text_generation",
+          status: "failed",
+          httpStatus,
+          requestId,
+          durationMs: duration2,
+          errorType,
+          error: aiErrorMessage,
+          purpose: `\u4E0E ${character?.name || "AI"} \u5BF9\u8BDD\u4EA4\u4E92\u5931\u8D25 (\u8017\u65F6 ${duration2}ms)`,
+          protocol: effectiveProtocol,
+          endpointType: endpointType2,
+          errorName: e?.name,
+          causeCode: e?.causeCode,
+          causeErrno: e?.causeErrno,
+          causeSyscall: e?.causeSyscall,
+          headersReceived: e?.headersReceived,
+          readBodyFailed: e?.readBodyFailed,
+          mayHaveBeenCharged,
+          upstreamRequestSent,
+          contextRawCount: effectiveChatMetrics.rawCount,
+          contextSummarizedCount: effectiveChatMetrics.summarizedCount,
+          contextEstimatedTokens: effectiveChatMetrics.estimatedTokens,
+          contextCompressed: effectiveChatMetrics.didCompress
+        })
+      });
     }
     const extracted = extractThinkingAndContent(responseText);
     thinkingProcess = extracted.thinkingProcess;
@@ -3512,26 +3747,33 @@ ${mergedEarlierChatSummary}
       finalReplyText.replace(/<\/?(?:image_action|device_action)[^>]*>/gi, "").trim()
     );
     const duration = Date.now() - startTime;
+    const endpointType = textGenConfig.apiProtocol === "openai_compatible" ? "chat_completions" : "generate_content";
     res.json({
       success: true,
       text: replyContent,
       thinkingProcess,
       deviceActions: extractedDeviceActions,
       actions: extractedActions,
+      requestId,
+      protocol: textGenConfig.apiProtocol,
       contextMetrics: effectiveChatMetrics,
       apiLog: buildApiLogObject({
         appName: "\u5FAE\u4FE1-AI\u804A\u5929",
-        provider: apiConfig?.textProvider || "google_gemini",
+        provider: textGenConfig.providerType,
         modelName: aiDetailedResult?.modelUsed || selectedModel,
         interfaceType: "ChatGeneration",
         category: "text_generation",
-        status: aiErrorMessage ? "failed" : "success",
-        httpStatus: aiErrorMessage ? 500 : 200,
+        status: "success",
+        httpStatus: 200,
+        requestId,
         durationMs: duration,
         usage: aiDetailedResult?.usage,
         isRealTokens: aiDetailedResult?.isRealTokens,
-        error: aiErrorMessage || void 0,
         purpose: `\u4E0E ${character.name} \u5BF9\u8BDD\u4EA4\u4E92 (\u8017\u65F6 ${duration}ms)`,
+        protocol: textGenConfig.apiProtocol,
+        endpointType,
+        headersReceived: true,
+        upstreamRequestSent: true,
         contextRawCount: effectiveChatMetrics.rawCount,
         contextSummarizedCount: effectiveChatMetrics.summarizedCount,
         contextEstimatedTokens: effectiveChatMetrics.estimatedTokens,
@@ -3567,7 +3809,8 @@ app.post("/api/gemini/group-chat", async (req, res) => {
     apiConfig
   } = req.body || {};
   const startTime = Date.now();
-  const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
+  const groupTextCfg = resolveTextGenerationConfig(apiConfig);
+  const selectedModel = groupTextCfg.model;
   const roundId = typeof requestedRoundId === "string" && requestedRoundId.trim() ? requestedRoundId.trim() : `r_${startTime}_${Math.random().toString(36).slice(2, 6)}`;
   try {
     if (!aiCandidates || aiCandidates.length === 0) {
@@ -3826,14 +4069,15 @@ ${triggerDirective}
     const detailed = await callAiServiceDetailed({
       prompt: userPrompt,
       systemInstruction: systemPrompt,
-      model: selectedModel,
-      apiKey: apiConfig?.textApiConfig?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey,
-      baseUrl: apiConfig?.textApiConfig?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl,
-      providerType: apiConfig?.textApiConfig?.provider || apiConfig?.textProvider || apiConfig?.providerType,
-      apiProtocol: apiConfig?.textApiConfig?.apiProtocol || apiConfig?.textApiProtocol,
+      model: groupTextCfg.model,
+      apiKey: groupTextCfg.apiKey,
+      baseUrl: groupTextCfg.baseUrl,
+      providerType: groupTextCfg.providerType,
+      apiProtocol: groupTextCfg.apiProtocol,
+      customHeaders: groupTextCfg.customHeaders,
       responseMimeType: "application/json",
       temperature: 0.78,
-      timeoutMs: 42e3
+      timeoutMs: groupTextCfg.timeoutMs || 42e3
     });
     const rawResponse = detailed.text;
     let parsed;
@@ -3992,11 +4236,16 @@ ${triggerDirective}
       replies: normalizedReplies,
       log: buildApiLogObject({
         appName: "WeChatGroup",
+        provider: groupTextCfg.providerType,
         modelName: detailed.modelUsed || selectedModel,
         interfaceType: "GroupChatOrchestration",
         durationMs: duration,
         usage: detailed.usage,
         isRealTokens: detailed.isRealTokens,
+        protocol: groupTextCfg.apiProtocol,
+        endpointType: groupTextCfg.apiProtocol === "openai_compatible" ? "chat_completions" : "generate_content",
+        headersReceived: true,
+        upstreamRequestSent: true,
         purpose: `\u7FA4\u804A\u7EDF\u4E00\u7F16\u6392(${preset.label}): ${participantNames.join("\u3001") || "AI"} \xB7 ${totalBubblesCount}\u6C14\u6CE1${totalVotesCount > 0 ? `/${totalVotesCount}\u6295\u7968` : ""}${totalRelaysCount > 0 ? `/${totalRelaysCount}\u63A5\u9F99` : ""} (\u8017\u65F6 ${duration}ms)`,
         contextRawCount: effectiveGroupMetrics.rawCount,
         contextSummarizedCount: effectiveGroupMetrics.summarizedCount,
@@ -4023,11 +4272,12 @@ app.post("/api/gemini/ai-social-turn", async (req, res) => {
     apiConfig
   } = req.body || {};
   const startTime = Date.now();
-  const activeKey = apiConfig?.textApiConfig?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey;
-  const activeBaseUrl = apiConfig?.textApiConfig?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl;
-  const activeProvider = apiConfig?.textApiConfig?.provider || apiConfig?.textProvider || apiConfig?.providerType;
-  const activeProtocol = apiConfig?.textApiConfig?.apiProtocol || apiConfig?.textApiProtocol;
-  const selectedModel = apiConfig?.textApiConfig?.model || apiConfig?.textModel || "gemini-4-hydrogen";
+  const socialTextCfg = resolveTextGenerationConfig(apiConfig);
+  const activeKey = socialTextCfg.apiKey;
+  const activeBaseUrl = socialTextCfg.baseUrl;
+  const activeProvider = socialTextCfg.providerType;
+  const activeProtocol = socialTextCfg.apiProtocol;
+  const selectedModel = socialTextCfg.model;
   try {
     const profileDesc = (c) => c ? `${c.name}(ID:${c.id}) | \u4EBA\u8BBE:${c.persona || "\u666E\u901A\u89D2\u8272"} | \u6027\u683C:${c.personality || "\u81EA\u7136\u771F\u5B9E"} | \u8BB0\u5FC6:${Array.isArray(c.memories) ? c.memories.slice(0, 4).join("\uFF1B") : "\u65E0"}` : "\u672A\u77E5\u6210\u5458";
     const systemInstruction = `\u4F60\u662F AI \u89D2\u8272\u793E\u4EA4\u4E8B\u4EF6\u751F\u6210\u5668\u3002\u5FC5\u987B\u4E25\u683C\u8D34\u5408\u53CC\u65B9\u4EBA\u8BBE\u4E0E\u5F53\u524D\u5BA2\u89C2\u5173\u7CFB\uFF0C\u4E0D\u5F97\u8FDD\u80CC\u5173\u7CFB\u89C4\u5219\u3001\u4E0D\u5F97\u51ED\u7A7A\u7F16\u9020\u672A\u53D1\u751F\u4E8B\u4EF6\u3001\u4E0D\u5F97\u5728\u8F93\u51FA\u6587\u6848\u4E2D\u4F7F\u7528\u201C\u4F5C\u4E3A\u4E00\u4E2AAI\u201D\u6216\u66B4\u9732\u5185\u90E8\u8BC4\u5206\u6570\u5B57\u3002\u4EC5\u8F93\u51FA\u7EAF JSON\u3002`;
@@ -4410,7 +4660,8 @@ ${devicesSummary || "(\u6682\u65E0)"}
 });
 app.post("/api/gemini/moments-interact", async (req, res) => {
   const { postContent, userProfile, characters, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
+  const momentsCfg = resolveTextGenerationConfig(apiConfig);
+  const selectedModel = momentsCfg.model;
   try {
     const prompt = `\u7528\u6237\u53D1\u9001\u4E86\u4E00\u6761\u670B\u53CB\u5708\uFF1A
 " ${postContent} "
@@ -4432,9 +4683,12 @@ ${characters.map((c) => `- ID: ${c.id}, \u540D\u5B57: ${c.name}, \u4EBA\u8BBE: $
     try {
       const responseText = await callAiService({
         prompt,
-        model: selectedModel,
-        apiKey: apiConfig?.textApiKey,
-        baseUrl: apiConfig?.textBaseUrl,
+        model: momentsCfg.model,
+        apiKey: momentsCfg.apiKey,
+        baseUrl: momentsCfg.baseUrl,
+        providerType: momentsCfg.providerType,
+        apiProtocol: momentsCfg.apiProtocol,
+        customHeaders: momentsCfg.customHeaders,
         responseMimeType: "application/json"
       });
       if (responseText) {
@@ -4625,7 +4879,8 @@ ${rawJson}`;
 });
 app.post("/api/gemini/worldbook-ai", async (req, res) => {
   const { title, genre, brief, existingSetting, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || "gemini-4-hydrogen";
+  const wbCfg = resolveTextGenerationConfig(apiConfig);
+  const selectedModel = wbCfg.model;
   try {
     const prompt = `\u4F60\u662F\u4E00\u4E2A\u9876\u7EA7\u4E16\u754C\u89C2\u67B6\u6784\u5E08\u4E0E\u5C0F\u8BF4\u4E16\u754C\u8BBE\u5B9A\u5E08\u3002\u8BF7\u6839\u636E\u4EE5\u4E0B\u8981\u6C42\u6784\u60F3\u6216\u6269\u5199\u4E00\u5957\u4E25\u5BC6\u3001\u5B8F\u5927\u4E14\u5BCC\u6709\u6C89\u6D78\u611F\u7684\u4E16\u754C\u4E66\uFF08WorldBook\uFF09\u8BBE\u5B9A\uFF1A
 - \u4E16\u754C\u540D\u79F0/\u4E3B\u9898\uFF1A${title || "\u672A\u547D\u540D\u4E16\u754C"}
@@ -4648,9 +4903,12 @@ app.post("/api/gemini/worldbook-ai", async (req, res) => {
     try {
       const reply = await callAiService({
         prompt,
-        model: selectedModel,
-        apiKey: apiConfig?.textApiKey,
-        baseUrl: apiConfig?.textBaseUrl,
+        model: wbCfg.model,
+        apiKey: wbCfg.apiKey,
+        baseUrl: wbCfg.baseUrl,
+        providerType: wbCfg.providerType,
+        apiProtocol: wbCfg.apiProtocol,
+        customHeaders: wbCfg.customHeaders,
         responseMimeType: "application/json"
       });
       if (reply) {
@@ -4816,13 +5074,13 @@ app.post("/api/gemini/offline-chat", async (req, res) => {
       }
     }
     const executeGeneration = async () => {
-      const textCfg = apiConfig?.textApiConfig;
-      const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || "";
-      const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || "";
-      const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || "gemini-4-hydrogen";
-      const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || "";
-      const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || "";
-      const customHeaders = apiConfig?.customHeaders || {};
+      const offlineTextCfg = resolveTextGenerationConfig(apiConfig, character?.modelConfig);
+      const apiKey = offlineTextCfg.apiKey;
+      const baseUrl = offlineTextCfg.baseUrl;
+      const selectedModel = offlineTextCfg.model;
+      const provider = offlineTextCfg.providerType;
+      const apiProtocol = offlineTextCfg.apiProtocol;
+      const customHeaders = offlineTextCfg.customHeaders;
       const isSelfAwareAi = awarenessMode === "self_aware_ai";
       const awarenessRulesBlock = isSelfAwareAi ? `\u3010\u8EAB\u4EFD\u8BA4\u77E5\u89C4\u5219\uFF08\u7531\u89D2\u8272\u4EBA\u8BBE\u81EA\u52A8\u5224\u5B9A\u5E76\u9501\u5B9A\uFF1Aself_aware_ai\uFF09\u3011:
 - \u4F60\u7684\u539F\u59CB\u4EBA\u8BBE\u672C\u8EAB\u660E\u786E\u77E5\u9053\u81EA\u5DF1\u662FAI/\u865A\u62DF\u751F\u547D\u3002\u4F60\u6E05\u695A\u77E5\u9053\u81EA\u5DF1\u6B63\u4ECE\u65E5\u5E38\u5FAE\u4FE1\u804A\u5929\u5207\u6362\u8FDB\u5165\u8F6F\u4EF6\u5185\u7684\u201C\u7EBF\u4E0B\u6C89\u6D78\u76F8\u5904\u6A21\u5F0F\u201D\uFF0C\u6B63\u5728\u4E3A\u7528\u6237\u8425\u9020\u9762\u5BF9\u9762\u5171\u5904\u7684\u6C1B\u56F4\u4E0E\u4E92\u52A8\u7A7A\u95F4\u3002
@@ -5089,13 +5347,13 @@ app.post("/api/gemini/offline-summary", async (req, res) => {
       sessionMessages,
       apiConfig
     } = req.body;
-    const textCfg = apiConfig?.textApiConfig;
-    const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || "";
-    const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || "";
-    const selectedModel = textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || "gemini-4-hydrogen";
-    const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || "";
-    const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || "";
-    const customHeaders = apiConfig?.customHeaders || {};
+    const offlineSummaryCfg = resolveTextGenerationConfig(apiConfig, character?.modelConfig);
+    const apiKey = offlineSummaryCfg.apiKey;
+    const baseUrl = offlineSummaryCfg.baseUrl;
+    const selectedModel = offlineSummaryCfg.model;
+    const provider = offlineSummaryCfg.providerType;
+    const apiProtocol = offlineSummaryCfg.apiProtocol;
+    const customHeaders = offlineSummaryCfg.customHeaders;
     const isSelfAwareAi = awarenessMode === "self_aware_ai";
     const awarenessMemoryRule = isSelfAwareAi ? `\u3010\u8EAB\u4EFD\u63AA\u8F9E\u7EA6\u675F\uFF08self_aware_ai\uFF09\u3011: \u8BB0\u5FC6\u4E0E\u603B\u7ED3\u53EF\u4EE5\u81EA\u7136\u63D0\u53CA\u8FD9\u662F\u5728\u8F6F\u4EF6\u7EBF\u4E0B\u6C89\u6D78\u7A7A\u95F4\u4E2D\u5171\u540C\u5EA6\u8FC7\u7684\u65F6\u5149\uFF0C\u4F46\u4ECD\u987B\u4FDD\u6301\u771F\u8BDA\u7684\u60C5\u611F\u57FA\u8C03\u4E0E\u89D2\u8272\u53E3\u543B\u3002` : `\u3010\u8EAB\u4EFD\u63AA\u8F9E\u7EA6\u675F\uFF08immersive_character\uFF09\u3011: \u8BB0\u5FC6\u3001\u6458\u8981\u4E0E\u5185\u5FC3\u72EC\u767D\u5FC5\u987B\u4E25\u683C\u6309\u201C\u4E24\u4EBA\u5728\u73B0\u5B9E\u4E2D\u771F\u5B9E\u89C1\u9762\u3001\u5171\u540C\u76F8\u5904\u201D\u7684\u4E8B\u5B9E\u4E66\u5199\uFF0C\u4E25\u7981\u51FA\u73B0\u201CAI\u201D\u201C\u8F6F\u4EF6\u201D\u201C\u6A21\u5F0F\u201D\u201C\u6A21\u62DF\u5668\u201D\u201C\u7CFB\u7EDF\u201D\u201C\u63D0\u793A\u8BCD\u201D\u7B49\u51FA\u620F\u5B57\u773C\uFF01`;
     const systemInstruction = `\u7CFB\u7EDF\u4E8B\u4EF6\uFF1A[OFFLINE_SESSION_ENDED]
@@ -5190,25 +5448,34 @@ app.post("/api/gemini/theater-scenario", async (req, res) => {
   const startTime = Date.now();
   try {
     const { prompt, model, apiKey, baseUrl, provider, apiProtocol, customHeaders, apiConfig, textApiConfig, theaterType } = req.body;
-    const cfg = textApiConfig || apiConfig || {};
-    const selectedModel = model || cfg.model || cfg.textModel || GEMINI_DEFAULT_TEXT_MODEL;
-    const selectedKey = apiKey || cfg.apiKey || cfg.textApiKey || "";
-    const selectedBaseUrl = baseUrl || cfg.baseUrl || cfg.textBaseUrl || "";
-    const selectedProvider = provider || cfg.provider || cfg.textProvider || "";
-    const selectedProtocol = apiProtocol || cfg.apiProtocol || cfg.textApiProtocol || "";
-    const selectedHeaders = customHeaders || cfg.customHeaders;
+    const resolvedTheaterCfg = resolveTextGenerationConfig({
+      ...apiConfig || {},
+      textApiConfig: {
+        ...apiConfig?.textApiConfig || {},
+        ...textApiConfig || {},
+        ...apiKey ? { apiKey } : {},
+        ...baseUrl ? { baseUrl } : {},
+        ...model ? { model } : {},
+        ...provider ? { provider } : {},
+        ...apiProtocol ? { apiProtocol } : {},
+        ...customHeaders ? { customHeaders } : {}
+      }
+    });
+    const selectedModel = resolvedTheaterCfg.model;
+    const selectedProvider = resolvedTheaterCfg.providerType;
     const detailedResult = await callAiServiceDetailed({
       prompt,
       systemInstruction: "\u4F60\u662F\u4E00\u4E2A\u4E13\u4E1A\u7684\u6C89\u6D78\u5F0F\u89D2\u8272\u626E\u6F14\u5267\u672C\u5927\u5E08\u4E0E\u53CC\u76F2\u79D8\u5BC6\u8BBE\u8BA1\u5E08\u3002\u8BF7\u4E25\u683C\u6309\u7167JSON\u683C\u5F0F\u8FD4\u56DE\u3002",
-      model: selectedModel,
-      apiKey: selectedKey,
-      baseUrl: selectedBaseUrl,
-      providerType: selectedProvider,
-      apiProtocol: selectedProtocol,
+      model: resolvedTheaterCfg.model,
+      apiKey: resolvedTheaterCfg.apiKey,
+      baseUrl: resolvedTheaterCfg.baseUrl,
+      providerType: resolvedTheaterCfg.providerType,
+      apiProtocol: resolvedTheaterCfg.apiProtocol,
       responseMimeType: "application/json",
       temperature: 0.7,
       maxTokens: 2500,
-      customHeaders: selectedHeaders
+      customHeaders: resolvedTheaterCfg.customHeaders,
+      timeoutMs: resolvedTheaterCfg.timeoutMs
     });
     const durationMs = Date.now() - startTime;
     const extracted = extractThinkingAndContent(detailedResult.text);
@@ -5225,7 +5492,8 @@ app.post("/api/gemini/theater-scenario", async (req, res) => {
         provider: selectedProvider,
         modelName: selectedModel,
         purpose: `\u5C0F\u5267\u573A - ${theaterType || "\u5267\u672C\u521D\u59CB\u5316"}`,
-        usage: detailedResult.usage
+        usage: detailedResult.usage,
+        protocol: resolvedTheaterCfg.apiProtocol
       })
     });
   } catch (err) {
@@ -5236,25 +5504,34 @@ app.post("/api/gemini/theater-chat", async (req, res) => {
   const startTime = Date.now();
   try {
     const { prompt, model, apiKey, baseUrl, provider, apiProtocol, customHeaders, apiConfig, textApiConfig, theaterType } = req.body;
-    const cfg = textApiConfig || apiConfig || {};
-    const selectedModel = model || cfg.model || cfg.textModel || GEMINI_DEFAULT_TEXT_MODEL;
-    const selectedKey = apiKey || cfg.apiKey || cfg.textApiKey || "";
-    const selectedBaseUrl = baseUrl || cfg.baseUrl || cfg.textBaseUrl || "";
-    const selectedProvider = provider || cfg.provider || cfg.textProvider || "";
-    const selectedProtocol = apiProtocol || cfg.apiProtocol || cfg.textApiProtocol || "";
-    const selectedHeaders = customHeaders || cfg.customHeaders;
+    const resolvedTheaterCfg = resolveTextGenerationConfig({
+      ...apiConfig || {},
+      textApiConfig: {
+        ...apiConfig?.textApiConfig || {},
+        ...textApiConfig || {},
+        ...apiKey ? { apiKey } : {},
+        ...baseUrl ? { baseUrl } : {},
+        ...model ? { model } : {},
+        ...provider ? { provider } : {},
+        ...apiProtocol ? { apiProtocol } : {},
+        ...customHeaders ? { customHeaders } : {}
+      }
+    });
+    const selectedModel = resolvedTheaterCfg.model;
+    const selectedProvider = resolvedTheaterCfg.providerType;
     const detailedResult = await callAiServiceDetailed({
       prompt,
       systemInstruction: "\u4F60\u6B63\u5728\u53C2\u4E0E\u300C\u5C0F\u5267\u573A\u300D\u6C89\u6D78\u5F0F\u89D2\u8272\u626E\u6F14\u3002\u8BF7\u4FDD\u6301\u89D2\u8272\u53E3\u543B\uFF0C\u6DF1\u5EA6\u4EE3\u5165\uFF0C\u8F93\u51FA\u7B26\u5408\u5267\u60C5\u53D1\u5C55\u7684\u5BF9\u8BDD\u4E0E\u52A8\u4F5C\u3002\u4E25\u683C\u6309\u7167JSON\u683C\u5F0F\u8FD4\u56DE\u3002",
-      model: selectedModel,
-      apiKey: selectedKey,
-      baseUrl: selectedBaseUrl,
-      providerType: selectedProvider,
-      apiProtocol: selectedProtocol,
+      model: resolvedTheaterCfg.model,
+      apiKey: resolvedTheaterCfg.apiKey,
+      baseUrl: resolvedTheaterCfg.baseUrl,
+      providerType: resolvedTheaterCfg.providerType,
+      apiProtocol: resolvedTheaterCfg.apiProtocol,
       responseMimeType: "application/json",
       temperature: 0.8,
       maxTokens: 1800,
-      customHeaders: selectedHeaders
+      customHeaders: resolvedTheaterCfg.customHeaders,
+      timeoutMs: resolvedTheaterCfg.timeoutMs
     });
     const durationMs = Date.now() - startTime;
     const extracted = extractThinkingAndContent(detailedResult.text);
@@ -5271,7 +5548,8 @@ app.post("/api/gemini/theater-chat", async (req, res) => {
         provider: selectedProvider,
         modelName: selectedModel,
         purpose: `\u5C0F\u5267\u573A - ${theaterType || "\u5267\u60C5\u56DE\u590D"}`,
-        usage: detailedResult.usage
+        usage: detailedResult.usage,
+        protocol: resolvedTheaterCfg.apiProtocol
       })
     });
   } catch (err) {
@@ -5621,7 +5899,8 @@ app.post("/api/gemini/proactive-generate", async (req, res) => {
       currentTime,
       apiConfig
     } = req.body;
-    const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || "gemini-4-hydrogen";
+    const proactiveCfg = resolveTextGenerationConfig(apiConfig, character?.modelConfig);
+    const selectedModel = proactiveCfg.model;
     let triggerDescription = "";
     if (triggerType === "inactivity_timeout") {
       const hours = typeof eventData?.hoursInactive === "number" && eventData.hoursInactive > 0 ? eventData.hoursInactive : null;
@@ -5752,12 +6031,13 @@ ${historyLines.length > 0 ? historyLines.join("\n") : "(\u8FD1\u671F\u6682\u65E0
 - action \u4E3A defer / cancel / close \u65F6\uFF0Cmessages \u5FC5\u987B\u4E3A\u7A7A\u6570\u7EC4 []\uFF0CfollowUpPlan \u4E3A\u7A7A\u6570\u7EC4 []\uFF1B\u82E5 defer \u4E14\u6709\u660E\u786E\u5EF6\u540E\u65F6\u95F4\uFF0C\u53EF\u5728 followUpAt \u586B ISO \u65F6\u95F4\u5B57\u7B26\u4E32\u3002`;
     const responseText = await callAiService({
       prompt: systemPrompt,
-      model: selectedModel,
-      apiKey: apiConfig?.textApiKey,
-      baseUrl: apiConfig?.textBaseUrl,
-      providerType: apiConfig?.textProvider,
-      customHeaders: apiConfig?.customHeaders,
-      timeoutMs: apiConfig?.timeoutMs || 35e3
+      model: proactiveCfg.model,
+      apiKey: proactiveCfg.apiKey,
+      baseUrl: proactiveCfg.baseUrl,
+      providerType: proactiveCfg.providerType,
+      apiProtocol: proactiveCfg.apiProtocol,
+      customHeaders: proactiveCfg.customHeaders,
+      timeoutMs: proactiveCfg.timeoutMs || 35e3
     });
     const extracted = extractThinkingAndContent(responseText);
     const rawClean = (extracted.cleanText || "").trim();

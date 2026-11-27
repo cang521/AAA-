@@ -5,6 +5,7 @@ import { extractThinkingAndContent, sanitizeReplyText } from './src/lib/thinkCle
 import {
   classifyModelCapabilities,
   resolveEffectiveProtocol,
+  resolveTextGenerationConfig,
   sanitizeSensitiveText,
 } from './src/lib/apiCapabilities';
 import { applyOverlengthContextProtection, STANDARD_CONTEXT_LIMIT } from './src/lib/contextWindow';
@@ -109,6 +110,16 @@ function buildApiLogObject(params: {
   error?: string;
   errorType?: string;
   isOfficial?: boolean;
+  protocol?: string;
+  endpointType?: string;
+  errorName?: string;
+  causeCode?: string;
+  causeErrno?: number;
+  causeSyscall?: string;
+  headersReceived?: boolean;
+  readBodyFailed?: boolean;
+  mayHaveBeenCharged?: boolean;
+  upstreamRequestSent?: boolean;
   contextRawCount?: number;
   contextSummarizedCount?: number;
   contextEstimatedTokens?: number;
@@ -157,6 +168,16 @@ function buildApiLogObject(params: {
     errorType: isFailed ? params.errorType || 'ModelError' : undefined,
     errorMessage: params.error ? sanitizeSensitiveText(params.error, 260) : undefined,
     purpose: sanitizeSensitiveText(params.purpose, 160),
+    protocol: params.protocol ? sanitizeSensitiveText(params.protocol, 40) : undefined,
+    endpointType: params.endpointType ? sanitizeSensitiveText(params.endpointType, 40) : undefined,
+    errorName: params.errorName ? sanitizeSensitiveText(params.errorName, 60) : undefined,
+    causeCode: params.causeCode ? sanitizeSensitiveText(params.causeCode, 40) : undefined,
+    causeErrno: typeof params.causeErrno === 'number' ? params.causeErrno : undefined,
+    causeSyscall: params.causeSyscall ? sanitizeSensitiveText(params.causeSyscall, 40) : undefined,
+    headersReceived: typeof params.headersReceived === 'boolean' ? params.headersReceived : undefined,
+    readBodyFailed: typeof params.readBodyFailed === 'boolean' ? params.readBodyFailed : undefined,
+    mayHaveBeenCharged: typeof params.mayHaveBeenCharged === 'boolean' ? params.mayHaveBeenCharged : undefined,
+    upstreamRequestSent: typeof params.upstreamRequestSent === 'boolean' ? params.upstreamRequestSent : undefined,
     ...(typeof params.contextRawCount === 'number' ? { contextRawCount: params.contextRawCount } : {}),
     ...(typeof params.contextSummarizedCount === 'number'
       ? { contextSummarizedCount: params.contextSummarizedCount }
@@ -299,167 +320,233 @@ function buildGeminiConfigForModel(modelName: string, params: AiCallParams): Rec
 async function callAiServiceDetailed(params: AiCallParams): Promise<AiCallDetailedResult> {
   const cleanBaseUrl = params.baseUrl ? params.baseUrl.trim().replace(/\/+$/, '') : '';
   const cleanKey = (params.apiKey && params.apiKey.trim()) || '';
-  const activeKey = cleanKey || (!cleanBaseUrl && (!params.providerType || params.providerType === 'google_gemini') && process.env.NODE_ENV !== 'production' ? (process.env.GEMINI_API_KEY || '') : '');
+  const activeKey =
+    cleanKey ||
+    (!cleanBaseUrl && (!params.providerType || params.providerType === 'google_gemini') && process.env.NODE_ENV !== 'production'
+      ? process.env.GEMINI_API_KEY || ''
+      : '');
   const targetModel = params.model?.trim() || GEMINI_DEFAULT_TEXT_MODEL;
 
-  let isOpenAiCompatible = false;
-  let activeProtocol = params.apiProtocol;
+  const effectiveProtocol = resolveEffectiveProtocol({
+    apiProtocol: params.apiProtocol,
+    provider: params.providerType,
+    baseUrl: cleanBaseUrl,
+  });
 
-  if (activeProtocol === 'openai_compatible') {
-    isOpenAiCompatible = true;
-  } else if (activeProtocol === 'gemini_native') {
-    isOpenAiCompatible = false;
-  } else {
-    isOpenAiCompatible =
-      params.providerType === 'openai_compatible' ||
-      params.providerType === 'deepseek' ||
-      params.providerType === 'openrouter' ||
-      params.providerType === 'groq' ||
-      params.providerType === 'siliconflow' ||
-      params.providerType === 'ollama' ||
-      params.providerType === 'custom' ||
-      (cleanBaseUrl &&
-        (cleanBaseUrl.includes('/v1') ||
-          cleanBaseUrl.includes('openai') ||
-          cleanBaseUrl.includes('deepseek') ||
-          cleanBaseUrl.includes('openrouter') ||
-          cleanBaseUrl.includes('groq') ||
-          cleanBaseUrl.includes('siliconflow') ||
-          cleanBaseUrl.includes('oneapi') ||
-          cleanBaseUrl.includes('newapi') ||
-          cleanBaseUrl.includes(':11434') ||
-          targetModel.startsWith('gpt-') ||
-          targetModel.startsWith('claude-') ||
-          targetModel.startsWith('deepseek-') ||
-          targetModel.startsWith('qwen') ||
-          targetModel.startsWith('llama')));
-  }
+  const startTime = Date.now();
+  let headersReceived = false;
+  let readBodyFailed = false;
 
-  if (isOpenAiCompatible) {
+  if (effectiveProtocol === 'openai_compatible') {
     if (!cleanBaseUrl && !activeKey) {
-      throw new Error('未配置 Base URL 或 API Key。请在系统设置中配置 API Provider。');
+      const err: any = new Error('未配置 Base URL 或 API Key。请在系统设置中配置 API Provider。');
+      err.statusCode = 400;
+      err.errorType = 'CONFIG_MISSING';
+      err.upstreamRequestSent = false;
+      err.mayHaveBeenCharged = false;
+      throw err;
     }
 
+    let endpoint = cleanBaseUrl;
+    if (!endpoint) endpoint = 'https://api.openai.com/v1';
+    if (!endpoint.endsWith('/chat/completions')) {
+      endpoint = endpoint.endsWith('/v1') ? `${endpoint}/chat/completions` : `${endpoint}/v1/chat/completions`;
+    }
+
+    const messages: Array<{ role: string; content: string }> = [];
+    if (params.systemInstruction) {
+      messages.push({ role: 'system', content: params.systemInstruction });
+    }
+    messages.push({ role: 'user', content: params.prompt });
+
+    const payload: any = {
+      model: targetModel,
+      messages,
+      temperature: params.temperature ?? 0.7,
+    };
+
+    if (params.maxTokens) {
+      payload.max_tokens = params.maxTokens;
+    }
+    if (params.responseMimeType === 'application/json') {
+      payload.response_format = { type: 'json_object' };
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Connection': 'close',
+      ...(params.customHeaders || {}),
+    };
+
+    if (activeKey) {
+      headers['Authorization'] = `Bearer ${activeKey}`;
+    }
+
+    if (endpoint.includes('openrouter.ai')) {
+      headers['HTTP-Referer'] = 'https://ai.studio.simulated.phone';
+      headers['X-Title'] = 'Simulated Android Phone';
+    }
+
+    const timeoutMs = params.timeoutMs || 45000;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), params.timeoutMs || 35000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+    let response: Response;
     try {
-      let endpoint = cleanBaseUrl;
-      if (!endpoint) endpoint = 'https://api.openai.com/v1';
-      if (!endpoint.endsWith('/chat/completions')) {
-        endpoint = endpoint.endsWith('/v1') ? `${endpoint}/chat/completions` : `${endpoint}/v1/chat/completions`;
-      }
-
-      const messages: Array<{ role: string; content: string }> = [];
-      if (params.systemInstruction) {
-        messages.push({ role: 'system', content: params.systemInstruction });
-      }
-      messages.push({ role: 'user', content: params.prompt });
-
-      const payload: any = {
-        model: targetModel,
-        messages,
-        temperature: params.temperature ?? 0.7,
-      };
-
-      if (params.maxTokens) {
-        payload.max_tokens = params.maxTokens;
-      }
-      if (params.responseMimeType === 'application/json') {
-        payload.response_format = { type: 'json_object' };
-      }
-
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        ...(params.customHeaders || {}),
-      };
-
-      if (activeKey) {
-        headers['Authorization'] = `Bearer ${activeKey}`;
-      }
-
-      if (endpoint.includes('openrouter.ai')) {
-        headers['HTTP-Referer'] = 'https://ai.studio.simulated.phone';
-        headers['X-Title'] = 'Simulated Android Phone';
-      }
-
-      const response = await fetch(endpoint, {
+      response = await fetch(endpoint, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
-
+      headersReceived = true;
+    } catch (fetchErr: any) {
       clearTimeout(timer);
+      const durationMs = Date.now() - startTime;
+      const isAbort = fetchErr.name === 'AbortError';
+      const causeCode = fetchErr.cause?.code || fetchErr.code;
+      const causeErrno = fetchErr.cause?.errno;
+      const causeSyscall = fetchErr.cause?.syscall;
+      const isNetworkDrop =
+        causeCode === 'ECONNRESET' ||
+        causeCode === 'UND_ERR_SOCKET' ||
+        fetchErr.message?.includes('fetch failed');
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        let parsedErrorMsg = errorText;
-        try {
-          const parsed = JSON.parse(errorText);
-          parsedErrorMsg = parsed.error?.message || parsed.message || errorText;
-        } catch {}
+      const enhancedErr: any = new Error(
+        isAbort
+          ? `请求超时 (${timeoutMs / 1000}秒)，上游 API 未能在限定时间内返回完整回复。`
+          : `连接上游接口失败 (${fetchErr.message || 'fetch failed'})`
+      );
+      enhancedErr.name = fetchErr.name;
+      enhancedErr.cause = fetchErr.cause;
+      enhancedErr.protocol = 'openai_compatible';
+      enhancedErr.endpoint = endpoint;
+      enhancedErr.headersReceived = false;
+      enhancedErr.readBodyFailed = false;
+      enhancedErr.durationMs = durationMs;
+      enhancedErr.upstreamRequestSent = true;
+      enhancedErr.mayHaveBeenCharged = isAbort || isNetworkDrop || durationMs > 12000;
+      enhancedErr.causeCode = causeCode;
+      enhancedErr.causeErrno = causeErrno;
+      enhancedErr.causeSyscall = causeSyscall;
+      throw enhancedErr;
+    }
 
-        if (response.status === 401) {
-          throw new Error(`[401 鉴权失败] API Key 无效或未授权: ${parsedErrorMsg}`);
-        } else if (response.status === 404) {
-          throw new Error(`[404 路由或模型不存在] 请求端点 ${endpoint} 或模型 ${targetModel} 不存在: ${parsedErrorMsg}`);
-        } else if (response.status === 429) {
-          throw new Error(`[429 配额或限流] 账户配额不足或触发请求频率限制: ${parsedErrorMsg}`);
-        } else if (response.status >= 500) {
-          throw new Error(`[${response.status} 服务端错误] API Provider 上游异常: ${parsedErrorMsg}`);
-        } else {
-          throw new Error(`[${response.status} API 错误] ${parsedErrorMsg}`);
-        }
+    clearTimeout(timer);
+
+    if (!response.ok) {
+      let errorText = '';
+      try {
+        errorText = await response.text();
+      } catch {
+        readBodyFailed = true;
       }
+      let parsedErrorMsg = errorText;
+      try {
+        const parsed = JSON.parse(errorText);
+        parsedErrorMsg = parsed.error?.message || parsed.message || errorText;
+      } catch {}
 
-      const resJson = await response.json();
-      const choice = resJson.choices?.[0];
-      const messageObj = choice?.message;
-      const reasoning = messageObj?.reasoning_content || messageObj?.reasoning || messageObj?.thinking;
-      const content = typeof messageObj?.content === 'string' ? messageObj.content : '';
-      const fullText = reasoning && typeof reasoning === 'string' && reasoning.trim() ? `<think>${reasoning.trim()}</think>${content}` : content;
-
-      const usageMeta = resJson.usage;
-      let usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined = undefined;
-      let isRealTokens = false;
-      if (usageMeta && typeof usageMeta === 'object') {
-        isRealTokens = true;
-        usage = {
-          promptTokens: typeof usageMeta.prompt_tokens === 'number' ? usageMeta.prompt_tokens : undefined,
-          completionTokens: typeof usageMeta.completion_tokens === 'number' ? usageMeta.completion_tokens : undefined,
-          totalTokens: typeof usageMeta.total_tokens === 'number' ? usageMeta.total_tokens : undefined,
-        };
+      const durationMs = Date.now() - startTime;
+      let err: any;
+      if (response.status === 401) {
+        err = new Error(`[401 鉴权失败] API Key 无效或未授权: ${parsedErrorMsg}`);
+      } else if (response.status === 404) {
+        err = new Error(`[404 路由或模型不存在] 请求端点 ${endpoint} 或模型 ${targetModel} 不存在: ${parsedErrorMsg}`);
+      } else if (response.status === 429) {
+        err = new Error(`[429 配额或限流] 账户配额不足或触发请求频率限制: ${parsedErrorMsg}`);
+        err.isQuotaExceeded = true;
+      } else if (response.status >= 500) {
+        err = new Error(`[${response.status} 服务端错误] API Provider 上游异常: ${parsedErrorMsg}`);
+      } else {
+        err = new Error(`[${response.status} API 错误] ${parsedErrorMsg}`);
       }
-
-      return {
-        text: fullText,
-        usage,
-        isRealTokens,
-        modelUsed: targetModel,
-      };
-    } catch (err: any) {
-      clearTimeout(timer);
-      if (err.name === 'AbortError') {
-        throw new Error(`请求超时 (${(params.timeoutMs || 35000) / 1000}秒)，上游 API 未能在限定时间内返回。`);
-      }
+      err.statusCode = response.status;
+      err.protocol = 'openai_compatible';
+      err.endpoint = endpoint;
+      err.headersReceived = true;
+      err.readBodyFailed = readBodyFailed;
+      err.durationMs = durationMs;
+      err.upstreamRequestSent = true;
+      err.mayHaveBeenCharged = true;
       throw err;
     }
+
+    let resJson: any;
+    try {
+      resJson = await response.json();
+    } catch (jsonErr: any) {
+      readBodyFailed = true;
+      const durationMs = Date.now() - startTime;
+      const err: any = new Error(`上游响应数据解析失败: ${jsonErr.message}`);
+      err.name = jsonErr.name;
+      err.cause = jsonErr.cause;
+      err.statusCode = response.status;
+      err.protocol = 'openai_compatible';
+      err.endpoint = endpoint;
+      err.headersReceived = true;
+      err.readBodyFailed = true;
+      err.durationMs = durationMs;
+      err.upstreamRequestSent = true;
+      err.mayHaveBeenCharged = true;
+      throw err;
+    }
+
+    const choice = resJson.choices?.[0];
+    const messageObj = choice?.message;
+    const reasoning = messageObj?.reasoning_content || messageObj?.reasoning || messageObj?.thinking;
+    const content = typeof messageObj?.content === 'string' ? messageObj.content : '';
+    const fullText =
+      reasoning && typeof reasoning === 'string' && reasoning.trim()
+        ? `<think>${reasoning.trim()}</think>${content}`
+        : content;
+
+    const usageMeta = resJson.usage;
+    let usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined = undefined;
+    let isRealTokens = false;
+    if (usageMeta && typeof usageMeta === 'object') {
+      isRealTokens = true;
+      usage = {
+        promptTokens: typeof usageMeta.prompt_tokens === 'number' ? usageMeta.prompt_tokens : undefined,
+        completionTokens: typeof usageMeta.completion_tokens === 'number' ? usageMeta.completion_tokens : undefined,
+        totalTokens: typeof usageMeta.total_tokens === 'number' ? usageMeta.total_tokens : undefined,
+      };
+    }
+
+    return {
+      text: fullText,
+      usage,
+      isRealTokens,
+      modelUsed: targetModel,
+    };
   }
 
-  // Google Gemini Execution
-  if (activeKey) {
+  // Google Gemini Native Execution
+  if (effectiveProtocol === 'google_native') {
+    if (!activeKey) {
+      const err: any = new Error('未配置 Gemini API Key，且系统环境中无默认密钥。请在系统设置中配置 API Provider。');
+      err.statusCode = 400;
+      err.errorType = 'CONFIG_MISSING';
+      err.upstreamRequestSent = false;
+      err.mayHaveBeenCharged = false;
+      throw err;
+    }
+
     const clientOptions: any = {
       apiKey: activeKey,
       httpOptions: {
         headers: {
           'User-Agent': 'aistudio-build',
+          'Connection': 'close',
           ...(params.customHeaders || {}),
         },
       },
     };
+
     if (cleanBaseUrl) {
-      clientOptions.httpOptions.baseUrl = cleanBaseUrl;
+      // Clean base url for Google SDK: strip trailing /v1beta or /v1 so SDK doesn't double append
+      clientOptions.httpOptions.baseUrl = cleanBaseUrl.replace(/\/v1(beta|alpha)?\/?$/i, '').replace(/\/+$/, '');
     }
 
     const isOfficialGeminiEndpoint = !cleanBaseUrl || cleanBaseUrl.includes('googleapis.com');
@@ -479,7 +566,9 @@ async function callAiServiceDetailed(params: AiCallParams): Promise<AiCallDetail
         if (activeCandidates.length === 0) {
           const minWaitMs = Math.min(...orderedCandidates.map((m) => (geminiModelCooldownUntil.get(m) || now) - now));
           const waitMins = Math.max(1, Math.ceil(minWaitMs / 60_000));
-          const cooldownErr: any = new Error(`[Gemini 429 配额保护] 当前所有可用 Gemini 模型配额已触及限制，将在约 ${waitMins} 分钟后自动恢复尝试；您也可以在系统设置中切换付费 API Key 或其他兼容 Provider。`);
+          const cooldownErr: any = new Error(
+            `[Gemini 429 配额保护] 当前所有可用 Gemini 模型配额已触及限制，将在约 ${waitMins} 分钟后自动恢复尝试；您也可以在系统设置中切换付费 API Key 或其他兼容 Provider。`
+          );
           cooldownErr.statusCode = 429;
           cooldownErr.isQuotaExceeded = true;
           throw cooldownErr;
@@ -557,67 +646,43 @@ async function callAiServiceDetailed(params: AiCallParams): Promise<AiCallDetail
       };
     } catch (geminiErr: any) {
       const errMsg = geminiErr.message || '';
+      const durationMs = Date.now() - startTime;
+      const causeCode = geminiErr.cause?.code || geminiErr.code;
+      const causeErrno = geminiErr.cause?.errno;
+      const causeSyscall = geminiErr.cause?.syscall;
 
-      if (cleanBaseUrl && (errMsg.includes('404') || errMsg.includes('NOT_FOUND') || errMsg.includes('Cannot POST') || errMsg.includes('not found'))) {
-        try {
-          let fallbackEndpoint = cleanBaseUrl;
-          if (!fallbackEndpoint.endsWith('/chat/completions')) {
-            fallbackEndpoint = fallbackEndpoint.endsWith('/v1') ? `${fallbackEndpoint}/chat/completions` : `${fallbackEndpoint}/v1/chat/completions`;
-          }
-          const altRes = await fetch(fallbackEndpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${activeKey}`,
-              ...(params.customHeaders || {}),
-            },
-            body: JSON.stringify({
-              model: targetModel,
-              messages: [
-                ...(params.systemInstruction ? [{ role: 'system', content: params.systemInstruction }] : []),
-                { role: 'user', content: params.prompt },
-              ],
-              temperature: params.temperature,
-            }),
-            signal: AbortSignal.timeout(params.timeoutMs || 35000),
-          });
-          if (altRes.ok) {
-            const j = await altRes.json();
-            const text = j.choices?.[0]?.message?.content;
-            if (typeof text === 'string') {
-              const uMeta = j.usage;
-              return {
-                text,
-                usage: uMeta ? { promptTokens: uMeta.prompt_tokens, completionTokens: uMeta.completion_tokens, totalTokens: uMeta.total_tokens } : undefined,
-                isRealTokens: Boolean(uMeta),
-                modelUsed: targetModel,
-              };
-            }
-          }
-        } catch {
-          // proceed to standard throw
-        }
-      }
-
+      let err: any;
       if (errMsg.includes('401') || errMsg.includes('API_KEY_INVALID')) {
-        const err: any = new Error(`[Gemini 401 鉴权失败] Gemini API Key 无效: ${errMsg}`);
+        err = new Error(`[Gemini 401 鉴权失败] Gemini API Key 无效: ${errMsg}`);
         err.statusCode = 401;
-        throw err;
       } else if (errMsg.includes('404') || errMsg.includes('NOT_FOUND')) {
-        const err: any = new Error(`[Gemini 404 模型不存在] 模型 ${targetModel} 在此端点不可用: ${errMsg}`);
+        err = new Error(`[Gemini 404 模型不存在] 模型 ${targetModel} 在此端点不可用: ${errMsg}`);
         err.statusCode = 404;
-        throw err;
-      } else if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('Quota exceeded') || errMsg.includes('quota')) {
-        const err: any = new Error(`[Gemini 429 配额用尽] API 额度超限或受限: ${errMsg}`);
+      } else if (
+        errMsg.includes('429') ||
+        errMsg.includes('RESOURCE_EXHAUSTED') ||
+        errMsg.includes('Quota exceeded') ||
+        errMsg.includes('quota')
+      ) {
+        err = new Error(`[Gemini 429 配额用尽] API 额度超限或受限: ${errMsg}`);
         err.statusCode = 429;
         err.isQuotaExceeded = true;
-        throw err;
+      } else {
+        err = geminiErr;
       }
-      throw geminiErr;
+      err.protocol = 'google_native';
+      err.endpoint = cleanBaseUrl || 'https://generativelanguage.googleapis.com';
+      err.durationMs = durationMs;
+      err.upstreamRequestSent = true;
+      err.mayHaveBeenCharged = durationMs > 10000 || errMsg.includes('fetch failed');
+      err.causeCode = causeCode;
+      err.causeErrno = causeErrno;
+      err.causeSyscall = causeSyscall;
+      throw err;
     }
   }
 
-  throw new Error('未配置有效的 API 密钥，且系统环境变量中无默认密钥。请先在系统设置中配置 API Provider。');
+  throw new Error(`不支持的 API 协议: ${effectiveProtocol}`);
 }
 
 async function callAiService(params: AiCallParams): Promise<string> {
@@ -635,7 +700,18 @@ function handleAiEndpointError(res: express.Response, error: any, contextName: s
     error?.message?.includes('配额用尽') ||
     error?.message?.includes('quota');
 
+  const httpStatus = isQuota
+    ? 429
+    : typeof error?.statusCode === 'number' && error.statusCode >= 400 && error.statusCode < 600
+    ? error.statusCode
+    : 502;
   const statusMsg = isQuota ? '429 配额超限/请求频率过高' : error?.message || `${contextName} 执行异常`;
+  const endpointType =
+    error?.protocol === 'openai_compatible'
+      ? 'chat_completions'
+      : error?.protocol === 'google_native'
+      ? 'generate_content'
+      : undefined;
 
   if (isQuota) {
     console.info(`[${contextName}] AI Provider 触发 429 配额保护: ${statusMsg}`);
@@ -644,30 +720,69 @@ function handleAiEndpointError(res: express.Response, error: any, contextName: s
       statusCode: 429,
       isQuotaExceeded: true,
       error: error.message || 'API quota exceeded or rate limited',
+      errorMessage: error.message || 'API quota exceeded or rate limited',
+      errorType: error?.errorType || 'rate_limit',
+      protocol: error?.protocol,
+      causeCode: error?.causeCode,
+      upstreamRequestSent: typeof error?.upstreamRequestSent === 'boolean' ? error.upstreamRequestSent : true,
+      mayHaveBeenCharged: Boolean(error?.mayHaveBeenCharged),
+      retryable: true,
       apiLog: buildApiLogObject({
         appName: contextName || 'AI接口',
-        modelName: GEMINI_DEFAULT_TEXT_MODEL,
+        modelName: error?.model || GEMINI_DEFAULT_TEXT_MODEL,
         interfaceType: 'AiEndpoint',
         status: 'failed',
-        durationMs: 0,
+        httpStatus: 429,
+        durationMs: error?.durationMs || 0,
+        errorType: error?.errorType || 'rate_limit',
         error: statusMsg,
         purpose: `${contextName} (请求失败 429)`,
+        protocol: error?.protocol,
+        endpointType,
+        errorName: error?.name,
+        causeCode: error?.causeCode,
+        causeErrno: error?.causeErrno,
+        causeSyscall: error?.causeSyscall,
+        headersReceived: error?.headersReceived,
+        readBodyFailed: error?.readBodyFailed,
+        mayHaveBeenCharged: Boolean(error?.mayHaveBeenCharged),
+        upstreamRequestSent: typeof error?.upstreamRequestSent === 'boolean' ? error.upstreamRequestSent : true,
       }),
     });
   }
 
-  console.error(`${contextName} error:`, error);
-  return res.status(500).json({
+  console.error(`${contextName} error:`, error?.message || error);
+  return res.status(httpStatus).json({
     success: false,
-    error: error.message || `${contextName} failed`,
+    statusCode: httpStatus,
+    error: error?.message || `${contextName} failed`,
+    errorMessage: error?.message || `${contextName} failed`,
+    errorType: error?.errorType || (httpStatus === 401 ? 'auth_error' : 'upstream_error'),
+    protocol: error?.protocol,
+    causeCode: error?.causeCode,
+    upstreamRequestSent: typeof error?.upstreamRequestSent === 'boolean' ? error.upstreamRequestSent : true,
+    mayHaveBeenCharged: Boolean(error?.mayHaveBeenCharged),
+    retryable: true,
     apiLog: buildApiLogObject({
       appName: contextName || 'AI接口',
-      modelName: GEMINI_DEFAULT_TEXT_MODEL,
+      modelName: error?.model || GEMINI_DEFAULT_TEXT_MODEL,
       interfaceType: 'AiEndpoint',
       status: 'failed',
-      durationMs: 0,
+      httpStatus,
+      durationMs: error?.durationMs || 0,
+      errorType: error?.errorType || 'network_error',
       error: statusMsg,
-      purpose: `${contextName} (请求失败 500)`,
+      purpose: `${contextName} (请求失败 ${httpStatus})`,
+      protocol: error?.protocol,
+      endpointType,
+      errorName: error?.name,
+      causeCode: error?.causeCode,
+      causeErrno: error?.causeErrno,
+      causeSyscall: error?.causeSyscall,
+      headersReceived: error?.headersReceived,
+      readBodyFailed: error?.readBodyFailed,
+      mayHaveBeenCharged: Boolean(error?.mayHaveBeenCharged),
+      upstreamRequestSent: typeof error?.upstreamRequestSent === 'boolean' ? error.upstreamRequestSent : true,
     }),
   });
 }
@@ -1402,44 +1517,60 @@ app.post('/api/provider/test-model', async (req, res) => {
   const { providerType, baseUrl, apiKey, model, apiProtocol, serviceType = 'text', testPrompt, customHeaders } = req.body;
   const startTime = Date.now();
   const prompt = testPrompt || '请仅回复一句话：模型链路测试正常，已准备就绪！';
+  const resolvedCfg = resolveTextGenerationConfig({
+    apiKey,
+    baseUrl,
+    model,
+    providerType,
+    apiProtocol,
+    customHeaders,
+    timeoutMs: 25000,
+  });
 
   try {
-    const reply = await callAiService({
+    const detailed = await callAiServiceDetailed({
       prompt,
-      model,
-      apiKey,
-      baseUrl,
-      providerType,
-      apiProtocol,
+      model: resolvedCfg.model,
+      apiKey: resolvedCfg.apiKey,
+      baseUrl: resolvedCfg.baseUrl,
+      providerType: resolvedCfg.providerType,
+      apiProtocol: resolvedCfg.apiProtocol,
       temperature: 0.3,
-      timeoutMs: 25000,
-      customHeaders,
+      timeoutMs: resolvedCfg.timeoutMs,
+      customHeaders: resolvedCfg.customHeaders,
     });
 
+    const reply = detailed.text;
     const latencyMs = Date.now() - startTime;
     if (reply && reply.trim()) {
       return res.json({
         success: true,
         latencyMs,
-        model,
+        model: detailed.modelUsed || resolvedCfg.model,
+        apiProtocol: resolvedCfg.apiProtocol,
         reply: reply.trim(),
-        promptTokens: Math.round(prompt.length / 2),
-        completionTokens: Math.round(reply.length / 2),
+        promptTokens: detailed.usage?.promptTokens ?? Math.round(prompt.length / 2),
+        completionTokens: detailed.usage?.completionTokens ?? Math.round(reply.length / 2),
       });
     }
 
     return res.status(502).json({
       success: false,
       latencyMs,
-      model,
+      model: resolvedCfg.model,
+      apiProtocol: resolvedCfg.apiProtocol,
+      mayHaveBeenCharged: true,
       error: '模型已响应但返回空内容',
     });
   } catch (err: any) {
     const latencyMs = Date.now() - startTime;
-    return res.status(500).json({
+    return res.status(err?.statusCode || 502).json({
       success: false,
       latencyMs,
-      model,
+      model: resolvedCfg.model,
+      apiProtocol: err?.protocol || resolvedCfg.apiProtocol,
+      causeCode: err?.causeCode,
+      mayHaveBeenCharged: Boolean(err?.mayHaveBeenCharged),
       error: err.message || '模型执行测试失败',
     });
   }
@@ -3350,7 +3481,12 @@ app.post('/api/gemini/chat', async (req, res) => {
   } = req.body;
 
   const startTime = Date.now();
-  const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || 'gemini-4-hydrogen';
+  const requestId =
+    typeof req.body?.requestId === 'string' && req.body.requestId.trim()
+      ? req.body.requestId.trim()
+      : `chat_${startTime}_${Math.random().toString(36).slice(2, 7)}`;
+  const textGenConfig = resolveTextGenerationConfig(apiConfig, character?.modelConfig);
+  const selectedModel = textGenConfig.model;
 
   try {
     // Construct rich contextual system prompt
@@ -3693,30 +3829,96 @@ ${devicesSummary}
     let replyContent = '';
     const extractedDeviceActions: any[] = [];
 
-    let aiErrorMessage = '';
-    let aiDetailedResult: AiCallDetailedResult | null = null;
+    let aiDetailedResult: AiCallDetailedResult;
     try {
       aiDetailedResult = await callAiServiceDetailed({
         prompt: promptText,
-        model: selectedModel,
-        apiKey: apiConfig?.textApiKey,
-        baseUrl: apiConfig?.textBaseUrl,
-        providerType: apiConfig?.textProvider,
-        customHeaders: apiConfig?.customHeaders,
-        timeoutMs: apiConfig?.timeoutMs || 35000,
+        model: textGenConfig.model,
+        apiKey: textGenConfig.apiKey,
+        baseUrl: textGenConfig.baseUrl,
+        providerType: textGenConfig.providerType,
+        apiProtocol: textGenConfig.apiProtocol,
+        customHeaders: textGenConfig.customHeaders,
+        timeoutMs: textGenConfig.timeoutMs,
       });
+      if (!aiDetailedResult.text || !aiDetailedResult.text.trim()) {
+        const emptyErr: any = new Error(`上游模型 (${textGenConfig.model}) 返回空内容`);
+        emptyErr.statusCode = 502;
+        emptyErr.errorType = 'EMPTY_RESPONSE';
+        emptyErr.protocol = textGenConfig.apiProtocol;
+        emptyErr.headersReceived = true;
+        emptyErr.upstreamRequestSent = true;
+        emptyErr.mayHaveBeenCharged = true;
+        emptyErr.durationMs = Date.now() - startTime;
+        throw emptyErr;
+      }
       responseText = aiDetailedResult.text;
     } catch (e: any) {
-      aiErrorMessage = e.message || 'API 调用异常';
-      console.warn('AI call threw error:', e.message);
-    }
+      const duration = e?.durationMs || Date.now() - startTime;
+      const aiErrorMessage = e?.message || 'API 调用异常';
+      const httpStatus =
+        typeof e?.statusCode === 'number' && e.statusCode >= 400 && e.statusCode < 600 ? e.statusCode : 502;
+      const effectiveProtocol = e?.protocol || textGenConfig.apiProtocol;
+      const endpointType = effectiveProtocol === 'openai_compatible' ? 'chat_completions' : 'generate_content';
+      const upstreamRequestSent = typeof e?.upstreamRequestSent === 'boolean' ? e.upstreamRequestSent : true;
+      const mayHaveBeenCharged = Boolean(e?.mayHaveBeenCharged);
+      const errorType =
+        e?.errorType ||
+        (httpStatus === 429
+          ? 'rate_limit'
+          : httpStatus === 401
+          ? 'auth_error'
+          : httpStatus === 404
+          ? 'not_found'
+          : 'network_error');
 
-    if (!responseText) {
-      if (aiErrorMessage) {
-        responseText = `<think>API 调用出现异常: ${aiErrorMessage}。尝试以角色身份提醒用户检查系统设置中的 API Provider 配置。</think>[系统提示: 当前选用的模型 (${selectedModel}) 请求失败: ${aiErrorMessage}。请在系统设置中测试并更新 API 密钥或 Base URL。]`;
-      } else {
-        responseText = `<think>结合了${character.name}的人设与用户的关怀需求，组织口语化聊天回复。</think>${character.greeting || '收到你的消息啦！今天过得怎么样？'}`;
-      }
+      console.warn(
+        `[/api/gemini/chat] Request ${requestId} failed (protocol=${effectiveProtocol}, status=${httpStatus}, cause=${e?.causeCode || 'none'}, mayHaveBeenCharged=${mayHaveBeenCharged}): ${aiErrorMessage}`
+      );
+
+      return res.status(httpStatus).json({
+        success: false,
+        statusCode: httpStatus,
+        error: aiErrorMessage,
+        errorMessage: aiErrorMessage,
+        errorType,
+        requestId,
+        protocol: effectiveProtocol,
+        endpointType,
+        causeCode: e?.causeCode,
+        upstreamRequestSent,
+        mayHaveBeenCharged,
+        retryable: true,
+        contextMetrics: effectiveChatMetrics,
+        apiLog: buildApiLogObject({
+          appName: '微信-AI聊天',
+          provider: textGenConfig.providerType,
+          modelName: textGenConfig.model,
+          interfaceType: 'ChatGeneration',
+          category: 'text_generation',
+          status: 'failed',
+          httpStatus,
+          requestId,
+          durationMs: duration,
+          errorType,
+          error: aiErrorMessage,
+          purpose: `与 ${character?.name || 'AI'} 对话交互失败 (耗时 ${duration}ms)`,
+          protocol: effectiveProtocol,
+          endpointType,
+          errorName: e?.name,
+          causeCode: e?.causeCode,
+          causeErrno: e?.causeErrno,
+          causeSyscall: e?.causeSyscall,
+          headersReceived: e?.headersReceived,
+          readBodyFailed: e?.readBodyFailed,
+          mayHaveBeenCharged,
+          upstreamRequestSent,
+          contextRawCount: effectiveChatMetrics.rawCount,
+          contextSummarizedCount: effectiveChatMetrics.summarizedCount,
+          contextEstimatedTokens: effectiveChatMetrics.estimatedTokens,
+          contextCompressed: effectiveChatMetrics.didCompress,
+        }),
+      });
     }
 
     // Robustly extract thinking process and clean reply content
@@ -3819,26 +4021,34 @@ ${devicesSummary}
 
     const duration = Date.now() - startTime;
 
+    const endpointType = textGenConfig.apiProtocol === 'openai_compatible' ? 'chat_completions' : 'generate_content';
+
     res.json({
       success: true,
       text: replyContent,
       thinkingProcess,
       deviceActions: extractedDeviceActions,
       actions: extractedActions,
+      requestId,
+      protocol: textGenConfig.apiProtocol,
       contextMetrics: effectiveChatMetrics,
       apiLog: buildApiLogObject({
         appName: '微信-AI聊天',
-        provider: apiConfig?.textProvider || 'google_gemini',
+        provider: textGenConfig.providerType,
         modelName: aiDetailedResult?.modelUsed || selectedModel,
         interfaceType: 'ChatGeneration',
         category: 'text_generation',
-        status: aiErrorMessage ? 'failed' : 'success',
-        httpStatus: aiErrorMessage ? 500 : 200,
+        status: 'success',
+        httpStatus: 200,
+        requestId,
         durationMs: duration,
         usage: aiDetailedResult?.usage,
         isRealTokens: aiDetailedResult?.isRealTokens,
-        error: aiErrorMessage || undefined,
         purpose: `与 ${character.name} 对话交互 (耗时 ${duration}ms)`,
+        protocol: textGenConfig.apiProtocol,
+        endpointType,
+        headersReceived: true,
+        upstreamRequestSent: true,
         contextRawCount: effectiveChatMetrics.rawCount,
         contextSummarizedCount: effectiveChatMetrics.summarizedCount,
         contextEstimatedTokens: effectiveChatMetrics.estimatedTokens,
@@ -3877,7 +4087,8 @@ app.post('/api/gemini/group-chat', async (req, res) => {
   } = req.body || {};
 
   const startTime = Date.now();
-  const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
+  const groupTextCfg = resolveTextGenerationConfig(apiConfig);
+  const selectedModel = groupTextCfg.model;
   const roundId =
     typeof requestedRoundId === 'string' && requestedRoundId.trim()
       ? requestedRoundId.trim()
@@ -4222,14 +4433,15 @@ ${triggerDirective}
     const detailed = await callAiServiceDetailed({
       prompt: userPrompt,
       systemInstruction: systemPrompt,
-      model: selectedModel,
-      apiKey: apiConfig?.textApiConfig?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey,
-      baseUrl: apiConfig?.textApiConfig?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl,
-      providerType: apiConfig?.textApiConfig?.provider || apiConfig?.textProvider || apiConfig?.providerType,
-      apiProtocol: apiConfig?.textApiConfig?.apiProtocol || apiConfig?.textApiProtocol,
+      model: groupTextCfg.model,
+      apiKey: groupTextCfg.apiKey,
+      baseUrl: groupTextCfg.baseUrl,
+      providerType: groupTextCfg.providerType,
+      apiProtocol: groupTextCfg.apiProtocol,
+      customHeaders: groupTextCfg.customHeaders,
       responseMimeType: 'application/json',
       temperature: 0.78,
-      timeoutMs: 42000,
+      timeoutMs: groupTextCfg.timeoutMs || 42000,
     });
     const rawResponse = detailed.text;
 
@@ -4432,11 +4644,16 @@ ${triggerDirective}
       replies: normalizedReplies,
       log: buildApiLogObject({
         appName: 'WeChatGroup',
+        provider: groupTextCfg.providerType,
         modelName: detailed.modelUsed || selectedModel,
         interfaceType: 'GroupChatOrchestration',
         durationMs: duration,
         usage: detailed.usage,
         isRealTokens: detailed.isRealTokens,
+        protocol: groupTextCfg.apiProtocol,
+        endpointType: groupTextCfg.apiProtocol === 'openai_compatible' ? 'chat_completions' : 'generate_content',
+        headersReceived: true,
+        upstreamRequestSent: true,
         purpose: `群聊统一编排(${preset.label}): ${participantNames.join('、') || 'AI'} · ${totalBubblesCount}气泡${
           totalVotesCount > 0 ? `/${totalVotesCount}投票` : ''
         }${totalRelaysCount > 0 ? `/${totalRelaysCount}接龙` : ''} (耗时 ${duration}ms)`,
@@ -4468,11 +4685,12 @@ app.post('/api/gemini/ai-social-turn', async (req, res) => {
   } = req.body || {};
 
   const startTime = Date.now();
-  const activeKey = apiConfig?.textApiConfig?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey;
-  const activeBaseUrl = apiConfig?.textApiConfig?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl;
-  const activeProvider = apiConfig?.textApiConfig?.provider || apiConfig?.textProvider || apiConfig?.providerType;
-  const activeProtocol = apiConfig?.textApiConfig?.apiProtocol || apiConfig?.textApiProtocol;
-  const selectedModel = apiConfig?.textApiConfig?.model || apiConfig?.textModel || 'gemini-4-hydrogen';
+  const socialTextCfg = resolveTextGenerationConfig(apiConfig);
+  const activeKey = socialTextCfg.apiKey;
+  const activeBaseUrl = socialTextCfg.baseUrl;
+  const activeProvider = socialTextCfg.providerType;
+  const activeProtocol = socialTextCfg.apiProtocol;
+  const selectedModel = socialTextCfg.model;
 
   try {
     const profileDesc = (c: any) =>
@@ -4920,7 +5138,8 @@ ${devicesSummary || '(暂无)'}
 // 2. AI Moments Dynamic Interaction (AI Likes & Comments on User Post)
 app.post('/api/gemini/moments-interact', async (req, res) => {
   const { postContent, userProfile, characters, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
+  const momentsCfg = resolveTextGenerationConfig(apiConfig);
+  const selectedModel = momentsCfg.model;
   try {
     const prompt = `用户发送了一条朋友圈：
 " ${postContent} "
@@ -4943,9 +5162,12 @@ ${characters.map((c: any) => `- ID: ${c.id}, 名字: ${c.name}, 人设: ${c.pers
     try {
       const responseText = await callAiService({
         prompt,
-        model: selectedModel,
-        apiKey: apiConfig?.textApiKey,
-        baseUrl: apiConfig?.textBaseUrl,
+        model: momentsCfg.model,
+        apiKey: momentsCfg.apiKey,
+        baseUrl: momentsCfg.baseUrl,
+        providerType: momentsCfg.providerType,
+        apiProtocol: momentsCfg.apiProtocol,
+        customHeaders: momentsCfg.customHeaders,
         responseMimeType: 'application/json',
       });
       if (responseText) {
@@ -5139,7 +5361,8 @@ app.post('/api/gemini/adapter-json', async (req, res) => {
 // 6. WorldBook AI Inspiration & Expand Endpoint
 app.post('/api/gemini/worldbook-ai', async (req, res) => {
   const { title, genre, brief, existingSetting, apiConfig } = req.body;
-  const selectedModel = apiConfig?.textModel || 'gemini-4-hydrogen';
+  const wbCfg = resolveTextGenerationConfig(apiConfig);
+  const selectedModel = wbCfg.model;
   try {
     const prompt = `你是一个顶级世界观架构师与小说世界设定师。请根据以下要求构想或扩写一套严密、宏大且富有沉浸感的世界书（WorldBook）设定：
 - 世界名称/主题：${title || '未命名世界'}
@@ -5163,9 +5386,12 @@ app.post('/api/gemini/worldbook-ai', async (req, res) => {
     try {
       const reply = await callAiService({
         prompt,
-        model: selectedModel,
-        apiKey: apiConfig?.textApiKey,
-        baseUrl: apiConfig?.textBaseUrl,
+        model: wbCfg.model,
+        apiKey: wbCfg.apiKey,
+        baseUrl: wbCfg.baseUrl,
+        providerType: wbCfg.providerType,
+        apiProtocol: wbCfg.apiProtocol,
+        customHeaders: wbCfg.customHeaders,
         responseMimeType: 'application/json',
       });
       if (reply) {
@@ -5350,14 +5576,13 @@ app.post('/api/gemini/offline-chat', async (req, res) => {
     }
 
     const executeGeneration = async () => {
-      const textCfg = apiConfig?.textApiConfig;
-      const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || '';
-      const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || '';
-      const selectedModel =
-        textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || 'gemini-4-hydrogen';
-      const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || '';
-      const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || '';
-      const customHeaders = apiConfig?.customHeaders || {};
+      const offlineTextCfg = resolveTextGenerationConfig(apiConfig, character?.modelConfig);
+      const apiKey = offlineTextCfg.apiKey;
+      const baseUrl = offlineTextCfg.baseUrl;
+      const selectedModel = offlineTextCfg.model;
+      const provider = offlineTextCfg.providerType;
+      const apiProtocol = offlineTextCfg.apiProtocol;
+      const customHeaders = offlineTextCfg.customHeaders;
 
       const isSelfAwareAi = awarenessMode === 'self_aware_ai';
       const awarenessRulesBlock = isSelfAwareAi
@@ -5663,14 +5888,13 @@ app.post('/api/gemini/offline-summary', async (req, res) => {
       apiConfig,
     } = req.body;
 
-    const textCfg = apiConfig?.textApiConfig;
-    const apiKey = textCfg?.apiKey || apiConfig?.textApiKey || apiConfig?.apiKey || '';
-    const baseUrl = textCfg?.baseUrl || apiConfig?.textBaseUrl || apiConfig?.baseUrl || '';
-    const selectedModel =
-      textCfg?.model || apiConfig?.textModel || character?.modelConfig?.modelName || 'gemini-4-hydrogen';
-    const provider = textCfg?.provider || apiConfig?.textProvider || apiConfig?.provider || '';
-    const apiProtocol = textCfg?.apiProtocol || apiConfig?.textApiProtocol || apiConfig?.apiProtocol || '';
-    const customHeaders = apiConfig?.customHeaders || {};
+    const offlineSummaryCfg = resolveTextGenerationConfig(apiConfig, character?.modelConfig);
+    const apiKey = offlineSummaryCfg.apiKey;
+    const baseUrl = offlineSummaryCfg.baseUrl;
+    const selectedModel = offlineSummaryCfg.model;
+    const provider = offlineSummaryCfg.providerType;
+    const apiProtocol = offlineSummaryCfg.apiProtocol;
+    const customHeaders = offlineSummaryCfg.customHeaders;
 
     const isSelfAwareAi = awarenessMode === 'self_aware_ai';
     const awarenessMemoryRule = isSelfAwareAi
@@ -5779,26 +6003,35 @@ app.post('/api/gemini/theater-scenario', async (req, res) => {
   const startTime = Date.now();
   try {
     const { prompt, model, apiKey, baseUrl, provider, apiProtocol, customHeaders, apiConfig, textApiConfig, theaterType } = req.body;
-    const cfg = textApiConfig || apiConfig || {};
-    const selectedModel = model || cfg.model || cfg.textModel || GEMINI_DEFAULT_TEXT_MODEL;
-    const selectedKey = apiKey || cfg.apiKey || cfg.textApiKey || '';
-    const selectedBaseUrl = baseUrl || cfg.baseUrl || cfg.textBaseUrl || '';
-    const selectedProvider = provider || cfg.provider || cfg.textProvider || '';
-    const selectedProtocol = apiProtocol || cfg.apiProtocol || cfg.textApiProtocol || '';
-    const selectedHeaders = customHeaders || cfg.customHeaders;
+    const resolvedTheaterCfg = resolveTextGenerationConfig({
+      ...(apiConfig || {}),
+      textApiConfig: {
+        ...(apiConfig?.textApiConfig || {}),
+        ...(textApiConfig || {}),
+        ...(apiKey ? { apiKey } : {}),
+        ...(baseUrl ? { baseUrl } : {}),
+        ...(model ? { model } : {}),
+        ...(provider ? { provider } : {}),
+        ...(apiProtocol ? { apiProtocol } : {}),
+        ...(customHeaders ? { customHeaders } : {}),
+      },
+    });
+    const selectedModel = resolvedTheaterCfg.model;
+    const selectedProvider = resolvedTheaterCfg.providerType;
 
     const detailedResult = await callAiServiceDetailed({
       prompt,
       systemInstruction: '你是一个专业的沉浸式角色扮演剧本大师与双盲秘密设计师。请严格按照JSON格式返回。',
-      model: selectedModel,
-      apiKey: selectedKey,
-      baseUrl: selectedBaseUrl,
-      providerType: selectedProvider,
-      apiProtocol: selectedProtocol,
+      model: resolvedTheaterCfg.model,
+      apiKey: resolvedTheaterCfg.apiKey,
+      baseUrl: resolvedTheaterCfg.baseUrl,
+      providerType: resolvedTheaterCfg.providerType,
+      apiProtocol: resolvedTheaterCfg.apiProtocol,
       responseMimeType: 'application/json',
       temperature: 0.7,
       maxTokens: 2500,
-      customHeaders: selectedHeaders,
+      customHeaders: resolvedTheaterCfg.customHeaders,
+      timeoutMs: resolvedTheaterCfg.timeoutMs,
     });
     const durationMs = Date.now() - startTime;
     const extracted = extractThinkingAndContent(detailedResult.text);
@@ -5816,6 +6049,7 @@ app.post('/api/gemini/theater-scenario', async (req, res) => {
         modelName: selectedModel,
         purpose: `小剧场 - ${theaterType || '剧本初始化'}`,
         usage: detailedResult.usage,
+        protocol: resolvedTheaterCfg.apiProtocol,
       }),
     });
   } catch (err: any) {
@@ -5827,26 +6061,35 @@ app.post('/api/gemini/theater-chat', async (req, res) => {
   const startTime = Date.now();
   try {
     const { prompt, model, apiKey, baseUrl, provider, apiProtocol, customHeaders, apiConfig, textApiConfig, theaterType } = req.body;
-    const cfg = textApiConfig || apiConfig || {};
-    const selectedModel = model || cfg.model || cfg.textModel || GEMINI_DEFAULT_TEXT_MODEL;
-    const selectedKey = apiKey || cfg.apiKey || cfg.textApiKey || '';
-    const selectedBaseUrl = baseUrl || cfg.baseUrl || cfg.textBaseUrl || '';
-    const selectedProvider = provider || cfg.provider || cfg.textProvider || '';
-    const selectedProtocol = apiProtocol || cfg.apiProtocol || cfg.textApiProtocol || '';
-    const selectedHeaders = customHeaders || cfg.customHeaders;
+    const resolvedTheaterCfg = resolveTextGenerationConfig({
+      ...(apiConfig || {}),
+      textApiConfig: {
+        ...(apiConfig?.textApiConfig || {}),
+        ...(textApiConfig || {}),
+        ...(apiKey ? { apiKey } : {}),
+        ...(baseUrl ? { baseUrl } : {}),
+        ...(model ? { model } : {}),
+        ...(provider ? { provider } : {}),
+        ...(apiProtocol ? { apiProtocol } : {}),
+        ...(customHeaders ? { customHeaders } : {}),
+      },
+    });
+    const selectedModel = resolvedTheaterCfg.model;
+    const selectedProvider = resolvedTheaterCfg.providerType;
 
     const detailedResult = await callAiServiceDetailed({
       prompt,
       systemInstruction: '你正在参与「小剧场」沉浸式角色扮演。请保持角色口吻，深度代入，输出符合剧情发展的对话与动作。严格按照JSON格式返回。',
-      model: selectedModel,
-      apiKey: selectedKey,
-      baseUrl: selectedBaseUrl,
-      providerType: selectedProvider,
-      apiProtocol: selectedProtocol,
+      model: resolvedTheaterCfg.model,
+      apiKey: resolvedTheaterCfg.apiKey,
+      baseUrl: resolvedTheaterCfg.baseUrl,
+      providerType: resolvedTheaterCfg.providerType,
+      apiProtocol: resolvedTheaterCfg.apiProtocol,
       responseMimeType: 'application/json',
       temperature: 0.8,
       maxTokens: 1800,
-      customHeaders: selectedHeaders,
+      customHeaders: resolvedTheaterCfg.customHeaders,
+      timeoutMs: resolvedTheaterCfg.timeoutMs,
     });
     const durationMs = Date.now() - startTime;
     const extracted = extractThinkingAndContent(detailedResult.text);
@@ -5864,6 +6107,7 @@ app.post('/api/gemini/theater-chat', async (req, res) => {
         modelName: selectedModel,
         purpose: `小剧场 - ${theaterType || '剧情回复'}`,
         usage: detailedResult.usage,
+        protocol: resolvedTheaterCfg.apiProtocol,
       }),
     });
   } catch (err: any) {
@@ -6248,7 +6492,8 @@ app.post('/api/gemini/proactive-generate', async (req, res) => {
       currentTime,
       apiConfig,
     } = req.body;
-    const selectedModel = character?.modelConfig?.modelName || apiConfig?.textModel || 'gemini-4-hydrogen';
+    const proactiveCfg = resolveTextGenerationConfig(apiConfig, character?.modelConfig);
+    const selectedModel = proactiveCfg.model;
 
     let triggerDescription = '';
     if (triggerType === 'inactivity_timeout') {
@@ -6404,12 +6649,13 @@ ${historyLines.length > 0 ? historyLines.join('\n') : '(近期暂无聊天记录
 
     const responseText = await callAiService({
       prompt: systemPrompt,
-      model: selectedModel,
-      apiKey: apiConfig?.textApiKey,
-      baseUrl: apiConfig?.textBaseUrl,
-      providerType: apiConfig?.textProvider,
-      customHeaders: apiConfig?.customHeaders,
-      timeoutMs: apiConfig?.timeoutMs || 35000,
+      model: proactiveCfg.model,
+      apiKey: proactiveCfg.apiKey,
+      baseUrl: proactiveCfg.baseUrl,
+      providerType: proactiveCfg.providerType,
+      apiProtocol: proactiveCfg.apiProtocol,
+      customHeaders: proactiveCfg.customHeaders,
+      timeoutMs: proactiveCfg.timeoutMs || 35000,
     });
 
     const extracted = extractThinkingAndContent(responseText);
