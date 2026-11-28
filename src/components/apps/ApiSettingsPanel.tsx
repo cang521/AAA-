@@ -236,6 +236,9 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
   isFetchingModels,
   modelFetchResult,
   handleFetchModels,
+  isTestingModel,
+  modelTestResult,
+  handleTestSelectedModel,
   isTestingThinking = false,
   thinkingDiagnostic = null,
   handleTestThinking,
@@ -960,6 +963,33 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
                 className="w-4 h-4 rounded accent-sky-500 shrink-0"
               />
             </label>
+
+            <div className="flex items-center justify-between gap-3 pt-1.5 border-t border-zinc-800/80 settings-card-divider">
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium text-zinc-200">
+                  单次请求超时上限
+                </div>
+                <div className="text-[10px] text-zinc-500">
+                  长上下文或深度推理建议 120 秒以上，避免上游生成中提前断开
+                </div>
+              </div>
+              <select
+                value={String(currentConfig.timeoutMs || 120000)}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (Number.isFinite(val)) {
+                    patchCurrent({ timeoutMs: val });
+                  }
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs font-mono focus:outline-none focus:border-zinc-500 shrink-0"
+              >
+                <option value="30000">30 秒</option>
+                <option value="60000">60 秒</option>
+                <option value="120000">120 秒 (默认)</option>
+                <option value="180000">180 秒</option>
+                <option value="300000">300 秒</option>
+              </select>
+            </div>
           </div>
         )}
 
@@ -1187,23 +1217,41 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
             </button>
           </div>
 
-          {activeSlot === 'text_generation' && handleTestThinking && (
-            <button
-              type="button"
-              onClick={() => {
-                setShowRawSchemaJson(false);
-                void handleTestThinking();
-              }}
-              disabled={isTestingThinking}
-              className="settings-option-btn w-full py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-amber-500/35 text-amber-300 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-[0.99] disabled:opacity-50 cursor-pointer"
-            >
-              {isTestingThinking ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Brain className="w-3.5 h-3.5" />
+          {activeSlot === 'text_generation' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {handleTestThinking && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRawSchemaJson(false);
+                    void handleTestThinking();
+                  }}
+                  disabled={isTestingThinking}
+                  className="settings-option-btn w-full py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-amber-500/35 text-amber-300 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+                >
+                  {isTestingThinking ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Brain className="w-3.5 h-3.5" />
+                  )}
+                  <span>{isTestingThinking ? '检测思考输出中...' : '检测思考输出'}</span>
+                </button>
               )}
-              <span>{isTestingThinking ? '正在检测流式与非流式思考输出...' : '测试连接并检测思考输出'}</span>
-            </button>
+
+              <button
+                type="button"
+                onClick={() => void handleTestSelectedModel()}
+                disabled={isTestingModel || !activeModel.trim()}
+                className="settings-option-btn w-full py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+              >
+                {isTestingModel ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+                )}
+                <span>{isTestingModel ? '发送实测请求中...' : '实测当前对话模型'}</span>
+              </button>
+            </div>
           )}
 
           {/* Real Image Generation Test Result Card (with real <img> decode verification!) */}
@@ -1297,6 +1345,44 @@ export const ApiSettingsPanel: React.FC<ApiSettingsPanelProps> = ({
               <span className="api-diag-muted font-mono text-[11px] text-zinc-400 shrink-0 ml-2">
                 {connectionResult.latencyMs}ms
               </span>
+            </div>
+          )}
+
+          {/* Selected Model Live Chat Probe Result */}
+          {activeSlot === 'text_generation' && modelTestResult && (
+            <div
+              className={`api-diag-status-box p-3 rounded-xl border text-xs space-y-1.5 ${
+                modelTestResult.success
+                  ? 'api-diag-status-box--ok bg-zinc-900/90 border-emerald-500/30 text-zinc-200'
+                  : 'api-diag-status-box--err bg-zinc-900/90 border-rose-500/35 text-rose-300'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 font-semibold min-w-0">
+                  {modelTestResult.success ? (
+                    <CheckCircle2 className="api-diag-ok w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="api-diag-err w-4 h-4 text-rose-400 shrink-0" />
+                  )}
+                  <span className="truncate">
+                    {modelTestResult.success
+                      ? `模型实测成功 (${modelTestResult.model || activeModel})`
+                      : `模型实测失败 (${modelTestResult.model || activeModel})`}
+                  </span>
+                </div>
+                <span className="api-diag-muted font-mono text-[11px] text-zinc-400 shrink-0">
+                  {modelTestResult.latencyMs}ms
+                </span>
+              </div>
+              {modelTestResult.success ? (
+                <p className="text-[11px] text-zinc-300 break-words leading-relaxed">
+                  返回预览：{sanitizeSensitiveText(modelTestResult.reply || '已成功收到响应')}
+                </p>
+              ) : (
+                <p className="text-[11px] break-words leading-relaxed">
+                  {sanitizeSensitiveText(modelTestResult.error || '实测请求失败')}
+                </p>
+              )}
             </div>
           )}
 

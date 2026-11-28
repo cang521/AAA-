@@ -17,7 +17,7 @@
  * - Backward-compatible aliases (text/image/voice) remain synced for legacy callers.
  */
 
-import { resolveEffectiveProtocol } from './apiCapabilities';
+import { normalizeTimeoutMs, resolveEffectiveProtocol } from './apiCapabilities';
 import { ThinkingOutputSettings } from '../types';
 
 export interface ApiConnectionConfig {
@@ -29,6 +29,7 @@ export interface ApiConnectionConfig {
   presetId?: string;
   thinkingConfig?: ThinkingOutputSettings;
   customHeaders?: Record<string, string>;
+  timeoutMs?: number;
 }
 
 export interface RecognitionApiSettings {
@@ -132,6 +133,9 @@ function cloneConn(c: ApiConnectionConfig): ApiConnectionConfig {
     ...(c.presetId ? { presetId: c.presetId } : {}),
     ...(c.thinkingConfig ? { thinkingConfig: { ...c.thinkingConfig } } : {}),
     ...(c.customHeaders ? { customHeaders: { ...c.customHeaders } } : {}),
+    ...(typeof c.timeoutMs === 'number' && Number.isFinite(c.timeoutMs) && c.timeoutMs > 0
+      ? { timeoutMs: normalizeTimeoutMs(c.timeoutMs) }
+      : {}),
   };
 }
 
@@ -221,6 +225,12 @@ function sanitizeConnection(
       ? { ...leg.customHeaders }
       : undefined;
 
+  const rawTimeout = src?.timeoutMs ?? leg?.timeoutMs ?? defaultConn.timeoutMs;
+  const timeoutMs =
+    typeof rawTimeout === 'number' && Number.isFinite(rawTimeout) && rawTimeout > 0
+      ? normalizeTimeoutMs(rawTimeout)
+      : undefined;
+
   return {
     provider,
     baseUrl,
@@ -230,6 +240,7 @@ function sanitizeConnection(
     ...(presetId ? { presetId } : {}),
     ...(thinkingConfig ? { thinkingConfig } : {}),
     ...(customHeaders ? { customHeaders } : {}),
+    ...(timeoutMs ? { timeoutMs } : {}),
   };
 }
 
@@ -421,6 +432,12 @@ export function mergeImportedApiSettings(imported: any): ApiSettings {
         ? src.apiProtocol
         : current.apiProtocol || resolveEffectiveProtocol({ provider: nextProvider, baseUrl: nextBaseUrl });
 
+    const rawTimeout = src.timeoutMs ?? current.timeoutMs;
+    const timeoutMs =
+      typeof rawTimeout === 'number' && Number.isFinite(rawTimeout) && rawTimeout > 0
+        ? normalizeTimeoutMs(rawTimeout)
+        : undefined;
+
     return {
       provider: nextProvider,
       baseUrl: nextBaseUrl,
@@ -436,6 +453,7 @@ export function mergeImportedApiSettings(imported: any): ApiSettings {
         : current.customHeaders
         ? { customHeaders: { ...current.customHeaders } }
         : {}),
+      ...(timeoutMs ? { timeoutMs } : {}),
     };
   };
 
@@ -556,6 +574,9 @@ export function getApiConfigForEngine() {
     textModel: s.textGeneration.model,
     textProvider: s.textGeneration.provider,
     textApiProtocol: s.textGeneration.apiProtocol,
+    customHeaders: s.textGeneration.customHeaders,
+    thinkingConfig: s.textGeneration.thinkingConfig,
+    timeoutMs: s.textGeneration.timeoutMs,
     imageApiKey: s.imageGeneration.apiKey,
     imageBaseUrl: s.imageGeneration.baseUrl,
     imageModel: s.imageGeneration.model,

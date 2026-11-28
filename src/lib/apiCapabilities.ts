@@ -498,6 +498,43 @@ export function parseCustomThinkingParamsJson(raw?: string): {
   }
 }
 
+export const DEFAULT_TEXT_TIMEOUT_MS = 120000;
+export const MIN_TEXT_TIMEOUT_MS = 10000;
+export const MAX_TEXT_TIMEOUT_MS = 300000;
+
+export function normalizeTimeoutMs(raw: unknown, fallback = DEFAULT_TEXT_TIMEOUT_MS): number {
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) {
+    return Math.min(MAX_TEXT_TIMEOUT_MS, Math.max(MIN_TEXT_TIMEOUT_MS, Math.round(n)));
+  }
+  return fallback;
+}
+
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'transfer-encoding',
+  'te',
+  'trailer',
+  'upgrade',
+  'host',
+  'content-length',
+]);
+
+export function sanitizeOutboundHeaders(headers?: Record<string, any>): Record<string, string> | undefined {
+  if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return undefined;
+  const cleaned: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    const key = String(k || '').trim();
+    if (!key || HOP_BY_HOP_HEADERS.has(key.toLowerCase())) continue;
+    if (v === undefined || v === null) continue;
+    const val = String(v).trim();
+    if (!val) continue;
+    cleaned[key] = val;
+  }
+  return Object.keys(cleaned).length > 0 ? cleaned : undefined;
+}
+
 /**
  * Unified text generation configuration resolution.
  * Prioritizes canonical textApiConfig / textGeneration object while falling back to legacy flat fields.
@@ -573,19 +610,15 @@ export function resolveTextGenerationConfig(
   });
 
   const customHeaders =
-    (nestedText?.customHeaders && typeof nestedText.customHeaders === 'object'
-      ? nestedText.customHeaders
-      : undefined) ||
-    (apiConfig?.customHeaders && typeof apiConfig.customHeaders === 'object'
-      ? apiConfig.customHeaders
-      : undefined);
+    sanitizeOutboundHeaders(nestedText?.customHeaders) ||
+    sanitizeOutboundHeaders(apiConfig?.customHeaders);
 
   const timeoutMs =
-    Number(apiConfig?.timeoutMs) > 0
-      ? Number(apiConfig.timeoutMs)
-      : Number(nestedText?.timeoutMs) > 0
-      ? Number(nestedText.timeoutMs)
-      : 45000;
+    Number(nestedText?.timeoutMs) > 0
+      ? normalizeTimeoutMs(nestedText.timeoutMs)
+      : Number(apiConfig?.timeoutMs) > 0
+      ? normalizeTimeoutMs(apiConfig.timeoutMs)
+      : DEFAULT_TEXT_TIMEOUT_MS;
 
   const thinkingConfig =
     nestedText?.thinkingConfig && typeof nestedText.thinkingConfig === 'object'

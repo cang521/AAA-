@@ -1074,22 +1074,33 @@ public final class ProactiveNativeExecutor {
                 return result;
             }
 
-            boolean isGeminiNative;
+            String protocolMode;
             if ("google_native".equals(apiProtocol) || "gemini_native".equals(apiProtocol) || "google".equals(apiProtocol)) {
-                isGeminiNative = true;
+                protocolMode = "google_native";
+            } else if ("anthropic".equals(apiProtocol) || "claude".equals(apiProtocol) || "anthropic_native".equals(apiProtocol)) {
+                protocolMode = "anthropic";
             } else if ("openai_compatible".equals(apiProtocol) || "openai".equals(apiProtocol)) {
-                isGeminiNative = false;
+                protocolMode = "openai_compatible";
+            } else if (provider.contains("anthropic") || provider.contains("claude") || baseUrl.contains("api.anthropic.com")) {
+                protocolMode = "anthropic";
             } else {
-                isGeminiNative = (provider.contains("gemini") || provider.contains("google"))
+                boolean looksGemini = (provider.contains("gemini") || provider.contains("google"))
                     && !provider.contains("openai")
                     && !provider.contains("custom")
                     && (baseUrl.isEmpty() || baseUrl.contains("generativelanguage.googleapis.com"));
+                protocolMode = looksGemini ? "google_native" : "openai_compatible";
             }
+
+            int rawTimeoutMs = textApiCfg != null ? textApiCfg.optInt("timeoutMs", 0) : 0;
+            if (rawTimeoutMs <= 0) {
+                rawTimeoutMs = apiConfig.optInt("timeoutMs", 90_000);
+            }
+            int readTimeoutMs = Math.max(15_000, Math.min(300_000, rawTimeoutMs));
 
             URL url;
             String requestBody;
 
-            if (isGeminiNative) {
+            if ("google_native".equals(protocolMode)) {
                 String root = baseUrl.isEmpty() ? "https://generativelanguage.googleapis.com" : baseUrl.replaceAll("/+$", "");
                 root = root.replaceAll("(?i)/v1(beta|alpha)?$", "");
                 String endpoint = root + "/v1beta/models/" + model + ":generateContent";
@@ -1101,6 +1112,25 @@ public final class ProactiveNativeExecutor {
                 JSONObject body = new JSONObject()
                     .put("contents", new JSONArray().put(content))
                     .put("generationConfig", genCfg);
+                requestBody = body.toString();
+            } else if ("anthropic".equals(protocolMode)) {
+                String root = baseUrl.isEmpty() ? "https://api.anthropic.com" : baseUrl.replaceAll("/+$", "");
+                String endpoint;
+                if (root.endsWith("/messages")) {
+                    endpoint = root;
+                } else if (root.endsWith("/v1")) {
+                    endpoint = root + "/messages";
+                } else {
+                    endpoint = root + "/v1/messages";
+                }
+                url = new URL(endpoint);
+
+                JSONObject msg = new JSONObject().put("role", "user").put("content", prompt);
+                JSONObject body = new JSONObject()
+                    .put("model", model)
+                    .put("max_tokens", 1024)
+                    .put("temperature", 0.7)
+                    .put("messages", new JSONArray().put(msg));
                 requestBody = body.toString();
             } else {
                 String root = baseUrl.isEmpty() ? "https://api.openai.com/v1" : baseUrl.replaceAll("/+$", "");
@@ -1125,24 +1155,39 @@ public final class ProactiveNativeExecutor {
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setConnectTimeout(15_000);
-            conn.setReadTimeout(35_000);
+            conn.setReadTimeout(readTimeoutMs);
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-            conn.setRequestProperty("Connection", "close");
 
-            if (isGeminiNative) {
+            if ("google_native".equals(protocolMode)) {
                 conn.setRequestProperty("x-goog-api-key", apiKey);
+            } else if ("anthropic".equals(protocolMode)) {
+                conn.setRequestProperty("x-api-key", apiKey);
+                conn.setRequestProperty("anthropic-version", "2023-06-01");
             } else {
                 conn.setRequestProperty("Authorization", "Bearer " + apiKey);
             }
 
-            JSONObject customHeaders = apiConfig.optJSONObject("customHeaders");
-            if (customHeaders != null) {
+            JSONObject[] headerSources = new JSONObject[] {
+                apiConfig.optJSONObject("customHeaders"),
+                textApiCfg != null ? textApiCfg.optJSONObject("customHeaders") : null
+            };
+            for (JSONObject customHeaders : headerSources) {
+                if (customHeaders == null) continue;
                 Iterator<String> keys = customHeaders.keys();
                 while (keys.hasNext()) {
                     String k = keys.next();
+                    String lowerK = k != null ? k.trim().toLowerCase(Locale.US) : "";
+                    if (lowerK.isEmpty()
+                        || "connection".equals(lowerK)
+                        || "keep-alive".equals(lowerK)
+                        || "transfer-encoding".equals(lowerK)
+                        || "host".equals(lowerK)
+                        || "content-length".equals(lowerK)) {
+                        continue;
+                    }
                     String v = customHeaders.optString(k, "");
-                    if (!k.isEmpty() && !v.isEmpty()) {
+                    if (!v.isEmpty()) {
                         conn.setRequestProperty(k, v);
                     }
                 }
@@ -1159,7 +1204,7 @@ public final class ProactiveNativeExecutor {
 
             String respBody = readStream(stream);
             if (result.httpStatus >= 200 && result.httpStatus < 300 && respBody != null) {
-                result.rawText = extractTextFromProviderResponse(respBody, isGeminiNative);
+                result.rawText = extractTextFromProviderResponse(respBody, protocolMode);
                 result.success = result.rawText != null && !result.rawText.trim().isEmpty();
             } else {
                 result.success = false;
@@ -1178,10 +1223,10 @@ public final class ProactiveNativeExecutor {
         return result;
     }
 
-    private static String extractTextFromProviderResponse(String body, boolean isGeminiNative) {
+    private static String extractTextFromProviderResponse(String body, String protocolMode) {
         try {
             JSONObject root = new JSONObject(body);
-            if (isGeminiNative) {
+            if ("google_native".equals(protocolMode)) {
                 JSONArray candidates = root.optJSONArray("candidates");
                 if (candidates != null && candidates.length() > 0) {
                     JSONObject c0 = candidates.optJSONObject(0);
@@ -1197,6 +1242,18 @@ public final class ProactiveNativeExecutor {
                         }
                         return sb.toString();
                     }
+                }
+            } else if ("anthropic".equals(protocolMode)) {
+                JSONArray contentArr = root.optJSONArray("content");
+                if (contentArr != null && contentArr.length() > 0) {
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < contentArr.length(); i++) {
+                        JSONObject block = contentArr.optJSONObject(i);
+                        if (block != null && "text".equals(block.optString("type", ""))) {
+                            sb.append(block.optString("text", ""));
+                        }
+                    }
+                    return sb.toString();
                 }
             } else {
                 JSONArray choices = root.optJSONArray("choices");

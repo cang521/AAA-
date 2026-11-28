@@ -664,12 +664,30 @@ class GroupReplyTaskManager {
       if (!current) return;
 
       const message = err?.message || '群聊 AI 回复生成失败，请检查内置后端或 API 配置';
+      const lowerMsg = String(message || '').toLowerCase();
+      const causeCode = String(err?.causeCode || err?.cause?.code || '').toUpperCase();
+      const preventAutoRetry =
+        Boolean(err?.mayHaveBeenCharged) ||
+        err?.statusCode === 401 ||
+        err?.statusCode === 403 ||
+        err?.statusCode === 404 ||
+        err?.statusCode === 429 ||
+        causeCode === 'ECONNRESET' ||
+        causeCode === 'UND_ERR_SOCKET' ||
+        causeCode === 'UND_ERR_BODY_TIMEOUT' ||
+        causeCode === 'ETIMEDOUT' ||
+        lowerMsg.includes('fetch failed') ||
+        lowerMsg.includes('econnreset') ||
+        lowerMsg.includes('und_err_socket') ||
+        lowerMsg.includes('请求超时') ||
+        lowerMsg.includes('已产生扣费');
+
       if (isBackendUnavailableError(err)) {
         this.updateTask(taskId, {
           status: 'waiting_backend',
           error: message,
         });
-      } else if (!current.plan && (current.retryCount || 0) < current.maxRetries) {
+      } else if (!preventAutoRetry && !current.plan && (current.retryCount || 0) < current.maxRetries) {
         const nextRetry = (current.retryCount || 0) + 1;
         this.updateTask(taskId, {
           status: 'queued',
@@ -680,6 +698,11 @@ class GroupReplyTaskManager {
           void this.processQueue();
         }, 1800);
       } else {
+        if (preventAutoRetry) {
+          console.warn(
+            `[GroupReplyTaskManager] Skipping auto-retry for task ${taskId} to avoid duplicate billing (mayHaveBeenCharged=${Boolean(err?.mayHaveBeenCharged)}, causeCode=${causeCode || 'none'}).`
+          );
+        }
         this.updateTask(taskId, {
           status: 'failed',
           error: message,

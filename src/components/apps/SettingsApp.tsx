@@ -460,8 +460,11 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           providerType: providerType || 'custom',
+          apiProtocol: activeConfig.apiProtocol || '',
           baseUrl,
           apiKey,
+          customHeaders: activeConfig.customHeaders,
+          timeoutMs: activeConfig.timeoutMs,
           serviceType: activeCategory,
         }),
       });
@@ -560,6 +563,8 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           apiProtocol: activeConfig.apiProtocol || '',
           baseUrl,
           apiKey,
+          customHeaders: activeConfig.customHeaders,
+          timeoutMs: activeConfig.timeoutMs,
           serviceType: activeSlot,
         }),
       });
@@ -668,6 +673,9 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           apiKey,
           model,
           apiProtocol,
+          customHeaders: activeConfig.customHeaders,
+          thinkingConfig: activeConfig.thinkingConfig,
+          timeoutMs: activeConfig.timeoutMs,
           serviceType: activeSlot,
         }),
       });
@@ -726,6 +734,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({
           apiProtocol,
           customHeaders: activeConfig.customHeaders,
           thinkingConfig: activeConfig.thinkingConfig,
+          timeoutMs: activeConfig.timeoutMs,
         }),
       });
 

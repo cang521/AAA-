@@ -322,7 +322,18 @@ export class OfflineSessionService {
 
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.success) {
-        throw new Error(data?.error || data?.message || `AI 线下生成服务异常 (${res.status})`);
+        const rawMsg = data?.errorMessage || data?.error || data?.message || `AI 线下生成服务异常 (${res.status})`;
+        const chargedNotice = data?.mayHaveBeenCharged
+          ? `${rawMsg}（请求已发送至上游，可能已产生扣费，如需重发请点击手动重试）`
+          : rawMsg;
+        const err: any = new Error(chargedNotice);
+        err.statusCode = res.status;
+        err.mayHaveBeenCharged = Boolean(data?.mayHaveBeenCharged);
+        err.upstreamRequestSent = data?.upstreamRequestSent;
+        err.protocol = data?.protocol;
+        err.causeCode = data?.causeCode;
+        err.requestId = data?.requestId;
+        throw err;
       }
 
       const normalizedSegments = normalizeOfflineSegments(data.segments, data.reply, data.action);
@@ -401,6 +412,12 @@ export class OfflineSessionService {
       });
       const wrapped: any = new Error(err?.message || '网络连接或模型响应异常，回复生成失败');
       wrapped.failedUserMessage = failedUserMsg;
+      if (err?.statusCode !== undefined) wrapped.statusCode = err.statusCode;
+      if (err?.mayHaveBeenCharged !== undefined) wrapped.mayHaveBeenCharged = err.mayHaveBeenCharged;
+      if (err?.upstreamRequestSent !== undefined) wrapped.upstreamRequestSent = err.upstreamRequestSent;
+      if (err?.protocol !== undefined) wrapped.protocol = err.protocol;
+      if (err?.causeCode !== undefined) wrapped.causeCode = err.causeCode;
+      if (err?.requestId !== undefined) wrapped.requestId = err.requestId;
       throw wrapped;
     }
   }
@@ -521,7 +538,18 @@ export class OfflineSessionService {
 
     const data = await res.json().catch(() => null);
     if (!res.ok || !data?.success) {
-      throw new Error(data?.error || data?.message || '重新生成请求失败');
+      const rawMsg = data?.errorMessage || data?.error || data?.message || '重新生成请求失败';
+      const chargedNotice = data?.mayHaveBeenCharged
+        ? `${rawMsg}（请求已发送至上游，可能已产生扣费，如需重发请点击手动重试）`
+        : rawMsg;
+      const err: any = new Error(chargedNotice);
+      err.statusCode = res.status;
+      err.mayHaveBeenCharged = Boolean(data?.mayHaveBeenCharged);
+      err.upstreamRequestSent = data?.upstreamRequestSent;
+      err.protocol = data?.protocol;
+      err.causeCode = data?.causeCode;
+      err.requestId = data?.requestId;
+      throw err;
     }
 
     const normalizedSegments = normalizeOfflineSegments(data.segments, data.reply, data.action);

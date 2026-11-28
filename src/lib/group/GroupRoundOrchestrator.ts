@@ -890,7 +890,18 @@ export async function orchestrateGroupRound(params: {
 
   const data = await res.json().catch(() => null);
   if (!res.ok || !data || data.success === false) {
-    throw new Error(data?.error || data?.message || `群聊 AI 接口请求失败 (${res.status})`);
+    const rawMsg = data?.errorMessage || data?.error || data?.message || `群聊 AI 接口请求失败 (${res.status})`;
+    const chargedNotice = data?.mayHaveBeenCharged
+      ? `${rawMsg}（请求已发送至上游，可能已产生扣费，已停止自动重试，如需重发请点击手动重试）`
+      : rawMsg;
+    const err: any = new Error(chargedNotice);
+    err.statusCode = res.status;
+    err.mayHaveBeenCharged = Boolean(data?.mayHaveBeenCharged);
+    err.upstreamRequestSent = data?.upstreamRequestSent;
+    err.protocol = data?.protocol;
+    err.causeCode = data?.causeCode;
+    err.requestId = data?.requestId;
+    throw err;
   }
 
   const plan = normalizeGroupRoundPlan({

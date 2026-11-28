@@ -282,14 +282,27 @@ ${worldBookPrompt}
   }
 
   if (!res.ok || !data.ok) {
-    const errorMsg = data?.error || `生成剧本失败 (HTTP ${res.status})`;
+    const rawMsg = data?.errorMessage || data?.error || `生成剧本失败 (HTTP ${res.status})`;
+    const buildTheaterErr = (msg: string) => {
+      const finalMsg = data?.mayHaveBeenCharged
+        ? `${msg}（请求已发送至上游，可能已产生扣费，如需重发请点击手动重试）`
+        : msg;
+      const err: any = new Error(finalMsg);
+      err.statusCode = res.status;
+      err.mayHaveBeenCharged = Boolean(data?.mayHaveBeenCharged);
+      err.upstreamRequestSent = data?.upstreamRequestSent;
+      err.protocol = data?.protocol;
+      err.causeCode = data?.causeCode;
+      err.requestId = data?.requestId;
+      return err;
+    };
     if (res.status === 401 || res.status === 403) {
-      throw new Error(`API 鉴权失败：${errorMsg}。请检查API密钥。`);
+      throw buildTheaterErr(`API 鉴权失败：${rawMsg}。请检查API密钥。`);
     }
     if (res.status === 429) {
-      throw new Error(`API 额度超限或触发频率限制(429)：${errorMsg}。请稍后重试。`);
+      throw buildTheaterErr(`API 额度超限或触发频率限制(429)：${rawMsg}。请稍后重试。`);
     }
-    throw new Error(errorMsg);
+    throw buildTheaterErr(rawMsg);
   }
 
   const parsed = cleanAndParseJson(data.text, '开局剧本解析');
@@ -442,14 +455,27 @@ ${formattedHistory}
   }
 
   if (!res.ok || !data.ok) {
-    const errorMsg = data?.error || `对话生成失败 (HTTP ${res.status})`;
+    const rawMsg = data?.errorMessage || data?.error || `对话生成失败 (HTTP ${res.status})`;
+    const buildTheaterErr = (msg: string) => {
+      const finalMsg = data?.mayHaveBeenCharged
+        ? `${msg}（请求已发送至上游，可能已产生扣费，如需重发请点击手动重试）`
+        : msg;
+      const err: any = new Error(finalMsg);
+      err.statusCode = res.status;
+      err.mayHaveBeenCharged = Boolean(data?.mayHaveBeenCharged);
+      err.upstreamRequestSent = data?.upstreamRequestSent;
+      err.protocol = data?.protocol;
+      err.causeCode = data?.causeCode;
+      err.requestId = data?.requestId;
+      return err;
+    };
     if (res.status === 401 || res.status === 403) {
-      throw new Error(`API 鉴权失败：${errorMsg}。请检查API密钥配置。`);
+      throw buildTheaterErr(`API 鉴权失败：${rawMsg}。请检查API密钥配置。`);
     }
     if (res.status === 429) {
-      throw new Error(`请求超限或触发速率限制(429)：${errorMsg}。请稍后重试。`);
+      throw buildTheaterErr(`请求超限或触发速率限制(429)：${rawMsg}。请稍后重试。`);
     }
-    throw new Error(errorMsg);
+    throw buildTheaterErr(rawMsg);
   }
 
   const parsed = cleanAndParseJson(data.text, '剧场回应解析');
